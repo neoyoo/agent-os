@@ -117,6 +117,46 @@ def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> No
     assert generation_span.attributes["agentos.provider.tool_call_count"] == 1
 
 
+def test_instrument_query_loop_metadata_mode_records_trace_input_output_summaries(tmp_path: Path) -> None:
+    loop, _, _ = _build_loop(tmp_path)
+    tracer = InMemoryTracer()
+
+    instrumented = instrument_query_loop(
+        loop,
+        ObservabilityConfig(
+            tracer=tracer,
+            capture_policy=CapturePolicy.metadata_only(),
+        ),
+    )
+    instrumented.run_turn("读取项目名")
+
+    root = tracer.records[0]
+    assert "user_message_length" in str(root.attributes["langfuse.trace.input"])
+    assert "content_length" in str(root.attributes["langfuse.trace.output"])
+    assert "user_message_length" in str(root.attributes["langfuse.observation.input"])
+    assert "content_length" in str(root.attributes["langfuse.observation.output"])
+    assert "读取项目名" not in str(root.attributes["langfuse.trace.input"])
+    assert "项目名是 agent-os。" not in str(root.attributes["langfuse.trace.output"])
+
+
+def test_instrument_query_loop_full_mode_records_trace_input_output_content(tmp_path: Path) -> None:
+    loop, _, _ = _build_loop(tmp_path)
+    tracer = InMemoryTracer()
+
+    instrumented = instrument_query_loop(
+        loop,
+        ObservabilityConfig(
+            tracer=tracer,
+            capture_policy=CapturePolicy.full_for_local_development(),
+        ),
+    )
+    instrumented.run_turn("读取项目名")
+
+    root = tracer.records[0]
+    assert "读取项目名" in str(root.attributes["langfuse.trace.input"])
+    assert "项目名是 agent-os。" in str(root.attributes["langfuse.trace.output"])
+
+
 def test_instrument_query_loop_does_not_mutate_original_loop(tmp_path: Path) -> None:
     loop, _, _ = _build_loop(tmp_path)
     original_provider = loop.provider

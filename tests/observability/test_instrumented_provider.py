@@ -56,8 +56,10 @@ def test_instrumented_provider_records_generation_span_without_changing_response
     assert span.attributes["gen_ai.usage.total_tokens"] == 15
     assert span.attributes["agentos.provider.response_id"] == "resp_1"
     assert span.attributes["agentos.provider.tool_call_count"] == 0
-    assert "langfuse.observation.input" not in span.attributes
-    assert "langfuse.observation.output" not in span.attributes
+    assert "system_length" in str(span.attributes["langfuse.observation.input"])
+    assert "content_length" in str(span.attributes["langfuse.observation.output"])
+    assert "system text" not in str(span.attributes["langfuse.observation.input"])
+    assert "done" not in str(span.attributes["langfuse.observation.output"])
 
 
 def test_instrumented_provider_full_capture_records_input_and_output() -> None:

@@ -72,3 +72,30 @@ def test_instrumented_router_records_error_and_reraises() -> None:
     assert span.status == "error"
     assert span.events[0].name == "exception"
     assert span.events[0].attributes["exception.type"] == "SecurityPolicyError"
+
+
+def test_instrumented_router_metadata_mode_records_input_output_summaries(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('name = "agent-os"', encoding="utf-8")
+    registry = ToolRegistry()
+    registry.register(read_file_tool(tmp_path))
+    router = ToolCallRouter(tool_registry=registry)
+    tracer = InMemoryTracer()
+    instrumented = InstrumentedToolCallRouter(
+        router,
+        tracer=tracer,
+        capture_policy=CapturePolicy.metadata_only(),
+    )
+
+    instrumented.execute_tool_call(
+        ProviderToolCall(
+            id="call_1",
+            name="read_file",
+            arguments={"path": "pyproject.toml"},
+        ),
+    )
+
+    span = tracer.records[0]
+    assert "arguments_sha256" in str(span.attributes["langfuse.observation.input"])
+    assert "content_length" in str(span.attributes["langfuse.observation.output"])
+    assert "pyproject.toml" not in str(span.attributes["langfuse.observation.input"])
+    assert "agent-os" not in str(span.attributes["langfuse.observation.output"])

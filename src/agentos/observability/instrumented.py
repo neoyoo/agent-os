@@ -23,16 +23,29 @@ from agentos.observability.conventions import (
     LANGFUSE_OBSERVATION_TYPE,
     LANGFUSE_OBSERVATION_USAGE_DETAILS,
     LANGFUSE_SESSION_ID,
+    LANGFUSE_TRACE_INPUT,
     LANGFUSE_TRACE_NAME,
+    LANGFUSE_TRACE_OUTPUT,
 )
 from agentos.observability.snapshots import (
+    ProviderRequestSnapshot,
+    ProviderResponseSnapshot,
+    ToolCallSnapshot,
+    ToolResultSnapshot,
     build_provider_request_snapshot,
     build_provider_response_snapshot,
     build_tool_call_snapshot,
     build_tool_result_snapshot,
+    stable_sha256,
 )
 from agentos.observability.tracer import Tracer
-from agentos.providers import Provider, ProviderRequest, ProviderResponse, ProviderToolCall
+from agentos.providers import (
+    Provider,
+    ProviderRequest,
+    ProviderResponse,
+    ProviderToolCall,
+    ProviderUsage,
+)
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
 
 
@@ -72,18 +85,13 @@ class InstrumentedProvider:
                 "agentos.provider_request.tools.sha256": request_snapshot.tools_sha256,
             },
         ) as span:
-            if self._capture_policy.capture_system or self._capture_policy.capture_messages:
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_INPUT,
-                    json_attribute(
-                        {
-                            "system": request_snapshot.system,
-                            "messages": request_snapshot.messages,
-                            "tools": request_snapshot.tools,
-                        },
-                        policy=self._capture_policy,
-                    ),
-                )
+            span.set_attribute(
+                LANGFUSE_OBSERVATION_INPUT,
+                json_attribute(
+                    self._provider_input_payload(request_snapshot),
+                    policy=self._capture_policy,
+                ),
+            )
             response = self._inner.complete(request)
             response_snapshot = build_provider_response_snapshot(
                 response,
@@ -115,23 +123,58 @@ class InstrumentedProvider:
                 )
             if response_snapshot.usage is not None:
                 self._set_usage_attributes(span, response_snapshot.usage)
-            if response_snapshot.content is not None:
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_OUTPUT,
-                    json_attribute(
-                        {
-                            "content": response_snapshot.content,
-                            "tool_calls": [
-                                asdict(tool_call)
-                                for tool_call in response_snapshot.tool_calls
-                            ],
-                        },
-                        policy=self._capture_policy,
-                    ),
-                )
+            span.set_attribute(
+                LANGFUSE_OBSERVATION_OUTPUT,
+                json_attribute(
+                    self._provider_output_payload(response_snapshot),
+                    policy=self._capture_policy,
+                ),
+            )
             return response
 
-    def _set_usage_attributes(self, span: object, usage: object) -> None:
+    def _provider_input_payload(
+        self,
+        snapshot: ProviderRequestSnapshot,
+    ) -> dict[str, object]:
+        """返回 provider span input payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {
+                "system_length": snapshot.system_length,
+                "system_sha256": snapshot.system_sha256,
+                "message_count": snapshot.message_count,
+                "messages_sha256": snapshot.messages_sha256,
+                "tool_count": snapshot.tool_count,
+                "tools_sha256": snapshot.tools_sha256,
+            }
+        return {
+            "system": snapshot.system,
+            "messages": snapshot.messages,
+            "tools": snapshot.tools,
+        }
+
+    def _provider_output_payload(
+        self,
+        snapshot: ProviderResponseSnapshot,
+    ) -> dict[str, object]:
+        """返回 provider span output payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {
+                "content_length": snapshot.content_length,
+                "content_sha256": snapshot.content_sha256,
+                "tool_call_count": len(snapshot.tool_calls),
+                "stop_reason": snapshot.stop_reason,
+            }
+        return {
+            "content": snapshot.content,
+            "tool_calls": [
+                asdict(tool_call)
+                for tool_call in snapshot.tool_calls
+            ],
+        }
+
+    def _set_usage_attributes(self, span: object, usage: ProviderUsage) -> None:
         """把 ProviderUsage 写入 span attributes。"""
 
         values = asdict(usage)
@@ -182,19 +225,32 @@ class InstrumentedProviderRequestBuilder:
                     "agentos.provider_request.tools.sha256": snapshot.tools_sha256,
                 },
             )
-            if snapshot.system is not None or snapshot.messages is not None:
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_INPUT,
-                    json_attribute(
-                        {
-                            "system": snapshot.system,
-                            "messages": snapshot.messages,
-                            "tools": snapshot.tools,
-                        },
-                        policy=self._capture_policy,
-                    ),
-                )
+            span.set_attribute(
+                LANGFUSE_OBSERVATION_INPUT,
+                json_attribute(
+                    self._request_payload(snapshot),
+                    policy=self._capture_policy,
+                ),
+            )
             return request
+
+    def _request_payload(self, snapshot: ProviderRequestSnapshot) -> dict[str, object]:
+        """返回 request build span input payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {
+                "system_length": snapshot.system_length,
+                "system_sha256": snapshot.system_sha256,
+                "message_count": snapshot.message_count,
+                "messages_sha256": snapshot.messages_sha256,
+                "tool_count": snapshot.tool_count,
+                "tools_sha256": snapshot.tools_sha256,
+            }
+        return {
+            "system": snapshot.system,
+            "messages": snapshot.messages,
+            "tools": snapshot.tools,
+        }
 
 
 class InstrumentedCompressionRuntime:
@@ -258,11 +314,13 @@ class InstrumentedToolCallRouter:
                 "agentos.tool.arguments.sha256": call_snapshot.arguments_sha256,
             },
         ) as span:
-            if call_snapshot.arguments is not None:
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_INPUT,
-                    json_attribute(call_snapshot.arguments, policy=self._capture_policy),
-                )
+            span.set_attribute(
+                LANGFUSE_OBSERVATION_INPUT,
+                json_attribute(
+                    self._tool_input_payload(call_snapshot),
+                    policy=self._capture_policy,
+                ),
+            )
             result = self._inner.execute_tool_call(tool_call)
             result_snapshot = build_tool_result_snapshot(
                 result,
@@ -276,14 +334,13 @@ class InstrumentedToolCallRouter:
                 "agentos.tool.result.length",
                 result_snapshot.content_length,
             )
-            if result_snapshot.content is not None:
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_OUTPUT,
-                    json_attribute(
-                        {"content": result_snapshot.content},
-                        policy=self._capture_policy,
-                    ),
-                )
+            span.set_attribute(
+                LANGFUSE_OBSERVATION_OUTPUT,
+                json_attribute(
+                    self._tool_output_payload(result_snapshot),
+                    policy=self._capture_policy,
+                ),
+            )
             return result
 
     def tool_specs(self) -> object:
@@ -302,6 +359,23 @@ class InstrumentedToolCallRouter:
             return self._inner.tool_registry.get(tool_name).kind
         except KeyError:
             return "unknown"
+
+    def _tool_input_payload(self, snapshot: ToolCallSnapshot) -> dict[str, object]:
+        """返回 tool span input payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {"arguments_sha256": snapshot.arguments_sha256}
+        return {"arguments": snapshot.arguments}
+
+    def _tool_output_payload(self, snapshot: ToolResultSnapshot) -> dict[str, object]:
+        """返回 tool span output payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {
+                "content_length": snapshot.content_length,
+                "content_sha256": snapshot.content_sha256,
+            }
+        return {"content": snapshot.content}
 
 
 class InstrumentedQueryLoop:
@@ -338,21 +412,44 @@ class InstrumentedQueryLoop:
             attributes["agentos.turn.id"] = turn_id
 
         with self._tracer.start_span("agent.turn", attributes=attributes) as span:
-            if self._capture_policy.mode != "metadata":
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_INPUT,
-                    json_attribute({"user_message": user_message}, policy=self._capture_policy),
-                )
+            input_payload = self._turn_input_payload(user_message)
+            input_attribute = json_attribute(
+                input_payload,
+                policy=self._capture_policy,
+            )
+            span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
+            span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
             response = self._inner.run_turn(user_message)
             span.set_attribute("agentos.final_response.length", len(response))
-            if self._capture_policy.capture_provider_output:
-                span.set_attribute(
-                    LANGFUSE_OBSERVATION_OUTPUT,
-                    json_attribute({"content": response}, policy=self._capture_policy),
-                )
+            output_attribute = json_attribute(
+                self._turn_output_payload(response),
+                policy=self._capture_policy,
+            )
+            span.set_attribute(LANGFUSE_TRACE_OUTPUT, output_attribute)
+            span.set_attribute(LANGFUSE_OBSERVATION_OUTPUT, output_attribute)
             return response
 
     def build_request(self) -> ProviderRequest:
         """透传 build_request，供测试和高级调用者使用。"""
 
         return self._inner.build_request()
+
+    def _turn_input_payload(self, user_message: str) -> dict[str, object]:
+        """返回 root span input payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {
+                "user_message_length": len(user_message),
+                "user_message_sha256": stable_sha256(user_message),
+            }
+        return {"user_message": user_message}
+
+    def _turn_output_payload(self, response: str) -> dict[str, object]:
+        """返回 root span output payload。"""
+
+        if self._capture_policy.mode == "metadata":
+            return {
+                "content_length": len(response),
+                "content_sha256": stable_sha256(response),
+            }
+        return {"content": response}
