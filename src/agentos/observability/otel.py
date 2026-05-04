@@ -1,10 +1,11 @@
-from typing import Mapping
+from contextlib import contextmanager
+from typing import Iterator, Mapping, MutableMapping
 
 from agentos.observability.langfuse import (
     langfuse_otel_headers,
     langfuse_otel_trace_endpoint,
 )
-from agentos.observability.tracer import Span
+from agentos.observability.tracer import Span, TraceIds
 from agentos.observability.traces import TraceRecord
 
 
@@ -93,6 +94,58 @@ class _OTelTracer:
                 name,
                 attributes=dict(attributes or {}),
             ),
+        )
+
+    @contextmanager
+    def use_incoming_headers(
+        self,
+        headers: Mapping[str, str] | None,
+    ) -> Iterator[None]:
+        """提取 incoming W3C trace context。"""
+
+        if not headers:
+            yield
+            return
+        try:
+            from opentelemetry import context, propagate
+        except ImportError as error:
+            raise RuntimeError(
+                "OpenTelemetry is required. Install agent-os[observability].",
+            ) from error
+        extracted = propagate.extract(dict(headers))
+        token = context.attach(extracted)
+        try:
+            yield
+        finally:
+            context.detach(token)
+
+    def inject_headers(self, headers: MutableMapping[str, str]) -> None:
+        """把当前 OTel context 注入 outgoing headers。"""
+
+        try:
+            from opentelemetry import propagate
+        except ImportError as error:
+            raise RuntimeError(
+                "OpenTelemetry is required. Install agent-os[observability].",
+            ) from error
+        propagate.inject(headers)
+
+    def current_trace_ids(self) -> TraceIds:
+        """读取当前 OTel span context。"""
+
+        try:
+            from opentelemetry import trace
+        except ImportError as error:
+            raise RuntimeError(
+                "OpenTelemetry is required. Install agent-os[observability].",
+            ) from error
+        span_context = trace.get_current_span().get_span_context()
+        if not span_context.is_valid:
+            return TraceIds(trace_id=None, span_id=None)
+        return TraceIds(
+            trace_id=format(span_context.trace_id, "032x"),
+            span_id=format(span_context.span_id, "016x"),
+            is_remote=getattr(span_context, "is_remote", False),
         )
 
     def shutdown(self) -> None:
