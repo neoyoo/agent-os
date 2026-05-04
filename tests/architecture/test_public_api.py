@@ -17,6 +17,7 @@ def test_legacy_mixed_case_package_name_is_not_public_api() -> None:
 
 
 def test_public_api_uses_responsibility_specific_names() -> None:
+    agentos = importlib.import_module("agentos")
     runtime = importlib.import_module("agentos.runtime")
     capabilities = importlib.import_module("agentos.capabilities")
     hooks = importlib.import_module("agentos.hooks")
@@ -36,6 +37,12 @@ def test_public_api_uses_responsibility_specific_names() -> None:
 
     assert hasattr(providers, "Provider")
     assert not hasattr(providers, "ProviderRuntime")
+
+    assert hasattr(agentos, "QueryLoop")
+    assert hasattr(agentos, "ProviderRequestBuilder")
+    assert hasattr(agentos, "Provider")
+    assert hasattr(agentos, "ToolCallRouter")
+    assert hasattr(agentos, "HookManager")
 
 
 def test_context_protocol_public_constants_remain_available() -> None:

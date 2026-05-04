@@ -48,7 +48,7 @@ class ContextRenderer:
         ]
         if state.working_state_schema.fields:
             sections.append(self._declared_schema(state))
-        if state.working_state:
+        if state.working_state_schema.fields or state.working_state:
             sections.append(self._working_state(state))
         if state.inherited_state:
             sections.append(self._inherited_state(state.inherited_state))
@@ -105,13 +105,11 @@ class ContextRenderer:
     def _context_management_rules(self) -> str:
         """渲染上下文管理协议规则。"""
 
-        (
-            _declare_schema_tool,
-            update_state_tool,
-            extend_schema_tool,
-            start_chapter_tool,
-            recall_context_tool,
-        ) = self._context_protocol_tool_names()
+        tool_names = self._context_protocol_tool_names()
+        update_state_tool = tool_names["update_state"]
+        extend_schema_tool = tool_names["extend_schema"]
+        start_chapter_tool = tool_names["start_chapter"]
+        recall_context_tool = tool_names["recall_context"]
         return "\n".join(
             [
                 "# Context Management Rules",
@@ -157,14 +155,23 @@ class ContextRenderer:
             ],
         )
 
-    def _context_protocol_tool_names(self) -> tuple[str, str, str, str, str]:
-        """按协议声明顺序返回 context protocol tool 名称。"""
+    def _context_protocol_tool_names(self) -> dict[str, str]:
+        """按名称返回 context protocol tool 名称，避免依赖声明顺序。"""
 
-        tool_names = tuple(
-            definition.name for definition in CONTEXT_PROTOCOL_TOOL_DEFINITIONS
-        )
-        if len(tool_names) != 5:
-            raise ValueError("context management rules require five protocol tools")
+        tool_names = {
+            definition.name: definition.name
+            for definition in CONTEXT_PROTOCOL_TOOL_DEFINITIONS
+        }
+        missing_names = {
+            "declare_schema",
+            "update_state",
+            "extend_schema",
+            "start_chapter",
+            "recall_context",
+        } - set(tool_names)
+        if missing_names:
+            missing = ", ".join(sorted(missing_names))
+            raise ValueError(f"context management rules missing protocol tools: {missing}")
         return tool_names
 
     def _declared_schema(self, state: ContextState) -> str:

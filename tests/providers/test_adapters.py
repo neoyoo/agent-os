@@ -146,6 +146,7 @@ def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
 
     assert messages.kwargs is not None
     assert messages.kwargs["model"] == "claude-test"
+    assert messages.kwargs["max_tokens"] == 4096
     assert messages.kwargs["system"] == "system text"
     assert messages.kwargs["messages"] == [
         {"role": "user", "content": "read project name"},

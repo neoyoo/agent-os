@@ -168,7 +168,7 @@ def create_otel_tracer(
         )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError as error:
         raise RuntimeError(
             "OpenTelemetry is required. Install agent-os[observability].",
@@ -179,7 +179,7 @@ def create_otel_tracer(
         resource_attributes["deployment.environment.name"] = environment
     provider = TracerProvider(resource=Resource.create(resource_attributes))
     provider.add_span_processor(
-        SimpleSpanProcessor(
+        BatchSpanProcessor(
             OTLPSpanExporter(endpoint=endpoint, headers=headers or {}),
         ),
     )
@@ -202,4 +202,3 @@ def create_langfuse_otel_tracer(
         service_name=service_name,
         environment=environment,
     )
-

@@ -111,6 +111,26 @@ def test_default_renderer_omits_empty_working_state_sections() -> None:
     assert "# Capability Plane" in rendered
 
 
+def test_default_renderer_renders_empty_working_state_when_schema_declared() -> None:
+    rendered = ContextRenderer().render(
+        ContextState(
+            working_state_schema=WorkingStateSchema(
+                fields=[
+                    WorkingStateField(
+                        name="task_goal",
+                        type="str",
+                        purpose="Current task goal and completion criteria",
+                    ),
+                ],
+            ),
+        ),
+    )
+
+    assert "# Declared Working State Schema" in rendered
+    assert "# Working State" in rendered
+    assert "<working-state>\n</working-state>" in rendered
+
+
 def test_default_renderer_renders_inherited_state_only_when_present() -> None:
     empty_rendered = ContextRenderer().render(ContextState())
     assert "\n# Inherited State\n" not in empty_rendered
@@ -329,3 +349,41 @@ def test_default_renderer_preserves_declared_schema_field_order() -> None:
     constraints_position = rendered.index('name="constraints"')
     next_steps_position = rendered.index('name="next_steps"')
     assert task_goal_position < constraints_position < next_steps_position
+
+
+def test_default_renderer_orders_inherited_state_between_working_state_and_compressed_history() -> None:
+    state = ContextState(
+        working_state_schema=WorkingStateSchema(
+            fields=[
+                WorkingStateField(
+                    name="task_goal",
+                    type="str",
+                    purpose="Current task goal and completion criteria",
+                ),
+            ],
+        ),
+        inherited_state=["Continue the current architecture direction."],
+        compressed_history=[
+            CompressedSegment(
+                id="seg_1",
+                topic="previous chapter",
+                summary="Previous chapter finished renderer.",
+            ),
+        ],
+    )
+
+    rendered = ContextRenderer().render(state)
+
+    expected_sections = [
+        "# Runtime Contract",
+        "# Capability Plane",
+        "# Context Management Rules",
+        "# Declared Working State Schema",
+        "# Working State",
+        "# Inherited State",
+        "# Compressed History",
+        "# Memory Context",
+    ]
+    lines = rendered.splitlines()
+    positions = [lines.index(section) for section in expected_sections]
+    assert positions == sorted(positions)

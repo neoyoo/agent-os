@@ -129,6 +129,7 @@ class QueryLoop:
             if turn is not None:
                 turn.increment_tool_iteration()
 
+            appended_message_ids: list[str] = [assistant.id]
             for tool_call in response.tool_calls:
                 self._emit(
                     ToolCallRequestedEvent(
@@ -144,7 +145,14 @@ class QueryLoop:
                         **self._event_context(turn),
                     ),
                 )
-                result = self.tool_call_router.execute_tool_call(tool_call)
+                try:
+                    result = self.tool_call_router.execute_tool_call(tool_call)
+                except Exception:
+                    self.message_runtime.active_window.remove_refs(
+                        appended_message_ids,
+                        self.message_runtime.store,
+                    )
+                    raise
                 self._emit(
                     ToolExecutionCompletedEvent(
                         tool_name=tool_call.name,
@@ -156,6 +164,7 @@ class QueryLoop:
                     tool_call_id=result.tool_call_id,
                     content=result.content,
                 )
+                appended_message_ids.append(tool_result.id)
                 self._emit(
                     ToolResultAppendedEvent(
                         tool_name=tool_call.name,

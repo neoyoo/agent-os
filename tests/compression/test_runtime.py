@@ -97,6 +97,7 @@ def test_compression_runtime_keeps_active_refs_if_context_append_fails() -> None
     with pytest.raises(RuntimeError, match="append failed"):
         runtime.maybe_compress()
 
+    assert runtime.next_segment_number() == 1
     assert [message.id for message in message_runtime.materialize_active()] == [
         old_user.id,
         old_assistant.id,

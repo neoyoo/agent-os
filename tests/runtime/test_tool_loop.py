@@ -4,6 +4,7 @@ from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.builtin import read_file_tool
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.messages import MessageRuntime
+from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import (
     AssistantMessageAppendedEvent,
@@ -98,4 +99,52 @@ def test_small_agent_reads_project_file_with_tool_call_loop() -> None:
         ProviderResponseReceivedEvent,
         AssistantMessageAppendedEvent,
         TurnCompletedEvent,
+    ]
+
+
+def test_query_loop_rolls_back_active_assistant_tool_call_when_tool_is_denied(tmp_path: Path) -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    registry = ToolRegistry()
+    registry.register(read_file_tool(root=tmp_path))
+    capabilities = ToolCallRouter(
+        tool_registry=registry,
+        context_runtime=context,
+        security_policy=SecurityPolicy(denied_tools={"read_file"}),
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_read",
+                        name="read_file",
+                        arguments={"path": "pyproject.toml"},
+                    ),
+                ],
+            ),
+        ],
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=capabilities.tool_specs(),
+        ),
+        provider=provider,
+        tool_call_router=capabilities,
+        session_state=SessionState(id="session_small_agent"),
+    )
+
+    try:
+        loop.run_turn("读取 pyproject.toml")
+    except SecurityPolicyError:
+        pass
+    else:
+        raise AssertionError("Expected SecurityPolicyError")
+
+    assert messages.materialize_provider_messages() == [
+        {"role": "user", "content": "读取 pyproject.toml"},
     ]

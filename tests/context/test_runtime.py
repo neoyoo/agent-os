@@ -6,6 +6,7 @@ from agentos.context import (
     ContextRuntime,
     ContextState,
     WorkingStateField,
+    WorkingStateSchema,
 )
 
 
@@ -89,6 +90,20 @@ def test_working_state_snapshot_cannot_be_mutated_directly() -> None:
     with pytest.raises(AttributeError):
         runtime.state.working_state["constraints"].append("mutated")  # type: ignore[attr-defined]
     assert runtime.state.working_state["task_goal"] == "Build context runtime."
+
+
+def test_working_state_schema_cannot_be_replaced_directly() -> None:
+    runtime = ContextRuntime()
+    runtime.declare_schema([field("task_goal")])
+
+    with pytest.raises(AttributeError):
+        runtime.state.working_state_schema = WorkingStateSchema(  # type: ignore[misc]
+            fields=[field("constraints")],
+        )
+
+    assert [item.name for item in runtime.state.working_state_schema.fields] == [
+        "task_goal",
+    ]
 
 
 def test_m3_projection_snapshots_cannot_be_mutated_directly() -> None:

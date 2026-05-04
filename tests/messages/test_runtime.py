@@ -26,6 +26,16 @@ def test_active_messages_materialize_provider_shape() -> None:
     ]
 
 
+def test_tool_call_provider_dict_deep_copies_arguments() -> None:
+    nested = {"path": {"value": "pyproject.toml"}}
+    tool_call = ToolCall(id="call_1", name="read_file", arguments=nested)
+
+    provider_dict = tool_call.to_provider_dict()
+    nested["path"]["value"] = "mutated"  # type: ignore[index]
+
+    assert provider_dict["arguments"] == {"path": {"value": "pyproject.toml"}}
+
+
 def test_temporary_recalled_refs_are_deduplicated_before_next_request() -> None:
     runtime = MessageRuntime()
     first = runtime.append_user("Original detail")

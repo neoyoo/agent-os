@@ -24,7 +24,7 @@ class CompressedSegment:
 class ContextState:
     """由 context 包持有并渲染进默认 prompt 的状态。"""
 
-    working_state_schema: WorkingStateSchema
+    _working_state_schema: WorkingStateSchema
     _working_state: dict[str, str | tuple[str, ...]]
     _compressed_history: list[CompressedSegment]
     _inherited_state: list[str]
@@ -40,7 +40,7 @@ class ContextState:
     ) -> None:
         """创建 context state，并冻结对外暴露的投影。"""
 
-        self.working_state_schema = working_state_schema or WorkingStateSchema()
+        self._working_state_schema = working_state_schema or WorkingStateSchema()
         self._working_state = {}
         for key, value in (working_state or {}).items():
             self.set_working_state_value(key, value)
@@ -110,3 +110,14 @@ class ContextState:
         if isinstance(value, str):
             return value
         return tuple(value)
+
+    @property
+    def working_state_schema(self) -> WorkingStateSchema:
+        """返回当前 chapter 的不可替换 working state schema。"""
+
+        return self._working_state_schema
+
+    def _replace_working_state_schema(self, schema: WorkingStateSchema) -> None:
+        """由 ContextRuntime 替换当前 chapter schema。"""
+
+        self._working_state_schema = schema

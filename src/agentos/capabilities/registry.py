@@ -16,6 +16,8 @@ class ToolRegistry:
 
         if tool.name in self._tools:
             raise ValueError(f"tool already registered: {tool.name}")
+        if tool.name.startswith("mcp__") and tool.kind != "mcp":
+            raise ValueError(f"tool name uses reserved MCP prefix: {tool.name}")
         self._tools[tool.name] = tool
 
     def get(self, tool_name: str) -> RegisteredTool:

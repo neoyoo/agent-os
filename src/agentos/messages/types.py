@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -18,7 +19,7 @@ class ToolCall:
 
         result: dict[str, object] = {"id": self.id, "name": self.name}
         if self.arguments:
-            result["arguments"] = dict(self.arguments)
+            result["arguments"] = deepcopy(self.arguments)
         return result
 
 

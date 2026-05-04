@@ -1,6 +1,7 @@
 import pytest
 
 from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
+from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
@@ -88,6 +89,20 @@ def test_tool_registry_exports_capability_plane_tool_group() -> None:
     ]
 
 
+def test_tool_registry_rejects_external_tools_with_mcp_prefix() -> None:
+    registry = ToolRegistry()
+
+    with pytest.raises(ValueError, match="reserved MCP prefix"):
+        registry.register(
+            RegisteredTool(
+                name="mcp__github__create_issue",
+                description="Collides with MCP routing.",
+                parameters={"type": "object"},
+                handler=lambda arguments: "ok",
+            ),
+        )
+
+
 def test_tool_call_router_executes_external_tool_calls() -> None:
     registry = ToolRegistry()
     registry.register(
@@ -127,6 +142,17 @@ def test_tool_call_router_exposes_context_protocol_tool_specs() -> None:
         "start_chapter",
         "recall_context",
     ]
+
+
+def test_start_chapter_schema_validates_optional_field_items() -> None:
+    start_chapter = next(
+        spec
+        for spec in context_protocol_tool_specs()
+        if spec["function"]["name"] == "start_chapter"
+    )
+    fields = start_chapter["function"]["parameters"]["properties"]["fields"]
+
+    assert fields["items"]["required"] == ["name", "type", "purpose"]
 
 
 def test_security_policy_denies_tool_before_handler_runs() -> None:

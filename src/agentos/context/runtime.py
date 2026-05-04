@@ -33,7 +33,9 @@ class ContextRuntime:
                 "working state schema already declared for this chapter",
             )
         validated_fields = self._validate_fields(fields)
-        self.state.working_state_schema = WorkingStateSchema(fields=validated_fields)
+        self.state._replace_working_state_schema(
+            WorkingStateSchema(fields=validated_fields),
+        )
         from agentos.runtime.event_bus import WorkingStateSchemaDeclaredEvent
 
         self._emit(
@@ -76,8 +78,10 @@ class ContextRuntime:
                     f"working state field already exists: {item.name}",
                 )
 
-        self.state.working_state_schema = WorkingStateSchema(
-            fields=[*existing_fields, *new_fields],
+        self.state._replace_working_state_schema(
+            WorkingStateSchema(
+                fields=[*existing_fields, *new_fields],
+            ),
         )
         from agentos.runtime.event_bus import WorkingStateSchemaExtendedEvent
 
@@ -92,7 +96,9 @@ class ContextRuntime:
         """开启新 chapter，并重置 M2 working state。"""
 
         next_fields = [] if fields is None else self._validate_fields(fields)
-        self.state.working_state_schema = WorkingStateSchema(fields=next_fields)
+        self.state._replace_working_state_schema(
+            WorkingStateSchema(fields=next_fields),
+        )
         self.state.clear_working_state()
         from agentos.runtime.event_bus import ChapterStartedEvent
 

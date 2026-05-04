@@ -16,6 +16,7 @@ class AnthropicProvider:
 
     client: Any
     model: str
+    max_tokens: int = 4096
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用注入的 Anthropic client，并标准化响应。"""
@@ -23,6 +24,7 @@ class AnthropicProvider:
         self._ensure_no_active_system_messages(request)
         response = self.client.messages.create(
             model=self.model,
+            max_tokens=self.max_tokens,
             system=request.system,
             messages=request.messages,
             tools=self._tools(request.tools) or None,
