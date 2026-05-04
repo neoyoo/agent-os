@@ -1,12 +1,12 @@
-# Production Observability Design
+# 生产级可观测性设计
 
-## Goal
+## 目标
 
-把 agentos 的 Phase 6 observability 从 import-free stub 升级为生产级观测架构：业务 runtime 不依赖 OpenTelemetry 或 Langfuse，但用户开启观测后，可以在 Langfuse 中看到一次 user request 触发的完整 LLM 交互、工具调用、压缩和错误链路。
+把 agentos 的 Phase 6 observability 从当前的轻量 stub 升级为生产级观测架构：业务 runtime 不依赖 OpenTelemetry 或 Langfuse，但用户开启观测后，可以在 Langfuse 里看到一次 user request 触发的完整 LLM 交互、工具调用、压缩和错误链路。
 
-这份 spec 只设计 observability。它不改变默认 LLM-visible context，不把 runtime metadata 渲染进 `ContextRenderer`，不把 hook 当日志系统使用。
+这份 spec 只设计 observability。它不改变默认 LLM-visible context，不把 runtime metadata 渲染进 `ContextRenderer`，也不把 hook 当日志系统使用。
 
-## Design References
+## 设计参考
 
 - `AGENTS.md`
 - `docs/design/sdk-architecture.md`
@@ -25,118 +25,118 @@
 
 ## Scope Contract
 
-This belongs to Phase 6 production observability.
+这属于 Phase 6 的生产级 observability 专项。
 
-Acceptance items completed by this design:
+本设计要完成的验收项：
 
-- Real provider request/response observability through spans, including LLM input/output capture under policy.
-- Langfuse generation/tool/agent observations through OTLP, not through ad hoc fake trace records.
-- Optional OpenTelemetry dependency; core `agentos` imports and tests work without OTel installed.
-- Clear separation between hooks, runtime events, debug projection and production tracing.
-- Capture policy and redaction defaults that make local debugging useful without making production unsafe by default.
-- Provider usage normalization so token/cost attribution can be attached to spans.
+- 通过 span 观测真实 provider request/response，包括受策略控制的 LLM input/output 捕获。
+- 通过 OTLP 让 Langfuse 展示 generation、tool、agent observation，而不是 ad hoc fake trace record。
+- OpenTelemetry 是 optional dependency；不安装 OTel 时，核心 `agentos` import 和测试仍然能跑。
+- 明确拆分 hooks、runtime events、debug projection 和 production tracing 的职责。
+- 定义 capture policy 和 redaction 默认值：本地调试能看清楚，生产默认不泄露 prompt/tool payload。
+- 统一 provider usage，让 token/cost attribution 能挂到 provider generation span 上。
 
-Intentionally deferred:
+本设计明确不做的内容：
 
-- Streaming token/chunk spans. The first production implementation records complete provider calls after response return.
-- Cross-process trace propagation into MCP servers and future subagents. The first implementation records the client-side MCP/tool span and leaves W3C `traceparent` propagation for the multi-agent/MCP follow-up.
-- Eval runner and in-memory exporter aggregation. The tracer protocol is designed to support it, but eval is a later phase.
-- Langfuse prompt management, datasets, scores and prompt versioning. This spec covers runtime traces only.
-- Cost pricing tables. This spec records token usage and optional provider-reported cost; price calculation can be layered later.
+- Streaming token/chunk 级观测。第一版生产实现只记录 provider call 完成后的完整请求/响应。
+- 跨进程 trace propagation 到 MCP server 和未来 subagent。第一版只记录 client 侧 MCP/tool span；W3C `traceparent` 传播放到 MCP/multi-agent 后续专项。
+- Eval runner 和 in-memory exporter 聚合。Tracer protocol 会为它留接口，但 eval 是后续阶段。
+- Langfuse prompt management、datasets、scores、prompt versioning。这份 spec 只覆盖 runtime traces。
+- pricing table 和本地 cost 计算。这份 spec 只记录 token usage 和 provider 可能返回的 cost；价格归因可以后续叠加。
 
-Design rule that must not be simplified away:
+不能被简化掉的设计规则：
 
-- Production observability cannot be implemented only by projecting `EventBus` records. `EventBus` does not carry complete provider input/output, nesting lifetime, exceptions around calls, or accurate span duration. It remains useful for append-only runtime facts and debug projection, but OTel spans must come from instrumentation around runtime boundaries.
+- 生产 observability 不能只靠 `EventBus` 投影实现。`EventBus` 不携带完整 provider input/output、嵌套生命周期、调用耗时和异常边界。它仍然用于 append-only runtime facts、session recovery 和 debug projection；生产链路必须由 runtime 边界上的 instrumentation 产生 OTel spans。
 
-## Current Problem
+## 当前问题
 
-The current Phase 6 observability modules are deliberately lightweight:
+当前 Phase 6 observability 模块是有意做薄的：
 
-- `EventLog` records typed runtime events.
-- `EventTraceProjector` converts event records into normalized `TraceRecord` values.
-- `OTelAdapter` and `LangfuseAdapter` output those trace records through injected clients.
+- `EventLog` 记录 typed runtime events。
+- `EventTraceProjector` 把 event record 转成内部 `TraceRecord`。
+- `OTelAdapter` 和 `LangfuseAdapter` 把这些 trace record 输出给注入的 client。
 
-That is acceptable for a stub, but it is not production LLM observability:
+这能证明边界存在，但不是生产级 LLM observability：
 
-- `ProviderRequestBuiltEvent` and `ProviderResponseReceivedEvent` do not contain the rendered system prompt, active messages, provider tool schema, model, usage or response payload.
-- Event projection creates disconnected trace records, not accurate nested spans with durations and exceptions.
-- Langfuse cannot reliably display provider calls as `generation` observations without generation-specific attributes and input/output mapping.
-- Hooks were previously tempting as log callbacks, but hooks are policy/interception points and should not become the observability pipeline.
+- `ProviderRequestBuiltEvent` 和 `ProviderResponseReceivedEvent` 没有 rendered system prompt、active messages、provider tool schema、model、usage 或 response payload。
+- Event projection 生成的是一批离散记录，不是有父子关系、耗时和异常状态的 span 树。
+- Langfuse 不能稳定把 provider call 识别成 generation，除非我们设置 generation-specific attributes 和 input/output。
+- hooks 曾经容易被当成日志 callback，但 hook 的职责是 policy/interception，不应该承担观测管道。
 
-The production design replaces "event projection as observability" with "proxy instrumentation as observability". Event projection remains a debug/export helper.
+生产设计要从“event projection 作为 observability”改成“proxy instrumentation 作为 observability”。Event projection 保留为 debug/export helper。
 
-## Approach Options
+## 方案对比
 
-### Option A: EventBus Projector Only
+### 方案 A：只增强 EventBus Projector
 
-Keep the current model and enrich typed events with more payload.
+继续沿用当前模型，把 typed event payload 加大，再投影到 trace。
 
-Pros:
+优点：
 
-- Smallest code change.
-- Works without optional dependencies.
-- Event records are already persisted.
+- 改动最小。
+- 不需要 optional dependency。
+- Event records 已经可以持久化。
 
-Cons:
+缺点：
 
-- Pollutes runtime events with large prompt/response payloads.
-- Cannot naturally represent span lifetime, nesting or exceptions.
-- Encourages `QueryLoop` and other runtime code to emit observability metadata directly.
-- Makes production privacy harder because event persistence would store the same payloads as traces.
+- 会把大块 prompt/response payload 塞进 runtime events。
+- 无法自然表达 span lifetime、嵌套关系和异常边界。
+- 会诱导 `QueryLoop` 等 runtime 模块直接发 observability metadata。
+- 生产隐私风险更高，因为 event persistence 会保存和 trace 一样敏感的 payload。
 
-Verdict: reject for production observability. Keep it only for debug projection and persisted runtime facts.
+结论：不作为生产 observability 方案。只保留用于 debug projection 和持久化 runtime facts。
 
-### Option B: Direct Langfuse SDK
+### 方案 B：直接接 Langfuse SDK
 
-Use Langfuse's Python SDK directly from the runtime or instrumentation layer.
+在 runtime 或 instrumentation 层直接调用 Langfuse Python SDK。
 
-Pros:
+优点：
 
-- Fastest Langfuse-specific integration.
-- Easy access to Langfuse features beyond tracing.
+- Langfuse 相关功能接入最快。
+- 以后接 prompt、dataset、score 等 Langfuse 功能更直接。
 
-Cons:
+缺点：
 
-- Locks the SDK's production observability path to Langfuse.
-- Core runtime or adapters become harder to test without Langfuse client objects.
-- Jaeger, Tempo, SkyWalking and Datadog become second-class.
+- SDK 的生产观测路径被 Langfuse 绑定。
+- 核心 runtime 或 adapter 测试会更依赖 Langfuse client。
+- Jaeger、Tempo、SkyWalking、Datadog 会变成二等 backend。
 
-Verdict: reject as the default production architecture. It can be added later as an optional sink if needed.
+结论：不作为默认生产架构。未来如果确实需要 Langfuse SDK 的高级功能，可以作为 optional sink 单独增加。
 
-### Option C: OTel Spans + Langfuse OTLP Backend
+### 方案 C：OTel Spans + Langfuse OTLP Backend
 
-Use an agentos-owned tracer protocol and proxy instrumentation. The optional OTel implementation sends spans to any OTLP backend; Langfuse is the recommended default backend for LLM inspection.
+定义 agentos 自己的轻量 `Tracer/Span` Protocol，通过 proxy instrumentation 包住 runtime 边界。可选 OTel 实现把 span 发到任何 OTLP backend；Langfuse 是推荐的默认 LLM 观测后端。
 
-Pros:
+优点：
 
-- Business code stays clean.
-- Backend can be Langfuse today and Tempo/Jaeger/SkyWalking later.
-- Langfuse can render `generation`, `tool` and `agent` observations from OTel span attributes.
-- The same spans can later feed eval aggregation through an in-memory exporter.
+- 业务代码保持干净。
+- Backend 可替换：本地/生产可以用 Langfuse，也可以换 Tempo、Jaeger、SkyWalking。
+- Langfuse 能根据 OTel span attributes 展示 generation、tool、agent observation。
+- 同一套 span 后续能给 eval aggregation 使用，例如 in-memory exporter。
 
-Cons:
+缺点：
 
-- More initial design and tests.
-- Requires careful capture policy to avoid leaking prompts in production.
+- 首次实现比 stub 复杂。
+- 必须认真做 capture policy，否则容易把 prompt 和 tool payload 泄露到监控系统。
 
-Verdict: choose this option.
+结论：采用方案 C。
 
-## Boundary Model
+## 职责边界
 
 ### Hooks
 
-Hooks are user intervention points:
+Hooks 是用户干预执行流的扩展点：
 
 - `before_provider_call`
 - `after_provider_call`
 - `before_tool_call`
 - `after_tool_call`
 
-They may allow, deny or modify execution through `HookResult`. They are not a logging API. Hook failures may be recorded by `HookManager` and may appear as span events later, but hooks do not produce traces.
+Hook 可以通过 `HookResult` 显式返回 allow、deny、modify。Hook 不是日志 API，不产生 trace。Hook failure 可以被 `HookManager` 记录，未来也可以作为当前 span 上的 event，但 hook 本身不承担 observability pipeline。
 
 ### EventBus
 
-`EventBus` publishes typed runtime facts:
+`EventBus` 发布 typed runtime facts：
 
 - turn started/completed/failed
 - messages appended
@@ -144,17 +144,17 @@ They may allow, deny or modify execution through `HookResult`. They are not a lo
 - tool execution facts
 - context/compression/recall/persistence facts
 
-Handlers are observation-only and must not mutate execution flow. `EventLog` persists these facts for session recovery and debug projection.
+Event handler 是 observation-only，不能改变执行流。`EventLog` 持久化这些 facts，用于 session recovery 和 debug projection。
 
 ### Debug Projection
 
-`context/debug_projection.py` is an explicit local inspection view. It may show runtime ids and event records. It is never called by `ProviderRequestBuilder`, and it never affects the default prompt.
+`context/debug_projection.py` 是显式的本地调试视图。它可以展示 runtime ids、compression index 和 recent events。它永远不由 `ProviderRequestBuilder` 调用，也不影响默认 prompt。
 
 ### Production Observability
 
-`observability/` owns traces, spans, capture policy, redaction and exporter setup. It observes runtime boundaries through wrappers. Runtime modules do not import OTel, Langfuse or span APIs.
+`observability/` 负责 traces、spans、capture policy、redaction 和 exporter setup。它通过 wrappers 观测 runtime 边界。`runtime/`、`providers/`、`capabilities/`、`context/` 不 import OTel、Langfuse 或 span API。
 
-## Production Architecture
+## 生产架构
 
 ```text
 Application composition
@@ -178,42 +178,38 @@ Runtime execution
      -> provider.complete generation span
 ```
 
-Instrumentation is a construction-time decision:
+是否开启观测是构造时决策：
 
-- disabled: application uses raw `QueryLoop`.
-- enabled: application wraps the loop through `instrument_query_loop(...)`.
+- 不开启：应用直接使用原始 `QueryLoop`。
+- 开启：应用通过 `instrument_query_loop(...)` 包一层。
 
-`instrument_query_loop(...)` must not mutate the caller's original `QueryLoop`.
-It creates a shallow configured `QueryLoop` copy whose provider, request builder,
-tool router and compression runtime are replaced by instrumented proxies, then
-returns an `InstrumentedQueryLoop` that owns the root `agent.turn` span and
-delegates to that configured copy.
+`instrument_query_loop(...)` 不能 mutate 调用方传进来的原始 `QueryLoop`。它创建一个浅拷贝配置后的 `QueryLoop`，把其中 provider、request builder、tool router、compression runtime 替换为 instrumented proxies，然后返回拥有 root `agent.turn` span 的 `InstrumentedQueryLoop`。
 
-Business modules remain unaware of observability.
+业务模块不知道自己正在被观测。
 
-## Modules
+## 模块设计
 
-Create or rewrite these modules:
+新增或重写这些模块：
 
 - `src/agentos/observability/config.py`
   - `ObservabilityConfig`
   - `CapturePolicy`
   - `CaptureMode`
   - `Redactor`
-  - default redaction helpers
+  - 默认 redaction helpers
 
 - `src/agentos/observability/tracer.py`
-  - agentos-owned `Tracer` Protocol
-  - agentos-owned `Span` Protocol
+  - agentos 自己的 `Tracer` Protocol
+  - agentos 自己的 `Span` Protocol
   - `NoOpTracer`
-  - `InMemoryTracer` for tests and eval follow-up
+  - `InMemoryTracer`，供测试和后续 eval 使用
 
 - `src/agentos/observability/snapshots.py`
   - `ProviderRequestSnapshot`
   - `ProviderResponseSnapshot`
   - `ToolCallSnapshot`
   - `ToolResultSnapshot`
-  - safe serializers for Langfuse `input`/`output`
+  - 安全的 Langfuse `input`/`output` serializer
 
 - `src/agentos/observability/conventions.py`
   - Langfuse attribute names
@@ -229,30 +225,31 @@ Create or rewrite these modules:
 
 - `src/agentos/observability/instrument.py`
   - `instrument_query_loop(loop, config) -> InstrumentedQueryLoop`
-  - optional helpers for wrapping individual components in tests
+  - 测试中可使用的单组件 wrapping helper
 
 - `src/agentos/observability/otel.py`
-  - optional OTel implementation of the tracer protocol
+  - 可选 OTel tracer 实现
   - `create_otel_tracer(...)`
   - `create_langfuse_otel_tracer(...)`
-  - import-time failure message that tells users to install `agent-os[observability]`
+  - 如果用户调用 factory 但没安装 OTel extras，给出明确安装提示
 
 - `src/agentos/observability/langfuse.py`
-  - Langfuse OTLP endpoint and header helpers
-  - no required Langfuse SDK dependency
+  - Langfuse OTLP endpoint helper
+  - Langfuse OTLP auth/header helper
+  - 不依赖 Langfuse SDK
 
-Keep these modules, with narrower responsibility:
+保留但收窄职责的模块：
 
 - `src/agentos/observability/events.py`
-  - EventLog and EventRecord only.
+  - 只负责 `EventLog` 和 `EventRecord`。
 
 - `src/agentos/observability/traces.py`
-  - EventLog-to-debug-trace projection only.
-  - It is not the production LLM trace pipeline.
+  - 只负责 EventLog-to-debug-trace projection。
+  - 它不是生产 LLM trace pipeline。
 
-## Public API
+## 公共 API
 
-Expose from `agentos.observability`:
+从 `agentos.observability` 导出：
 
 ```python
 from agentos.observability import (
@@ -272,11 +269,11 @@ from agentos.observability import (
 )
 ```
 
-Public package imports must stay lowercase `agentos`.
+公共 import 包名必须保持 `agentos`。
 
 ## Tracer Protocol
 
-The core SDK must not depend on OpenTelemetry types. The internal protocol is:
+核心 SDK 不能依赖 OpenTelemetry 类型。agentos 内部 protocol 是：
 
 ```python
 class Span(Protocol):
@@ -298,11 +295,11 @@ class Tracer(Protocol):
     ) -> Span: ...
 ```
 
-The OTel implementation maps this to `start_as_current_span`. Test fakes can implement the same protocol without importing OTel.
+OTel 实现把它映射到 `start_as_current_span`。测试 fake 可以实现同样 protocol，不需要 import OTel。
 
 ## Capture Policy
 
-Production defaults must be safe:
+生产默认必须安全：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -318,29 +315,29 @@ class CapturePolicy:
     redactor: Redactor = default_redactor
 ```
 
-Modes:
+模式：
 
-- `metadata`: default. Records counts, lengths, hashes, ids, model, stop reason, tool names and usage. Does not record prompt, messages, tool args or tool results.
-- `redacted`: records structured input/output after applying the configured redactor and length limit.
-- `full`: records raw provider input/output and tool input/output, with only length limiting. Intended for local development against self-hosted Langfuse.
+- `metadata`：默认模式。只记录 counts、lengths、hashes、ids、model、stop reason、tool names 和 usage。不记录 prompt、messages、tool args 或 tool results。
+- `redacted`：记录经过 redactor 和长度限制处理后的结构化 input/output。
+- `full`：记录原始 provider input/output 和 tool input/output，只做长度限制。只建议用于本地开发和自托管 Langfuse。
 
-Convenience constructors:
+便利构造函数：
 
 - `CapturePolicy.metadata_only()`
 - `CapturePolicy.redacted()`
 - `CapturePolicy.full_for_local_development()`
 
-Default redaction replaces likely secrets in strings:
+默认 redactor 替换字符串中的疑似 secret：
 
-- OpenAI/Anthropic/Langfuse style API keys.
-- `Authorization`, `api_key`, `secret`, `token`, `password` object keys.
-- PEM private key blocks.
+- OpenAI、Anthropic、Langfuse 风格 API keys。
+- `Authorization`、`api_key`、`secret`、`token`、`password` 等 object key。
+- PEM private key blocks。
 
-The redactor runs before values are serialized into span attributes.
+所有值写入 span attribute 前必须先过 redactor。
 
 ## Provider Usage
 
-Add a normalized provider usage value:
+新增标准化 provider usage：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -354,7 +351,7 @@ class ProviderUsage:
     cost_usd: float | None = None
 ```
 
-Extend `ProviderResponse` with:
+扩展 `ProviderResponse`：
 
 ```python
 usage: ProviderUsage | None = None
@@ -363,11 +360,11 @@ provider_name: str | None = None
 response_id: str | None = None
 ```
 
-Provider adapters should fill these fields when the provider response exposes them. The instrumentation layer must tolerate `None`.
+Provider adapter 在 provider response 暴露 usage 时应填充这些字段。Instrumentation 层必须容忍 `None`。
 
 ## Snapshot Model
 
-Provider request snapshot:
+Provider request snapshot：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -383,7 +380,7 @@ class ProviderRequestSnapshot:
     tools_sha256: str
 ```
 
-Provider response snapshot:
+Provider response snapshot：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -399,16 +396,13 @@ class ProviderResponseSnapshot:
     response_id: str | None
 ```
 
-`None` content means the policy did not capture raw content. Lengths and hashes are still recorded for debugging and correlation.
+`None` content 表示 capture policy 没有捕获原始内容。length 和 hash 仍会记录，用于调试和关联。
 
-Snapshot hashes are computed from canonical JSON with `sort_keys=True`,
-`ensure_ascii=False` and compact separators. This keeps hashes stable across
-equivalent dict ordering while preserving readable Chinese content when capture
-is enabled.
+Snapshot hash 使用 canonical JSON 计算：`sort_keys=True`、`ensure_ascii=False`、compact separators。这样等价 dict ordering 的 hash 稳定，同时 capture 打开时中文内容仍可读。
 
-## Span Hierarchy
+## Span 层级
 
-For one turn with one tool call:
+一次包含一个工具调用的 turn：
 
 ```text
 agent.turn
@@ -420,36 +414,36 @@ agent.turn
 └─ provider.complete
 ```
 
-The root span starts in `InstrumentedQueryLoop.run_turn(...)` and ends when the turn succeeds or fails.
+Root span 从 `InstrumentedQueryLoop.run_turn(...)` 开始，在 turn 成功或失败时结束。
 
-Nested spans are created by component proxies:
+子 span 由组件 proxy 创建：
 
 - `InstrumentedCompressionRuntime.maybe_compress(...)`
 - `InstrumentedProviderRequestBuilder.build(...)`
 - `InstrumentedProvider.complete(...)`
 - `InstrumentedToolCallRouter.execute_tool_call(...)`
 
-If an exception is raised, the current span records the exception and status `error`, then re-raises. Instrumentation must not swallow errors.
+如果被包裹调用抛异常，当前 span 记录 exception 和 `error` status，然后重新抛出。Instrumentation 不能吞异常。
 
-## Attribute Mapping
+## Attribute 映射
 
-### Trace/Root Span
+### Root Span：`agent.turn`
 
-`agent.turn` attributes:
+Attributes：
 
 - `langfuse.observation.type = "agent"`
 - `langfuse.trace.name = "agentos.turn"`
-- `langfuse.session.id = session_id` when available
-- `agentos.session.id = session_id` when available
-- `agentos.turn.id = turn_id` when available
+- `langfuse.session.id = session_id`，如果存在
+- `agentos.session.id = session_id`，如果存在
+- `agentos.turn.id = turn_id`，如果存在
 - `agentos.turn.max_tool_iterations`
 - `agentos.capture.mode`
 
-The root span input/output follows capture policy. In `metadata` mode it records only user input length/hash and final output length/hash.
+Root span input/output 遵守 capture policy。`metadata` 模式只记录 user input length/hash 和 final output length/hash。
 
-### Provider Request Build Span
+### Provider Request Build Span：`provider.request.build`
 
-`provider.request.build` attributes:
+Attributes：
 
 - `langfuse.observation.type = "span"`
 - `agentos.provider_request.system.length`
@@ -459,16 +453,16 @@ The root span input/output follows capture policy. In `metadata` mode it records
 - `agentos.provider_request.messages.sha256`
 - `agentos.provider_request.tools.sha256`
 
-When policy allows capture:
+当 policy 允许捕获内容时：
 
 - `langfuse.observation.input`
 - `agentos.provider_request.system`
 - `agentos.provider_request.messages`
 - `agentos.provider_request.tools`
 
-### Provider Complete Span
+### Provider Complete Span：`provider.complete`
 
-`provider.complete` attributes:
+Attributes：
 
 - `langfuse.observation.type = "generation"`
 - `langfuse.observation.model.name`
@@ -482,16 +476,16 @@ When policy allows capture:
 - `agentos.provider.response_id`
 - `agentos.provider.tool_call_count`
 
-When policy allows capture:
+当 policy 允许捕获内容时：
 
 - `langfuse.observation.input`
 - `langfuse.observation.output`
 
-For Langfuse compatibility, token usage is also serialized into `langfuse.observation.usage_details`.
+为了 Langfuse 兼容，token usage 还要序列化进 `langfuse.observation.usage_details`。
 
-### Tool Span
+### Tool Span：`tool.<name>`
 
-`tool.<name>` attributes:
+Attributes：
 
 - `langfuse.observation.type = "tool"`
 - `tool.name`
@@ -501,30 +495,30 @@ For Langfuse compatibility, token usage is also serialized into `langfuse.observ
 - `agentos.tool.result.sha256`
 - `agentos.tool.result.length`
 
-When policy allows capture:
+当 policy 允许捕获内容时：
 
 - `langfuse.observation.input`
 - `langfuse.observation.output`
 
-The router wrapper must cover context protocol tools, external tools, skill tools and MCP tools because all four route through `ToolCallRouter`.
+Router wrapper 必须覆盖四类工具路径：context protocol tools、external tools、skill tools 和 MCP tools，因为它们都通过 `ToolCallRouter`。
 
-### Compression Span
+### Compression Span：`compression.maybe_compress`
 
-`compression.maybe_compress` attributes:
+Attributes：
 
 - `langfuse.observation.type = "span"`
 - `agentos.compression.executed`
-- `agentos.compression.segment_id` when produced
-- `agentos.compression.source_message_count` when known
-- `agentos.compression.reason` when skipped
+- `agentos.compression.segment_id`，如果产生 segment
+- `agentos.compression.source_message_count`，如果可得
+- `agentos.compression.reason`，如果 skipped
 
-The first implementation may record only before/after metadata available from current return values and events. It must not record original message content.
+第一版可以只记录当前 return values 和 events 能得到的 before/after metadata。不能记录原始 message content。
 
-## Langfuse OTLP Configuration
+## Langfuse OTLP 配置
 
-Langfuse is the recommended backend, but the SDK sends standard OTLP spans.
+Langfuse 是推荐 backend，但 SDK 发送的是标准 OTLP spans。
 
-Factory:
+Factory：
 
 ```python
 tracer = create_langfuse_otel_tracer(
@@ -536,21 +530,21 @@ tracer = create_langfuse_otel_tracer(
 )
 ```
 
-The helper configures:
+Helper 配置：
 
-- OTLP HTTP trace endpoint: `{host}/api/public/otel/v1/traces`
-- Authorization header: `Basic base64(public_key:secret_key)`
-- Langfuse ingestion header: `x-langfuse-ingestion-version: 4`
-- OTel resource attributes:
+- OTLP HTTP trace endpoint：`{host}/api/public/otel/v1/traces`
+- Authorization header：`Basic base64(public_key:secret_key)`
+- Langfuse ingestion header：`x-langfuse-ingestion-version: 4`
+- OTel resource attributes：
   - `service.name`
   - `deployment.environment.name`
-  - `telemetry.sdk.language = python` when the OTel SDK provides it
+  - `telemetry.sdk.language = python`，如果 OTel SDK 提供
 
-The helper lives behind optional dependencies. Importing `agentos` or `agentos.observability` must not require OpenTelemetry packages unless the factory is called.
+Helper 位于 optional dependency 后面。Import `agentos` 或 `agentos.observability` 不应该要求已安装 OpenTelemetry；只有调用 factory 时才需要。
 
 ## Optional Dependencies
 
-`pyproject.toml` adds:
+`pyproject.toml` 增加：
 
 ```toml
 [project.optional-dependencies]
@@ -561,11 +555,11 @@ observability = [
 ]
 ```
 
-No required runtime dependency is added.
+不增加 required runtime dependency。
 
-## User API
+## 用户 API
 
-Local development with full capture:
+本地开发，打开 full capture：
 
 ```python
 from agentos.observability import (
@@ -594,7 +588,7 @@ loop = instrument_query_loop(
 loop.run_turn("帮我分析这个 bug")
 ```
 
-Production with metadata-only capture:
+生产环境，默认 metadata-only capture：
 
 ```python
 loop = instrument_query_loop(
@@ -606,67 +600,67 @@ loop = instrument_query_loop(
 )
 ```
 
-Disabled:
+关闭观测：
 
 ```python
 loop.run_turn("不启用观测时无需改业务代码")
 ```
 
-## Implementation Rules
+## 实现规则
 
-- `runtime/query_loop.py` must not import `agentos.observability`.
-- `runtime/provider_request_builder.py` must not import `agentos.observability`.
-- `providers/*` must not import OTel or Langfuse.
-- `capabilities/router.py` must not import OTel or Langfuse.
-- Observability wrappers may import runtime/provider/capability protocols.
-- Instrumentation must preserve existing behavior and exception semantics.
-- Instrumentation must not alter provider requests, provider responses, tool arguments or tool results.
-- Capture policy must be applied before serializing anything to span attributes.
-- Default prompt golden tests must continue to reject `session_id`, `trace_id`, `span_id`, `tool_call_id`, `schema_id`, `projection_id`, `compression_id`, `source` and `relevance`.
+- `runtime/query_loop.py` 不得 import `agentos.observability`。
+- `runtime/provider_request_builder.py` 不得 import `agentos.observability`。
+- `providers/*` 不得 import OTel 或 Langfuse。
+- `capabilities/router.py` 不得 import OTel 或 Langfuse。
+- Observability wrappers 可以 import runtime/provider/capability protocols。
+- Instrumentation 必须保留现有行为和 exception semantics。
+- Instrumentation 不得修改 provider request、provider response、tool arguments 或 tool results。
+- Capture policy 必须在任何值序列化进 span attributes 之前应用。
+- 默认 prompt golden tests 必须继续拒绝 `session_id`、`trace_id`、`span_id`、`tool_call_id`、`schema_id`、`projection_id`、`compression_id`、`source` 和 `relevance`。
 
-## Test Matrix
+## 测试矩阵
 
 ### Unit Tests
 
 - `tests/observability/test_capture_policy.py`
-  - metadata mode records lengths/hashes but not raw content.
-  - redacted mode removes API keys and secret-like fields.
-  - full mode captures raw provider request/response under length limit.
+  - metadata 模式只记录 length/hash，不记录原始内容。
+  - redacted 模式移除 API keys 和 secret-like fields。
+  - full 模式在长度限制内捕获原始 provider request/response。
 
 - `tests/observability/test_snapshots.py`
-  - provider request snapshots are deterministic.
-  - provider response snapshots include tool calls, stop reason and usage.
-  - hashes are stable across equivalent dict ordering.
+  - provider request snapshot 是 deterministic。
+  - provider response snapshot 包含 tool calls、stop reason 和 usage。
+  - 等价 dict ordering 的 hash 稳定。
 
 - `tests/observability/test_in_memory_tracer.py`
-  - nested spans preserve parent/child order.
-  - exceptions set error status and are re-raised by wrappers.
+  - nested spans 保持 parent/child 顺序。
+  - wrapper 遇到异常时设置 error status 并重新抛出。
 
 - `tests/observability/test_instrumented_provider.py`
-  - provider span records `generation` type, model, stop reason and usage.
-  - provider wrapper does not change `ProviderResponse`.
+  - provider span 记录 `generation` type、model、stop reason 和 usage。
+  - provider wrapper 不改变 `ProviderResponse`。
 
 - `tests/observability/test_instrumented_router.py`
-  - external, context, skill and MCP tool calls produce `tool` spans.
-  - denied tool calls record error status and preserve the original exception.
+  - external、context、skill、MCP tool calls 都产生 `tool` spans。
+  - denied tool call 记录 error status，并保留原始异常。
 
 - `tests/observability/test_otel_config.py`
-  - Langfuse endpoint is `{host}/api/public/otel/v1/traces`.
-  - Authorization is Basic `base64(public_key:secret_key)`.
-  - `x-langfuse-ingestion-version` is set to `4`.
-  - importing `agentos.observability` without OTel installed does not fail.
+  - Langfuse endpoint 是 `{host}/api/public/otel/v1/traces`。
+  - Authorization 是 Basic `base64(public_key:secret_key)`。
+  - `x-langfuse-ingestion-version` 设置为 `4`。
+  - 不安装 OTel 时 import `agentos.observability` 不失败。
 
 ### Provider Adapter Tests
 
 - `tests/providers/test_adapters.py`
-  - OpenAI adapter maps prompt/completion/cached/reasoning usage when fields exist.
-  - Anthropic adapter maps input/output/cache usage when fields exist.
-  - missing usage remains `None` without breaking old fake clients.
+  - OpenAI adapter 在字段存在时映射 prompt/completion/cached/reasoning usage。
+  - Anthropic adapter 在字段存在时映射 input/output/cache usage。
+  - provider 没有 usage 时保持 `None`，不破坏旧 fake clients。
 
 ### Integration Tests
 
 - `tests/observability/test_query_loop_instrumentation.py`
-  - a fake provider that calls one tool produces:
+  - 一个会调用工具的 fake provider 产生：
 
 ```text
 agent.turn
@@ -678,58 +672,58 @@ agent.turn
 └─ provider.complete
 ```
 
-  - final assistant response is unchanged.
-  - provider request span includes rendered system length/hash and tool count.
-  - provider generation span includes assistant output length/hash and usage.
+  - final assistant response 不变。
+  - provider request span 包含 rendered system length/hash 和 tool count。
+  - provider generation span 包含 assistant output length/hash 和 usage。
 
 - `tests/context/test_renderer.py`
-  - default context still omits runtime metadata after observability is installed.
+  - 安装 observability 后，默认 context 仍然不包含 runtime metadata。
 
 - `tests/architecture/test_public_api.py`
-  - public observability API names are exported.
-  - mixed-case and snake-case package aliases are rejected.
+  - public observability API names 被导出。
+  - 历史错误包名别名被拒绝。
 
 ### Smoke Test
 
-Keep and update:
+保留并更新：
 
 - `scripts/langfuse_otel_smoke_test.py`
 
-Add a second smoke path after implementation:
+实现后增加第二条 smoke path：
 
-- creates a fake `QueryLoop`
-- instruments it with `create_langfuse_otel_tracer(...)`
-- runs one turn
-- prints the OTel trace id and Langfuse search hint
+- 创建一个 fake `QueryLoop`。
+- 用 `create_langfuse_otel_tracer(...)` instrument。
+- 运行一个 turn。
+- 打印 OTel trace id 和 Langfuse 搜索提示。
 
-This script is not part of unit tests because it requires a running Langfuse instance and keys.
+这个脚本不进入 unit tests，因为它需要本地 Langfuse 实例和 API keys。
 
-## Required Verification
+## 必跑验证
 
 ```bash
 uv run --python 3.11 --extra dev pytest -q
 uv run --python 3.11 --extra dev python -m compileall -q src tests scripts
 git diff --check
-rg -n "agent[O]s|agent[_]os" src tests docs pyproject.toml README.md
+rg -n "agent[O]s|agent[_]os" src tests docs pyproject.toml AGENTS.md .gitignore
 rg -n "from opentelemetry|import opentelemetry|langfuse" src/agentos/runtime src/agentos/providers src/agentos/capabilities src/agentos/context
 rg -n "session_id|turn_id|message_id|trace_id|span_id|tool_call_id|schema_id|projection_id|compression_id|source|relevance" tests/context/goldens src/agentos/context/renderer.py
 ```
 
-The last command may report only tests that assert forbidden metadata is absent.
+最后一条命令只允许命中“断言 forbidden metadata 不存在”的测试，或明确不是默认 prompt 的 debug projection 测试。
 
-## Acceptance Checklist
+## 验收清单
 
 | Requirement | Implementation files | Test files | Status |
 |---|---|---|---|
-| Observability enabled through construction-time instrumentation, not runtime imports. | `observability/instrument.py`, `observability/instrumented.py` | `tests/observability/test_query_loop_instrumentation.py` | required |
-| OTel spans are produced for turn, provider request build, provider complete, tool calls and compression. | `observability/instrumented.py`, `observability/tracer.py` | `tests/observability/test_query_loop_instrumentation.py`, `tests/observability/test_in_memory_tracer.py` | required |
-| Langfuse receives provider calls as generation observations through OTLP attributes. | `observability/conventions.py`, `observability/otel.py`, `observability/langfuse.py` | `tests/observability/test_instrumented_provider.py`, `tests/observability/test_otel_config.py` | required |
-| Capture policy prevents raw prompt/message/tool data from being recorded by default. | `observability/config.py`, `observability/snapshots.py` | `tests/observability/test_capture_policy.py`, `tests/observability/test_snapshots.py` | required |
-| Provider usage is normalized and attached to provider response spans. | `providers/base.py`, `providers/openai.py`, `providers/anthropic.py`, `providers/openai_compatible.py` | `tests/providers/test_adapters.py`, `tests/observability/test_instrumented_provider.py` | required |
-| Tool spans cover external, context, skill and MCP routing paths. | `observability/instrumented.py`, `capabilities/router.py` boundary only | `tests/observability/test_instrumented_router.py` | required |
-| EventBus remains typed facts/debug persistence, not the production trace source. | `observability/events.py`, `observability/traces.py` | `tests/observability/test_event_log.py`, `tests/observability/test_traces.py` | required |
-| Hooks remain policy/interception points and do not become logging events. | `hooks/base.py`, `hooks/manager.py` | `tests/hooks/test_runtime.py`, `tests/observability/test_query_loop_instrumentation.py` | required |
-| Core SDK imports and tests work without OTel installed. | `observability/__init__.py`, `observability/otel.py`, `pyproject.toml` | `tests/observability/test_otel_config.py`, full test suite | required |
-| Default LLM-visible context stays metadata-free. | `context/renderer.py` unchanged by observability | `tests/context/test_renderer.py`, renderer golden tests | required |
+| 通过构造期 instrumentation 开启观测，runtime 不直接 import observability。 | `observability/instrument.py`, `observability/instrumented.py` | `tests/observability/test_query_loop_instrumentation.py` | required |
+| 为 turn、provider request build、provider complete、tool calls、compression 产生 OTel spans。 | `observability/instrumented.py`, `observability/tracer.py` | `tests/observability/test_query_loop_instrumentation.py`, `tests/observability/test_in_memory_tracer.py` | required |
+| Langfuse 能通过 OTLP attributes 把 provider call 展示为 generation。 | `observability/conventions.py`, `observability/otel.py`, `observability/langfuse.py` | `tests/observability/test_instrumented_provider.py`, `tests/observability/test_otel_config.py` | required |
+| 默认 capture policy 不记录原始 prompt/message/tool payload。 | `observability/config.py`, `observability/snapshots.py` | `tests/observability/test_capture_policy.py`, `tests/observability/test_snapshots.py` | required |
+| Provider usage 被归一化并挂到 provider response span。 | `providers/base.py`, `providers/openai.py`, `providers/anthropic.py`, `providers/openai_compatible.py` | `tests/providers/test_adapters.py`, `tests/observability/test_instrumented_provider.py` | required |
+| Tool spans 覆盖 external、context、skill、MCP 四类路由路径。 | `observability/instrumented.py`, `capabilities/router.py` boundary only | `tests/observability/test_instrumented_router.py` | required |
+| EventBus 保持 typed facts/debug persistence，不作为生产 trace source。 | `observability/events.py`, `observability/traces.py` | `tests/observability/test_event_log.py`, `tests/observability/test_traces.py` | required |
+| Hooks 保持 policy/interception 职责，不变成 logging events。 | `hooks/base.py`, `hooks/manager.py` | `tests/hooks/test_runtime.py`, `tests/observability/test_query_loop_instrumentation.py` | required |
+| Core SDK 在未安装 OTel 时仍可 import 和运行测试。 | `observability/__init__.py`, `observability/otel.py`, `pyproject.toml` | `tests/observability/test_otel_config.py`, full test suite | required |
+| 默认 LLM-visible context 保持 metadata-free。 | `context/renderer.py` 不因 observability 改动 | `tests/context/test_renderer.py`, renderer golden tests | required |
 
-The production observability task is complete only when every required row is implemented, tested and verified.
+生产级 observability 只有在所有 required 行都实现、测试并通过验证后，才算完成。
