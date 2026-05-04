@@ -16,6 +16,7 @@ def test_in_memory_tracer_records_nested_spans_with_parent_ids() -> None:
     root, child = tracer.records
     assert root.parent_span_id is None
     assert child.parent_span_id == root.span_id
+    assert root.trace_id == child.trace_id
     assert root.attributes["agentos.capture.mode"] == "full"
     assert child.attributes["langfuse.observation.type"] == "generation"
     assert child.events[0].name == "provider.response"
@@ -52,3 +53,12 @@ def test_noop_tracer_accepts_span_operations() -> None:
         span.add_event("event", {"b": 2})
         span.record_exception(RuntimeError("ignored"))
         span.set_status("error", "ignored")
+
+    headers: dict[str, str] = {}
+    tracer.inject_headers(headers)
+    assert headers == {}
+    assert tracer.current_trace_ids().trace_id is None
+    assert tracer.current_trace_ids().span_id is None
+
+    with tracer.use_incoming_headers({"traceparent": "not-used"}):
+        assert tracer.current_trace_ids().trace_id is None

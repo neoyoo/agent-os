@@ -91,10 +91,21 @@ def test_phase5_phase6_public_api_exports() -> None:
     for name in [
         "EventLog",
         "EventRecord",
+        "ObservabilityContext",
+        "RuntimeTraceContext",
+        "TraceIds",
         "TraceRecord",
+        "TraceContextPropagator",
         "EventTraceProjector",
         "OTelAdapter",
         "LangfuseAdapter",
+        "current_observability_context",
+        "current_runtime_trace_context",
+        "current_trace_ids",
+        "inject_trace_headers",
+        "use_default_trace_propagator",
+        "use_observability_context",
+        "use_runtime_trace_context",
     ]:
         assert hasattr(observability, name)
 
