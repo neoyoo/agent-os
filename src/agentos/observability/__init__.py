@@ -33,13 +33,11 @@ from agentos.observability.instrumented import (
     InstrumentedToolCallRouter,
 )
 from agentos.observability.instrument import instrument_query_loop
-from agentos.observability.langfuse import LangfuseAdapter
 from agentos.observability.langfuse import (
     langfuse_otel_headers,
     langfuse_otel_trace_endpoint,
 )
 from agentos.observability.otel import (
-    OTelAdapter,
     create_langfuse_otel_tracer,
     create_otel_tracer,
 )
@@ -64,14 +62,12 @@ from agentos.observability.tracer import (
     TraceIds,
     Tracer,
 )
-from agentos.observability.traces import EventTraceProjector, TraceRecord, TraceSink
 
 __all__ = [
     "CaptureMode",
     "CapturePolicy",
     "EventLog",
     "EventRecord",
-    "EventTraceProjector",
     "EventSubscriber",
     "InMemorySpanEvent",
     "InMemorySpanRecord",
@@ -81,9 +77,7 @@ __all__ = [
     "InstrumentedProviderRequestBuilder",
     "InstrumentedQueryLoop",
     "InstrumentedToolCallRouter",
-    "LangfuseAdapter",
     "NoOpTracer",
-    "OTelAdapter",
     "ObservabilityContext",
     "ObservabilityConfig",
     "ProviderRequestSnapshot",
@@ -95,8 +89,6 @@ __all__ = [
     "ToolResultSnapshot",
     "TraceContextPropagator",
     "TraceIds",
-    "TraceRecord",
-    "TraceSink",
     "Tracer",
     "build_provider_request_snapshot",
     "build_provider_response_snapshot",

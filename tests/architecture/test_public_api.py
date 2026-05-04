@@ -89,25 +89,30 @@ def test_phase5_phase6_public_api_exports() -> None:
         assert hasattr(persistence, name)
 
     for name in [
+        "CapturePolicy",
         "EventLog",
         "EventRecord",
+        "InMemoryTracer",
+        "NoOpTracer",
         "ObservabilityContext",
-        "RuntimeTraceContext",
-        "TraceIds",
+        "ObservabilityConfig",
+        "create_langfuse_otel_tracer",
+        "create_otel_tracer",
+        "current_observability_context",
+        "inject_trace_headers",
+        "instrument_query_loop",
+        "use_observability_context",
+    ]:
+        assert hasattr(observability, name)
+
+    for removed_name in [
         "TraceRecord",
-        "TraceContextPropagator",
+        "TraceSink",
         "EventTraceProjector",
         "OTelAdapter",
         "LangfuseAdapter",
-        "current_observability_context",
-        "current_runtime_trace_context",
-        "current_trace_ids",
-        "inject_trace_headers",
-        "use_default_trace_propagator",
-        "use_observability_context",
-        "use_runtime_trace_context",
     ]:
-        assert hasattr(observability, name)
+        assert not hasattr(observability, removed_name)
 
     assert observability.EventSubscriber is events.EventSubscriber
 
