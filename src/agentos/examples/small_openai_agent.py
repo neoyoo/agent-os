@@ -11,6 +11,7 @@ from agentos.observability import (
     ObservabilityConfig,
     create_langfuse_otel_tracer,
     instrument_query_loop,
+    use_observability_context,
 )
 from agentos.providers import (
     OpenAICompatibleProvider,
@@ -320,7 +321,9 @@ def main(argv: list[str] | None = None) -> int:
         project_root=Path.cwd(),
         observability_config=observability_config,
     )
-    print(loop.run_turn(user_message))
+    user_id = os.environ.get("AGENTOS_USER_ID")
+    with use_observability_context(user_id=user_id or None):
+        print(loop.run_turn(user_message))
     return 0
 
 

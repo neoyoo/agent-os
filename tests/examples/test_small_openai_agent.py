@@ -221,3 +221,30 @@ def test_main_accepts_observe_langfuse_flag(monkeypatch, capsys) -> None:
         "provider.request.build",
         "provider.complete",
     ]
+
+
+def test_main_observe_langfuse_uses_agentos_user_id(monkeypatch, capsys) -> None:
+    provider = FakeProvider([ProviderResponse(content="ok")])
+    tracer = InMemoryTracer()
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.provider_from_env",
+        lambda: provider,
+    )
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
+    monkeypatch.setenv("AGENTOS_OBSERVABILITY_CAPTURE", "metadata")
+    monkeypatch.setenv("AGENTOS_USER_ID", "local_user")
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.create_langfuse_otel_tracer",
+        lambda **kwargs: tracer,
+    )
+
+    exit_code = main(["--observe-langfuse", "hello"])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    for record in tracer.records:
+        assert record.attributes["langfuse.user.id"] == "local_user"
+        assert record.attributes["user.id"] == "local_user"
+        assert "agentos.user.id" not in record.attributes
