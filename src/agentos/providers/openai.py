@@ -6,6 +6,7 @@ from agentos.providers.base import (
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
+    ProviderUsage,
 )
 
 
@@ -34,6 +35,10 @@ class OpenAIProvider:
             content=message.content or "",
             tool_calls=self._tool_calls(getattr(message, "tool_calls", None) or []),
             stop_reason=getattr(choice, "finish_reason", None),
+            usage=self._usage(getattr(response, "usage", None)),
+            model=getattr(response, "model", None) or self.model,
+            provider_name="openai",
+            response_id=getattr(response, "id", None),
         )
 
     def _ensure_no_active_system_messages(self, request: ProviderRequest) -> None:
@@ -60,3 +65,26 @@ class OpenAIProvider:
                 ),
             )
         return tool_calls
+
+    def _usage(self, raw_usage: object | None) -> ProviderUsage | None:
+        """把 OpenAI usage 标准化。"""
+
+        if raw_usage is None:
+            return None
+        prompt_details = getattr(raw_usage, "prompt_tokens_details", None)
+        completion_details = getattr(raw_usage, "completion_tokens_details", None)
+        return ProviderUsage(
+            input_tokens=getattr(raw_usage, "prompt_tokens", None),
+            output_tokens=getattr(raw_usage, "completion_tokens", None),
+            total_tokens=getattr(raw_usage, "total_tokens", None),
+            cached_input_tokens=(
+                None
+                if prompt_details is None
+                else getattr(prompt_details, "cached_tokens", None)
+            ),
+            reasoning_output_tokens=(
+                None
+                if completion_details is None
+                else getattr(completion_details, "reasoning_tokens", None)
+            ),
+        )

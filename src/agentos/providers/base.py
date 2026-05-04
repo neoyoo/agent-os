@@ -25,12 +25,29 @@ class ProviderRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderUsage:
+    """provider 返回的标准化 token/cost usage。"""
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    reasoning_output_tokens: int | None = None
+    cost_usd: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderResponse:
     """provider 返回的标准化响应。"""
 
     content: str = ""
     tool_calls: list[ProviderToolCall] = field(default_factory=list)
     stop_reason: str | None = None
+    usage: ProviderUsage | None = None
+    model: str | None = None
+    provider_name: str | None = None
+    response_id: str | None = None
 
 
 class Provider(Protocol):

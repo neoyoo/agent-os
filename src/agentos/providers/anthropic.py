@@ -6,6 +6,7 @@ from agentos.providers.base import (
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
+    ProviderUsage,
 )
 
 
@@ -43,6 +44,10 @@ class AnthropicProvider:
             content="".join(text_parts),
             tool_calls=tool_calls,
             stop_reason=getattr(response, "stop_reason", None),
+            usage=self._usage(getattr(response, "usage", None)),
+            model=getattr(response, "model", None) or self.model,
+            provider_name="anthropic",
+            response_id=getattr(response, "id", None),
         )
 
     def _ensure_no_active_system_messages(self, request: ProviderRequest) -> None:
@@ -71,3 +76,19 @@ class AnthropicProvider:
                 },
             )
         return converted
+
+    def _usage(self, raw_usage: object | None) -> ProviderUsage | None:
+        """把 Anthropic usage 标准化。"""
+
+        if raw_usage is None:
+            return None
+        return ProviderUsage(
+            input_tokens=getattr(raw_usage, "input_tokens", None),
+            output_tokens=getattr(raw_usage, "output_tokens", None),
+            cached_input_tokens=getattr(raw_usage, "cache_read_input_tokens", None),
+            cache_creation_input_tokens=getattr(
+                raw_usage,
+                "cache_creation_input_tokens",
+                None,
+            ),
+        )

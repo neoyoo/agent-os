@@ -5,6 +5,7 @@ from agentos.providers import (
     OpenAIProvider,
     ProviderRequest,
     ProviderToolCall,
+    ProviderUsage,
 )
 
 
@@ -16,8 +17,18 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
         def create(self, **kwargs: object) -> object:
             self.kwargs = kwargs
             return SimpleNamespace(
+                id="chatcmpl_1",
+                model="gpt-test",
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    total_tokens=15,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=2),
+                    completion_tokens_details=SimpleNamespace(reasoning_tokens=1),
+                ),
                 choices=[
                     SimpleNamespace(
+                        finish_reason="tool_calls",
                         message=SimpleNamespace(
                             content="Need file.",
                             tool_calls=[
@@ -64,6 +75,17 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
         {"role": "user", "content": "read project name"},
     ]
     assert response.content == "Need file."
+    assert response.stop_reason == "tool_calls"
+    assert response.model == "gpt-test"
+    assert response.provider_name == "openai"
+    assert response.response_id == "chatcmpl_1"
+    assert response.usage == ProviderUsage(
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        cached_input_tokens=2,
+        reasoning_output_tokens=1,
+    )
     assert response.tool_calls == [
         ProviderToolCall(
             id="call_1",
@@ -81,6 +103,15 @@ def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
         def create(self, **kwargs: object) -> object:
             self.kwargs = kwargs
             return SimpleNamespace(
+                id="msg_1",
+                model="claude-test",
+                stop_reason="tool_use",
+                usage=SimpleNamespace(
+                    input_tokens=10,
+                    output_tokens=5,
+                    cache_creation_input_tokens=3,
+                    cache_read_input_tokens=2,
+                ),
                 content=[
                     SimpleNamespace(type="text", text="Need file."),
                     SimpleNamespace(
@@ -127,6 +158,16 @@ def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
         },
     ]
     assert response.content == "Need file."
+    assert response.stop_reason == "tool_use"
+    assert response.model == "claude-test"
+    assert response.provider_name == "anthropic"
+    assert response.response_id == "msg_1"
+    assert response.usage == ProviderUsage(
+        input_tokens=10,
+        output_tokens=5,
+        cached_input_tokens=2,
+        cache_creation_input_tokens=3,
+    )
     assert response.tool_calls == [
         ProviderToolCall(
             id="call_1",

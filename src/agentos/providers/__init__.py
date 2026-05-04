@@ -8,6 +8,7 @@ from agentos.providers.base import (
     Provider,
     ProviderToolCall,
     ProviderToolSpec,
+    ProviderUsage,
 )
 from agentos.providers.fake import FakeProvider
 from agentos.providers.openai import OpenAIProvider
@@ -31,5 +32,6 @@ __all__ = [
     "Provider",
     "ProviderToolCall",
     "ProviderToolSpec",
+    "ProviderUsage",
     "UrlLibJSONTransport",
 ]

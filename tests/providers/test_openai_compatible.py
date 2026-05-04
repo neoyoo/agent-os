@@ -3,6 +3,7 @@ from agentos.providers import (
     OpenAICompatibleProvider,
     ProviderRequest,
     ProviderToolCall,
+    ProviderUsage,
 )
 from io import BytesIO
 from urllib.error import HTTPError
@@ -36,6 +37,15 @@ class FakeTransport:
 def test_openai_compatible_provider_posts_chat_completion_request() -> None:
     transport = FakeTransport(
         {
+            "id": "chatcmpl_1",
+            "model": "deepseek-chat",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "prompt_tokens_details": {"cached_tokens": 2},
+                "completion_tokens_details": {"reasoning_tokens": 1},
+            },
             "choices": [
                 {
                     "finish_reason": "tool_calls",
@@ -146,6 +156,16 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
     ]
     assert response.content == "需要读取文件。"
     assert response.stop_reason == "tool_calls"
+    assert response.model == "deepseek-chat"
+    assert response.provider_name == "openai-compatible"
+    assert response.response_id == "chatcmpl_1"
+    assert response.usage == ProviderUsage(
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        cached_input_tokens=2,
+        reasoning_output_tokens=1,
+    )
     assert response.tool_calls == [
         ProviderToolCall(
             id="call_1",

@@ -9,6 +9,7 @@ from agentos.providers.base import (
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
+    ProviderUsage,
 )
 
 
@@ -176,6 +177,10 @@ class OpenAICompatibleProvider:
             stop_reason=(
                 None if raw_finish_reason is None else str(raw_finish_reason)
             ),
+            usage=self._usage(response.get("usage")),
+            model=None if response.get("model") is None else str(response.get("model")),
+            provider_name="openai-compatible",
+            response_id=None if response.get("id") is None else str(response.get("id")),
         )
 
     def _response_tool_calls(self, raw_tool_calls: object) -> list[ProviderToolCall]:
@@ -201,3 +206,33 @@ class OpenAICompatibleProvider:
                 ),
             )
         return tool_calls
+
+    def _usage(self, raw_usage: object) -> ProviderUsage | None:
+        """把 OpenAI-compatible JSON usage 标准化。"""
+
+        if not isinstance(raw_usage, dict):
+            return None
+        prompt_details = raw_usage.get("prompt_tokens_details")
+        completion_details = raw_usage.get("completion_tokens_details")
+        return ProviderUsage(
+            input_tokens=self._int_or_none(raw_usage.get("prompt_tokens")),
+            output_tokens=self._int_or_none(raw_usage.get("completion_tokens")),
+            total_tokens=self._int_or_none(raw_usage.get("total_tokens")),
+            cached_input_tokens=(
+                self._int_or_none(prompt_details.get("cached_tokens"))
+                if isinstance(prompt_details, dict)
+                else None
+            ),
+            reasoning_output_tokens=(
+                self._int_or_none(completion_details.get("reasoning_tokens"))
+                if isinstance(completion_details, dict)
+                else None
+            ),
+        )
+
+    def _int_or_none(self, value: object) -> int | None:
+        """把 provider usage 数值转为 int。"""
+
+        if value is None:
+            return None
+        return int(value)
