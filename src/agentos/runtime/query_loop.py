@@ -1,0 +1,208 @@
+from dataclasses import dataclass
+from typing import Protocol
+
+from agentos.compression import CompressionRuntime
+from agentos.context import ContextState
+from agentos.messages import MessageRuntime, ToolCall
+from agentos.providers import ProviderRequest, ProviderResponse, Provider
+from agentos.runtime.event_bus import (
+    AssistantMessageAppendedEvent,
+    EventBus,
+    ProviderRequestBuiltEvent,
+    ProviderResponseReceivedEvent,
+    AgentEvent,
+    ToolCallRequestedEvent,
+    ToolExecutionCompletedEvent,
+    ToolExecutionStartedEvent,
+    ToolResultAppendedEvent,
+    TurnCompletedEvent,
+    TurnFailedEvent,
+    TurnStartedEvent,
+    UserMessageAppendedEvent,
+)
+from agentos.runtime.provider_request_builder import ProviderRequestBuilder
+from agentos.runtime.session import SessionState
+from agentos.runtime.turn import TurnState
+
+
+class ContextRuntimeBoundary(Protocol):
+    """QueryLoop 依赖的 context runtime 边界。"""
+
+    def snapshot(self) -> ContextState:
+        """返回可渲染的 context snapshot。"""
+
+
+class ToolCallRouterBoundary(Protocol):
+    """QueryLoop 依赖的 tool call router 边界。"""
+
+    def execute_tool_call(self, tool_call: object) -> object:
+        """执行 provider tool call。"""
+
+
+@dataclass(slots=True)
+class QueryLoop:
+    """最小 agent turn 调度器。"""
+
+    context_runtime: ContextRuntimeBoundary
+    message_runtime: MessageRuntime
+    request_builder: ProviderRequestBuilder
+    provider: Provider
+    compression_runtime: CompressionRuntime | None = None
+    tool_call_router: ToolCallRouterBoundary | None = None
+    event_bus: EventBus | None = None
+    session_state: SessionState | None = None
+    max_tool_iterations: int = 8
+
+    def build_request(self) -> ProviderRequest:
+        """构建下一次 provider request，并在请求前执行窗口压缩。"""
+
+        if self.compression_runtime is not None:
+            self.compression_runtime.maybe_compress()
+        return self.request_builder.build(self.context_runtime)
+
+    def run_turn(self, user_message: str) -> str:
+        """运行一轮 user -> provider -> assistant。"""
+
+        turn = self._start_turn(user_message)
+        user = self.message_runtime.append_user(user_message)
+        self._emit(
+            UserMessageAppendedEvent(
+                message_id=user.id,
+                **self._event_context(turn),
+            ),
+        )
+
+        try:
+            response_content = self._run_provider_loop(turn)
+        except Exception as error:
+            if turn is not None:
+                turn.fail(str(error))
+            self._emit(
+                TurnFailedEvent(
+                    error=str(error),
+                    **self._event_context(turn),
+                ),
+            )
+            raise
+
+        if turn is not None:
+            turn.complete()
+        self._emit(TurnCompletedEvent(**self._event_context(turn)))
+        return response_content
+
+    def _run_provider_loop(self, turn: TurnState | None) -> str:
+        """执行 provider 请求，直到返回 final assistant response。"""
+
+        iterations = 0
+        while True:
+            request = self.build_request()
+            self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
+            response = self.provider.complete(request)
+            self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
+            self._ensure_provider_response_usable(response)
+            tool_calls = [
+                ToolCall(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    arguments=dict(tool_call.arguments),
+                )
+                for tool_call in response.tool_calls
+            ]
+            assistant = self.message_runtime.append_assistant(
+                response.content,
+                tool_calls=tool_calls,
+            )
+            self._emit(
+                AssistantMessageAppendedEvent(
+                    message_id=assistant.id,
+                    **self._event_context(turn),
+                ),
+            )
+
+            if not response.tool_calls:
+                return response.content
+            if self.tool_call_router is None:
+                raise RuntimeError("tool call router is required for tool calls")
+            iterations += 1
+            if iterations > self.max_tool_iterations:
+                raise RuntimeError("provider tool-call loop exceeded max iterations")
+            if turn is not None:
+                turn.increment_tool_iteration()
+
+            for tool_call in response.tool_calls:
+                self._emit(
+                    ToolCallRequestedEvent(
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                        **self._event_context(turn),
+                    ),
+                )
+                self._emit(
+                    ToolExecutionStartedEvent(
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                        **self._event_context(turn),
+                    ),
+                )
+                result = self.tool_call_router.execute_tool_call(tool_call)
+                self._emit(
+                    ToolExecutionCompletedEvent(
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                        **self._event_context(turn),
+                    ),
+                )
+                tool_result = self.message_runtime.append_tool_result(
+                    tool_call_id=result.tool_call_id,
+                    content=result.content,
+                )
+                self._emit(
+                    ToolResultAppendedEvent(
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                        message_id=tool_result.id,
+                        **self._event_context(turn),
+                    ),
+                )
+
+    def _ensure_provider_response_usable(self, response: ProviderResponse) -> None:
+        """拒绝被 provider 截断或拦截的响应，避免伪装成最终答案。"""
+
+        stop_reason = response.stop_reason
+        if stop_reason in {"length", "max_tokens"}:
+            raise RuntimeError(
+                f"provider response was truncated before final answer: {stop_reason}",
+            )
+        if stop_reason == "content_filter":
+            raise RuntimeError("provider response was blocked by content filter")
+
+    def _start_turn(self, user_message: str) -> TurnState | None:
+        """创建 turn state 并发出 turn_started 事件。"""
+
+        turn = None
+        if self.session_state is not None:
+            turn = self.session_state.new_turn(user_message)
+        self._emit(
+            TurnStartedEvent(
+                user_input=user_message,
+                **self._event_context(turn),
+            ),
+        )
+        return turn
+
+    def _emit(self, event: AgentEvent) -> None:
+        """向 EventBus 写入内部 runtime event。"""
+
+        if self.event_bus is None:
+            return
+        self.event_bus.emit(event)
+
+    def _event_context(self, turn: TurnState | None) -> dict[str, str | None]:
+        """返回 typed event 使用的 session/turn id。"""
+
+        return {
+            "session_id": self.session_state.id
+            if self.session_state is not None
+            else None,
+            "turn_id": turn.id if turn is not None else None,
+        }

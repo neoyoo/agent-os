@@ -1,0 +1,135 @@
+from dataclasses import dataclass, field
+
+from agentos.capabilities.executor import ToolExecutionResult, ToolExecutor
+from agentos.capabilities.mcp import MCPToolAdapter
+from agentos.capabilities.registry import ToolRegistry
+from agentos.context import ContextRuntime, WorkingStateField
+from agentos.context_protocol import (
+    CONTEXT_PROTOCOL_TOOL_NAMES,
+    context_protocol_tool_specs,
+)
+from agentos.policies import SecurityPolicy
+from agentos.providers import ProviderToolCall, ProviderToolSpec
+from agentos.recall import RecallRuntime
+
+
+@dataclass(slots=True)
+class ToolCallRouter:
+    """统一路由 context tools 和外部工具。"""
+
+    tool_registry: ToolRegistry
+    context_runtime: ContextRuntime | None = None
+    recall_runtime: RecallRuntime | None = None
+    mcp_adapter: MCPToolAdapter | None = None
+    security_policy: SecurityPolicy = field(default_factory=SecurityPolicy)
+    _executor: ToolExecutor | None = None
+
+    def tool_specs(self) -> list[ProviderToolSpec]:
+        """返回 context protocol tools 和外部工具的 provider schema。"""
+
+        return [
+            *context_protocol_tool_specs(),
+            *self.tool_registry.provider_tool_specs(kinds={"external", "skill"}),
+            *(
+                self.mcp_adapter.provider_tool_specs()
+                if self.mcp_adapter is not None
+                else []
+            ),
+        ]
+
+    def execute_tool_call(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
+        """执行 provider tool call，并按工具类型路由。"""
+
+        self.security_policy.ensure_tool_allowed(tool_call.name)
+        if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
+            return self._execute_context_tool(tool_call)
+        if tool_call.name.startswith("mcp__"):
+            if self.mcp_adapter is None:
+                raise RuntimeError("mcp adapter is required for MCP tool calls")
+            return self.mcp_adapter.execute(tool_call)
+        return self._tool_executor().execute(tool_call)
+
+    def _tool_executor(self) -> ToolExecutor:
+        """延迟创建外部工具 executor。"""
+
+        if self._executor is None:
+            self._executor = ToolExecutor(
+                registry=self.tool_registry,
+                security_policy=self.security_policy,
+            )
+        return self._executor
+
+    def _execute_context_tool(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ToolExecutionResult:
+        """把 context tool call 应用到 ContextRuntime。"""
+
+        if tool_call.name == "recall_context":
+            return self._execute_recall_context(tool_call)
+
+        if self.context_runtime is None:
+            raise RuntimeError("context runtime is required for context tools")
+
+        arguments = tool_call.arguments
+        if tool_call.name == "declare_schema":
+            self.context_runtime.declare_schema(self._working_state_fields(arguments))
+        elif tool_call.name == "update_state":
+            self.context_runtime.update_state(
+                field_name=str(arguments["field_name"]),
+                value=arguments["value"],  # type: ignore[arg-type]
+            )
+        elif tool_call.name == "extend_schema":
+            self.context_runtime.extend_schema(self._working_state_fields(arguments))
+        elif tool_call.name == "start_chapter":
+            fields = arguments.get("fields")
+            self.context_runtime.start_chapter(
+                None if fields is None else self._working_state_fields(arguments),
+            )
+        else:
+            raise RuntimeError(f"unknown context tool: {tool_call.name}")
+
+        return ToolExecutionResult(
+            tool_call_id=tool_call.id,
+            content=f"context tool {tool_call.name} applied",
+        )
+
+    def _execute_recall_context(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ToolExecutionResult:
+        """把 recall_context 工具调用交给 RecallRuntime。"""
+
+        if self.recall_runtime is None:
+            raise RuntimeError("recall runtime is required for recall_context")
+
+        recalled_messages = self.recall_runtime.recall_context(
+            handle=str(tool_call.arguments["handle"]),
+        )
+        return ToolExecutionResult(
+            tool_call_id=tool_call.id,
+            content=f"context tool recall_context applied; recalled "
+            f"{len(recalled_messages)} message(s)",
+        )
+
+    def _working_state_fields(
+        self,
+        arguments: dict[str, object],
+    ) -> list[WorkingStateField]:
+        """从 provider arguments 中解析 working state field 声明。"""
+
+        raw_fields = arguments.get("fields")
+        if not isinstance(raw_fields, list):
+            raise ValueError("context schema tools require a fields list")
+        fields: list[WorkingStateField] = []
+        for raw_field in raw_fields:
+            if not isinstance(raw_field, dict):
+                raise ValueError("working state field must be an object")
+            fields.append(
+                WorkingStateField(
+                    name=str(raw_field["name"]),
+                    type=str(raw_field["type"]),
+                    purpose=str(raw_field["purpose"]),
+                ),
+            )
+        return fields
