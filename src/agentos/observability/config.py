@@ -123,7 +123,6 @@ def json_attribute(value: object, *, policy: CapturePolicy) -> str:
         processed,
         ensure_ascii=False,
         separators=(",", ":"),
-        sort_keys=True,
     )
 
 

@@ -87,5 +87,9 @@ def test_instrumented_provider_full_capture_records_input_and_output() -> None:
     )
 
     span = tracer.records[0]
-    assert "system text" in str(span.attributes["langfuse.observation.input"])
+    input_attribute = str(span.attributes["langfuse.observation.input"])
+    assert input_attribute.startswith('{"system"')
+    assert input_attribute.index('"system"') < input_attribute.index('"messages"')
+    assert input_attribute.index('"messages"') < input_attribute.index('"tools"')
+    assert "system text" in input_attribute
     assert "done" in str(span.attributes["langfuse.observation.output"])
