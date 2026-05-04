@@ -93,21 +93,15 @@ class OpenAICompatibleProvider:
         if self.thinking is not None:
             payload["thinking"] = dict(self.thinking)
 
-        try:
-            response = transport.post_json(
-                url=self._chat_completions_url(),
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                payload=payload,
-                timeout=self.timeout,
-            )
-        except HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed with HTTP {error.code}: {body}",
-            ) from error
+        response = transport.post_json(
+            url=self._chat_completions_url(),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            payload=payload,
+            timeout=self.timeout,
+        )
         return self._response(response)
 
     def _chat_completions_url(self) -> str:

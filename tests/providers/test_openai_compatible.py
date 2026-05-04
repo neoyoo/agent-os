@@ -1,12 +1,15 @@
+import inspect
+from io import BytesIO
+from urllib.error import HTTPError
+
 from agentos.providers import (
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
     ProviderRequest,
     ProviderToolCall,
     ProviderUsage,
+    UrlLibJSONTransport,
 )
-from io import BytesIO
-from urllib.error import HTTPError
 
 
 class FakeTransport:
@@ -175,13 +178,7 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
     ]
 
 
-def test_openai_compatible_transport_includes_error_body() -> None:
-    provider = OpenAICompatibleProvider(
-        api_key="test-key",
-        base_url="https://api.deepseek.example",
-        model="deepseek-chat",
-    )
-
+def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:
     def _raise_http_error(*args: object, **kwargs: object) -> object:
         raise HTTPError(
             url="https://api.deepseek.example/chat/completions",
@@ -191,21 +188,29 @@ def test_openai_compatible_transport_includes_error_body() -> None:
             fp=BytesIO(b'{"error":{"message":"invalid model"}}'),
         )
 
-    provider.transport = type(
-        "FailingTransport",
-        (),
-        {"post_json": _raise_http_error},
-    )()
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.urlopen",
+        _raise_http_error,
+    )
 
     try:
-        provider.complete(
-            ProviderRequest(system="system", messages=[{"role": "user", "content": "hi"}]),
+        UrlLibJSONTransport().post_json(
+            url="https://api.deepseek.example/chat/completions",
+            headers={},
+            payload={},
+            timeout=1.0,
         )
     except OpenAICompatibleProviderError as error:
         assert "HTTP 400" in str(error)
         assert "invalid model" in str(error)
     else:
         raise AssertionError("Expected OpenAICompatibleProviderError")
+
+
+def test_openai_compatible_provider_leaves_http_error_translation_to_transport() -> None:
+    source = inspect.getsource(OpenAICompatibleProvider.complete)
+
+    assert "except HTTPError" not in source
 
 
 def test_openai_compatible_provider_can_disable_thinking() -> None:
