@@ -6,6 +6,12 @@ from pathlib import Path
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
 from agentos.messages import MessageRuntime
+from agentos.observability import (
+    CapturePolicy,
+    ObservabilityConfig,
+    create_langfuse_otel_tracer,
+    instrument_query_loop,
+)
 from agentos.providers import (
     OpenAICompatibleProvider,
     ProviderRequest,
@@ -205,6 +211,7 @@ def _json_dumps(value: object) -> str:
 def build_agent(
     provider: Provider,
     project_root: str | Path = ".",
+    observability_config: ObservabilityConfig | None = None,
 ) -> QueryLoop:
     """构建一个带 read_file 工具的小型 agent。"""
 
@@ -216,7 +223,7 @@ def build_agent(
         tool_registry=registry,
         context_runtime=context,
     )
-    return QueryLoop(
+    loop = QueryLoop(
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
@@ -235,6 +242,53 @@ def build_agent(
         event_bus=EventBus(),
         session_state=SessionState(id="small_openai_agent"),
     )
+    if observability_config is not None:
+        return instrument_query_loop(loop, observability_config)  # type: ignore[return-value]
+    return loop
+
+
+def observability_config_from_env() -> ObservabilityConfig:
+    """从环境变量创建 Langfuse OTel observability config。"""
+
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+    if not public_key or not secret_key:
+        raise RuntimeError(
+            "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required "
+            "when --observe-langfuse is used",
+        )
+    host = (
+        os.environ.get("LANGFUSE_HOST")
+        or os.environ.get("LANGFUSE_BASE_URL")
+        or "http://localhost:3000"
+    )
+    capture_policy = _capture_policy_from_env()
+    tracer = create_langfuse_otel_tracer(
+        host=host,
+        public_key=public_key,
+        secret_key=secret_key,
+        service_name="agentos-small-openai-agent",
+        environment=os.environ.get("AGENTOS_ENVIRONMENT", "local"),
+    )
+    return ObservabilityConfig(
+        tracer=tracer,
+        capture_policy=capture_policy,
+    )
+
+
+def _capture_policy_from_env() -> CapturePolicy:
+    """读取 AGENTOS_OBSERVABILITY_CAPTURE。"""
+
+    mode = os.environ.get("AGENTOS_OBSERVABILITY_CAPTURE", "metadata").strip().lower()
+    if mode == "metadata":
+        return CapturePolicy.metadata_only()
+    if mode == "redacted":
+        return CapturePolicy.redacted()
+    if mode == "full":
+        return CapturePolicy.full_for_local_development()
+    raise RuntimeError(
+        "AGENTOS_OBSERVABILITY_CAPTURE must be metadata, redacted, or full",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -242,7 +296,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = list(sys.argv[1:] if argv is None else argv)
     trace = "--trace" in args
-    args = [arg for arg in args if arg != "--trace"]
+    observe_langfuse = "--observe-langfuse" in args
+    args = [
+        arg
+        for arg in args
+        if arg not in {"--trace", "--observe-langfuse"}
+    ]
     user_message = (
         " ".join(args)
         if args
@@ -251,7 +310,16 @@ def main(argv: list[str] | None = None) -> int:
     provider: Provider = provider_from_env()
     if trace:
         provider = traced_provider(provider)
-    loop = build_agent(provider=provider, project_root=Path.cwd())
+    observability_config = (
+        observability_config_from_env()
+        if observe_langfuse
+        else None
+    )
+    loop = build_agent(
+        provider=provider,
+        project_root=Path.cwd(),
+        observability_config=observability_config,
+    )
     print(loop.run_turn(user_message))
     return 0
 

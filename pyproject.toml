@@ -16,6 +16,11 @@ agent-os-small-agent = "agentos.examples.small_openai_agent:main"
 dev = [
     "pytest>=8.0",
 ]
+observability = [
+    "opentelemetry-api>=1.28",
+    "opentelemetry-sdk>=1.28",
+    "opentelemetry-exporter-otlp-proto-http>=1.28",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentos"]

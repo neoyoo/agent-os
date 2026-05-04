@@ -14,8 +14,24 @@ from agentos.observability.events import (
     event_record_from_dict,
     event_record_to_dict,
 )
+from agentos.observability.instrumented import (
+    InstrumentedCompressionRuntime,
+    InstrumentedProvider,
+    InstrumentedProviderRequestBuilder,
+    InstrumentedQueryLoop,
+    InstrumentedToolCallRouter,
+)
+from agentos.observability.instrument import instrument_query_loop
 from agentos.observability.langfuse import LangfuseAdapter
-from agentos.observability.otel import OTelAdapter
+from agentos.observability.langfuse import (
+    langfuse_otel_headers,
+    langfuse_otel_trace_endpoint,
+)
+from agentos.observability.otel import (
+    OTelAdapter,
+    create_langfuse_otel_tracer,
+    create_otel_tracer,
+)
 from agentos.observability.snapshots import (
     ProviderRequestSnapshot,
     ProviderResponseSnapshot,
@@ -47,6 +63,11 @@ __all__ = [
     "InMemorySpanEvent",
     "InMemorySpanRecord",
     "InMemoryTracer",
+    "InstrumentedCompressionRuntime",
+    "InstrumentedProvider",
+    "InstrumentedProviderRequestBuilder",
+    "InstrumentedQueryLoop",
+    "InstrumentedToolCallRouter",
     "LangfuseAdapter",
     "NoOpTracer",
     "OTelAdapter",
@@ -67,5 +88,10 @@ __all__ = [
     "default_redactor",
     "event_record_from_dict",
     "event_record_to_dict",
+    "instrument_query_loop",
+    "create_langfuse_otel_tracer",
+    "create_otel_tracer",
+    "langfuse_otel_headers",
+    "langfuse_otel_trace_endpoint",
     "stable_sha256",
 ]

@@ -6,6 +6,8 @@ from agentos.examples.small_openai_agent import (
     provider_from_env,
     traced_provider,
 )
+from agentos.observability import CapturePolicy, InMemoryTracer, ObservabilityConfig
+from agentos.observability.instrumented import InstrumentedQueryLoop
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 
 
@@ -55,6 +57,28 @@ def test_build_agent_renders_capability_plane_from_registered_tools() -> None:
     tool_names = [tool["function"]["name"] for tool in provider.requests[0].tools]
     assert "recall_context" in tool_names
     assert "read_file" in tool_names
+
+
+def test_build_agent_can_enable_observability(tmp_path) -> None:
+    tracer = InMemoryTracer()
+    provider = FakeProvider([ProviderResponse(content="ok")])
+
+    loop = build_agent(
+        provider=provider,
+        project_root=tmp_path,
+        observability_config=ObservabilityConfig(
+            tracer=tracer,
+            capture_policy=CapturePolicy.metadata_only(),
+        ),
+    )
+
+    assert isinstance(loop, InstrumentedQueryLoop)
+    assert loop.run_turn("hello") == "ok"
+    assert [record.name for record in tracer.records] == [
+        "agent.turn",
+        "provider.request.build",
+        "provider.complete",
+    ]
 
 
 def test_provider_from_env_uses_openai_compatible_settings(monkeypatch) -> None:
@@ -169,3 +193,31 @@ def test_main_accepts_trace_flag(monkeypatch, capsys) -> None:
     assert "--- messages ---" in output
     assert "=== LLM Response #1 ===" in output
     assert "ok" in output
+
+
+def test_main_accepts_observe_langfuse_flag(monkeypatch, capsys) -> None:
+    provider = FakeProvider([ProviderResponse(content="ok")])
+    tracer = InMemoryTracer()
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.provider_from_env",
+        lambda: provider,
+    )
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
+    monkeypatch.setenv("AGENTOS_OBSERVABILITY_CAPTURE", "metadata")
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.create_langfuse_otel_tracer",
+        lambda **kwargs: tracer,
+    )
+
+    exit_code = main(["--observe-langfuse", "hello"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "ok" in output
+    assert [record.name for record in tracer.records] == [
+        "agent.turn",
+        "provider.request.build",
+        "provider.complete",
+    ]
