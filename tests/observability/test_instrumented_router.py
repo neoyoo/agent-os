@@ -95,7 +95,10 @@ def test_instrumented_router_metadata_mode_records_input_output_summaries(tmp_pa
     )
 
     span = tracer.records[0]
-    assert "arguments_sha256" in str(span.attributes["langfuse.observation.input"])
-    assert "content_length" in str(span.attributes["langfuse.observation.output"])
+    assert "arguments_hidden" in str(span.attributes["langfuse.observation.input"])
+    assert "sha256" not in str(span.attributes["langfuse.observation.input"])
+    assert "content_chars" in str(span.attributes["langfuse.observation.output"])
+    assert "sha256" not in str(span.attributes["langfuse.observation.output"])
+    assert "agentos.tool.arguments.sha256" in span.attributes
     assert "pyproject.toml" not in str(span.attributes["langfuse.observation.input"])
     assert "agent-os" not in str(span.attributes["langfuse.observation.output"])

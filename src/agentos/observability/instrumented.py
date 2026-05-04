@@ -4,6 +4,10 @@ from dataclasses import asdict
 
 from agentos.capabilities import ToolCallRouter
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
+from agentos.observability.attributes import (
+    apply_common_observability_attributes,
+    metadata_identity_payload,
+)
 from agentos.observability.config import CapturePolicy, json_attribute
 from agentos.observability.conventions import (
     GEN_AI_OPERATION_NAME,
@@ -27,6 +31,11 @@ from agentos.observability.conventions import (
     LANGFUSE_TRACE_NAME,
     LANGFUSE_TRACE_OUTPUT,
 )
+from agentos.observability.context import (
+    current_observability_context,
+    use_default_trace_propagator,
+    use_runtime_trace_context,
+)
 from agentos.observability.snapshots import (
     ProviderRequestSnapshot,
     ProviderResponseSnapshot,
@@ -36,7 +45,6 @@ from agentos.observability.snapshots import (
     build_provider_response_snapshot,
     build_tool_call_snapshot,
     build_tool_result_snapshot,
-    stable_sha256,
 )
 from agentos.observability.tracer import Tracer
 from agentos.providers import (
@@ -85,6 +93,11 @@ class InstrumentedProvider:
                 "agentos.provider_request.tools.sha256": request_snapshot.tools_sha256,
             },
         ) as span:
+            apply_common_observability_attributes(
+                span,
+                tracer=self._tracer,
+                capture_policy=self._capture_policy,
+            )
             span.set_attribute(
                 LANGFUSE_OBSERVATION_INPUT,
                 json_attribute(
@@ -140,12 +153,10 @@ class InstrumentedProvider:
 
         if self._capture_policy.mode == "metadata":
             return {
-                "system_length": snapshot.system_length,
-                "system_sha256": snapshot.system_sha256,
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "system_chars": snapshot.system_length,
                 "message_count": snapshot.message_count,
-                "messages_sha256": snapshot.messages_sha256,
                 "tool_count": snapshot.tool_count,
-                "tools_sha256": snapshot.tools_sha256,
             }
         return {
             "system": snapshot.system,
@@ -161,8 +172,8 @@ class InstrumentedProvider:
 
         if self._capture_policy.mode == "metadata":
             return {
-                "content_length": snapshot.content_length,
-                "content_sha256": snapshot.content_sha256,
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "content_chars": snapshot.content_length,
                 "tool_call_count": len(snapshot.tool_calls),
                 "stop_reason": snapshot.stop_reason,
             }
@@ -213,6 +224,11 @@ class InstrumentedProviderRequestBuilder:
             "provider.request.build",
             attributes={LANGFUSE_OBSERVATION_TYPE: "span"},
         ) as span:
+            apply_common_observability_attributes(
+                span,
+                tracer=self._tracer,
+                capture_policy=self._capture_policy,
+            )
             request = self._inner.build(context_runtime)  # type: ignore[arg-type]
             snapshot = build_provider_request_snapshot(request, self._capture_policy)
             span.set_attributes(
@@ -239,12 +255,10 @@ class InstrumentedProviderRequestBuilder:
 
         if self._capture_policy.mode == "metadata":
             return {
-                "system_length": snapshot.system_length,
-                "system_sha256": snapshot.system_sha256,
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "system_chars": snapshot.system_length,
                 "message_count": snapshot.message_count,
-                "messages_sha256": snapshot.messages_sha256,
                 "tool_count": snapshot.tool_count,
-                "tools_sha256": snapshot.tools_sha256,
             }
         return {
             "system": snapshot.system,
@@ -261,11 +275,13 @@ class InstrumentedCompressionRuntime:
         inner: object,
         *,
         tracer: Tracer,
+        capture_policy: CapturePolicy,
     ) -> None:
         """保存被包装 compression runtime。"""
 
         self._inner = inner
         self._tracer = tracer
+        self._capture_policy = capture_policy
 
     def maybe_compress(self) -> object:
         """执行压缩检查，并记录 compression span。"""
@@ -274,6 +290,11 @@ class InstrumentedCompressionRuntime:
             "compression.maybe_compress",
             attributes={LANGFUSE_OBSERVATION_TYPE: "span"},
         ) as span:
+            apply_common_observability_attributes(
+                span,
+                tracer=self._tracer,
+                capture_policy=self._capture_policy,
+            )
             result = self._inner.maybe_compress()
             span.set_attribute("agentos.compression.executed", result is not None)
             if result is not None and getattr(result, "id", None) is not None:
@@ -314,6 +335,11 @@ class InstrumentedToolCallRouter:
                 "agentos.tool.arguments.sha256": call_snapshot.arguments_sha256,
             },
         ) as span:
+            apply_common_observability_attributes(
+                span,
+                tracer=self._tracer,
+                capture_policy=self._capture_policy,
+            )
             span.set_attribute(
                 LANGFUSE_OBSERVATION_INPUT,
                 json_attribute(
@@ -364,7 +390,10 @@ class InstrumentedToolCallRouter:
         """返回 tool span input payload。"""
 
         if self._capture_policy.mode == "metadata":
-            return {"arguments_sha256": snapshot.arguments_sha256}
+            return {
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "arguments_hidden": True,
+            }
         return {"arguments": snapshot.arguments}
 
     def _tool_output_payload(self, snapshot: ToolResultSnapshot) -> dict[str, object]:
@@ -372,8 +401,8 @@ class InstrumentedToolCallRouter:
 
         if self._capture_policy.mode == "metadata":
             return {
-                "content_length": snapshot.content_length,
-                "content_sha256": snapshot.content_sha256,
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "content_chars": snapshot.content_length,
             }
         return {"content": snapshot.content}
 
@@ -404,6 +433,9 @@ class InstrumentedQueryLoop:
             "agentos.turn.max_tool_iterations": self._inner.max_tool_iterations,
             "agentos.user_input.length": len(user_message),
         }
+        observability_context = current_observability_context()
+        session_id = None
+        turn_id = None
         if self._inner.session_state is not None:
             session_id = self._inner.session_state.id
             turn_id = f"turn_{self._inner.session_state.next_turn_number()}"
@@ -411,23 +443,45 @@ class InstrumentedQueryLoop:
             attributes["agentos.session.id"] = session_id
             attributes["agentos.turn.id"] = turn_id
 
-        with self._tracer.start_span("agent.turn", attributes=attributes) as span:
-            input_payload = self._turn_input_payload(user_message)
-            input_attribute = json_attribute(
-                input_payload,
-                policy=self._capture_policy,
-            )
-            span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
-            span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
-            response = self._inner.run_turn(user_message)
-            span.set_attribute("agentos.final_response.length", len(response))
-            output_attribute = json_attribute(
-                self._turn_output_payload(response),
-                policy=self._capture_policy,
-            )
-            span.set_attribute(LANGFUSE_TRACE_OUTPUT, output_attribute)
-            span.set_attribute(LANGFUSE_OBSERVATION_OUTPUT, output_attribute)
-            return response
+        with use_default_trace_propagator(self._tracer):
+            with self._tracer.use_incoming_headers(
+                observability_context.incoming_headers,
+            ):
+                with use_runtime_trace_context(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                ):
+                    with self._tracer.start_span(
+                        "agent.turn",
+                        attributes=attributes,
+                    ) as span:
+                        apply_common_observability_attributes(
+                            span,
+                            tracer=self._tracer,
+                            capture_policy=self._capture_policy,
+                            context=observability_context,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                        )
+                        input_payload = self._turn_input_payload(user_message)
+                        input_attribute = json_attribute(
+                            input_payload,
+                            policy=self._capture_policy,
+                        )
+                        span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
+                        span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
+                        response = self._inner.run_turn(user_message)
+                        span.set_attribute(
+                            "agentos.final_response.length",
+                            len(response),
+                        )
+                        output_attribute = json_attribute(
+                            self._turn_output_payload(response),
+                            policy=self._capture_policy,
+                        )
+                        span.set_attribute(LANGFUSE_TRACE_OUTPUT, output_attribute)
+                        span.set_attribute(LANGFUSE_OBSERVATION_OUTPUT, output_attribute)
+                        return response
 
     def build_request(self) -> ProviderRequest:
         """透传 build_request，供测试和高级调用者使用。"""
@@ -439,8 +493,8 @@ class InstrumentedQueryLoop:
 
         if self._capture_policy.mode == "metadata":
             return {
-                "user_message_length": len(user_message),
-                "user_message_sha256": stable_sha256(user_message),
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "user_message_chars": len(user_message),
             }
         return {"user_message": user_message}
 
@@ -449,7 +503,7 @@ class InstrumentedQueryLoop:
 
         if self._capture_policy.mode == "metadata":
             return {
-                "content_length": len(response),
-                "content_sha256": stable_sha256(response),
+                **metadata_identity_payload(capture_policy=self._capture_policy),
+                "content_chars": len(response),
             }
         return {"content": response}

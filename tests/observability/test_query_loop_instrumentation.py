@@ -3,7 +3,12 @@ from pathlib import Path
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
 from agentos.messages import MessageRuntime
-from agentos.observability import CapturePolicy, InMemoryTracer, ObservabilityConfig
+from agentos.observability import (
+    CapturePolicy,
+    InMemoryTracer,
+    ObservabilityConfig,
+    use_observability_context,
+)
 from agentos.observability.instrument import instrument_query_loop
 from agentos.observability.instrumented import InstrumentedQueryLoop
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
@@ -131,10 +136,12 @@ def test_instrument_query_loop_metadata_mode_records_trace_input_output_summarie
     instrumented.run_turn("读取项目名")
 
     root = tracer.records[0]
-    assert "user_message_length" in str(root.attributes["langfuse.trace.input"])
-    assert "content_length" in str(root.attributes["langfuse.trace.output"])
-    assert "user_message_length" in str(root.attributes["langfuse.observation.input"])
-    assert "content_length" in str(root.attributes["langfuse.observation.output"])
+    assert "user_message_chars" in str(root.attributes["langfuse.trace.input"])
+    assert "sha256" not in str(root.attributes["langfuse.trace.input"])
+    assert "content_chars" in str(root.attributes["langfuse.trace.output"])
+    assert "sha256" not in str(root.attributes["langfuse.trace.output"])
+    assert "user_message_chars" in str(root.attributes["langfuse.observation.input"])
+    assert "content_chars" in str(root.attributes["langfuse.observation.output"])
     assert "读取项目名" not in str(root.attributes["langfuse.trace.input"])
     assert "项目名是 agent-os。" not in str(root.attributes["langfuse.trace.output"])
 
@@ -177,3 +184,56 @@ def test_instrument_query_loop_does_not_mutate_original_loop(tmp_path: Path) -> 
     assert loop.request_builder is original_builder
     assert loop.tool_call_router is original_router
     assert loop.compression_runtime is original_compression
+
+
+def test_query_loop_records_trace_session_turn_and_user_metadata_on_all_spans(tmp_path: Path) -> None:
+    loop, _, _ = _build_loop(tmp_path)
+    tracer = InMemoryTracer()
+    instrumented = instrument_query_loop(
+        loop,
+        ObservabilityConfig(
+            tracer=tracer,
+            capture_policy=CapturePolicy.metadata_only(),
+        ),
+    )
+
+    with use_observability_context(user_id="u_1"):
+        instrumented.run_turn("读取项目名")
+
+    root_trace_id = tracer.records[0].attributes["agentos.trace.id"]
+    for record in tracer.records:
+        assert record.attributes["agentos.trace.id"] == root_trace_id
+        assert record.attributes["agentos.session.id"] == "s1"
+        assert record.attributes["agentos.turn.id"] == "turn_1"
+        assert record.attributes["langfuse.session.id"] == "s1"
+        assert record.attributes["session.id"] == "s1"
+        assert record.attributes["langfuse.user.id"] == "u_1"
+        assert record.attributes["user.id"] == "u_1"
+        assert "agentos.user.id" not in record.attributes
+        assert "agentos.span.id" not in record.attributes
+        assert record.attributes["langfuse.trace.metadata.turn_id"] == "turn_1"
+        assert record.attributes["langfuse.trace.metadata.capture_mode"] == "metadata"
+
+
+def test_query_loop_inherits_incoming_traceparent(tmp_path: Path) -> None:
+    loop, _, _ = _build_loop(tmp_path)
+    tracer = InMemoryTracer()
+    incoming_trace_id = "1" * 32
+    instrumented = instrument_query_loop(
+        loop,
+        ObservabilityConfig(
+            tracer=tracer,
+            capture_policy=CapturePolicy.metadata_only(),
+        ),
+    )
+
+    with use_observability_context(
+        incoming_headers={
+            "traceparent": f"00-{incoming_trace_id}-{'2' * 16}-01",
+        },
+    ):
+        instrumented.run_turn("读取项目名")
+
+    assert tracer.records[0].trace_id == incoming_trace_id
+    assert tracer.records[0].attributes["agentos.trace.id"] == incoming_trace_id
+    assert all(record.trace_id == incoming_trace_id for record in tracer.records)

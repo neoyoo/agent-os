@@ -44,6 +44,7 @@ def instrument_query_loop(
         else InstrumentedCompressionRuntime(
             loop.compression_runtime,
             tracer=tracer,
+            capture_policy=capture_policy,
         )
     )
     configured_loop = replace(
