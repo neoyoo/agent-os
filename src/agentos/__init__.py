@@ -2,6 +2,11 @@
 
 from agentos.capabilities import ToolCallRouter
 from agentos.hooks import HookManager
+from agentos.memory import (
+    CompressedSegmentPackage,
+    MemoryRuntime,
+    SegmentRecallDocument,
+)
 from agentos.providers import Provider
 from agentos.runtime import (
     Agent,
@@ -14,11 +19,14 @@ from agentos.runtime import (
 __all__ = [
     "Agent",
     "AgentResult",
+    "CompressedSegmentPackage",
     "HookManager",
+    "MemoryRuntime",
     "Provider",
     "ProviderRequestBuilder",
     "QueryLoop",
     "RunOptions",
+    "SegmentRecallDocument",
     "ToolCallRouter",
     "__version__",
 ]

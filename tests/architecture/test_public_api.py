@@ -124,6 +124,31 @@ def test_phase5_phase6_public_api_exports() -> None:
     assert observability.EventSubscriber is events.EventSubscriber
 
 
+def test_phase7_memory_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    memory = importlib.import_module("agentos.memory")
+
+    for name in [
+        "CompressedSegmentPackage",
+        "DurableSessionStore",
+        "HotSessionState",
+        "HotSessionStore",
+        "MemoryRuntime",
+        "RecallCandidate",
+        "RecallIndex",
+        "SegmentRecallDocument",
+        "TextEmbeddingProvider",
+    ]:
+        assert hasattr(memory, name)
+
+    for name in [
+        "CompressedSegmentPackage",
+        "MemoryRuntime",
+        "SegmentRecallDocument",
+    ]:
+        assert hasattr(agentos, name)
+
+
 def test_no_public_snake_case_package_alias() -> None:
     legacy_snake_name = "agent" + "_os"
 
