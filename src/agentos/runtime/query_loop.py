@@ -1,10 +1,23 @@
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextState
 from agentos.messages import MessageRuntime, ToolCall
-from agentos.providers import ProviderRequest, ProviderResponse, Provider
+from agentos.providers import (
+    Provider,
+    ProviderContentDelta,
+    ProviderRequest,
+    ProviderResponse,
+    ProviderStreamCancelled,
+    ProviderStreamCompleted,
+    ProviderStreamEvent,
+    ProviderStreamFailed,
+    ProviderStreamOptions,
+    ProviderThinkingDelta,
+    complete_response_to_stream_events,
+)
 from agentos.runtime.event_bus import (
     AssistantMessageAppendedEvent,
     EventBus,
@@ -22,6 +35,16 @@ from agentos.runtime.event_bus import (
 )
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.session import SessionState
+from agentos.runtime.stream_events import (
+    AssistantCompleted,
+    AssistantContentDelta,
+    AssistantThinkingDelta,
+    RunOptions,
+    TurnStreamCompleted,
+    TurnStreamEvent,
+    TurnStreamFailed,
+    TurnStreamStarted,
+)
 from agentos.runtime.turn import TurnState
 
 
@@ -52,6 +75,7 @@ class QueryLoop:
     event_bus: EventBus | None = None
     session_state: SessionState | None = None
     max_tool_iterations: int = 8
+    _provider_stream_counter: int = field(default=0, init=False, repr=False)
 
     def build_request(self) -> ProviderRequest:
         """构建下一次 provider request，并在请求前执行窗口压缩。"""
@@ -62,6 +86,13 @@ class QueryLoop:
 
     def run_turn(self, user_message: str) -> str:
         """运行一轮 user -> provider -> assistant。"""
+
+        if self.tool_call_router is None:
+            final_content = ""
+            for event in self.run_turn_stream(user_message):
+                if isinstance(event, TurnStreamCompleted):
+                    final_content = event.content
+            return final_content
 
         turn = self._start_turn(user_message)
         user = self.message_runtime.append_user(user_message)
@@ -89,6 +120,46 @@ class QueryLoop:
             turn.complete()
         self._emit(TurnCompletedEvent(**self._event_context(turn)))
         return response_content
+
+    def run_turn_stream(
+        self,
+        user_message: str,
+        options: RunOptions | None = None,
+    ) -> Iterator[TurnStreamEvent]:
+        """运行一轮 user -> provider -> assistant，并产出 typed stream events。"""
+
+        run_options = options or RunOptions()
+        turn = self._start_turn(user_message)
+        user = self.message_runtime.append_user(user_message)
+        self._emit(
+            UserMessageAppendedEvent(
+                message_id=user.id,
+                **self._event_context(turn),
+            ),
+        )
+        yield TurnStreamStarted(user_message=user_message)
+
+        try:
+            response_content = yield from self._run_provider_loop_stream(
+                turn,
+                run_options,
+            )
+        except Exception as error:
+            if turn is not None:
+                turn.fail(str(error))
+            self._emit(
+                TurnFailedEvent(
+                    error=str(error),
+                    **self._event_context(turn),
+                ),
+            )
+            yield TurnStreamFailed(error=error)
+            raise
+
+        if turn is not None:
+            turn.complete()
+        self._emit(TurnCompletedEvent(**self._event_context(turn)))
+        yield TurnStreamCompleted(content=response_content)
 
     def _run_provider_loop(self, turn: TurnState | None) -> str:
         """执行 provider 请求，直到返回 final assistant response。"""
@@ -173,6 +244,82 @@ class QueryLoop:
                         **self._event_context(turn),
                     ),
                 )
+
+    def _run_provider_loop_stream(
+        self,
+        turn: TurnState | None,
+        options: RunOptions,
+    ) -> Iterator[TurnStreamEvent]:
+        """执行无工具 provider streaming loop，直到得到最终 assistant response。"""
+
+        request = self.build_request()
+        self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
+        response: ProviderResponse | None = None
+        provider_options = ProviderStreamOptions(
+            thinking=options.thinking,
+            show_thinking=options.show_thinking,
+        )
+
+        for event in self._provider_stream_events(request, provider_options):
+            if isinstance(event, ProviderContentDelta):
+                yield AssistantContentDelta(index=event.index, text=event.text)
+            elif isinstance(event, ProviderThinkingDelta):
+                if options.show_thinking:
+                    yield AssistantThinkingDelta(index=event.index, text=event.text)
+            elif isinstance(event, ProviderStreamCompleted):
+                response = event.response
+                yield event
+            elif isinstance(event, ProviderStreamFailed):
+                yield event
+                raise event.error
+            elif isinstance(event, ProviderStreamCancelled):
+                yield event
+                raise RuntimeError(event.reason or "provider stream was cancelled")
+            else:
+                yield event
+
+        if response is None:
+            raise RuntimeError("provider stream ended without completion event")
+
+        self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
+        self._ensure_provider_response_usable(response)
+        if response.tool_calls:
+            raise RuntimeError("streaming tool calls are implemented in Task 4")
+
+        assistant = self.message_runtime.append_assistant(response.content)
+        self._emit(
+            AssistantMessageAppendedEvent(
+                message_id=assistant.id,
+                **self._event_context(turn),
+            ),
+        )
+        yield AssistantCompleted(response=response)
+        return response.content
+
+    def _provider_stream_events(
+        self,
+        request: ProviderRequest,
+        options: ProviderStreamOptions,
+    ) -> Iterator[ProviderStreamEvent]:
+        """返回 provider stream events，必要时使用 complete fallback。"""
+
+        stream = getattr(self.provider, "stream", None)
+        if callable(stream):
+            yield from stream(request, options)
+            return
+
+        response = self.provider.complete(request)
+        yield from complete_response_to_stream_events(
+            request_id=self._next_provider_stream_request_id(),
+            response=response,
+            options=options,
+        )
+
+    def _next_provider_stream_request_id(self) -> str:
+        """生成 QueryLoop fallback provider stream request id。"""
+
+        self._provider_stream_counter += 1
+        return f"provider_{self._provider_stream_counter}"
 
     def _ensure_provider_response_usable(self, response: ProviderResponse) -> None:
         """拒绝被 provider 截断或拦截的响应，避免伪装成最终答案。"""

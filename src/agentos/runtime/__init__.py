@@ -33,10 +33,24 @@ from agentos.events import (
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.query_loop import QueryLoop
 from agentos.runtime.session import SessionState
+from agentos.runtime.stream_events import (
+    AssistantCompleted,
+    AssistantContentDelta,
+    AssistantThinkingDelta,
+    RunOptions,
+    TurnStreamCancelled,
+    TurnStreamCompleted,
+    TurnStreamEvent,
+    TurnStreamFailed,
+    TurnStreamStarted,
+)
 from agentos.runtime.turn import TurnState
 
 __all__ = [
+    "AssistantCompleted",
+    "AssistantContentDelta",
     "AssistantMessageAppendedEvent",
+    "AssistantThinkingDelta",
     "ChapterStartedEvent",
     "CompressedSegmentAppendedEvent",
     "CompressionCompletedEvent",
@@ -49,6 +63,7 @@ __all__ = [
     "ProviderRequestBuiltEvent",
     "ProviderResponseReceivedEvent",
     "QueryLoop",
+    "RunOptions",
     "AgentEvent",
     "RecallContextFailedEvent",
     "RecallContextInjectedEvent",
@@ -62,6 +77,11 @@ __all__ = [
     "ToolResultAppendedEvent",
     "TurnCompletedEvent",
     "TurnFailedEvent",
+    "TurnStreamCancelled",
+    "TurnStreamCompleted",
+    "TurnStreamEvent",
+    "TurnStreamFailed",
+    "TurnStreamStarted",
     "TurnStartedEvent",
     "TurnState",
     "UserMessageAppendedEvent",
