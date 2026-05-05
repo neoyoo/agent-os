@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import asdict
+from time import monotonic
 
 from agentos.capabilities import ToolCallRouter
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
@@ -10,12 +12,17 @@ from agentos.observability.attributes import (
 )
 from agentos.observability.config import CapturePolicy, json_attribute
 from agentos.observability.conventions import (
+    AGENTOS_STREAM_CONTENT_DELTA,
+    AGENTOS_STREAM_THINKING_DELTA,
+    AGENTOS_STREAM_TOOL_CALL_DELTA,
     GEN_AI_OPERATION_NAME,
     GEN_AI_PROVIDER_NAME,
     GEN_AI_REQUEST_MODEL,
+    GEN_AI_REQUEST_STREAM,
     GEN_AI_RESPONSE_FINISH_REASONS,
     GEN_AI_RESPONSE_ID,
     GEN_AI_RESPONSE_MODEL,
+    GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK,
     GEN_AI_TOOL_CALL_ID,
     GEN_AI_TOOL_NAME,
     GEN_AI_USAGE_INPUT_TOKENS,
@@ -49,10 +56,18 @@ from agentos.observability.snapshots import (
 from agentos.observability.tracer import Tracer
 from agentos.providers import (
     Provider,
+    ProviderContentDelta,
     ProviderRequest,
     ProviderResponse,
+    ProviderStreamCompleted,
+    ProviderStreamEvent,
+    ProviderStreamOptions,
+    ProviderStreamStarted,
+    ProviderThinkingDelta,
     ProviderToolCall,
+    ProviderToolCallDelta,
     ProviderUsage,
+    complete_response_to_stream_events,
 )
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
 
@@ -145,6 +160,117 @@ class InstrumentedProvider:
             )
             return response
 
+    def stream(
+        self,
+        request: ProviderRequest,
+        options: ProviderStreamOptions | None = None,
+    ) -> Iterator[ProviderStreamEvent]:
+        """调用 provider stream，并记录完整 streaming 生命周期 span。"""
+
+        request_snapshot = build_provider_request_snapshot(
+            request,
+            self._capture_policy,
+        )
+        started_at = monotonic()
+        first_chunk_at: float | None = None
+        content_delta_count = 0
+        content_char_count = 0
+        thinking_delta_count = 0
+        thinking_char_count = 0
+        tool_delta_count = 0
+
+        with self._tracer.start_span(
+            "provider.stream",
+            attributes={
+                LANGFUSE_OBSERVATION_TYPE: "generation",
+                GEN_AI_OPERATION_NAME: "chat",
+                GEN_AI_REQUEST_STREAM: True,
+                "agentos.provider_request.system.length": request_snapshot.system_length,
+                "agentos.provider_request.messages.count": request_snapshot.message_count,
+                "agentos.provider_request.tools.count": request_snapshot.tool_count,
+                "agentos.provider_request.system.sha256": request_snapshot.system_sha256,
+                "agentos.provider_request.messages.sha256": request_snapshot.messages_sha256,
+                "agentos.provider_request.tools.sha256": request_snapshot.tools_sha256,
+            },
+        ) as span:
+            apply_common_observability_attributes(
+                span,
+                tracer=self._tracer,
+                capture_policy=self._capture_policy,
+            )
+            span.set_attribute(
+                LANGFUSE_OBSERVATION_INPUT,
+                json_attribute(
+                    self._provider_input_payload(request_snapshot),
+                    policy=self._capture_policy,
+                ),
+            )
+            try:
+                for event in self._inner_stream(request, options):
+                    if (
+                        first_chunk_at is None
+                        and not isinstance(
+                            event,
+                            (ProviderStreamStarted, ProviderStreamCompleted),
+                        )
+                    ):
+                        first_chunk_at = monotonic()
+                    if isinstance(event, ProviderContentDelta):
+                        content_delta_count += 1
+                        content_char_count += len(event.text)
+                        self._record_stream_event(
+                            span,
+                            AGENTOS_STREAM_CONTENT_DELTA,
+                            sequence=event.index,
+                            char_count=len(event.text),
+                            text=event.text,
+                        )
+                    elif isinstance(event, ProviderThinkingDelta):
+                        thinking_delta_count += 1
+                        thinking_char_count += len(event.text)
+                        self._record_stream_event(
+                            span,
+                            AGENTOS_STREAM_THINKING_DELTA,
+                            sequence=event.index,
+                            char_count=len(event.text),
+                            text=event.text,
+                        )
+                    elif isinstance(event, ProviderToolCallDelta):
+                        tool_delta_count += 1
+                        self._record_stream_event(
+                            span,
+                            AGENTOS_STREAM_TOOL_CALL_DELTA,
+                            sequence=event.index,
+                            char_count=len(event.arguments_delta or ""),
+                            text=event.arguments_delta or "",
+                        )
+                    elif isinstance(event, ProviderStreamCompleted):
+                        response_snapshot = build_provider_response_snapshot(
+                            event.response,
+                            self._capture_policy,
+                        )
+                        self._set_stream_response_attributes(
+                            span,
+                            response_snapshot,
+                            event.stop_reason,
+                            first_chunk_at,
+                            started_at,
+                            content_delta_count,
+                            content_char_count,
+                            thinking_delta_count,
+                            thinking_char_count,
+                            tool_delta_count,
+                        )
+                    yield event
+            except Exception as error:
+                span.set_status("error", str(error))
+                span.set_attribute("agentos.stream.partial", True)
+                span.set_attribute(
+                    "agentos.stream.content.char_count",
+                    content_char_count,
+                )
+                raise
+
     def _provider_input_payload(
         self,
         snapshot: ProviderRequestSnapshot,
@@ -179,6 +305,7 @@ class InstrumentedProvider:
             }
         return {
             "content": snapshot.content,
+            "thinking_content": snapshot.thinking_content,
             "tool_calls": [
                 asdict(tool_call)
                 for tool_call in snapshot.tool_calls
@@ -198,6 +325,97 @@ class InstrumentedProvider:
         span.set_attribute(
             LANGFUSE_OBSERVATION_USAGE_DETAILS,
             json_attribute(values, policy=self._capture_policy),
+        )
+
+    def _inner_stream(
+        self,
+        request: ProviderRequest,
+        options: ProviderStreamOptions | None,
+    ) -> Iterator[ProviderStreamEvent]:
+        """返回 inner provider stream，必要时使用 complete fallback。"""
+
+        stream = getattr(self._inner, "stream", None)
+        if callable(stream):
+            yield from stream(request, options)
+            return
+        response = self._inner.complete(request)
+        yield from complete_response_to_stream_events(
+            request_id="provider_1",
+            response=response,
+            options=options,
+        )
+
+    def _record_stream_event(
+        self,
+        span: object,
+        name: str,
+        *,
+        sequence: int,
+        char_count: int,
+        text: str,
+    ) -> None:
+        """按 capture policy 记录低容量 stream span event。"""
+
+        if not self._capture_policy.capture_stream_deltas:
+            return
+        attributes: dict[str, object] = {
+            "sequence": sequence,
+            "char_count": char_count,
+        }
+        if self._capture_policy.capture_stream_delta_text:
+            attributes["text"] = text[: self._capture_policy.max_string_length]
+        span.add_event(name, attributes)
+
+    def _set_stream_response_attributes(
+        self,
+        span: object,
+        snapshot: ProviderResponseSnapshot,
+        stop_reason: str | None,
+        first_chunk_at: float | None,
+        started_at: float,
+        content_delta_count: int,
+        content_char_count: int,
+        thinking_delta_count: int,
+        thinking_char_count: int,
+        tool_delta_count: int,
+    ) -> None:
+        """stream terminal event 后写 response attributes。"""
+
+        provider_name = snapshot.provider_name or "unknown"
+        model = snapshot.model or "unknown"
+        span.set_attributes(
+            {
+                GEN_AI_PROVIDER_NAME: provider_name,
+                GEN_AI_REQUEST_MODEL: model,
+                GEN_AI_RESPONSE_MODEL: model,
+                LANGFUSE_OBSERVATION_MODEL_NAME: model,
+                GEN_AI_RESPONSE_FINISH_REASONS: (
+                    [] if stop_reason is None else [stop_reason]
+                ),
+                "agentos.stream.content.delta_count": content_delta_count,
+                "agentos.stream.content.char_count": content_char_count,
+                "agentos.stream.thinking.delta_count": thinking_delta_count,
+                "agentos.stream.thinking.char_count": thinking_char_count,
+                "agentos.stream.tool_call.delta_count": tool_delta_count,
+                "agentos.provider.tool_call_count": len(snapshot.tool_calls),
+            },
+        )
+        if first_chunk_at is not None:
+            span.set_attribute(
+                GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK,
+                first_chunk_at - started_at,
+            )
+        if snapshot.response_id is not None:
+            span.set_attribute(GEN_AI_RESPONSE_ID, snapshot.response_id)
+            span.set_attribute("agentos.provider.response_id", snapshot.response_id)
+        if snapshot.usage is not None:
+            self._set_usage_attributes(span, snapshot.usage)
+        span.set_attribute(
+            LANGFUSE_OBSERVATION_OUTPUT,
+            json_attribute(
+                self._provider_output_payload(snapshot),
+                policy=self._capture_policy,
+            ),
         )
 
 

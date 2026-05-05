@@ -97,11 +97,11 @@ def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> No
         "agent.turn",
         "compression.maybe_compress",
         "provider.request.build",
-        "provider.complete",
+        "provider.stream",
         "tool.read_file",
         "compression.maybe_compress",
         "provider.request.build",
-        "provider.complete",
+        "provider.stream",
     ]
     root = tracer.records[0]
     assert root.parent_span_id is None
