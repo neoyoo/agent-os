@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence
+from typing import TYPE_CHECKING, Protocol, Sequence
 
 from agentos.context import CompressedSegment
 from agentos.memory.types import CompressedSegmentPackage, HotSessionState
 from agentos.messages import Message, MessageRef
-from agentos.runtime.session import SessionState
+
+if TYPE_CHECKING:
+    from agentos.runtime.session import SessionState
 
 
 class HotSessionStore(Protocol):
@@ -56,10 +58,10 @@ class HotSessionStore(Protocol):
 class DurableSessionStore(Protocol):
     """长期 session 真值源存储边界。"""
 
-    def save_session(self, session: SessionState) -> None:
+    def save_session(self, session: "SessionState") -> None:
         """保存 session state。"""
 
-    def load_session(self, session_id: str) -> SessionState:
+    def load_session(self, session_id: str) -> "SessionState":
         """读取 session state。"""
 
     def append_message(self, session_id: str, message: Message) -> None:
