@@ -41,15 +41,13 @@ def test_query_loop_streams_content_and_completes_turn() -> None:
 
     assert [type(event).__name__ for event in events] == [
         "TurnStreamStarted",
-        "ProviderStreamStarted",
         "AssistantContentDelta",
-        "ProviderStreamCompleted",
         "AssistantCompleted",
         "TurnStreamCompleted",
     ]
     assert isinstance(events[0], TurnStreamStarted)
-    assert events[2] == AssistantContentDelta(index=1, text="hello")
-    assert isinstance(events[4], AssistantCompleted)
+    assert events[1] == AssistantContentDelta(index=1, text="hello")
+    assert isinstance(events[2], AssistantCompleted)
     assert isinstance(events[-1], TurnStreamCompleted)
     assert messages.materialize_provider_messages() == [
         {"role": "user", "content": "hi"},
@@ -103,11 +101,9 @@ def test_query_loop_can_emit_thinking_when_requested() -> None:
 
     assert [type(event).__name__ for event in events] == [
         "TurnStreamStarted",
-        "ProviderStreamStarted",
         "AssistantThinkingDelta",
         "AssistantContentDelta",
-        "ProviderStreamCompleted",
         "AssistantCompleted",
         "TurnStreamCompleted",
     ]
-    assert events[2].text == "private reasoning"
+    assert events[1].text == "private reasoning"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from agentos.runtime.query_loop import QueryLoop
 from agentos.runtime.stream_events import (
@@ -38,7 +38,21 @@ class Agent:
 
         if query_loop is None and query_loop_kwargs is None:
             raise ValueError("query_loop or query_loop_kwargs is required")
-        self.query_loop = query_loop or QueryLoop(**query_loop_kwargs)  # type: ignore[arg-type]
+        if query_loop is not None:
+            self.query_loop = query_loop
+            return
+
+        kwargs = dict(query_loop_kwargs or {})
+        allowed_keys = {field.name for field in fields(QueryLoop) if field.init}
+        unknown_keys = sorted(set(kwargs) - allowed_keys)
+        if unknown_keys:
+            raise ValueError(
+                "unknown query_loop_kwargs: " + ", ".join(unknown_keys),
+            )
+        try:
+            self.query_loop = QueryLoop(**kwargs)
+        except TypeError as error:
+            raise ValueError(f"invalid query_loop_kwargs: {error}") from error
 
     def run(
         self,

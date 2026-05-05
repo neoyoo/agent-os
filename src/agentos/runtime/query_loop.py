@@ -260,15 +260,10 @@ class QueryLoop:
                     yield AssistantThinkingDelta(index=event.index, text=event.text)
             elif isinstance(event, ProviderStreamCompleted):
                 response = event.response
-                yield event
             elif isinstance(event, ProviderStreamFailed):
-                yield event
                 raise event.error
             elif isinstance(event, ProviderStreamCancelled):
-                yield event
                 raise RuntimeError(event.reason or "provider stream was cancelled")
-            else:
-                yield event
 
         if response is None:
             raise RuntimeError("provider stream ended without completion event")

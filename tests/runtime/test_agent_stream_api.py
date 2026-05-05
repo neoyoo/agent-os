@@ -76,3 +76,13 @@ def test_agent_callbacks_receive_specific_delta_events() -> None:
 
     assert result.content == "ok"
     assert deltas == ["ok"]
+
+
+def test_agent_rejects_unknown_query_loop_kwargs() -> None:
+    try:
+        Agent(query_loop_kwargs={"provider": FakeProvider([]), "bad_key": object()})
+    except ValueError as error:
+        assert "unknown query_loop_kwargs" in str(error)
+        assert "bad_key" in str(error)
+    else:
+        raise AssertionError("Expected ValueError")

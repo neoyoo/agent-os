@@ -3,7 +3,9 @@ import json
 from agentos.runtime import (
     AssistantContentDelta,
     AssistantThinkingDelta,
+    ToolStreamFailed,
     ToolStreamStarted,
+    TurnStreamFailed,
     TurnStreamCompleted,
     event_to_json,
     event_to_sse,
@@ -53,3 +55,25 @@ def test_event_to_json_serializes_event_type() -> None:
         "index": 1,
         "text": "hello",
     }
+
+
+def test_event_to_json_serializes_tool_failure_error_message() -> None:
+    payload = json.loads(
+        event_to_json(
+            ToolStreamFailed(
+                tool_name="read_file",
+                tool_call_id="call_1",
+                error=RuntimeError("permission denied"),
+            ),
+        ),
+    )
+
+    assert payload["type"] == "tool_failed"
+    assert payload["error"] == "permission denied"
+
+
+def test_event_to_sse_serializes_turn_failure_error_message() -> None:
+    chunk = event_to_sse(TurnStreamFailed(error=RuntimeError("provider failed")))
+
+    assert chunk is not None
+    assert json.loads(chunk.split("data: ", 1)[1])["error"] == "provider failed"

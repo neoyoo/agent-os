@@ -36,11 +36,13 @@ def event_payload(event: object) -> dict[str, object]:
 
     if not is_dataclass(event):
         return {}
-    return {
-        key: value
-        for key, value in asdict(event).items()
-        if isinstance(value, (str, int, float, bool, type(None), list, dict))
-    }
+    payload: dict[str, object] = {}
+    for key, value in asdict(event).items():
+        if isinstance(value, BaseException):
+            payload[key] = str(value)
+        elif isinstance(value, (str, int, float, bool, type(None), list, dict)):
+            payload[key] = value
+    return payload
 
 
 def event_to_json(event: object, *, show_thinking: bool = True) -> str | None:

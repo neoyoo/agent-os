@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from agentos.providers import ProviderResponse, ProviderStreamEvent
+from agentos.providers import ProviderResponse
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,5 +102,4 @@ TurnStreamEvent: TypeAlias = (
     | TurnStreamCompleted
     | TurnStreamFailed
     | TurnStreamCancelled
-    | ProviderStreamEvent
 )
