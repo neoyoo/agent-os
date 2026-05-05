@@ -45,6 +45,32 @@ class AssistantCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolStreamStarted:
+    """tool execution 已开始。"""
+
+    tool_name: str
+    tool_call_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolStreamCompleted:
+    """tool execution 已完成。"""
+
+    tool_name: str
+    tool_call_id: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolStreamFailed:
+    """tool execution 失败。"""
+
+    tool_name: str
+    tool_call_id: str
+    error: BaseException
+
+
+@dataclass(frozen=True, slots=True)
 class TurnStreamCompleted:
     """agent turn stream 已完成。"""
 
@@ -70,6 +96,9 @@ TurnStreamEvent: TypeAlias = (
     | AssistantContentDelta
     | AssistantThinkingDelta
     | AssistantCompleted
+    | ToolStreamStarted
+    | ToolStreamCompleted
+    | ToolStreamFailed
     | TurnStreamCompleted
     | TurnStreamFailed
     | TurnStreamCancelled
