@@ -46,6 +46,9 @@ class ProviderResponseSnapshot:
     content: str | None
     content_length: int
     content_sha256: str
+    thinking_content: str | None
+    thinking_length: int
+    thinking_sha256: str
     tool_calls: tuple[ToolCallSnapshot, ...]
     stop_reason: str | None
     usage: ProviderUsage | None
@@ -113,6 +116,7 @@ def build_provider_response_snapshot(
 ) -> ProviderResponseSnapshot:
     """基于 capture policy 构造 ProviderResponseSnapshot。"""
 
+    thinking_content = response.thinking_content or ""
     return ProviderResponseSnapshot(
         content=(
             _captured_string(response.content, policy)
@@ -121,6 +125,13 @@ def build_provider_response_snapshot(
         ),
         content_length=len(response.content),
         content_sha256=stable_sha256(response.content),
+        thinking_content=(
+            _captured_string(thinking_content, policy)
+            if policy.capture_thinking and thinking_content
+            else None
+        ),
+        thinking_length=len(thinking_content),
+        thinking_sha256=stable_sha256(thinking_content),
         tool_calls=tuple(
             build_tool_call_snapshot(tool_call, policy)
             for tool_call in response.tool_calls

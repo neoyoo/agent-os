@@ -55,3 +55,19 @@ def test_default_redactor_masks_private_key_blocks() -> None:
     value = "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
 
     assert default_redactor(value) == "[REDACTED]"
+
+
+def test_capture_policy_defaults_do_not_capture_thinking_or_delta_text() -> None:
+    policy = CapturePolicy.metadata_only()
+
+    assert policy.capture_thinking is False
+    assert policy.capture_stream_deltas is False
+    assert policy.capture_stream_delta_text is False
+
+
+def test_full_local_capture_includes_thinking_and_delta_text() -> None:
+    policy = CapturePolicy.full_for_local_development()
+
+    assert policy.capture_thinking is True
+    assert policy.capture_stream_deltas is True
+    assert policy.capture_stream_delta_text is True

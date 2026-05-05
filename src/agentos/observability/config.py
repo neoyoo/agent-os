@@ -56,6 +56,10 @@ class CapturePolicy:
     capture_provider_output: bool = False
     capture_tool_arguments: bool = False
     capture_tool_result: bool = False
+    capture_thinking: bool = False
+    capture_stream_deltas: bool = False
+    capture_stream_delta_text: bool = False
+    max_stream_delta_events: int = 200
     max_string_length: int = 4000
     redactor: Redactor = default_redactor
 
@@ -82,6 +86,9 @@ class CapturePolicy:
             capture_provider_output=True,
             capture_tool_arguments=True,
             capture_tool_result=True,
+            capture_thinking=False,
+            capture_stream_deltas=True,
+            capture_stream_delta_text=False,
             max_string_length=max_string_length,
             redactor=redactor,
         )
@@ -102,6 +109,9 @@ class CapturePolicy:
             capture_provider_output=True,
             capture_tool_arguments=True,
             capture_tool_result=True,
+            capture_thinking=True,
+            capture_stream_deltas=True,
+            capture_stream_delta_text=True,
             max_string_length=max_string_length,
         )
 

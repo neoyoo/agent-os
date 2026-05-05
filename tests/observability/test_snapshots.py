@@ -112,3 +112,23 @@ def test_tool_snapshots_respect_capture_policy() -> None:
 
 def test_stable_sha256_is_independent_of_dict_ordering() -> None:
     assert stable_sha256({"a": 1, "b": 2}) == stable_sha256({"b": 2, "a": 1})
+
+
+def test_response_snapshot_hides_thinking_by_default() -> None:
+    snapshot = build_provider_response_snapshot(
+        ProviderResponse(content="answer", thinking_content="secret"),
+        CapturePolicy.metadata_only(),
+    )
+
+    assert snapshot.thinking_content is None
+    assert snapshot.thinking_length == 6
+
+
+def test_response_snapshot_captures_thinking_in_full_mode() -> None:
+    snapshot = build_provider_response_snapshot(
+        ProviderResponse(content="answer", thinking_content="secret"),
+        CapturePolicy.full_for_local_development(),
+    )
+
+    assert snapshot.thinking_content == "secret"
+    assert snapshot.thinking_length == 6
