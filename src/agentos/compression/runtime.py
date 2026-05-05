@@ -7,6 +7,8 @@ from agentos.compression.compressor import Compressor, RuleBasedCompressor
 from agentos.compression.evictor import Evictor
 from agentos.compression.index import CompressionIndex
 from agentos.context import CompressedSegment
+from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
+from agentos.messages import Message
 from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy
 
@@ -23,6 +25,16 @@ class CompressionContextBoundary(Protocol):
         """把压缩片段追加到 context 投影。"""
 
 
+class CompressionMemorySink(Protocol):
+    """CompressionRuntime 写入 memory recall 的边界。"""
+
+    def record_compressed_segment(
+        self,
+        package: CompressedSegmentPackage,
+    ) -> None:
+        """记录 compression package。"""
+
+
 @dataclass(slots=True, init=False)
 class CompressionRuntime:
     """协调 MessageRuntime、context 边界和压缩索引。"""
@@ -32,6 +44,7 @@ class CompressionRuntime:
     budget_policy: BudgetPolicy
     compressor: Compressor = field(default_factory=RuleBasedCompressor)
     index: CompressionIndex = field(default_factory=CompressionIndex)
+    memory_sink: CompressionMemorySink | None = None
     evictor: Evictor | None = None
     event_bus: EventBus | None = None
     session_id: str | None = None
@@ -45,6 +58,7 @@ class CompressionRuntime:
         budget_policy: BudgetPolicy,
         compressor: Compressor | None = None,
         index: CompressionIndex | None = None,
+        memory_sink: CompressionMemorySink | None = None,
         evictor: Evictor | None = None,
         event_bus: EventBus | None = None,
         session_id: str | None = None,
@@ -58,6 +72,7 @@ class CompressionRuntime:
         self.budget_policy = budget_policy
         self.compressor = compressor if compressor is not None else RuleBasedCompressor()
         self.index = index if index is not None else CompressionIndex()
+        self.memory_sink = memory_sink
         self.evictor = evictor if evictor is not None else Evictor(budget_policy)
         self.event_bus = event_bus
         self.session_id = session_id
@@ -84,7 +99,11 @@ class CompressionRuntime:
             self.message_runtime.store.get(message_id)
             for message_id in selected_message_ids
         ]
-        segment = self.compressor.compress(self._next_segment_id(), source_messages)
+        package = self._compress_package(source_messages)
+        segment = package.segment
+
+        if self.memory_sink is not None:
+            self.memory_sink.record_compressed_segment(package)
 
         self.context_runtime.append_compressed_segment(segment)
         self.index.record(segment.id, selected_message_ids)
@@ -125,6 +144,33 @@ class CompressionRuntime:
         """生成 LLM 可见的稳定 segment handle。"""
 
         return f"seg_{self._next_segment_number}"
+
+    def _compress_package(
+        self,
+        source_messages: list[Message],
+    ) -> CompressedSegmentPackage:
+        """生成 compression package，并兼容旧 Compressor 协议。"""
+
+        segment_id = self._next_segment_id()
+        compress_package = getattr(self.compressor, "compress_package", None)
+        if callable(compress_package):
+            return compress_package(
+                segment_id=segment_id,
+                session_id=self.session_id or "",
+                messages=source_messages,
+            )
+
+        segment = self.compressor.compress(segment_id, source_messages)
+        return CompressedSegmentPackage(
+            segment=segment,
+            source_refs=tuple(message.id for message in source_messages),
+            recall_document=SegmentRecallDocument(
+                session_id=self.session_id or "",
+                segment_id=segment.id,
+                topic=segment.topic,
+                summary=segment.summary,
+            ),
+        )
 
     def _emit(self, event: object) -> None:
         """向 EventBus 写入 compression event。"""
