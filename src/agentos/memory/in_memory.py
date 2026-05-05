@@ -247,8 +247,13 @@ class InMemoryRecallIndex:
     def _tokens(self, text: str) -> set[str]:
         """提取适合开发上下文的简单词法 token。"""
 
-        return {
-            token.lower()
-            for token in re.findall(r"[A-Za-z0-9_./:-]+", text)
-            if token
-        }
+        tokens: set[str] = set()
+        for token in re.findall(r"[A-Za-z0-9_./:-]+", text):
+            lowered = token.lower()
+            tokens.add(lowered)
+            tokens.update(
+                part
+                for part in re.split(r"[._/:-]+", lowered)
+                if part
+            )
+        return tokens

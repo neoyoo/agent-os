@@ -2,6 +2,7 @@
 
 from agentos.memory.embeddings import TextEmbeddingProvider
 from agentos.memory.recall_index import RecallIndex
+from agentos.memory.runtime import MemoryRuntime
 from agentos.memory.store import DurableSessionStore, HotSessionStore
 from agentos.memory.types import (
     CompressedSegmentPackage,
@@ -15,6 +16,7 @@ __all__ = [
     "DurableSessionStore",
     "HotSessionState",
     "HotSessionStore",
+    "MemoryRuntime",
     "RecallCandidate",
     "RecallIndex",
     "SegmentRecallDocument",
