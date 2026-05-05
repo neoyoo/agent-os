@@ -46,6 +46,12 @@ class MessageRuntime:
             self.store.get(message_id)
         self.active_window.prepend_temporary(message_ids)
 
+    def hydrate_messages(self, messages: list[Message]) -> None:
+        """把外部存储召回的原始消息水合进本地 MessageStore。"""
+
+        for message in messages:
+            self.store.put(message)
+
     def has_temporary_recalled(self) -> bool:
         """判断是否存在尚未被 provider request 消费的召回消息。"""
 

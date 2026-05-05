@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agentos.compression import CompressionIndex
+from agentos.memory import MemoryRuntime
 from agentos.messages import Message, MessageRuntime
 
 if TYPE_CHECKING:
@@ -22,12 +23,31 @@ class RecallRuntime:
 
     compression_index: CompressionIndex
     message_runtime: MessageRuntime
+    memory_runtime: MemoryRuntime | None = None
     event_bus: EventBus | None = None
     session_id: str | None = None
     turn_id: str | None = None
 
-    def recall_context(self, handle: str) -> list[Message]:
-        """恢复压缩片段对应的原始消息，并供下一次请求使用。"""
+    def recall_context(
+        self,
+        handle: str | None = None,
+        *,
+        query: str | None = None,
+        limit: int = 1,
+    ) -> list[Message]:
+        """按 handle 或 query 恢复原始消息，并供下一次请求使用。"""
+
+        if (handle is None) == (query is None):
+            raise RecallContextError("provide either handle or query for recall_context")
+        if query is not None:
+            return self._recall_by_query(query=query, limit=limit)
+        if handle is None:
+            raise RecallContextError("provide either handle or query for recall_context")
+
+        return self._recall_by_handle(handle)
+
+    def _recall_by_handle(self, handle: str) -> list[Message]:
+        """按 compressed segment handle 召回。"""
 
         from agentos.runtime.event_bus import RecallContextRequestedEvent
 
@@ -54,7 +74,11 @@ class RecallRuntime:
                 message,
             ) from error
 
-        self.message_runtime.inject_temporary_recalled(source_message_ids)
+        recalled_messages = [
+            self.message_runtime.store.get(message_id)
+            for message_id in source_message_ids
+        ]
+        self._inject_messages(recalled_messages)
         from agentos.runtime.event_bus import RecallContextInjectedEvent
 
         self._emit(
@@ -64,10 +88,49 @@ class RecallRuntime:
                 **self._event_context(),
             ),
         )
-        return [
-            self.message_runtime.store.get(message_id)
-            for message_id in source_message_ids
-        ]
+        return recalled_messages
+
+    def _recall_by_query(self, query: str, limit: int) -> list[Message]:
+        """按 query 检索 recall index 并召回。"""
+
+        if self.memory_runtime is None:
+            raise RecallContextError("memory runtime is required for query recall")
+        if self.session_id is None:
+            raise RecallContextError("session_id is required for query recall")
+
+        event_handle = f"query:{query}"
+        from agentos.runtime.event_bus import RecallContextRequestedEvent
+
+        self._emit(
+            RecallContextRequestedEvent(
+                handle=event_handle,
+                **self._event_context(),
+            ),
+        )
+        recalled_messages = self.memory_runtime.recall_by_query(
+            self.session_id,
+            query,
+            limit,
+        )
+        self._inject_messages(recalled_messages)
+        from agentos.runtime.event_bus import RecallContextInjectedEvent
+
+        self._emit(
+            RecallContextInjectedEvent(
+                handle=event_handle,
+                message_ids=tuple(message.id for message in recalled_messages),
+                **self._event_context(),
+            ),
+        )
+        return recalled_messages
+
+    def _inject_messages(self, messages: list[Message]) -> None:
+        """水合召回消息并注入一次性 refs。"""
+
+        self.message_runtime.hydrate_messages(messages)
+        self.message_runtime.inject_temporary_recalled(
+            [message.id for message in messages],
+        )
 
     def _emit(self, event: object) -> None:
         """向 EventBus 写入 recall event。"""

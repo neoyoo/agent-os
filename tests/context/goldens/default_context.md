@@ -25,7 +25,7 @@
 - Context protocol: `update_state` — 更新一个 working state 字段。
 - Context protocol: `extend_schema` — 当当前 schema 不足时添加字段。
 - Context protocol: `start_chapter` — 当任务发生实质变化时开启新 chapter。
-- Context protocol: `recall_context` — 当压缩摘要不够时恢复对应的压缩片段。
+- Context protocol: `recall_context` — 当压缩摘要不够时，按 handle 或 query 恢复相关压缩片段。
 
 ## MCP servers connected
 

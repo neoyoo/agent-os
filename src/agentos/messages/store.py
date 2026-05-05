@@ -37,6 +37,17 @@ class MessageStore:
                 return message
         raise KeyError(message_id)
 
+    def put(self, message: Message) -> None:
+        """按原始 id 水合一条已存在的消息。"""
+
+        for existing in self._messages:
+            if existing.id == message.id:
+                if existing != message:
+                    raise ValueError(f"message id conflict: {message.id}")
+                return
+        self._messages.append(message)
+        self._advance_next_id(message.id)
+
     def all(self) -> list[Message]:
         """返回全部原始消息副本。"""
 
@@ -62,3 +73,14 @@ class MessageStore:
         message_id = f"msg_{self._next_id}"
         self._next_id += 1
         return message_id
+
+    def _advance_next_id(self, message_id: str) -> None:
+        """根据水合消息 id 推进下一个本地递增 id。"""
+
+        if not message_id.startswith("msg_"):
+            return
+        try:
+            number = int(message_id.removeprefix("msg_"))
+        except ValueError:
+            return
+        self._next_id = max(self._next_id, number + 1)

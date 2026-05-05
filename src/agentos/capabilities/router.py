@@ -103,8 +103,14 @@ class ToolCallRouter:
         if self.recall_runtime is None:
             raise RuntimeError("recall runtime is required for recall_context")
 
+        arguments = tool_call.arguments
+        handle = arguments.get("handle")
+        query = arguments.get("query")
+        limit = int(arguments.get("limit", 1))
         recalled_messages = self.recall_runtime.recall_context(
-            handle=str(tool_call.arguments["handle"]),
+            None if handle is None else str(handle),
+            query=None if query is None else str(query),
+            limit=limit,
         )
         return ToolExecutionResult(
             tool_call_id=tool_call.id,

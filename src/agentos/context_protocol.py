@@ -31,7 +31,7 @@ CONTEXT_PROTOCOL_TOOL_DEFINITIONS = [
     ),
     ContextProtocolToolDefinition(
         name="recall_context",
-        description="当压缩摘要不够时恢复对应的压缩片段。",
+        description="当压缩摘要不够时，按 handle 或 query 恢复相关压缩片段。",
     ),
 ]
 """默认 context protocol tool 的 LLM 可见声明。"""
@@ -140,7 +140,7 @@ _CONTEXT_PROTOCOL_TOOL_SPECS: list[ProviderToolSpec] = [
         "type": "function",
         "function": {
             "name": "recall_context",
-            "description": "当压缩摘要不够时恢复对应的压缩片段。",
+            "description": "当压缩摘要不够时，按 handle 或 query 恢复相关压缩片段。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -148,8 +148,15 @@ _CONTEXT_PROTOCOL_TOOL_SPECS: list[ProviderToolSpec] = [
                         "type": "string",
                         "description": "压缩历史片段 handle，例如 seg_1。",
                     },
+                    "query": {
+                        "type": "string",
+                        "description": "用于检索相关压缩片段的自然语言查询。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "query 召回的最多片段数，默认 1。",
+                    },
                 },
-                "required": ["handle"],
             },
         },
     },

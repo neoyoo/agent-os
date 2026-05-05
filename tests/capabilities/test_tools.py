@@ -3,8 +3,15 @@ import pytest
 from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
 from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
-from agentos.context import ContextRuntime, WorkingStateField
-from agentos.messages import MessageRuntime
+from agentos.context import CompressedSegment, ContextRuntime, WorkingStateField
+from agentos.compression import CompressionIndex
+from agentos.memory import CompressedSegmentPackage, MemoryRuntime, SegmentRecallDocument
+from agentos.memory.in_memory import (
+    InMemoryDurableSessionStore,
+    InMemoryHotSessionStore,
+    InMemoryRecallIndex,
+)
+from agentos.messages import Message, MessageRuntime
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.policies import BudgetPolicy
 from agentos.providers import ProviderToolCall
@@ -275,4 +282,57 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
         "Original detail",
         "Original answer",
         "Current task",
+    ]
+
+
+def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> None:
+    messages = MessageRuntime()
+    durable_store = InMemoryDurableSessionStore()
+    memory_runtime = MemoryRuntime(
+        hot_store=InMemoryHotSessionStore(),
+        durable_store=durable_store,
+        recall_index=InMemoryRecallIndex(),
+    )
+    package = CompressedSegmentPackage(
+        segment=CompressedSegment(
+            id="seg_1",
+            topic="读取 pyproject.toml",
+            summary="项目名是 agent-os。",
+        ),
+        source_refs=("msg_1",),
+        recall_document=SegmentRecallDocument(
+            session_id="session_1",
+            segment_id="seg_1",
+            topic="读取 pyproject.toml",
+            summary="项目名是 agent-os。",
+            keywords=("pyproject.toml", "agent-os"),
+        ),
+    )
+    memory_runtime.record_compressed_segment(package)
+    durable_store.append_message(
+        "session_1",
+        Message(id="msg_1", role="user", content="读取 pyproject.toml"),
+    )
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        recall_runtime=RecallRuntime(
+            compression_index=CompressionIndex(),
+            message_runtime=messages,
+            memory_runtime=memory_runtime,
+            session_id="session_1",
+        ),
+    )
+
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_recall",
+            name="recall_context",
+            arguments={"query": "pyproject 项目名", "limit": 1},
+        ),
+    )
+
+    assert result.tool_call_id == "call_recall"
+    assert "recalled 1 message(s)" in result.content
+    assert [message["content"] for message in messages.materialize_provider_messages()] == [
+        "读取 pyproject.toml",
     ]
