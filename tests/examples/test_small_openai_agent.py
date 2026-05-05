@@ -77,7 +77,7 @@ def test_build_agent_can_enable_observability(tmp_path) -> None:
     assert [record.name for record in tracer.records] == [
         "agent.turn",
         "provider.request.build",
-        "provider.complete",
+        "provider.stream",
     ]
 
 
@@ -219,7 +219,7 @@ def test_main_accepts_observe_langfuse_flag(monkeypatch, capsys) -> None:
     assert [record.name for record in tracer.records] == [
         "agent.turn",
         "provider.request.build",
-        "provider.complete",
+        "provider.stream",
     ]
 
 
@@ -248,3 +248,47 @@ def test_main_observe_langfuse_uses_agentos_user_id(monkeypatch, capsys) -> None
         assert record.attributes["langfuse.user.id"] == "local_user"
         assert record.attributes["user.id"] == "local_user"
         assert "agentos.user.id" not in record.attributes
+
+
+def test_main_accepts_stream_flag(monkeypatch, capsys) -> None:
+    provider = FakeProvider([ProviderResponse(content="ok")])
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.provider_from_env",
+        lambda: provider,
+    )
+
+    exit_code = main(["--stream", "hello"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "ok" in output
+
+
+def test_main_accepts_stream_json_output(monkeypatch, capsys) -> None:
+    provider = FakeProvider([ProviderResponse(content="ok")])
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.provider_from_env",
+        lambda: provider,
+    )
+
+    exit_code = main(["--stream", "--output-format", "stream-json", "hello"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert '"type":"content_delta"' in output
+    assert '"type":"done"' in output
+
+
+def test_main_accepts_sse_output(monkeypatch, capsys) -> None:
+    provider = FakeProvider([ProviderResponse(content="ok")])
+    monkeypatch.setattr(
+        "agentos.examples.small_openai_agent.provider_from_env",
+        lambda: provider,
+    )
+
+    exit_code = main(["--stream", "--output-format", "sse", "hello"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "event: content_delta" in output
+    assert "event: done" in output

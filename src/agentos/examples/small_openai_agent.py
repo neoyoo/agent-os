@@ -1,6 +1,8 @@
+import argparse
 import json
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
@@ -15,11 +17,25 @@ from agentos.observability import (
 )
 from agentos.providers import (
     OpenAICompatibleProvider,
+    ProviderStreamEvent,
+    ProviderStreamCompleted,
+    ProviderStreamOptions,
     ProviderRequest,
     ProviderResponse,
     Provider,
+    complete_response_to_stream_events,
 )
-from agentos.runtime import QueryLoop, EventBus, ProviderRequestBuilder, SessionState
+from agentos.runtime import (
+    AssistantContentDelta,
+    EventBus,
+    ProviderRequestBuilder,
+    QueryLoop,
+    RunOptions,
+    SessionState,
+    TurnStreamCompleted,
+    event_to_json,
+    event_to_sse,
+)
 
 
 def load_dotenv(env_file: str | Path = ".env") -> None:
@@ -78,7 +94,10 @@ def provider_from_env(env_file: str | Path = ".env") -> OpenAICompatibleProvider
     api_key = _provider_env_value(provider_prefix, "API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY or DEEPSEEK_API_KEY is required")
-    base_url = _provider_env_value(provider_prefix, "BASE_URL") or "https://api.deepseek.com"
+    base_url = (
+        _provider_env_value(provider_prefix, "BASE_URL")
+        or "https://api.deepseek.com"
+    )
     model = _provider_env_value(provider_prefix, "MODEL") or "deepseek-chat"
     thinking = _thinking_from_env(base_url)
     _ensure_non_thinking_model(model, thinking)
@@ -164,6 +183,33 @@ class TracedProvider:
         response = self._provider.complete(request)
         self._print_response(self._request_count, response)
         return response
+
+    def stream(
+        self,
+        request: ProviderRequest,
+        options: ProviderStreamOptions | None = None,
+    ) -> Iterator[ProviderStreamEvent]:
+        """打印请求，并透传 provider streaming events。"""
+
+        self._request_count += 1
+        request_number = self._request_count
+        self._print_request(request_number, request)
+        response: ProviderResponse | None = None
+        stream = getattr(self._provider, "stream", None)
+        if callable(stream):
+            events = stream(request, options)
+        else:
+            events = complete_response_to_stream_events(
+                request_id=f"trace_provider_{request_number}",
+                response=self._provider.complete(request),
+                options=options,
+            )
+        for event in events:
+            if isinstance(event, ProviderStreamCompleted):
+                response = event.response
+            yield event
+        if response is not None:
+            self._print_response(request_number, response)
 
     def _print_request(self, number: int, request: ProviderRequest) -> None:
         """打印一次 provider request，不包含 API key 或 HTTP header。"""
@@ -295,25 +341,38 @@ def _capture_policy_from_env() -> CapturePolicy:
 def main(argv: list[str] | None = None) -> int:
     """运行小型 OpenAI-compatible agent。"""
 
-    args = list(sys.argv[1:] if argv is None else argv)
-    trace = "--trace" in args
-    observe_langfuse = "--observe-langfuse" in args
-    args = [
-        arg
-        for arg in args
-        if arg not in {"--trace", "--observe-langfuse"}
-    ]
+    parser = argparse.ArgumentParser(prog="agent-os-small-agent")
+    parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--observe-langfuse", action="store_true")
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream typed output events.",
+    )
+    parser.add_argument(
+        "--show-thinking",
+        action="store_true",
+        help="Show provider thinking/reasoning deltas when available.",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["text", "stream-json", "sse"],
+        default="text",
+        help="Streaming output format.",
+    )
+    parser.add_argument("prompt", nargs="*")
+    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     user_message = (
-        " ".join(args)
-        if args
+        " ".join(args.prompt)
+        if args.prompt
         else "读取 pyproject.toml 里的项目名，并用一句话回答。"
     )
     provider: Provider = provider_from_env()
-    if trace:
+    if args.trace:
         provider = traced_provider(provider)
     observability_config = (
         observability_config_from_env()
-        if observe_langfuse
+        if args.observe_langfuse
         else None
     )
     loop = build_agent(
@@ -323,7 +382,33 @@ def main(argv: list[str] | None = None) -> int:
     )
     user_id = os.environ.get("AGENTOS_USER_ID")
     with use_observability_context(user_id=user_id or None):
-        print(loop.run_turn(user_message))
+        if args.stream:
+            stream_options = RunOptions(
+                thinking=args.show_thinking,
+                show_thinking=args.show_thinking,
+            )
+            for event in loop.run_turn_stream(user_message, stream_options):
+                if args.output_format == "text":
+                    if isinstance(event, AssistantContentDelta):
+                        print(event.text, end="", flush=True)
+                    elif isinstance(event, TurnStreamCompleted):
+                        print()
+                elif args.output_format == "stream-json":
+                    payload = event_to_json(
+                        event,
+                        show_thinking=args.show_thinking,
+                    )
+                    if payload is not None:
+                        print(payload)
+                elif args.output_format == "sse":
+                    chunk = event_to_sse(
+                        event,
+                        show_thinking=args.show_thinking,
+                    )
+                    if chunk is not None:
+                        print(chunk, end="")
+        else:
+            print(loop.run_turn(user_message))
     return 0
 
 
