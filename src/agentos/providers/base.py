@@ -48,6 +48,7 @@ class ProviderResponse:
     model: str | None = None
     provider_name: str | None = None
     response_id: str | None = None
+    thinking_content: str | None = None
 
 
 class Provider(Protocol):
