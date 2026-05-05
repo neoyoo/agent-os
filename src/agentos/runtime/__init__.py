@@ -30,6 +30,7 @@ from agentos.events import (
     WorkingStateSchemaExtendedEvent,
     WorkingStateUpdatedEvent,
 )
+from agentos.runtime.agent import Agent, AgentResult
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.query_loop import QueryLoop
 from agentos.runtime.session import SessionState
@@ -47,13 +48,21 @@ from agentos.runtime.stream_events import (
     TurnStreamFailed,
     TurnStreamStarted,
 )
+from agentos.runtime.stream_serializers import (
+    event_payload,
+    event_to_json,
+    event_to_sse,
+    event_type,
+)
 from agentos.runtime.turn import TurnState
 
 __all__ = [
+    "Agent",
     "AssistantCompleted",
     "AssistantContentDelta",
     "AssistantMessageAppendedEvent",
     "AssistantThinkingDelta",
+    "AgentResult",
     "ChapterStartedEvent",
     "CompressedSegmentAppendedEvent",
     "CompressionCompletedEvent",
@@ -94,4 +103,8 @@ __all__ = [
     "WorkingStateSchemaDeclaredEvent",
     "WorkingStateSchemaExtendedEvent",
     "WorkingStateUpdatedEvent",
+    "event_payload",
+    "event_to_json",
+    "event_to_sse",
+    "event_type",
 ]

@@ -3,13 +3,22 @@
 from agentos.capabilities import ToolCallRouter
 from agentos.hooks import HookManager
 from agentos.providers import Provider
-from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime import (
+    Agent,
+    AgentResult,
+    ProviderRequestBuilder,
+    QueryLoop,
+    RunOptions,
+)
 
 __all__ = [
+    "Agent",
+    "AgentResult",
     "HookManager",
     "Provider",
     "ProviderRequestBuilder",
     "QueryLoop",
+    "RunOptions",
     "ToolCallRouter",
     "__version__",
 ]
