@@ -7,6 +7,13 @@ from agentos.memory import (
     MemoryRuntime,
     SegmentRecallDocument,
 )
+from agentos.multi import (
+    AgentCard,
+    AgentCoordinator,
+    AgentInbox,
+    InMemoryRegistry,
+    TaskTable,
+)
 from agentos.providers import Provider
 from agentos.runtime import (
     Agent,
@@ -18,15 +25,20 @@ from agentos.runtime import (
 
 __all__ = [
     "Agent",
+    "AgentCard",
+    "AgentCoordinator",
+    "AgentInbox",
     "AgentResult",
     "CompressedSegmentPackage",
     "HookManager",
+    "InMemoryRegistry",
     "MemoryRuntime",
     "Provider",
     "ProviderRequestBuilder",
     "QueryLoop",
     "RunOptions",
     "SegmentRecallDocument",
+    "TaskTable",
     "ToolCallRouter",
     "__version__",
 ]

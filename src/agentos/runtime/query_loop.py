@@ -79,6 +79,23 @@ class QueryLoop:
     session_state: SessionState | None = None
     max_tool_iterations: int = 8
     _provider_stream_counter: int = field(default=0, init=False, repr=False)
+    _interrupted: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def interrupted(self) -> bool:
+        """判断当前 loop 是否已收到中断请求。"""
+
+        return self._interrupted
+
+    def request_interrupt(self) -> None:
+        """请求在下一个安全点中断运行。"""
+
+        self._interrupted = True
+
+    def clear_interrupt(self) -> None:
+        """清除中断请求。"""
+
+        self._interrupted = False
 
     def build_request(self) -> ProviderRequest:
         """构建下一次 provider request，并在请求前执行窗口压缩。"""
@@ -104,6 +121,7 @@ class QueryLoop:
         """运行一轮 user -> provider -> assistant，并产出 typed stream events。"""
 
         run_options = options or RunOptions()
+        self._raise_if_interrupted()
         turn = self._start_turn(user_message)
         user = self.message_runtime.append_user(user_message)
         self._emit(
@@ -145,6 +163,7 @@ class QueryLoop:
 
         iterations = 0
         while True:
+            self._raise_if_interrupted()
             request = self.build_request()
             self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
             response = yield from self._consume_provider_stream(request, options)
@@ -182,6 +201,7 @@ class QueryLoop:
 
             appended_message_ids: list[str] = [assistant.id]
             for tool_call in response.tool_calls:
+                self._raise_if_interrupted()
                 yield ToolStreamStarted(
                     tool_name=tool_call.name,
                     tool_call_id=tool_call.id,
@@ -268,6 +288,12 @@ class QueryLoop:
         if response is None:
             raise RuntimeError("provider stream ended without completion event")
         return response
+
+    def _raise_if_interrupted(self) -> None:
+        """在安全点响应 interrupt 请求。"""
+
+        if self._interrupted:
+            raise RuntimeError("agent run interrupted")
 
     def _provider_stream_events(
         self,

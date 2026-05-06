@@ -54,6 +54,22 @@ class Agent:
         except TypeError as error:
             raise ValueError(f"invalid query_loop_kwargs: {error}") from error
 
+    @property
+    def interrupted(self) -> bool:
+        """判断底层 QueryLoop 是否已收到中断请求。"""
+
+        return self.query_loop.interrupted
+
+    def interrupt(self) -> None:
+        """请求在下一个安全点中断运行。"""
+
+        self.query_loop.request_interrupt()
+
+    def clear_interrupt(self) -> None:
+        """清除中断请求。"""
+
+        self.query_loop.clear_interrupt()
+
     def run(
         self,
         user_message: str,

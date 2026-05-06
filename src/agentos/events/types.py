@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -189,3 +190,66 @@ class SnapshotLoadedEvent(AgentEvent):
     """session snapshot 已读取。"""
 
     snapshot_session_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentSpawnedEvent(AgentEvent):
+    """ephemeral subagent 已创建并开始排队或运行。"""
+
+    parent_agent_id: str = ""
+    child_agent_id: str = ""
+    task_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskDispatchedEvent(AgentEvent):
+    """任务已派发给目标 agent。"""
+
+    from_agent_id: str = ""
+    to_agent_id: str = ""
+    task_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskCompletedEvent(AgentEvent):
+    """multi-agent 任务已进入终态。"""
+
+    agent_id: str = ""
+    task_id: str = ""
+    status: Literal["completed", "failed", "cancelled", "timeout"] = "completed"
+    elapsed_seconds: float = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskFailedEvent(AgentEvent):
+    """multi-agent 任务执行失败。"""
+
+    agent_id: str = ""
+    task_id: str = ""
+    error: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskCancelledEvent(AgentEvent):
+    """multi-agent 任务已取消。"""
+
+    agent_id: str = ""
+    task_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgentInboxBackpressureEvent(AgentEvent):
+    """agent inbox 达到容量上限。"""
+
+    agent_id: str = ""
+    pending_count: int = 0
+    max_pending_envelopes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskLateResultReceivedEvent(AgentEvent):
+    """终态之后收到 late result。"""
+
+    agent_id: str = ""
+    task_id: str = ""
+    final_status: Literal["cancelled", "timeout"] = "timeout"

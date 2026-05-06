@@ -149,6 +149,43 @@ def test_phase7_memory_public_api_exports() -> None:
         assert hasattr(agentos, name)
 
 
+def test_phase8_multi_agent_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    multi = importlib.import_module("agentos.multi")
+
+    for name in [
+        "AgentCard",
+        "AgentCoordinator",
+        "AgentCoordinationTools",
+        "AgentEnvelope",
+        "AgentInbox",
+        "AgentInboxFullError",
+        "AgentInboxMissingError",
+        "ExpertAgentRunner",
+        "InMemoryRegistry",
+        "SpawnExecutor",
+        "SubagentInitRequest",
+        "TaskHandle",
+        "TaskRecord",
+        "TaskRequest",
+        "TaskResult",
+        "TaskTable",
+    ]:
+        assert hasattr(multi, name)
+
+    for name in [
+        "AgentCard",
+        "AgentCoordinator",
+        "AgentInbox",
+        "InMemoryRegistry",
+        "TaskTable",
+    ]:
+        assert hasattr(agentos, name)
+
+    assert not hasattr(multi, "MessageBus")
+    assert not hasattr(multi, "SpawnManager")
+
+
 def test_no_public_snake_case_package_alias() -> None:
     legacy_snake_name = "agent" + "_os"
 

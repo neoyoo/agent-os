@@ -86,3 +86,29 @@ def test_agent_rejects_unknown_query_loop_kwargs() -> None:
         assert "bad_key" in str(error)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_agent_interrupt_causes_next_turn_to_fail_at_safe_point() -> None:
+    agent = build_agent(FakeProvider([ProviderResponse(content="ok")]))
+
+    agent.interrupt()
+
+    try:
+        agent.run("hello")
+    except RuntimeError as error:
+        assert "agent run interrupted" in str(error)
+    else:
+        raise AssertionError("Expected interrupted run to fail")
+
+    assert agent.interrupted
+
+
+def test_agent_clear_interrupt_allows_later_turns() -> None:
+    agent = build_agent(FakeProvider([ProviderResponse(content="ok")]))
+    agent.interrupt()
+    agent.clear_interrupt()
+
+    result = agent.run("hello")
+
+    assert result.content == "ok"
+    assert not agent.interrupted

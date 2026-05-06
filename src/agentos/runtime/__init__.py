@@ -1,6 +1,12 @@
 """运行时请求构建、typed events 与 loop 调度。"""
 
 from agentos.events import (
+    AgentInboxBackpressureEvent,
+    AgentTaskCancelledEvent,
+    AgentTaskCompletedEvent,
+    AgentTaskDispatchedEvent,
+    AgentTaskFailedEvent,
+    AgentTaskLateResultReceivedEvent,
     AssistantMessageAppendedEvent,
     ChapterStartedEvent,
     CompressedSegmentAppendedEvent,
@@ -18,6 +24,7 @@ from agentos.events import (
     RecallContextRequestedEvent,
     SnapshotLoadedEvent,
     SnapshotSavedEvent,
+    SubagentSpawnedEvent,
     ToolCallRequestedEvent,
     ToolExecutionCompletedEvent,
     ToolExecutionStartedEvent,
@@ -58,6 +65,12 @@ from agentos.runtime.turn import TurnState
 
 __all__ = [
     "Agent",
+    "AgentInboxBackpressureEvent",
+    "AgentTaskCancelledEvent",
+    "AgentTaskCompletedEvent",
+    "AgentTaskDispatchedEvent",
+    "AgentTaskFailedEvent",
+    "AgentTaskLateResultReceivedEvent",
     "AssistantCompleted",
     "AssistantContentDelta",
     "AssistantMessageAppendedEvent",
@@ -83,6 +96,7 @@ __all__ = [
     "SessionState",
     "SnapshotLoadedEvent",
     "SnapshotSavedEvent",
+    "SubagentSpawnedEvent",
     "ToolCallRequestedEvent",
     "ToolExecutionCompletedEvent",
     "ToolExecutionStartedEvent",

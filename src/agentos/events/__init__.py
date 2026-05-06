@@ -3,6 +3,12 @@
 from agentos.events.bus import EventBus, EventSubscriber
 from agentos.events.types import (
     AgentEvent,
+    AgentInboxBackpressureEvent,
+    AgentTaskCancelledEvent,
+    AgentTaskCompletedEvent,
+    AgentTaskDispatchedEvent,
+    AgentTaskFailedEvent,
+    AgentTaskLateResultReceivedEvent,
     AssistantMessageAppendedEvent,
     ChapterStartedEvent,
     CompressedSegmentAppendedEvent,
@@ -18,6 +24,7 @@ from agentos.events.types import (
     RecallContextRequestedEvent,
     SnapshotLoadedEvent,
     SnapshotSavedEvent,
+    SubagentSpawnedEvent,
     ToolCallRequestedEvent,
     ToolExecutionCompletedEvent,
     ToolExecutionStartedEvent,
@@ -33,6 +40,12 @@ from agentos.events.types import (
 
 __all__ = [
     "AgentEvent",
+    "AgentInboxBackpressureEvent",
+    "AgentTaskCancelledEvent",
+    "AgentTaskCompletedEvent",
+    "AgentTaskDispatchedEvent",
+    "AgentTaskFailedEvent",
+    "AgentTaskLateResultReceivedEvent",
     "AssistantMessageAppendedEvent",
     "ChapterStartedEvent",
     "CompressedSegmentAppendedEvent",
@@ -50,6 +63,7 @@ __all__ = [
     "RecallContextRequestedEvent",
     "SnapshotLoadedEvent",
     "SnapshotSavedEvent",
+    "SubagentSpawnedEvent",
     "ToolCallRequestedEvent",
     "ToolExecutionCompletedEvent",
     "ToolExecutionStartedEvent",
