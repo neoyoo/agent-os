@@ -148,6 +148,16 @@ class ContextRuntime:
             ),
         )
 
+    def set_runtime_notices(self, notices: tuple[str, ...]) -> None:
+        """设置本轮 provider request 可见的一次性 runtime notice。"""
+
+        self.state.set_runtime_notices(notices)
+
+    def clear_runtime_notices(self) -> None:
+        """清空一次性 runtime notice。"""
+
+        self.state.clear_runtime_notices()
+
     def snapshot(self) -> ContextState:
         """返回 request 构建使用的 ContextState 快照。"""
 
@@ -157,6 +167,7 @@ class ContextRuntime:
             compressed_history=list(self.state.compressed_history),
             inherited_state=list(self.state.inherited_state),
             memory_context=list(self.state.memory_context),
+            runtime_notices=list(self.state.runtime_notices),
         )
 
     def _declared_field_names(self) -> set[str]:

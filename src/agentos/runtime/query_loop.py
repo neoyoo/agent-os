@@ -57,6 +57,19 @@ class ContextRuntimeBoundary(Protocol):
     def snapshot(self) -> ContextState:
         """返回可渲染的 context snapshot。"""
 
+    def set_runtime_notices(self, notices: tuple[str, ...]) -> None:
+        """设置本轮 provider request 可见的一次性 runtime notice。"""
+
+    def clear_runtime_notices(self) -> None:
+        """清空一次性 runtime notice。"""
+
+
+class TurnNoticeProvider(Protocol):
+    """QueryLoop 依赖的一次性 turn notice 边界。"""
+
+    def consume_notices(self) -> tuple[str, ...]:
+        """返回并消费本轮 runtime notices。"""
+
 
 class ToolCallRouterBoundary(Protocol):
     """QueryLoop 依赖的 tool call router 边界。"""
@@ -77,6 +90,7 @@ class QueryLoop:
     tool_call_router: ToolCallRouterBoundary | None = None
     event_bus: EventBus | None = None
     session_state: SessionState | None = None
+    turn_notice_provider: TurnNoticeProvider | None = None
     max_tool_iterations: int = 8
     _provider_stream_counter: int = field(default=0, init=False, repr=False)
     _interrupted: bool = field(default=False, init=False, repr=False)
@@ -102,7 +116,10 @@ class QueryLoop:
 
         if self.compression_runtime is not None:
             self.compression_runtime.maybe_compress()
-        return self.request_builder.build(self.context_runtime)
+        try:
+            return self.request_builder.build(self.context_runtime)
+        finally:
+            self._clear_runtime_notices()
 
     def run_turn(self, user_message: str) -> str:
         """运行一轮 user -> provider -> assistant。"""
@@ -153,6 +170,57 @@ class QueryLoop:
             turn.complete()
         self._emit(TurnCompletedEvent(**self._event_context(turn)))
         yield TurnStreamCompleted(content=response_content)
+
+    def run_continuation_stream(
+        self,
+        options: RunOptions | None = None,
+    ) -> Iterator[TurnStreamEvent]:
+        """运行 runtime continuation turn，不追加 user 消息。"""
+
+        run_options = options or RunOptions()
+        self._raise_if_interrupted()
+        notices = self._consume_turn_notices()
+        if not notices:
+            return
+        turn = self._start_turn("", is_continuation=True)
+        self._set_runtime_notices(notices)
+        try:
+            yield TurnStreamStarted(user_message="")
+
+            try:
+                response_content = yield from self._run_provider_loop_stream(
+                    turn,
+                    run_options,
+                )
+            except Exception as error:
+                if turn is not None:
+                    turn.fail(str(error))
+                self._emit(
+                    TurnFailedEvent(
+                        error=str(error),
+                        **self._event_context(turn),
+                    ),
+                )
+                yield TurnStreamFailed(error=error)
+                raise
+
+            if turn is not None:
+                turn.complete()
+            self._emit(TurnCompletedEvent(**self._event_context(turn)))
+            yield TurnStreamCompleted(content=response_content)
+        finally:
+            self._clear_runtime_notices()
+
+    def _clear_runtime_notices(self) -> None:
+        """清空 context runtime 中可能残留的一次性 runtime notice。"""
+
+        clear_runtime_notices = getattr(
+            self.context_runtime,
+            "clear_runtime_notices",
+            None,
+        )
+        if callable(clear_runtime_notices):
+            clear_runtime_notices()
 
     def _run_provider_loop_stream(
         self,
@@ -295,6 +363,27 @@ class QueryLoop:
         if self._interrupted:
             raise RuntimeError("agent run interrupted")
 
+    def _consume_turn_notices(self) -> tuple[str, ...]:
+        """从可选 notice provider 读取本轮 runtime notices。"""
+
+        if self.turn_notice_provider is None:
+            return ()
+        return self.turn_notice_provider.consume_notices()
+
+    def _set_runtime_notices(self, notices: tuple[str, ...]) -> None:
+        """把 runtime notices 写入支持该 projection 的 context runtime。"""
+
+        if not notices:
+            return
+        set_runtime_notices = getattr(
+            self.context_runtime,
+            "set_runtime_notices",
+            None,
+        )
+        if not callable(set_runtime_notices):
+            raise RuntimeError("context runtime does not support runtime notices")
+        set_runtime_notices(notices)
+
     def _provider_stream_events(
         self,
         request: ProviderRequest,
@@ -331,7 +420,12 @@ class QueryLoop:
         if stop_reason == "content_filter":
             raise RuntimeError("provider response was blocked by content filter")
 
-    def _start_turn(self, user_message: str) -> TurnState | None:
+    def _start_turn(
+        self,
+        user_message: str,
+        *,
+        is_continuation: bool = False,
+    ) -> TurnState | None:
         """创建 turn state 并发出 turn_started 事件。"""
 
         turn = None
@@ -340,6 +434,7 @@ class QueryLoop:
         self._emit(
             TurnStartedEvent(
                 user_input=user_message,
+                is_continuation=is_continuation,
                 **self._event_context(turn),
             ),
         )

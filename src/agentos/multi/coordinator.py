@@ -5,6 +5,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from agentos.events import (
+    AgentContinuationFailedEvent,
     AgentEvent,
     AgentTaskCancelledEvent,
     AgentTaskCompletedEvent,
@@ -15,6 +16,7 @@ from agentos.events import (
     SubagentSpawnedEvent,
 )
 from agentos.multi.inbox import AgentInbox, AgentInboxError
+from agentos.multi.continuation import ContinuationTrigger
 from agentos.multi.registry import AgentRegistry
 from agentos.multi.spawn import SpawnExecutor
 from agentos.multi.tasks import TaskTable
@@ -49,6 +51,7 @@ class AgentCoordinator:
         spawn_executor: SpawnExecutor,
         subagent_factory: SubagentFactory,
         event_bus: EventBus | None = None,
+        continuation_trigger: ContinuationTrigger | None = None,
     ) -> None:
         """创建本地协调器。"""
 
@@ -58,6 +61,7 @@ class AgentCoordinator:
         self.spawn_executor = spawn_executor
         self.subagent_factory = subagent_factory
         self.event_bus = event_bus
+        self.continuation_trigger = continuation_trigger
         self._agents: dict[str, Agent] = {}
 
     def attach_agent(self, card: AgentCard, agent: Agent) -> None:
@@ -232,6 +236,7 @@ class AgentCoordinator:
                 ),
             )
             self._send_result(record, result)
+            self._notify_task_completed(record.parent_agent_id, record.task_id)
             return True
         current = self.task_table.get(task_id)
         return current is not None and current.status in {
@@ -283,6 +288,7 @@ class AgentCoordinator:
                     ),
                 )
                 self._send_result(record, result)
+                self._notify_task_completed(record.parent_agent_id, record.task_id)
             else:
                 self._store_late_result(
                     record.target_agent_id,
@@ -307,6 +313,7 @@ class AgentCoordinator:
                     ),
                 )
                 self._send_result(record, result)
+                self._notify_task_completed(record.parent_agent_id, record.task_id)
             else:
                 self._store_late_result(
                     record.target_agent_id,
@@ -358,6 +365,7 @@ class AgentCoordinator:
                     ),
                 )
                 self._send_result(record, result)
+                self._notify_task_completed(record.parent_agent_id, record.task_id)
             else:
                 self._store_late_result(child_agent_id, request.task_id, result)
             return result
@@ -380,6 +388,10 @@ class AgentCoordinator:
                 )
                 if record is not None:
                     self._send_result(record, result)
+                    self._notify_task_completed(
+                        record.parent_agent_id,
+                        record.task_id,
+                    )
             else:
                 self._store_late_result(child_agent_id, request.task_id, result)
             return result
@@ -442,6 +454,7 @@ class AgentCoordinator:
                     ),
                 )
                 self._send_result(record, result)
+                self._notify_task_completed(record.parent_agent_id, record.task_id)
 
     def _select_available_expert(
         self,
@@ -461,3 +474,16 @@ class AgentCoordinator:
     def _emit(self, event: AgentEvent) -> None:
         if self.event_bus is not None:
             self.event_bus.emit(event)
+
+    def _notify_task_completed(self, parent_agent_id: str, task_id: str) -> None:
+        if self.continuation_trigger is not None:
+            try:
+                self.continuation_trigger.on_task_completed(parent_agent_id, task_id)
+            except Exception as error:
+                self._emit(
+                    AgentContinuationFailedEvent(
+                        parent_agent_id=parent_agent_id,
+                        task_id=task_id,
+                        error=str(error),
+                    ),
+                )

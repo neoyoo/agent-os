@@ -25,6 +25,7 @@ def test_public_api_uses_responsibility_specific_names() -> None:
 
     assert hasattr(runtime, "QueryLoop")
     assert hasattr(runtime, "ProviderRequestBuilder")
+    assert hasattr(runtime, "TurnNoticeProvider")
     assert not hasattr(runtime, "AgentLoop")
     assert not hasattr(runtime, "RequestBuilder")
     assert not hasattr(runtime, "RuntimeEvent")
@@ -161,8 +162,12 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "AgentInbox",
         "AgentInboxFullError",
         "AgentInboxMissingError",
+        "AgentTaskNoticeStore",
+        "ContinuationErrorRecord",
+        "ContinuationTrigger",
         "ExpertAgentRunner",
         "InMemoryRegistry",
+        "LocalContinuationTrigger",
         "SpawnExecutor",
         "SubagentInitRequest",
         "TaskHandle",

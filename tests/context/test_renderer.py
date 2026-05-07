@@ -162,6 +162,24 @@ def test_default_renderer_renders_inherited_state_only_when_present() -> None:
     assert "<item>继续 Phase 2，不改变 provider 协议。</item>" in rendered
 
 
+def test_default_renderer_renders_runtime_notices_as_last_transient_section() -> None:
+    rendered = ContextRenderer().render(
+        ContextState(
+            runtime_notices=[
+                "Task task_abc completed. Call check_agent_tasks to retrieve results.",
+            ],
+        ),
+    )
+
+    assert "# Runtime Notice" in rendered
+    assert rendered.rstrip().endswith(
+        "<notice>Task task_abc completed. "
+        "Call check_agent_tasks to retrieve results.</notice>\n"
+        "</runtime-notices>",
+    )
+    assert "\n# Working State\n" not in rendered
+
+
 def test_default_renderer_lists_context_protocol_tools() -> None:
     rendered = ContextRenderer().render(ContextState())
 

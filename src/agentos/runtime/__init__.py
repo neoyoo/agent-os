@@ -1,6 +1,7 @@
 """运行时请求构建、typed events 与 loop 调度。"""
 
 from agentos.events import (
+    AgentContinuationFailedEvent,
     AgentInboxBackpressureEvent,
     AgentTaskCancelledEvent,
     AgentTaskCompletedEvent,
@@ -39,7 +40,7 @@ from agentos.events import (
 )
 from agentos.runtime.agent import Agent, AgentResult
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
-from agentos.runtime.query_loop import QueryLoop
+from agentos.runtime.query_loop import QueryLoop, TurnNoticeProvider
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -65,6 +66,7 @@ from agentos.runtime.turn import TurnState
 
 __all__ = [
     "Agent",
+    "AgentContinuationFailedEvent",
     "AgentInboxBackpressureEvent",
     "AgentTaskCancelledEvent",
     "AgentTaskCompletedEvent",
@@ -113,6 +115,7 @@ __all__ = [
     "TurnStreamStarted",
     "TurnStartedEvent",
     "TurnState",
+    "TurnNoticeProvider",
     "UserMessageAppendedEvent",
     "WorkingStateSchemaDeclaredEvent",
     "WorkingStateSchemaExtendedEvent",

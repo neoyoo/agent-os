@@ -15,6 +15,7 @@ class TurnStartedEvent(AgentEvent):
     """turn 已开始。"""
 
     user_input: str = ""
+    is_continuation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,3 +254,12 @@ class AgentTaskLateResultReceivedEvent(AgentEvent):
     agent_id: str = ""
     task_id: str = ""
     final_status: Literal["cancelled", "timeout"] = "timeout"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentContinuationFailedEvent(AgentEvent):
+    """parent continuation turn 执行失败。"""
+
+    parent_agent_id: str = ""
+    task_id: str = ""
+    error: str = ""

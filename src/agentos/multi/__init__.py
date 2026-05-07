@@ -1,5 +1,12 @@
 """本地单进程 multi-agent coordination。"""
 
+from agentos.multi.continuation import (
+    AgentTaskNoticeProvider,
+    AgentTaskNoticeStore,
+    ContinuationTrigger,
+    ContinuationErrorRecord,
+    LocalContinuationTrigger,
+)
 from agentos.multi.coordinator import AgentCoordinator, SubagentFactory
 from agentos.multi.expert import ExpertAgentRunner
 from agentos.multi.registry import AgentRegistry, InMemoryRegistry
@@ -38,6 +45,10 @@ __all__ = [
     "AgentInboxError",
     "AgentInboxFullError",
     "AgentInboxMissingError",
+    "AgentTaskNoticeProvider",
+    "AgentTaskNoticeStore",
+    "ContinuationErrorRecord",
+    "ContinuationTrigger",
     "ExpertAgentRunner",
     "AgentLifecycle",
     "AgentRegistry",
@@ -45,6 +56,7 @@ __all__ = [
     "ContextInitStrategy",
     "CoordinationMode",
     "InMemoryRegistry",
+    "LocalContinuationTrigger",
     "SpawnExecutor",
     "SubagentInitRequest",
     "SubagentFactory",

@@ -29,6 +29,7 @@ class ContextState:
     _compressed_history: list[CompressedSegment]
     _inherited_state: list[str]
     _memory_context: list[str]
+    _runtime_notices: list[str]
 
     def __init__(
         self,
@@ -37,6 +38,7 @@ class ContextState:
         compressed_history: Sequence[CompressedSegment] | None = None,
         inherited_state: Sequence[str] | None = None,
         memory_context: Sequence[str] | None = None,
+        runtime_notices: Sequence[str] | None = None,
     ) -> None:
         """创建 context state，并冻结对外暴露的投影。"""
 
@@ -47,6 +49,7 @@ class ContextState:
         self._compressed_history = list(compressed_history or [])
         self._inherited_state = list(inherited_state or [])
         self._memory_context = list(memory_context or [])
+        self._runtime_notices = list(runtime_notices or [])
 
     @property
     def working_state(self) -> WorkingStateSnapshot:
@@ -71,6 +74,12 @@ class ContextState:
         """返回不可变 memory context 投影，禁止外部直接写入。"""
 
         return tuple(self._memory_context)
+
+    @property
+    def runtime_notices(self) -> StringProjectionSnapshot:
+        """返回不可变 runtime notice 投影，禁止外部直接写入。"""
+
+        return tuple(self._runtime_notices)
 
     def set_working_state_value(
         self,
@@ -100,6 +109,16 @@ class ContextState:
         """由 ContextRuntime 替换 memory context 投影。"""
 
         self._memory_context = list(items)
+
+    def set_runtime_notices(self, items: Sequence[str]) -> None:
+        """由 ContextRuntime 替换一次性 runtime notice 投影。"""
+
+        self._runtime_notices = list(items)
+
+    def clear_runtime_notices(self) -> None:
+        """由 ContextRuntime 清空一次性 runtime notice 投影。"""
+
+        self._runtime_notices.clear()
 
     def _coerce_working_state_value(
         self,

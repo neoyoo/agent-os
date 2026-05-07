@@ -134,6 +134,17 @@ def test_m3_projection_snapshots_cannot_be_mutated_directly() -> None:
     assert runtime.state.memory_context == ("用户偏好中文讨论架构。",)
 
 
+def test_runtime_notices_are_transient_projection_state() -> None:
+    runtime = ContextRuntime()
+
+    runtime.set_runtime_notices(("Task task_1 completed.",))
+    snapshot = runtime.snapshot()
+    runtime.clear_runtime_notices()
+
+    assert snapshot.runtime_notices == ("Task task_1 completed.",)
+    assert runtime.snapshot().runtime_notices == ()
+
+
 def test_extend_schema_appends_fields_and_preserves_state() -> None:
     runtime = ContextRuntime()
     runtime.declare_schema([field("task_goal")])

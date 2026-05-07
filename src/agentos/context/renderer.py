@@ -58,6 +58,8 @@ class ContextRenderer:
                 self._memory_context(state.memory_context),
             ],
         )
+        if state.runtime_notices:
+            sections.append(self._runtime_notices(state.runtime_notices))
         return "\n\n".join(sections) + "\n"
 
     def _runtime_contract(self) -> str:
@@ -272,6 +274,18 @@ class ContextRenderer:
         ]
         lines.extend(f"  <fact>{fact}</fact>" for fact in memory_context)
         lines.append("</memory-context>")
+        return "\n".join(lines)
+
+    def _runtime_notices(self, runtime_notices: Sequence[str]) -> str:
+        """渲染本轮一次性 runtime notices。"""
+
+        lines = [
+            "# Runtime Notice",
+            "",
+            "<runtime-notices>",
+        ]
+        lines.extend(f"  <notice>{notice}</notice>" for notice in runtime_notices)
+        lines.append("</runtime-notices>")
         return "\n".join(lines)
 
     def _list_item_tag(self, key: str) -> str:

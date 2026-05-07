@@ -1,8 +1,11 @@
+import time
+from threading import Event, Thread
+
 from agentos import Agent
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse
-from agentos.runtime import ProviderRequestBuilder
+from agentos.runtime import EventBus, ProviderRequestBuilder, TurnStartedEvent
 
 
 def build_agent(provider: FakeProvider) -> Agent:
@@ -18,6 +21,56 @@ def build_agent(provider: FakeProvider) -> Agent:
                 tools=[],
             ),
             "provider": provider,
+        },
+    )
+
+
+class StaticNoticeProvider:
+    def __init__(self, notices: tuple[str, ...]) -> None:
+        self.notices = notices
+        self.calls = 0
+
+    def consume_notices(self) -> tuple[str, ...]:
+        self.calls += 1
+        notices = self.notices
+        self.notices = ()
+        return notices
+
+
+class BlockingProvider:
+    def __init__(self) -> None:
+        self.requests = []
+        self.first_started = Event()
+        self.release_first = Event()
+
+    def complete(self, request):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            self.first_started.set()
+            self.release_first.wait(timeout=1)
+            return ProviderResponse(content="first")
+        return ProviderResponse(content="second")
+
+
+def build_agent_with_context(
+    provider: FakeProvider,
+    context: ContextRuntime,
+    notice_provider: StaticNoticeProvider,
+    event_bus: EventBus | None = None,
+) -> Agent:
+    messages = MessageRuntime()
+    return Agent(
+        query_loop_kwargs={
+            "context_runtime": context,
+            "message_runtime": messages,
+            "request_builder": ProviderRequestBuilder(
+                context_renderer=ContextRenderer(),
+                message_runtime=messages,
+                tools=[],
+            ),
+            "provider": provider,
+            "turn_notice_provider": notice_provider,
+            "event_bus": event_bus,
         },
     )
 
@@ -112,3 +165,106 @@ def test_agent_clear_interrupt_allows_later_turns() -> None:
 
     assert result.content == "ok"
     assert not agent.interrupted
+
+
+def test_agent_continuation_injects_notice_without_user_message() -> None:
+    provider = FakeProvider([ProviderResponse(content="checked")])
+    context = ContextRuntime()
+    notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+    agent = build_agent_with_context(provider, context, notice_provider)
+
+    result = agent.run_continuation()
+
+    assert result.content == "checked"
+    assert provider.requests[0].messages == []
+    assert "# Runtime Notice" in provider.requests[0].system
+    assert "Task task_1 completed." in provider.requests[0].system
+    assert context.snapshot().runtime_notices == ()
+    assert notice_provider.calls == 1
+
+
+def test_agent_continuation_without_notices_does_not_call_provider() -> None:
+    provider = FakeProvider([ProviderResponse(content="should not run")])
+    context = ContextRuntime()
+    notice_provider = StaticNoticeProvider(())
+    event_bus = EventBus()
+    agent = build_agent_with_context(provider, context, notice_provider, event_bus)
+
+    result = agent.run_continuation()
+
+    assert result.content == ""
+    assert provider.requests == []
+    assert event_bus.events == []
+    assert notice_provider.calls == 1
+
+
+def test_agent_continuation_turn_started_event_is_marked_continuation() -> None:
+    provider = FakeProvider([ProviderResponse(content="checked")])
+    context = ContextRuntime()
+    notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+    event_bus = EventBus()
+    agent = build_agent_with_context(provider, context, notice_provider, event_bus)
+
+    agent.run_continuation()
+
+    started = [
+        event for event in event_bus.events if isinstance(event, TurnStartedEvent)
+    ]
+    assert len(started) == 1
+    assert started[0].user_input == ""
+    assert started[0].is_continuation is True
+
+
+def test_agent_continuation_clears_notice_when_stream_closes_before_request() -> None:
+    provider = FakeProvider([ProviderResponse(content="user answer")])
+    context = ContextRuntime()
+    notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+    agent = build_agent_with_context(provider, context, notice_provider)
+
+    stream = agent.stream_continuation()
+    first_event = next(stream)
+    stream.close()
+
+    assert type(first_event).__name__ == "TurnStreamStarted"
+    assert context.snapshot().runtime_notices == ()
+
+    result = agent.run("hello")
+
+    assert result.content == "user answer"
+    assert "# Runtime Notice" not in provider.requests[0].system
+    assert "Task task_1 completed." not in provider.requests[0].system
+
+
+def test_agent_user_turn_and_continuation_are_serialized() -> None:
+    provider = BlockingProvider()
+    context = ContextRuntime()
+    notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+    agent = build_agent_with_context(provider, context, notice_provider)
+    continuation_result = []
+    user_result = []
+
+    continuation_thread = Thread(
+        target=lambda: continuation_result.append(agent.run_continuation().content),
+    )
+    user_thread = Thread(
+        target=lambda: user_result.append(agent.run("hello").content),
+    )
+
+    continuation_thread.start()
+    assert provider.first_started.wait(timeout=1)
+    user_thread.start()
+    time.sleep(0.05)
+
+    assert len(provider.requests) == 1
+
+    provider.release_first.set()
+    continuation_thread.join(timeout=1)
+    user_thread.join(timeout=1)
+
+    assert continuation_result == ["first"]
+    assert user_result == ["second"]
+    assert provider.requests[0].messages == []
+    assert provider.requests[1].messages[-1] == {
+        "role": "user",
+        "content": "hello",
+    }

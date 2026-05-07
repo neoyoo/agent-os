@@ -1,4 +1,5 @@
 from agentos.runtime import (
+    AgentContinuationFailedEvent,
     AgentInboxBackpressureEvent,
     AgentTaskCancelledEvent,
     AgentTaskCompletedEvent,
@@ -93,6 +94,10 @@ def test_phase8_multi_agent_events_are_typed_event_objects() -> None:
             agent_id="child",
             task_id="task_5",
             final_status="timeout",
+        ),
+        AgentContinuationFailedEvent(
+            parent_agent_id="parent",
+            error="provider failed",
         ),
     ]
 

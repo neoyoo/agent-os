@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, fields
+from threading import RLock
 
 from agentos.runtime.query_loop import QueryLoop
 from agentos.runtime.stream_events import (
@@ -28,6 +29,7 @@ class Agent:
     """用户侧 agent facade，隐藏 QueryLoop 装配细节。"""
 
     query_loop: QueryLoop
+    _turn_lock: RLock
 
     def __init__(
         self,
@@ -36,6 +38,7 @@ class Agent:
     ) -> None:
         """从 QueryLoop 或 QueryLoop kwargs 创建 Agent。"""
 
+        self._turn_lock = RLock()
         if query_loop is None and query_loop_kwargs is None:
             raise ValueError("query_loop or query_loop_kwargs is required")
         if query_loop is not None:
@@ -98,10 +101,41 @@ class Agent:
     ) -> Iterator[TurnStreamEvent]:
         """运行 turn，并返回 typed stream events。"""
 
-        yield from self.query_loop.run_turn_stream(
-            user_message,
-            RunOptions(thinking=thinking, show_thinking=show_thinking),
-        )
+        with self._turn_lock:
+            yield from self.query_loop.run_turn_stream(
+                user_message,
+                RunOptions(thinking=thinking, show_thinking=show_thinking),
+            )
+
+    def run_continuation(
+        self,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ) -> AgentResult:
+        """运行 runtime continuation turn，并返回最终内容。"""
+
+        final_content = ""
+        for event in self.stream_continuation(
+            thinking=thinking,
+            show_thinking=show_thinking,
+        ):
+            if isinstance(event, TurnStreamCompleted):
+                final_content = event.content
+        return AgentResult(content=final_content)
+
+    def stream_continuation(
+        self,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ) -> Iterator[TurnStreamEvent]:
+        """运行 runtime continuation turn，不追加 user 消息。"""
+
+        with self._turn_lock:
+            yield from self.query_loop.run_continuation_stream(
+                RunOptions(thinking=thinking, show_thinking=show_thinking),
+            )
 
     def stream_jsonl(
         self,

@@ -3,6 +3,7 @@
 from agentos.events.bus import EventBus, EventSubscriber
 from agentos.events.types import (
     AgentEvent,
+    AgentContinuationFailedEvent,
     AgentInboxBackpressureEvent,
     AgentTaskCancelledEvent,
     AgentTaskCompletedEvent,
@@ -40,6 +41,7 @@ from agentos.events.types import (
 
 __all__ = [
     "AgentEvent",
+    "AgentContinuationFailedEvent",
     "AgentInboxBackpressureEvent",
     "AgentTaskCancelledEvent",
     "AgentTaskCompletedEvent",
