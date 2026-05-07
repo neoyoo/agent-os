@@ -9,11 +9,13 @@ from agentos.persistence.base import (
 )
 from agentos.persistence.filesystem import FileSystemPersistence
 from agentos.persistence.memory import MemoryPersistence
+from agentos.persistence.postgres import PostgresDurableSessionStore
 from agentos.persistence.sqlite import SQLitePersistence
 
 __all__ = [
     "FileSystemPersistence",
     "MemoryPersistence",
+    "PostgresDurableSessionStore",
     "SNAPSHOT_VERSION",
     "SessionPersistence",
     "SessionSnapshot",

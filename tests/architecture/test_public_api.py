@@ -1,6 +1,10 @@
 import importlib
+from pathlib import Path
 
 import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_public_package_imports_as_agentos_pep8_name() -> None:
@@ -91,6 +95,7 @@ def test_phase5_phase6_public_api_exports() -> None:
         "SessionPersistence",
         "MemoryPersistence",
         "FileSystemPersistence",
+        "PostgresDurableSessionStore",
         "SQLitePersistence",
         "SnapshotLoadError",
     ]:
@@ -135,8 +140,10 @@ def test_phase7_memory_public_api_exports() -> None:
         "HotSessionState",
         "HotSessionStore",
         "MemoryRuntime",
+        "QdrantRecallIndex",
         "RecallCandidate",
         "RecallIndex",
+        "RedisHotSessionStore",
         "SegmentRecallDocument",
         "TextEmbeddingProvider",
     ]:
@@ -145,6 +152,9 @@ def test_phase7_memory_public_api_exports() -> None:
     for name in [
         "CompressedSegmentPackage",
         "MemoryRuntime",
+        "PostgresDurableSessionStore",
+        "QdrantRecallIndex",
+        "RedisHotSessionStore",
         "SegmentRecallDocument",
     ]:
         assert hasattr(agentos, name)
@@ -196,3 +206,65 @@ def test_no_public_snake_case_package_alias() -> None:
 
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module(legacy_snake_name)
+
+
+def test_remote_registry_and_channel_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    registry = importlib.import_module("agentos.registry")
+    channels = importlib.import_module("agentos.channels")
+
+    for name in [
+        "AgentResolver",
+        "InMemoryAgentRegistryStore",
+        "JsonFileAgentRegistryStore",
+        "PersistentAgentRegistry",
+        "PostgresAgentRegistryStore",
+        "ServiceResolver",
+        "StaticResolver",
+    ]:
+        assert hasattr(registry, name)
+
+    for name in [
+        "A2AAdapter",
+        "A2ATransport",
+        "AgentHealth",
+    ]:
+        assert hasattr(channels, name)
+
+    for name in [
+        "A2AAdapter",
+        "AgentResolver",
+        "PersistentAgentRegistry",
+        "PostgresAgentRegistryStore",
+        "ServiceResolver",
+        "StaticResolver",
+    ]:
+        assert hasattr(agentos, name)
+
+
+def test_production_sql_migrations_include_down_paths() -> None:
+    migration_dir = PROJECT_ROOT / "docs" / "migrations"
+
+    for name in [
+        "2026-05-07-postgres-agent-registry.sql",
+        "2026-05-07-postgres-memory-backends.sql",
+        "2026-05-07-sqlite-session-persistence.sql",
+    ]:
+        text = (migration_dir / name).read_text(encoding="utf-8")
+
+        assert "-- migrate:up" in text
+        assert "-- migrate:down" in text
+
+
+def test_qdrant_recall_collection_migration_script_exists() -> None:
+    text = (
+        PROJECT_ROOT
+        / "docs"
+        / "migrations"
+        / "2026-05-07-qdrant-recall-collection.py"
+    ).read_text(encoding="utf-8")
+
+    assert "create_collection" in text
+    assert "agentos_recall" in text
+    assert "AGENTOS_QDRANT_VECTOR_SIZE" in text
+    assert "session_id" in text

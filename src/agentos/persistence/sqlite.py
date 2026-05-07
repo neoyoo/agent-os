@@ -20,11 +20,10 @@ class SQLitePersistence:
     """以 SQLite 保存 session snapshot 和 append-only event records。"""
 
     def __init__(self, path: Path) -> None:
-        """创建 SQLite persistence，并初始化 schema。"""
+        """创建 SQLite persistence；schema 必须由迁移流程预先准备。"""
 
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
 
     def save(self, snapshot: SessionSnapshot) -> None:
         """保存最新 snapshot，并替换该 session 的 event records。"""
@@ -124,33 +123,6 @@ class SQLitePersistence:
             connection.execute(
                 "DELETE FROM snapshots WHERE session_id = ?",
                 (session_id,),
-            )
-
-    def _initialize(self) -> None:
-        """初始化 SQLite schema。"""
-
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS snapshots (
-                  session_id TEXT PRIMARY KEY,
-                  version INTEGER NOT NULL,
-                  payload_json TEXT NOT NULL,
-                  updated_at TEXT NOT NULL
-                )
-                """,
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS event_records (
-                  session_id TEXT NOT NULL,
-                  sequence INTEGER NOT NULL,
-                  event_type TEXT NOT NULL,
-                  payload_json TEXT NOT NULL,
-                  created_at TEXT NOT NULL,
-                  PRIMARY KEY (session_id, sequence)
-                )
-                """,
             )
 
     def _connect(self) -> sqlite3.Connection:

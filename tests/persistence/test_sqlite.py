@@ -1,5 +1,6 @@
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 from agentos.compression import CompressionIndex
 from agentos.context import ContextState
@@ -7,6 +8,37 @@ from agentos.messages import MessageRuntime
 from agentos.observability.events import EventLog
 from agentos.persistence import SQLitePersistence, SessionSnapshot, SnapshotLoadError
 from agentos.runtime import SessionState, TurnStartedEvent
+
+
+def prepare_sqlite_schema(path: Path) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE snapshots (
+              session_id TEXT PRIMARY KEY,
+              version INTEGER NOT NULL,
+              payload_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+        )
+        connection.execute(
+            """
+            CREATE TABLE event_records (
+              session_id TEXT NOT NULL,
+              sequence INTEGER NOT NULL,
+              event_type TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (session_id, sequence)
+            )
+            """,
+        )
+
+
+def build_store(path: Path) -> SQLitePersistence:
+    prepare_sqlite_schema(path)
+    return SQLitePersistence(path)
 
 
 def make_snapshot(session_id: str = "session_1") -> SessionSnapshot:
@@ -32,7 +64,7 @@ def make_snapshot(session_id: str = "session_1") -> SessionSnapshot:
 def test_sqlite_persistence_round_trips_latest_snapshot_and_events(
     tmp_path: Path,
 ) -> None:
-    store = SQLitePersistence(tmp_path / "sessions.sqlite3")
+    store = build_store(tmp_path / "sessions.sqlite3")
     store.save(make_snapshot())
 
     restored = store.load("session_1")
@@ -43,7 +75,7 @@ def test_sqlite_persistence_round_trips_latest_snapshot_and_events(
 
 
 def test_sqlite_persistence_delete_removes_snapshot(tmp_path: Path) -> None:
-    store = SQLitePersistence(tmp_path / "sessions.sqlite3")
+    store = build_store(tmp_path / "sessions.sqlite3")
     store.save(make_snapshot())
     store.delete("session_1")
 
@@ -51,7 +83,7 @@ def test_sqlite_persistence_delete_removes_snapshot(tmp_path: Path) -> None:
 
 
 def test_sqlite_persistence_missing_session_raises_key_error(tmp_path: Path) -> None:
-    store = SQLitePersistence(tmp_path / "sessions.sqlite3")
+    store = build_store(tmp_path / "sessions.sqlite3")
 
     try:
         store.load("missing")
@@ -65,7 +97,7 @@ def test_sqlite_persistence_corrupt_json_raises_snapshot_load_error(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "sessions.sqlite3"
-    store = SQLitePersistence(path)
+    store = build_store(path)
     store.save(make_snapshot())
     with sqlite3.connect(path) as connection:
         connection.execute(
@@ -83,9 +115,42 @@ def test_sqlite_persistence_corrupt_json_raises_snapshot_load_error(
 
 def test_sqlite_persistence_uses_wal_journal_mode(tmp_path: Path) -> None:
     path = tmp_path / "sessions.sqlite3"
-    SQLitePersistence(path)
+    prepare_sqlite_schema(path)
+    store = SQLitePersistence(path)
+    assert store.list_ids() == []
 
     with sqlite3.connect(path) as connection:
         mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
 
     assert mode.lower() == "wal"
+
+
+class FakeSQLiteConnection:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    def __enter__(self) -> "FakeSQLiteConnection":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def execute(
+        self,
+        sql: str,
+        params: tuple[object, ...] | None = None,
+    ) -> "FakeSQLiteConnection":
+        self.statements.append(sql)
+        return self
+
+
+def test_sqlite_persistence_does_not_create_tables_at_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake_connection = FakeSQLiteConnection()
+    monkeypatch.setattr(sqlite3, "connect", lambda _: fake_connection)
+
+    SQLitePersistence(tmp_path / "sessions.sqlite3")
+
+    assert not any("CREATE TABLE" in sql for sql in fake_connection.statements)
