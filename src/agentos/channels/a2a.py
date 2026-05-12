@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 from urllib import request as urllib_request
 
-from agentos.multi import AgentCard, TaskRequest, TaskResult
+from agentos.multi.types import AgentCard, TaskRequest, TaskResult
 
 
 AgentHealthStatus = Literal["ok", "unhealthy"]

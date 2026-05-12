@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Protocol
 from uuid import uuid4
 
@@ -39,6 +40,18 @@ class SubagentFactory(Protocol):
         """创建一个子 agent。"""
 
 
+class RemoteTaskSubmitter(Protocol):
+    """远程 task executor 的最小提交边界。"""
+
+    def submit(
+        self,
+        target: AgentCard,
+        request: TaskRequest,
+        on_result: Callable[[TaskResult], None],
+    ) -> object:
+        """提交远程 task。"""
+
+
 class AgentCoordinator:
     """本地单进程 multi-agent 协调器。"""
 
@@ -52,6 +65,7 @@ class AgentCoordinator:
         subagent_factory: SubagentFactory,
         event_bus: EventBus | None = None,
         continuation_trigger: ContinuationTrigger | None = None,
+        remote_task_executor: RemoteTaskSubmitter | None = None,
     ) -> None:
         """创建本地协调器。"""
 
@@ -62,6 +76,7 @@ class AgentCoordinator:
         self.subagent_factory = subagent_factory
         self.event_bus = event_bus
         self.continuation_trigger = continuation_trigger
+        self.remote_task_executor = remote_task_executor
         self._agents: dict[str, Agent] = {}
 
     def attach_agent(self, card: AgentCard, agent: Agent) -> None:
@@ -166,6 +181,10 @@ class AgentCoordinator:
         target = self._select_available_expert(required_capabilities)
         if target is None:
             raise RuntimeError("no available agent")
+        if target.endpoint is not None and self.remote_task_executor is None:
+            raise RuntimeError(
+                "remote_task_executor is required to dispatch endpoint-backed agents",
+            )
 
         created_at = time.time()
         task_id = f"task_{uuid4().hex}"
@@ -186,6 +205,18 @@ class AgentCoordinator:
             deadline_at=created_at + timeout_seconds,
         )
         handle = self.task_table.create(record)
+        if target.endpoint is not None:
+            if self.task_table.mark_running(task_id):
+                self._submit_remote_task(target, record, request)
+            self._emit(
+                AgentTaskDispatchedEvent(
+                    from_agent_id=parent_agent_id,
+                    to_agent_id=target.agent_id,
+                    task_id=task_id,
+                ),
+            )
+            return handle
+
         envelope = AgentEnvelope(
             envelope_id=f"env_{uuid4().hex}",
             from_agent_id=parent_agent_id,
@@ -204,6 +235,73 @@ class AgentCoordinator:
             ),
         )
         return handle
+
+    def _submit_remote_task(
+        self,
+        target: AgentCard,
+        record: TaskRecord,
+        request: TaskRequest,
+    ) -> None:
+        try:
+            if self.remote_task_executor is None:
+                raise RuntimeError(
+                    "remote_task_executor is required to dispatch endpoint-backed agents",
+                )
+            self.remote_task_executor.submit(
+                target,
+                request,
+                lambda result: self._handle_remote_result(record, result),
+            )
+        except Exception as error:
+            result = TaskResult(
+                task_id=request.task_id,
+                status="failed",
+                summary="remote task failed",
+                error=str(error),
+            )
+            self._handle_remote_result(record, result)
+
+    def _handle_remote_result(self, record: TaskRecord, result: TaskResult) -> None:
+        if result.status == "completed":
+            changed = self.task_table.mark_completed(record.task_id, result)
+            if changed:
+                self._emit(
+                    AgentTaskCompletedEvent(
+                        agent_id=record.target_agent_id,
+                        task_id=record.task_id,
+                        status="completed",
+                        elapsed_seconds=result.elapsed_seconds,
+                    ),
+                )
+                self._send_result(record, result)
+                self._notify_task_completed(record.parent_agent_id, record.task_id)
+            else:
+                self._store_late_result(record.target_agent_id, record.task_id, result)
+            return
+
+        failed_result = result
+        if failed_result.status != "failed":
+            failed_result = TaskResult(
+                task_id=record.task_id,
+                status="failed",
+                summary=result.summary,
+                artifacts=result.artifacts,
+                error=result.error,
+                elapsed_seconds=result.elapsed_seconds,
+            )
+        changed = self.task_table.mark_failed(record.task_id, failed_result)
+        if changed:
+            self._emit(
+                AgentTaskFailedEvent(
+                    agent_id=record.target_agent_id,
+                    task_id=record.task_id,
+                    error=failed_result.error or failed_result.summary,
+                ),
+            )
+            self._send_result(record, failed_result)
+            self._notify_task_completed(record.parent_agent_id, record.task_id)
+        else:
+            self._store_late_result(record.target_agent_id, record.task_id, result)
 
     def active_tasks(self, agent_id: str | None = None) -> list[TaskHandle]:
         """返回 task table 中的任务 handles。"""

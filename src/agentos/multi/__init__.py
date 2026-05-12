@@ -35,6 +35,16 @@ from agentos.multi.types import (
     TaskStatus,
 )
 
+
+def __getattr__(name: str) -> object:
+    """延迟导入 remote executor，避免 channels/multi package import 环。"""
+
+    if name == "RemoteTaskExecutor":
+        from agentos.multi.remote import RemoteTaskExecutor
+
+        return RemoteTaskExecutor
+    raise AttributeError(name)
+
 __all__ = [
     "AgentCard",
     "AgentCoordinator",
@@ -57,6 +67,7 @@ __all__ = [
     "CoordinationMode",
     "InMemoryRegistry",
     "LocalContinuationTrigger",
+    "RemoteTaskExecutor",
     "SpawnExecutor",
     "SubagentInitRequest",
     "SubagentFactory",

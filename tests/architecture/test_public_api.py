@@ -226,20 +226,44 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
 
     for name in [
         "A2AAdapter",
+        "A2AServerAdapter",
         "A2ATransport",
+        "AgentA2ATaskRunner",
         "AgentHealth",
+        "AgentSessionProvider",
+        "AllowAllChannelAuthPolicy",
+        "AsgiAgentApp",
+        "ChannelAuthPolicy",
+        "ChannelError",
+        "ChannelTurnRequest",
+        "ChannelTurnResult",
+        "HttpAgentChannel",
+        "InMemoryAgentSessionProvider",
+        "SseAgentChannel",
     ]:
         assert hasattr(channels, name)
 
     for name in [
         "A2AAdapter",
+        "A2AServerAdapter",
         "AgentResolver",
+        "AsgiAgentApp",
+        "HttpAgentChannel",
+        "InMemoryAgentSessionProvider",
         "PersistentAgentRegistry",
         "PostgresAgentRegistryStore",
+        "RemoteTaskExecutor",
         "ServiceResolver",
+        "SseAgentChannel",
         "StaticResolver",
     ]:
         assert hasattr(agentos, name)
+
+
+def test_runtime_context_messages_do_not_import_channels() -> None:
+    for package in ["runtime", "context", "messages"]:
+        for path in (PROJECT_ROOT / "src" / "agentos" / package).glob("*.py"):
+            assert "agentos.channels" not in path.read_text(encoding="utf-8")
 
 
 def test_production_sql_migrations_include_down_paths() -> None:

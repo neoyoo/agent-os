@@ -7,11 +7,47 @@ from agentos.channels.a2a import (
     AgentHealthStatus,
     UrllibA2ATransport,
 )
+from agentos.channels.a2a_server import (
+    A2AServerAdapter,
+    A2ATaskRunner,
+    AgentA2ATaskRunner,
+)
+from agentos.channels.asgi import AsgiAgentApp
+from agentos.channels.auth import (
+    AllowAllChannelAuthPolicy,
+    ChannelAuthError,
+    ChannelAuthPolicy,
+)
+from agentos.channels.http import HttpAgentChannel
+from agentos.channels.session import (
+    AgentSessionProvider,
+    InMemoryAgentSessionProvider,
+)
+from agentos.channels.sse import SseAgentChannel
+from agentos.channels.types import (
+    ChannelError,
+    ChannelTurnRequest,
+    ChannelTurnResult,
+)
 
 __all__ = [
     "A2AAdapter",
+    "A2AServerAdapter",
+    "A2ATaskRunner",
     "A2ATransport",
+    "AgentA2ATaskRunner",
     "AgentHealth",
     "AgentHealthStatus",
+    "AgentSessionProvider",
+    "AllowAllChannelAuthPolicy",
+    "AsgiAgentApp",
+    "ChannelAuthError",
+    "ChannelAuthPolicy",
+    "ChannelError",
+    "ChannelTurnRequest",
+    "ChannelTurnResult",
+    "HttpAgentChannel",
+    "InMemoryAgentSessionProvider",
+    "SseAgentChannel",
     "UrllibA2ATransport",
 ]
