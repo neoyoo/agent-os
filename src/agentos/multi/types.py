@@ -69,7 +69,7 @@ class TaskHandle:
 
 @dataclass(frozen=True, slots=True)
 class TaskRecord:
-    """TaskTable 内部保存的任务状态事实。"""
+    """TaskStore 中保存的任务状态事实。"""
 
     task_id: str
     mode: CoordinationMode
@@ -83,6 +83,13 @@ class TaskRecord:
     late_result: TaskResult | None = None
     completed_at: float | None = None
     consumed_at: float | None = None
+    worker_id: str | None = None
+    lease_expires_at: float | None = None
+    attempt: int = 0
+    updated_at: float | None = None
+    version: int = 0
+    cancel_requested_at: float | None = None
+    result_notified_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

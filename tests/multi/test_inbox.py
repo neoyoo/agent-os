@@ -32,7 +32,7 @@ def test_inbox_send_collect_and_wait_without_polling() -> None:
 
     assert inbox.has_pending("parent")
     assert inbox.wait("parent", timeout=0.01) is True
-    assert inbox.collect("parent") == [envelope]
+    assert inbox.collect_envelopes("parent") == [envelope]
     assert not inbox.has_pending("parent")
     assert inbox.wait("parent", timeout=0.01) is False
 
@@ -72,4 +72,6 @@ def test_inbox_backpressure_rejects_send_and_emits_event() -> None:
             max_pending_envelopes=1,
         ),
     ]
-    assert [envelope.envelope_id for envelope in inbox.collect("parent")] == ["env_1"]
+    assert [delivery.envelope.envelope_id for delivery in inbox.collect("parent")] == [
+        "env_1",
+    ]

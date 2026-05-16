@@ -4,6 +4,7 @@ from queue import Empty, Queue
 from threading import Event, RLock
 
 from agentos.events import AgentInboxBackpressureEvent, EventBus
+from agentos.multi.message_queue import QueueDelivery
 from agentos.multi.types import AgentEnvelope
 
 
@@ -33,8 +34,9 @@ class AgentInbox:
             raise ValueError("max_pending_envelopes must be >= 1")
         self.max_pending_envelopes = max_pending_envelopes
         self.event_bus = event_bus
-        self._queues: dict[str, Queue[AgentEnvelope]] = {}
+        self._queues: dict[str, Queue[QueueDelivery]] = {}
         self._events: dict[str, Event] = {}
+        self._acked_delivery_ids: set[tuple[str, str]] = set()
         self._lock = RLock()
 
     def create_inbox(self, agent_id: str) -> None:
@@ -51,9 +53,10 @@ class AgentInbox:
             self._queues.pop(agent_id, None)
             self._events.pop(agent_id, None)
 
-    def send(self, envelope: AgentEnvelope) -> None:
+    def send(self, envelope: AgentEnvelope) -> str:
         """向目标 inbox 发送 envelope，缺失或满载时 fail-closed。"""
 
+        delivery_id = envelope.envelope_id
         with self._lock:
             queue = self._queue_for(envelope.to_agent_id)
             if queue.qsize() >= self.max_pending_envelopes:
@@ -68,23 +71,40 @@ class AgentInbox:
                 raise AgentInboxFullError(
                     f"inbox is full: {envelope.to_agent_id}",
                 )
-            queue.put(envelope)
+            queue.put(QueueDelivery(delivery_id=delivery_id, envelope=envelope))
             self._events[envelope.to_agent_id].set()
+        return delivery_id
 
-    def collect(self, agent_id: str) -> list[AgentEnvelope]:
-        """Drain 并返回当前 inbox 中所有 envelopes。"""
+    def collect(self, agent_id: str) -> list[QueueDelivery]:
+        """Drain 并返回当前 inbox 中所有 deliveries。"""
 
         with self._lock:
             queue = self._queue_for(agent_id)
-            envelopes: list[AgentEnvelope] = []
+            deliveries: list[QueueDelivery] = []
             while True:
                 try:
-                    envelopes.append(queue.get_nowait())
+                    deliveries.append(queue.get_nowait())
                 except Empty:
                     break
             if queue.empty():
                 self._events[agent_id].clear()
-            return envelopes
+            return deliveries
+
+    def collect_envelopes(self, agent_id: str) -> list[AgentEnvelope]:
+        """兼容旧调用方：只返回 envelopes。"""
+
+        return [delivery.envelope for delivery in self.collect(agent_id)]
+
+    def ack(self, agent_id: str, delivery_id: str) -> bool:
+        """in-memory delivery drain 后即可视为已处理；ack 只做幂等记录。"""
+
+        with self._lock:
+            self._queue_for(agent_id)
+            key = (agent_id, delivery_id)
+            if key in self._acked_delivery_ids:
+                return False
+            self._acked_delivery_ids.add(key)
+            return True
 
     def wait(self, agent_id: str, timeout: float | None = None) -> bool:
         """阻塞等待 inbox 中出现消息。"""
@@ -99,7 +119,7 @@ class AgentInbox:
         with self._lock:
             return not self._queue_for(agent_id).empty()
 
-    def _queue_for(self, agent_id: str) -> Queue[AgentEnvelope]:
+    def _queue_for(self, agent_id: str) -> Queue[QueueDelivery]:
         try:
             return self._queues[agent_id]
         except KeyError as error:

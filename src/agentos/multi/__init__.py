@@ -16,7 +16,9 @@ from agentos.multi.inbox import (
     AgentInboxFullError,
     AgentInboxMissingError,
 )
+from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
 from agentos.multi.spawn import SpawnExecutor
+from agentos.multi.task_store import TaskClaim, TaskStore
 from agentos.multi.tasks import TaskTable
 from agentos.multi.tools import AgentCoordinationTools
 from agentos.multi.types import (
@@ -43,6 +45,14 @@ def __getattr__(name: str) -> object:
         from agentos.multi.remote import RemoteTaskExecutor
 
         return RemoteTaskExecutor
+    if name == "PostgresTaskStore":
+        from agentos.multi.postgres_tasks import PostgresTaskStore
+
+        return PostgresTaskStore
+    if name == "RedisAgentMessageQueue":
+        from agentos.multi.redis_queue import RedisAgentMessageQueue
+
+        return RedisAgentMessageQueue
     raise AttributeError(name)
 
 __all__ = [
@@ -55,6 +65,7 @@ __all__ = [
     "AgentInboxError",
     "AgentInboxFullError",
     "AgentInboxMissingError",
+    "AgentMessageQueue",
     "AgentTaskNoticeProvider",
     "AgentTaskNoticeStore",
     "ContinuationErrorRecord",
@@ -67,14 +78,19 @@ __all__ = [
     "CoordinationMode",
     "InMemoryRegistry",
     "LocalContinuationTrigger",
+    "PostgresTaskStore",
+    "QueueDelivery",
     "RemoteTaskExecutor",
+    "RedisAgentMessageQueue",
     "SpawnExecutor",
     "SubagentInitRequest",
     "SubagentFactory",
     "TaskHandle",
+    "TaskClaim",
     "TaskRecord",
     "TaskRequest",
     "TaskResult",
     "TaskStatus",
+    "TaskStore",
     "TaskTable",
 ]

@@ -20,10 +20,10 @@ class ExpertAgentRunner:
 
         if not self.coordinator.inbox.wait(self.agent_id, timeout):
             return False
-        envelopes = self.coordinator.inbox.collect(self.agent_id)
         handled = False
-        for envelope in envelopes:
-            result = self.coordinator.execute_expert_envelope(envelope)
+        for delivery in self.coordinator.inbox.collect(self.agent_id):
+            result = self.coordinator.execute_expert_envelope(delivery.envelope)
+            self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
             if result is not None:
                 handled = True
         return handled

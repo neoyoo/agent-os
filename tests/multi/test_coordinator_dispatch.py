@@ -59,12 +59,13 @@ def test_dispatch_sends_task_request_to_available_expert() -> None:
     assert handle.status == "queued"
     assert handle.target_agent_id == "expert"
 
-    envelopes = coordinator.inbox.collect("expert")
-    assert len(envelopes) == 1
-    assert envelopes[0].type == "task_request"
-    assert envelopes[0].from_agent_id == "parent"
-    assert isinstance(envelopes[0].payload, TaskRequest)
-    assert envelopes[0].payload.instruction == "Review Python code"
+    deliveries = coordinator.inbox.collect("expert")
+    assert len(deliveries) == 1
+    envelope = deliveries[0].envelope
+    assert envelope.type == "task_request"
+    assert envelope.from_agent_id == "parent"
+    assert isinstance(envelope.payload, TaskRequest)
+    assert envelope.payload.instruction == "Review Python code"
 
     coordinator.spawn_executor.shutdown()
 

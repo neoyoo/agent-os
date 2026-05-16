@@ -3,7 +3,9 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 from threading import RLock
+from typing import Sequence
 
+from agentos.multi.task_store import TaskClaim
 from agentos.multi.types import TaskHandle, TaskRecord, TaskResult, TaskStatus
 
 
@@ -31,16 +33,82 @@ class TaskTable:
         with self._lock:
             return self._records.get(task_id)
 
-    def mark_running(self, task_id: str) -> bool:
+    def claim_queued(
+        self,
+        *,
+        worker_id: str,
+        capabilities: Sequence[str],
+        limit: int,
+        lease_expires_at: float,
+        now: float,
+    ) -> list[TaskClaim]:
+        """领取 queued task，并写入 worker lease。"""
+
+        if limit < 1:
+            return []
+        available_capabilities = set(capabilities)
+        claims: list[TaskClaim] = []
+        with self._lock:
+            for task_id, record in self._records.items():
+                if len(claims) >= limit:
+                    break
+                if not (
+                    record.status == "queued"
+                    or (
+                        record.status == "running"
+                        and record.lease_expires_at is not None
+                        and record.lease_expires_at <= now
+                        and record.cancel_requested_at is None
+                    )
+                ):
+                    continue
+                if record.deadline_at <= now:
+                    continue
+                required_capabilities = set(record.request.allowed_tool_names)
+                if (
+                    required_capabilities
+                    and not required_capabilities.issubset(available_capabilities)
+                ):
+                    continue
+                attempt = record.attempt + 1
+                self._records[task_id] = replace(
+                    record,
+                    status="running",
+                    worker_id=worker_id,
+                    lease_expires_at=lease_expires_at,
+                    attempt=attempt,
+                    updated_at=now,
+                    version=record.version + 1,
+                )
+                claims.append(
+                    TaskClaim(
+                        task_id=task_id,
+                        worker_id=worker_id,
+                        lease_expires_at=lease_expires_at,
+                        attempt=attempt,
+                    ),
+                )
+        return claims
+
+    def mark_running(self, task_id: str, *, now: float | None = None) -> bool:
         """queued -> running。"""
 
         return self._transition(
             task_id,
             allowed={"queued"},
             status="running",
+            now=now,
         )
 
-    def mark_completed(self, task_id: str, result: TaskResult) -> bool:
+    def mark_completed(
+        self,
+        task_id: str,
+        result: TaskResult,
+        *,
+        now: float | None = None,
+        worker_id: str | None = None,
+        attempt: int | None = None,
+    ) -> bool:
         """running -> completed。"""
 
         return self._transition(
@@ -48,9 +116,20 @@ class TaskTable:
             allowed={"running"},
             status="completed",
             result=result,
+            now=now,
+            worker_id=worker_id,
+            attempt=attempt,
         )
 
-    def mark_failed(self, task_id: str, result: TaskResult) -> bool:
+    def mark_failed(
+        self,
+        task_id: str,
+        result: TaskResult,
+        *,
+        now: float | None = None,
+        worker_id: str | None = None,
+        attempt: int | None = None,
+    ) -> bool:
         """running -> failed。"""
 
         return self._transition(
@@ -58,9 +137,90 @@ class TaskTable:
             allowed={"running"},
             status="failed",
             result=result,
+            now=now,
+            worker_id=worker_id,
+            attempt=attempt,
         )
 
-    def mark_cancelled(self, task_id: str, result: TaskResult) -> bool:
+    def request_cancel(self, task_id: str, *, now: float) -> bool:
+        """queued 直接取消，running 写入 cancel intent。"""
+
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None:
+                return False
+            if record.status == "queued":
+                result = TaskResult(
+                    task_id=task_id,
+                    status="cancelled",
+                    summary="task cancelled",
+                )
+                self._records[task_id] = replace(
+                    record,
+                    status="cancelled",
+                    result=result,
+                    completed_at=now,
+                    consumed_at=None,
+                    updated_at=now,
+                    version=record.version + 1,
+                )
+                return True
+            if record.status == "running":
+                if record.cancel_requested_at is not None:
+                    return True
+                self._records[task_id] = replace(
+                    record,
+                    cancel_requested_at=now,
+                    updated_at=now,
+                    version=record.version + 1,
+                )
+                return True
+            return record.status == "cancelled"
+
+    def ack_cancelled(
+        self,
+        task_id: str,
+        result: TaskResult,
+        *,
+        now: float,
+        worker_id: str | None = None,
+        attempt: int | None = None,
+    ) -> bool:
+        """running task 响应 cancel intent 后进入 cancelled。"""
+
+        with self._lock:
+            record = self._records.get(task_id)
+            if (
+                record is None
+                or record.status != "running"
+                or record.cancel_requested_at is None
+                or not self._claim_matches(
+                    record,
+                    worker_id=worker_id,
+                    attempt=attempt,
+                )
+            ):
+                return False
+            self._records[task_id] = replace(
+                record,
+                status="cancelled",
+                result=result,
+                completed_at=now,
+                consumed_at=None,
+                updated_at=now,
+                version=record.version + 1,
+            )
+            return True
+
+    def mark_cancelled(
+        self,
+        task_id: str,
+        result: TaskResult,
+        *,
+        now: float | None = None,
+        worker_id: str | None = None,
+        attempt: int | None = None,
+    ) -> bool:
         """queued/running -> cancelled。"""
 
         return self._transition(
@@ -68,9 +228,18 @@ class TaskTable:
             allowed={"queued", "running"},
             status="cancelled",
             result=result,
+            now=now,
+            worker_id=worker_id,
+            attempt=attempt,
         )
 
-    def mark_timed_out(self, task_id: str, result: TaskResult) -> bool:
+    def mark_timed_out(
+        self,
+        task_id: str,
+        result: TaskResult,
+        *,
+        now: float | None = None,
+    ) -> bool:
         """queued/running -> timeout。"""
 
         return self._transition(
@@ -78,6 +247,7 @@ class TaskTable:
             allowed={"queued", "running"},
             status="timeout",
             result=result,
+            now=now,
         )
 
     def store_late_result(self, task_id: str, result: TaskResult) -> bool:
@@ -87,7 +257,12 @@ class TaskTable:
             record = self._records.get(task_id)
             if record is None or record.status not in {"cancelled", "timeout"}:
                 return False
-            self._records[task_id] = replace(record, late_result=result)
+            self._records[task_id] = replace(
+                record,
+                late_result=result,
+                updated_at=time.time(),
+                version=record.version + 1,
+            )
             return True
 
     def due_timeouts(self, now: float) -> list[TaskRecord]:
@@ -141,8 +316,29 @@ class TaskTable:
                     self._records[record.task_id] = replace(
                         record,
                         consumed_at=now,
+                        updated_at=now,
+                        version=record.version + 1,
                     )
             return results
+
+    def mark_result_notified(self, task_id: str, *, now: float) -> bool:
+        """标记 terminal result 已发送 result-ready 通知。"""
+
+        with self._lock:
+            record = self._records.get(task_id)
+            if (
+                record is None
+                or record.result is None
+                or record.result_notified_at is not None
+            ):
+                return False
+            self._records[task_id] = replace(
+                record,
+                result_notified_at=now,
+                updated_at=now,
+                version=record.version + 1,
+            )
+            return True
 
     def active_count_for_target(self, agent_id: str) -> int:
         """返回指定 target agent 的 queued/running 任务数。"""
@@ -162,17 +358,31 @@ class TaskTable:
         allowed: set[TaskStatus],
         status: TaskStatus,
         result: TaskResult | None = None,
+        now: float | None = None,
+        worker_id: str | None = None,
+        attempt: int | None = None,
     ) -> bool:
         with self._lock:
             record = self._records.get(task_id)
-            if record is None or record.status not in allowed:
+            if (
+                record is None
+                or record.status not in allowed
+                or not self._claim_matches(
+                    record,
+                    worker_id=worker_id,
+                    attempt=attempt,
+                )
+            ):
                 return False
+            updated_at = time.time() if now is None else now
             self._records[task_id] = replace(
                 record,
                 status=status,
                 result=result,
-                completed_at=None if result is None else time.time(),
+                completed_at=None if result is None else updated_at,
                 consumed_at=None,
+                updated_at=updated_at,
+                version=record.version + 1,
             )
             return True
 
@@ -183,3 +393,20 @@ class TaskTable:
             target_agent_id=record.target_agent_id,
             status=record.status,
         )
+
+    def _claim_matches(
+        self,
+        record: TaskRecord,
+        *,
+        worker_id: str | None,
+        attempt: int | None,
+    ) -> bool:
+        if record.worker_id is not None and worker_id is None:
+            return False
+        if record.attempt > 0 and attempt is None:
+            return False
+        if worker_id is not None and record.worker_id != worker_id:
+            return False
+        if attempt is not None and record.attempt != attempt:
+            return False
+        return True

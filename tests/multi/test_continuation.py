@@ -264,7 +264,7 @@ def test_coordinator_trigger_failure_does_not_change_completed_expert_result() -
         required_capabilities=("python",),
         parent_agent_id="parent",
     )
-    envelope = coordinator.inbox.collect("expert")[0]
+    envelope = coordinator.inbox.collect("expert")[0].envelope
 
     result = coordinator.execute_expert_envelope(envelope)
 

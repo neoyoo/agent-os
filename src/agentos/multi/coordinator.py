@@ -16,11 +16,12 @@ from agentos.events import (
     EventBus,
     SubagentSpawnedEvent,
 )
-from agentos.multi.inbox import AgentInbox, AgentInboxError
+from agentos.multi.inbox import AgentInboxError
 from agentos.multi.continuation import ContinuationTrigger
+from agentos.multi.message_queue import AgentMessageQueue
 from agentos.multi.registry import AgentRegistry
 from agentos.multi.spawn import SpawnExecutor
-from agentos.multi.tasks import TaskTable
+from agentos.multi.task_store import TaskStore
 from agentos.multi.types import (
     AgentCard,
     AgentEnvelope,
@@ -60,8 +61,10 @@ class AgentCoordinator:
         self,
         *,
         registry: AgentRegistry,
-        inbox: AgentInbox,
-        task_table: TaskTable,
+        inbox: AgentMessageQueue | None = None,
+        task_table: TaskStore | None = None,
+        message_queue: AgentMessageQueue | None = None,
+        task_store: TaskStore | None = None,
         spawn_executor: SpawnExecutor,
         subagent_factory: SubagentFactory,
         event_bus: EventBus | None = None,
@@ -70,9 +73,15 @@ class AgentCoordinator:
     ) -> None:
         """创建本地协调器。"""
 
+        resolved_inbox = message_queue or inbox
+        resolved_task_table = task_store or task_table
+        if resolved_inbox is None:
+            raise ValueError("message_queue or inbox is required")
+        if resolved_task_table is None:
+            raise ValueError("task_store or task_table is required")
         self.registry = registry
-        self.inbox = inbox
-        self.task_table = task_table
+        self.inbox = resolved_inbox
+        self.task_table = resolved_task_table
         self.spawn_executor = spawn_executor
         self.subagent_factory = subagent_factory
         self.event_bus = event_bus
@@ -163,7 +172,8 @@ class AgentCoordinator:
         """drain inbox，并从 TaskTable 返回未消费的终态 results。"""
 
         self._mark_due_timeouts()
-        self.inbox.collect(agent_id)
+        for delivery in self.inbox.collect(agent_id):
+            self.inbox.ack(agent_id, delivery.delivery_id)
         return self.task_table.consume_results_for_agent(agent_id)
 
     def dispatch(
@@ -265,6 +275,8 @@ class AgentCoordinator:
             self._handle_remote_result(record, result)
 
     def _handle_remote_result(self, record: TaskRecord, result: TaskResult) -> None:
+        if self._handle_result_after_cancel_requested(record, result):
+            return
         if result.status == "completed":
             changed = self.task_table.mark_completed(record.task_id, result)
             if changed:
@@ -306,6 +318,42 @@ class AgentCoordinator:
         else:
             self._store_late_result(record.target_agent_id, record.task_id, result)
 
+    def _handle_result_after_cancel_requested(
+        self,
+        record: TaskRecord,
+        result: TaskResult,
+    ) -> bool:
+        current = self.task_table.get(record.task_id)
+        if current is None or current.cancel_requested_at is None:
+            return False
+        if result.status == "cancelled":
+            changed = self.task_table.ack_cancelled(
+                record.task_id,
+                result,
+                now=time.time(),
+            )
+        else:
+            cancelled = TaskResult(
+                task_id=record.task_id,
+                status="cancelled",
+                summary="task cancelled",
+            )
+            changed = self.task_table.mark_cancelled(record.task_id, cancelled)
+        if changed:
+            self._emit(
+                AgentTaskCancelledEvent(
+                    agent_id=record.target_agent_id,
+                    task_id=record.task_id,
+                ),
+            )
+            terminal = self.task_table.get(record.task_id)
+            if terminal is not None and terminal.result is not None:
+                self._send_result(record, terminal.result)
+            self._notify_task_completed(record.parent_agent_id, record.task_id)
+        if result.status != "cancelled":
+            self._store_late_result(record.target_agent_id, record.task_id, result)
+        return True
+
     def active_tasks(self, agent_id: str | None = None) -> list[TaskHandle]:
         """返回 task table 中的任务 handles。"""
 
@@ -313,7 +361,7 @@ class AgentCoordinator:
         return self.task_table.active_for_agent(agent_id)
 
     def cancel(self, task_id: str) -> bool:
-        """取消 queued/running task，并对 running agent 发出 best-effort interrupt。"""
+        """取消 queued task，或对 running task 写入 cancel intent。"""
 
         record = self.task_table.get(task_id)
         if record is None:
@@ -323,21 +371,24 @@ class AgentCoordinator:
         agent = self._agents.get(record.target_agent_id)
         if agent is not None:
             agent.interrupt()
-        result = TaskResult(
-            task_id=task_id,
-            status="cancelled",
-            summary="task cancelled",
-        )
-        changed = self.task_table.mark_cancelled(task_id, result)
-        if changed:
+        changed = self.task_table.request_cancel(task_id, now=time.time())
+        current = self.task_table.get(task_id)
+        if (
+            changed
+            and current is not None
+            and current.status == "cancelled"
+            and current.result is not None
+        ):
             self._emit(
                 AgentTaskCancelledEvent(
                     agent_id=record.target_agent_id,
                     task_id=task_id,
                 ),
             )
-            self._send_result(record, result)
+            self._send_result(record, current.result)
             self._notify_task_completed(record.parent_agent_id, record.task_id)
+            return True
+        if changed:
             return True
         current = self.task_table.get(task_id)
         return current is not None and current.status in {
@@ -379,6 +430,8 @@ class AgentCoordinator:
                 summary=agent_result.content,
                 elapsed_seconds=time.time() - started_at,
             )
+            if self._handle_result_after_cancel_requested(record, result):
+                return result
             if self.task_table.mark_completed(request.task_id, result):
                 self._emit(
                     AgentTaskCompletedEvent(
@@ -405,6 +458,8 @@ class AgentCoordinator:
                 error=str(error),
                 elapsed_seconds=time.time() - started_at,
             )
+            if self._handle_result_after_cancel_requested(record, result):
+                return result
             if self.task_table.mark_failed(request.task_id, result):
                 self._emit(
                     AgentTaskFailedEvent(
@@ -456,6 +511,8 @@ class AgentCoordinator:
                 elapsed_seconds=time.time() - started_at,
             )
             self._detach_ephemeral_agent(child_agent_id)
+            if self._handle_result_after_cancel_requested(record, result):
+                return result
             if self.task_table.mark_completed(request.task_id, result):
                 self._emit(
                     AgentTaskCompletedEvent(
@@ -479,6 +536,11 @@ class AgentCoordinator:
                 elapsed_seconds=time.time() - started_at,
             )
             self._detach_ephemeral_agent(child_agent_id)
+            if record is not None and self._handle_result_after_cancel_requested(
+                record,
+                result,
+            ):
+                return result
             if self.task_table.mark_failed(request.task_id, result):
                 self._emit(
                     AgentTaskFailedEvent(
