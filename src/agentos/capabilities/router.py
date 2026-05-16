@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 
+from agentos.attachments.types import AttachmentError
 from agentos.capabilities.executor import ToolExecutionResult, ToolExecutor
 from agentos.capabilities.mcp import MCPToolAdapter
 from agentos.capabilities.registry import ToolRegistry
@@ -21,6 +22,7 @@ class ToolCallRouter:
     tool_registry: ToolRegistry
     context_runtime: ContextRuntime | None = None
     recall_runtime: RecallRuntime | None = None
+    attachment_runtime: object | None = None
     mcp_adapter: MCPToolAdapter | None = None
     security_policy: SecurityPolicy = field(default_factory=SecurityPolicy)
     _executor: ToolExecutor | None = None
@@ -111,11 +113,12 @@ class ToolCallRouter:
     ) -> ToolExecutionResult:
         """把 recall_context 工具调用交给 RecallRuntime。"""
 
-        if self.recall_runtime is None:
-            raise RuntimeError("recall runtime is required for recall_context")
-
         arguments = tool_call.arguments
         handle = arguments.get("handle")
+        if isinstance(handle, str) and handle.startswith("att:"):
+            return self._execute_attachment_recall(tool_call, handle)
+        if self.recall_runtime is None:
+            raise RuntimeError("recall runtime is required for recall_context")
         query = arguments.get("query")
         limit = int(arguments.get("limit", 1))
         recalled_messages = self.recall_runtime.recall_context(
@@ -127,6 +130,40 @@ class ToolCallRouter:
             tool_call_id=tool_call.id,
             content=f"context tool recall_context applied; recalled "
             f"{len(recalled_messages)} message(s)",
+        )
+
+    def _execute_attachment_recall(
+        self,
+        tool_call: ProviderToolCall,
+        handle: str,
+    ) -> ToolExecutionResult:
+        """把 att: recall_context handle 交给 AttachmentRuntime。"""
+
+        if self.attachment_runtime is None:
+            raise RuntimeError("attachment runtime is required for attachment recall")
+        recall_attachment_handle = getattr(
+            self.attachment_runtime,
+            "recall_attachment_handle",
+            None,
+        )
+        if not callable(recall_attachment_handle):
+            raise RuntimeError(
+                "attachment_runtime must define recall_attachment_handle()",
+            )
+        try:
+            attachment = recall_attachment_handle(handle)
+        except AttachmentError as error:
+            return ToolExecutionResult(
+                tool_call_id=tool_call.id,
+                content=f"attachment recall_context failed: {error}",
+            )
+        attachment_handle = str(getattr(attachment, "handle", handle))
+        return ToolExecutionResult(
+            tool_call_id=tool_call.id,
+            content=(
+                "attachment recall_context applied; scheduled "
+                f"{attachment_handle} for next provider request"
+            ),
         )
 
     def _working_state_fields(

@@ -65,13 +65,21 @@ None.
 - 如果某个压缩片段相关但细节不足，调用 `recall_context(handle=...)`。
 - 读取恢复内容后，如果它改变了你的当前理解，更新 working state。
 
+## Attachments
+
+- Uploaded attachments may be visible for only the current turn.
+- If an attachment is listed as not loaded and you need to inspect it again, call `recall_context(handle="att:...")`.
+- Do not infer unseen attachment details from filename or preview.
+- If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.
+
 ## Trust Order
 
-1. Active messages
+1. Active messages and currently loaded attachments
 2. Inherited state
 3. Compressed history
 4. Memory context
 5. Working state
+6. Attachment placeholders / previews
 
 # Declared Working State Schema
 

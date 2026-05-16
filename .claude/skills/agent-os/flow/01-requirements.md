@@ -14,6 +14,10 @@ description: Phased requirements gathering for agent-os SDK projects — asks 6 
 4. Do NOT generate code or spec until user confirms the summary.
 </HARD-GATE>
 
+## Pre-Check
+
+Before asking dimensions, check if the user's description maps to a known agent form in `modules/agent-forms.md`. If it does, mention the form name and which modules it uses — this helps them understand what the SDK already handles vs. what they need to customize.
+
 ## Dimensions
 
 ### 【1/6】Agent Purpose & Provider

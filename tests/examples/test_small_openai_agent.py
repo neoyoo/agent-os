@@ -59,6 +59,7 @@ def test_build_agent_renders_capability_plane_from_registered_tools() -> None:
     assert "read_file" in tool_names
 
 
+
 def test_build_agent_can_enable_observability(tmp_path) -> None:
     tracer = InMemoryTracer()
     provider = FakeProvider([ProviderResponse(content="ok")])

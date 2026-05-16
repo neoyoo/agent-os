@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -34,6 +35,10 @@ from agentos.runtime.event_bus import (
     TurnFailedEvent,
     TurnStartedEvent,
     UserMessageAppendedEvent,
+)
+from agentos.runtime._async_provider_bridge import (
+    complete_async_provider_from_thread,
+    stream_async_provider_from_thread,
 )
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.session import SessionState
@@ -97,6 +102,11 @@ class QueryLoop:
     max_tool_iterations: int = 8
     _provider_stream_counter: int = field(default=0, init=False, repr=False)
     _interrupted: bool = field(default=False, init=False, repr=False)
+    _async_provider_event_loop: asyncio.AbstractEventLoop | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def interrupted(self) -> bool:
@@ -114,6 +124,19 @@ class QueryLoop:
 
         self._interrupted = False
 
+    def set_async_provider_event_loop(
+        self,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """为 async serving path 设置 provider I/O 所属 event loop。"""
+
+        self._async_provider_event_loop = loop
+
+    def clear_async_provider_event_loop(self) -> None:
+        """清除 async provider I/O event loop。"""
+
+        self._async_provider_event_loop = None
+
     def build_request(self) -> ProviderRequest:
         """构建下一次 provider request，并在请求前执行窗口压缩。"""
 
@@ -124,11 +147,16 @@ class QueryLoop:
         finally:
             self._clear_runtime_notices()
 
-    def run_turn(self, user_message: str) -> str:
+    def run_turn(
+        self,
+        user_message: str,
+        *,
+        attachments: list[object] | None = None,
+    ) -> str:
         """运行一轮 user -> provider -> assistant。"""
 
         final_content = ""
-        for event in self.run_turn_stream(user_message):
+        for event in self.run_turn_stream(user_message, attachments=attachments):
             if isinstance(event, TurnStreamCompleted):
                 final_content = event.content
         return final_content
@@ -137,13 +165,19 @@ class QueryLoop:
         self,
         user_message: str,
         options: RunOptions | None = None,
+        *,
+        attachments: list[object] | None = None,
     ) -> Iterator[TurnStreamEvent]:
         """运行一轮 user -> provider -> assistant，并产出 typed stream events。"""
 
         run_options = options or RunOptions()
         self._raise_if_interrupted()
         turn = self._start_turn(user_message)
-        user = self.message_runtime.append_user(user_message)
+        stored_user_message = self._prepare_user_message(
+            user_message,
+            attachments or [],
+        )
+        user = self.message_runtime.append_user(stored_user_message)
         self._emit(
             UserMessageAppendedEvent(
                 message_id=user.id,
@@ -173,6 +207,29 @@ class QueryLoop:
             turn.complete()
         self._emit(TurnCompletedEvent(**self._event_context(turn)))
         yield TurnStreamCompleted(content=response_content)
+
+    def _prepare_user_message(
+        self,
+        user_message: str,
+        attachments: list[object],
+    ) -> str:
+        """把附件折叠成安全占位符，并安排首轮 provider request 展开。"""
+
+        if not attachments:
+            return user_message
+        attachment_runtime = getattr(self.request_builder, "attachment_runtime", None)
+        if attachment_runtime is None:
+            raise RuntimeError("attachment runtime is required for attachments")
+        prepare_user_message = getattr(
+            attachment_runtime,
+            "prepare_user_message",
+            None,
+        )
+        if not callable(prepare_user_message):
+            raise RuntimeError(
+                "attachment_runtime must define prepare_user_message()",
+            )
+        return prepare_user_message(user_message, attachments)
 
     def run_continuation_stream(
         self,
@@ -500,6 +557,27 @@ class QueryLoop:
         options: ProviderStreamOptions,
     ) -> Iterator[ProviderStreamEvent]:
         """返回 provider stream events，必要时使用 complete fallback。"""
+
+        if self._async_provider_event_loop is not None:
+            async_stream = getattr(self.provider, "async_stream", None)
+            if callable(async_stream):
+                yield from stream_async_provider_from_thread(
+                    loop=self._async_provider_event_loop,
+                    async_stream_factory=lambda: async_stream(request, options),
+                    cancel_requested=lambda: self._interrupted,
+                )
+                return
+
+            async_complete = getattr(self.provider, "async_complete", None)
+            if callable(async_complete):
+                yield from complete_async_provider_from_thread(
+                    loop=self._async_provider_event_loop,
+                    async_complete_factory=lambda: async_complete(request),
+                    request_id=self._next_provider_stream_request_id(),
+                    options=options,
+                    cancel_requested=lambda: self._interrupted,
+                )
+                return
 
         stream = getattr(self.provider, "stream", None)
         if callable(stream):

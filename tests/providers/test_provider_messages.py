@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
@@ -103,6 +104,65 @@ def test_provider_message_null_content_normalizes_to_empty_string() -> None:
     assert provider_message_from_dict(
         {"role": "tool", "tool_call_id": "call_1", "content": None},
     ) == ToolResultMessage(tool_call_id="call_1", content="")
+
+
+def test_provider_message_to_dict_redacts_attachment_content_parts() -> None:
+    attachment = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+
+    result = provider_message_to_dict(
+        UserMessage(
+            content=(
+                TextPart("分析图片"),
+                ImagePart(attachment),
+            ),
+        ),
+    )
+
+    assert result == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "分析图片"},
+            {
+                "type": "image",
+                "attachment": {
+                    "handle": "att_1",
+                    "filename": "diagram.png",
+                    "mime_type": "image/png",
+                    "size_bytes": 11,
+                },
+                "detail": "auto",
+            },
+        ],
+    }
+    assert "image-bytes" not in str(result)
+
+
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        {},
+        {"id": "call_1"},
+        {"name": "read_file"},
+        {"id": None, "name": "read_file"},
+        {"id": "call_1", "name": None},
+        {"id": "call_1", "name": "read_file", "arguments": []},
+    ],
+)
+def test_provider_message_rejects_malformed_tool_calls(tool_call: object) -> None:
+    with pytest.raises(ValueError, match="provider tool call"):
+        provider_message_from_dict(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [tool_call],
+            },
+        )
 
 
 def test_provider_tool_call_deepcopies_arguments() -> None:

@@ -1,18 +1,46 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
+
 
 if TYPE_CHECKING:
     from agentos.providers.base import ProviderToolCall
 
 
 @dataclass(frozen=True, slots=True)
+class TextPart:
+    """provider content 中的文本片段。"""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ImagePart:
+    """provider content 中的一次性图片附件片段。"""
+
+    attachment: object
+    detail: Literal["auto", "low", "high"] = "auto"
+
+
+@dataclass(frozen=True, slots=True)
+class FilePart:
+    """provider content 中的一次性文件附件片段。"""
+
+    attachment: object
+
+
+ProviderContentPart: TypeAlias = TextPart | ImagePart | FilePart
+ProviderMessageContent: TypeAlias = str | tuple[ProviderContentPart, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class UserMessage:
     """用户消息。"""
 
-    content: str
+    content: ProviderMessageContent
 
     def __getitem__(self, key: str) -> object:
         """迁移期只读 dict-style 访问。"""
@@ -128,7 +156,7 @@ def provider_message_to_dict(message: ProviderMessage) -> dict[str, object]:
     """把强类型 provider message 转成 JSON-safe dict。"""
 
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": _content_to_json_safe(message.content)}
     if isinstance(message, AssistantMessage):
         result: dict[str, object] = {
             "role": "assistant",
@@ -148,6 +176,44 @@ def provider_message_to_dict(message: ProviderMessage) -> dict[str, object]:
             "tool_call_id": message.tool_call_id,
         }
     raise TypeError(f"unsupported provider message: {type(message).__name__}")
+
+
+def _content_to_json_safe(content: ProviderMessageContent) -> object:
+    """把 provider content 转成 JSON-safe 且附件 source 已脱敏的形态。"""
+
+    if isinstance(content, str):
+        return content
+    return [_content_part_to_json_safe(part) for part in content]
+
+
+def _content_part_to_json_safe(part: ProviderContentPart) -> dict[str, object]:
+    """把单个 content part 转为可观测安全摘要。"""
+
+    if isinstance(part, TextPart):
+        return {"type": "text", "text": part.text}
+    if isinstance(part, ImagePart):
+        return {
+            "type": "image",
+            "attachment": _attachment_metadata(part.attachment),
+            "detail": part.detail,
+        }
+    if isinstance(part, FilePart):
+        return {
+            "type": "file",
+            "attachment": _attachment_metadata(part.attachment),
+        }
+    raise TypeError(f"unsupported provider content part: {type(part).__name__}")
+
+
+def _attachment_metadata(attachment: object) -> dict[str, object]:
+    """提取 LLM/observability 可见的附件元数据，不暴露 source。"""
+
+    return {
+        "handle": str(getattr(attachment, "handle", "")),
+        "filename": getattr(attachment, "filename", None),
+        "mime_type": str(getattr(attachment, "mime_type", "")),
+        "size_bytes": int(getattr(attachment, "size_bytes", 0)),
+    }
 
 
 def provider_message_from_dict(value: object) -> ProviderMessage:
@@ -241,8 +307,29 @@ def _tool_call_to_dict(tool_call: ProviderToolCall) -> dict[str, object]:
         "name": tool_call.name,
     }
     if tool_call.arguments:
-        result["arguments"] = deepcopy(tool_call.arguments)
+        result["arguments"] = _json_safe_value(tool_call.arguments)
     return result
+
+
+def _json_safe_value(value: object) -> object:
+    """递归清洗 provider tool arguments，避免观测快照泄露或崩溃。"""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return f"<bytes:{len(value)}>"
+    if isinstance(value, Path):
+        return "<path>"
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    if is_dataclass(value):
+        return f"<object:{type(value).__name__}>"
+    return f"<object:{type(value).__name__}>"
 
 
 def _tool_call_from_dict(value: object) -> ProviderToolCall:
@@ -250,11 +337,17 @@ def _tool_call_from_dict(value: object) -> ProviderToolCall:
         raise ValueError("provider tool call must be an object")
     from agentos.providers.base import ProviderToolCall
 
+    raw_id = value.get("id")
+    raw_name = value.get("name")
+    if not isinstance(raw_id, str) or not raw_id:
+        raise ValueError("provider tool call requires id")
+    if not isinstance(raw_name, str) or not raw_name:
+        raise ValueError("provider tool call requires name")
     raw_arguments = value.get("arguments", {})
     if not isinstance(raw_arguments, dict):
         raise ValueError("provider tool call arguments must be an object")
     return ProviderToolCall(
-        id=str(value["id"]),
-        name=str(value["name"]),
+        id=raw_id,
+        name=raw_name,
         arguments=deepcopy(raw_arguments),
     )

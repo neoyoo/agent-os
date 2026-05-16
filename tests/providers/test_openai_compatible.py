@@ -1,7 +1,11 @@
 import inspect
+import asyncio
 from io import BytesIO
 from urllib.error import HTTPError
 
+import pytest
+
+from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.providers import (
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
@@ -9,6 +13,7 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderUsage,
     UrlLibJSONTransport,
+    UserMessage,
 )
 
 
@@ -178,6 +183,47 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
     )
 
 
+def test_openai_compatible_provider_async_complete_uses_async_transport() -> None:
+    class FakeAsyncTransport:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def post_json(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ) -> dict[str, object]:
+            self.calls.append(
+                {
+                    "url": url,
+                    "headers": headers,
+                    "payload": payload,
+                    "timeout": timeout,
+                },
+            )
+            return {"choices": [{"message": {"content": "async done"}}]}
+
+    async def run() -> tuple[str, list[dict[str, object]]]:
+        transport = FakeAsyncTransport()
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            async_transport=transport,
+        )
+        response = await provider.async_complete(
+            ProviderRequest(system="system", messages=[]),
+        )
+        return response.content, transport.calls
+
+    content, calls = asyncio.run(run())
+
+    assert content == "async done"
+    assert calls[0]["url"] == "https://api.deepseek.example/chat/completions"
+
+
 def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:
     def _raise_http_error(*args: object, **kwargs: object) -> object:
         raise HTTPError(
@@ -230,6 +276,51 @@ def test_openai_compatible_provider_can_disable_thinking() -> None:
     assert transport.calls[0]["payload"]["thinking"] == {"type": "disabled"}
 
 
+def test_openai_compatible_provider_maps_image_content_parts() -> None:
+    transport = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+    attachment = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+
+    provider.complete(
+        ProviderRequest(
+            system="system",
+            messages=[
+                UserMessage(
+                    content=(
+                        TextPart("分析图片"),
+                        ImagePart(attachment),
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    assert transport.calls[0]["payload"]["messages"][1] == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "分析图片"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                    "detail": "auto",
+                },
+            },
+        ],
+    }
+
+
 def test_openai_compatible_provider_rejects_system_messages_in_active_window() -> None:
     transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
     provider = OpenAICompatibleProvider(
@@ -251,3 +342,77 @@ def test_openai_compatible_provider_rejects_system_messages_in_active_window() -
         assert "unsupported provider message role" in str(error)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_openai_compatible_provider_rejects_non_object_tool_arguments() -> None:
+    transport = FakeTransport(
+        {
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": "null",
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        },
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match="tool arguments must decode to an object"):
+        provider.complete(ProviderRequest(system="system", messages=[]))
+
+
+@pytest.mark.parametrize(
+    "tool_call, message",
+    [
+        (
+            {"id": None, "function": {"name": "read_file", "arguments": "{}"}},
+            "tool_call requires id",
+        ),
+        (
+            {"id": "call_1", "function": {"name": None, "arguments": "{}"}},
+            "tool_call requires function name",
+        ),
+    ],
+)
+def test_openai_compatible_provider_rejects_missing_tool_identity(
+    tool_call: dict[str, object],
+    message: str,
+) -> None:
+    transport = FakeTransport(
+        {
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [tool_call],
+                    },
+                },
+            ],
+        },
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        provider.complete(ProviderRequest(system="system", messages=[]))

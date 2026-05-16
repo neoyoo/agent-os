@@ -2,6 +2,12 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from agentos.providers._content_parts import openai_chat_user_content
+from agentos.providers._tool_arguments import (
+    parse_json_object_arguments,
+    require_tool_call_id,
+    require_tool_call_name,
+)
 from agentos.providers.base import (
     ProviderMessage,
     ProviderRequest,
@@ -69,7 +75,7 @@ class OpenAIProvider:
         """把 provider message 转为 OpenAI chat message。"""
 
         if isinstance(message, UserMessage):
-            return {"role": "user", "content": message.content}
+            return {"role": "user", "content": self._user_content(message.content)}
         if isinstance(message, AssistantMessage):
             result: dict[str, object] = {
                 "role": "assistant",
@@ -102,17 +108,37 @@ class OpenAIProvider:
             "active messages must not include system role; use ProviderRequest.system",
         )
 
+    def _user_content(self, content: object) -> object:
+        """把 canonical content parts 转为 OpenAI Chat content。"""
+
+        if isinstance(content, str):
+            return content
+        if isinstance(content, tuple):
+            return openai_chat_user_content(content)
+        return content
+
     def _tool_calls(self, raw_tool_calls: list[object]) -> list[ProviderToolCall]:
         """把 OpenAI tool_calls 标准化为 ProviderToolCall。"""
 
         tool_calls: list[ProviderToolCall] = []
         for raw_tool_call in raw_tool_calls:
             arguments = raw_tool_call.function.arguments or "{}"
+            tool_call_id = require_tool_call_id(
+                raw_tool_call.id,
+                provider_name="OpenAI",
+            )
+            tool_call_name = require_tool_call_name(
+                raw_tool_call.function.name,
+                provider_name="OpenAI",
+            )
             tool_calls.append(
                 ProviderToolCall(
-                    id=raw_tool_call.id,
-                    name=raw_tool_call.function.name,
-                    arguments=json.loads(arguments),
+                    id=tool_call_id,
+                    name=tool_call_name,
+                    arguments=parse_json_object_arguments(
+                        arguments,
+                        provider_name="OpenAI",
+                    ),
                 ),
             )
         return tool_calls

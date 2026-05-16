@@ -21,6 +21,9 @@ observability = [
     "opentelemetry-sdk>=1.28",
     "opentelemetry-exporter-otlp-proto-http>=1.28",
 ]
+async-http = [
+    "httpx>=0.27",
+]
 redis = [
     "redis>=5.0",
 ]

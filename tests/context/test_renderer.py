@@ -111,6 +111,14 @@ def test_default_renderer_omits_empty_working_state_sections() -> None:
     assert "# Capability Plane" in rendered
 
 
+def test_context_renderer_documents_attachment_recall_rules() -> None:
+    rendered = ContextRenderer().render(ContextState())
+
+    assert 'recall_context(handle="att:...")' in rendered
+    assert "currently loaded attachments" in rendered
+    assert "Attachment placeholders / previews" in rendered
+
+
 def test_default_renderer_renders_empty_working_state_when_schema_declared() -> None:
     rendered = ContextRenderer().render(
         ContextState(

@@ -27,6 +27,19 @@ def test_agent_builder_creates_runnable_standard_agent() -> None:
     ]
 
 
+def test_agent_builder_wires_attachment_runtime() -> None:
+    provider = FakeProvider(["ok"])
+
+    agent = AgentBuilder().provider(provider).build()
+    attachment = agent.attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+
+    assert attachment.handle.startswith("att_")
+
+
 def test_agent_builder_tools_are_visible_and_executable() -> None:
     tool = RegisteredTool(
         name="lookup_status",
@@ -253,6 +266,7 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
         provider_message_to_dict(provider.requests[1].messages[2])["content"]
         == "router tool result"
     )
+    assert router.attachment_runtime is agent.attachments
 
 
 def test_agent_builder_rejects_missing_provider_and_duplicate_provider() -> None:

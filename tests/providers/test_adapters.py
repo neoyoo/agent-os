@@ -1,5 +1,14 @@
 from types import SimpleNamespace
 
+import pytest
+
+from agentos.attachments import (
+    Attachment,
+    BytesSource,
+    FilePart,
+    ImagePart,
+    TextPart,
+)
 from agentos.providers import (
     AssistantMessage,
     AnthropicProvider,
@@ -96,6 +105,168 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
             arguments={"path": "pyproject.toml"},
         ),
     )
+
+
+def test_openai_provider_rejects_non_object_tool_arguments() -> None:
+    class FakeCompletions:
+        def create(self, **kwargs: object) -> object:
+            return SimpleNamespace(
+                id="chatcmpl_1",
+                model="gpt-test",
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="tool_calls",
+                        message=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call_1",
+                                    function=SimpleNamespace(
+                                        name="read_file",
+                                        arguments='["not", "object"]',
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            )
+
+    provider = OpenAIProvider(
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions()),
+        ),
+        model="gpt-test",
+    )
+
+    with pytest.raises(ValueError, match="tool arguments must decode to an object"):
+        provider.complete(ProviderRequest(system="system", messages=[]))
+
+
+def test_openai_provider_rejects_missing_tool_identity() -> None:
+    class FakeCompletions:
+        def create(self, **kwargs: object) -> object:
+            return SimpleNamespace(
+                id="chatcmpl_1",
+                model="gpt-test",
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="tool_calls",
+                        message=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id=None,
+                                    function=SimpleNamespace(
+                                        name="read_file",
+                                        arguments="{}",
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            )
+
+    provider = OpenAIProvider(
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions()),
+        ),
+        model="gpt-test",
+    )
+
+    with pytest.raises(ValueError, match="tool_call requires id"):
+        provider.complete(ProviderRequest(system="system", messages=[]))
+
+
+def test_openai_provider_maps_image_parts_to_chat_image_url() -> None:
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] | None = None
+
+        def create(self, **kwargs: object) -> object:
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                id="chatcmpl_1",
+                model="gpt-test",
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(content="ok", tool_calls=[]),
+                    ),
+                ],
+            )
+
+    completions = FakeCompletions()
+    provider = OpenAIProvider(
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        model="gpt-test",
+    )
+    attachment = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+
+    provider.complete(
+        ProviderRequest(
+            system="system",
+            messages=[
+                UserMessage(
+                    content=(
+                        TextPart("分析图片"),
+                        ImagePart(attachment),
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    assert completions.kwargs is not None
+    assert completions.kwargs["messages"][1] == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "分析图片"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                    "detail": "auto",
+                },
+            },
+        ],
+    }
+
+
+def test_openai_provider_rejects_file_parts_for_chat_completions() -> None:
+    class FakeCompletions:
+        def create(self, **kwargs: object) -> object:
+            raise AssertionError("OpenAI client should not be called")
+
+    provider = OpenAIProvider(
+        client=SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        model="gpt-test",
+    )
+    attachment = Attachment(
+        handle="att_1",
+        filename="doc.pdf",
+        mime_type="application/pdf",
+        size_bytes=8,
+        source=BytesSource(b"pdf data"),
+    )
+
+    with pytest.raises(ValueError, match="does not support file attachments"):
+        provider.complete(
+            ProviderRequest(
+                system="system",
+                messages=[UserMessage(content=(FilePart(attachment),))],
+            ),
+        )
 
 
 def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
@@ -249,6 +420,83 @@ def test_anthropic_provider_converts_tool_messages_to_anthropic_blocks() -> None
                     "type": "tool_result",
                     "tool_use_id": "call_2",
                     "content": "version = 0.1",
+                },
+            ],
+        },
+    ]
+
+
+def test_anthropic_provider_maps_image_and_pdf_parts_to_content_blocks() -> None:
+    class FakeMessages:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] | None = None
+
+        def create(self, **kwargs: object) -> object:
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                id="msg_1",
+                model="claude-test",
+                stop_reason="end_turn",
+                usage=None,
+                content=[SimpleNamespace(type="text", text="done")],
+            )
+
+    messages = FakeMessages()
+    provider = AnthropicProvider(
+        client=SimpleNamespace(messages=messages),
+        model="claude-test",
+    )
+    image = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+    pdf = Attachment(
+        handle="att_2",
+        filename="doc.pdf",
+        mime_type="application/pdf",
+        size_bytes=8,
+        source=BytesSource(b"pdf data"),
+    )
+
+    provider.complete(
+        ProviderRequest(
+            system="system",
+            messages=[
+                UserMessage(
+                    content=(
+                        TextPart("分析附件"),
+                        ImagePart(image),
+                        FilePart(pdf),
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    assert messages.kwargs is not None
+    assert messages.kwargs["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "分析附件"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "aW1hZ2UtYnl0ZXM=",
+                    },
+                },
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": "cGRmIGRhdGE=",
+                    },
                 },
             ],
         },

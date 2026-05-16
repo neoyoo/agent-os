@@ -1,4 +1,7 @@
+import asyncio
 from collections.abc import Iterator
+
+import pytest
 
 from agentos.providers import (
     OpenAICompatibleProvider,
@@ -93,6 +96,102 @@ def test_openai_compatible_streams_content_and_completion() -> None:
         output_tokens=2,
         total_tokens=5,
     )
+
+
+def test_openai_compatible_async_stream_uses_async_transport() -> None:
+    class FakeAsyncStreamingTransport:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def post_json_stream(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ):
+            self.calls.append(
+                {
+                    "url": url,
+                    "headers": headers,
+                    "payload": payload,
+                    "timeout": timeout,
+                },
+            )
+            yield {
+                "id": "chatcmpl_async",
+                "model": "deepseek-chat",
+                "choices": [{"delta": {"content": "async"}, "finish_reason": "stop"}],
+            }
+
+    async def collect() -> tuple[list[object], list[dict[str, object]]]:
+        transport = FakeAsyncStreamingTransport()
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            async_transport=transport,
+        )
+        events = [
+            event
+            async for event in provider.async_stream(
+                ProviderRequest(system="system", messages=[]),
+            )
+        ]
+        return events, transport.calls
+
+    events, calls = asyncio.run(collect())
+
+    assert calls[0]["payload"]["stream"] is True
+    assert [type(event).__name__ for event in events] == [
+        "ProviderStreamStarted",
+        "ProviderContentDelta",
+        "ProviderStreamCompleted",
+    ]
+    assert events[-1].response.content == "async"
+
+
+def test_openai_compatible_async_stream_cancellation_reaches_transport() -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class BlockingAsyncStreamingTransport:
+        async def post_json_stream(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            yield {}
+
+    async def run_and_cancel() -> bool:
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            async_transport=BlockingAsyncStreamingTransport(),
+        )
+        task = asyncio.create_task(
+            anext(
+                provider.async_stream(
+                    ProviderRequest(system="system", messages=[]),
+                ),
+            ),
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return cancelled.is_set()
+
+    assert asyncio.run(run_and_cancel()) is True
 
 
 def test_openai_compatible_streams_reasoning_when_visible() -> None:
@@ -199,3 +298,73 @@ def test_openai_compatible_streams_tool_call_deltas() -> None:
     assert events[-1].response.tool_calls[0].id == "call_1"
     assert events[-1].response.tool_calls[0].name == "read_file"
     assert events[-1].response.tool_calls[0].arguments == {"path": "pyproject.toml"}
+
+
+def test_openai_compatible_stream_rejects_non_object_tool_arguments() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": "[]",
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match="tool arguments must decode to an object"):
+        list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+
+def test_openai_compatible_stream_rejects_missing_tool_identity() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"arguments": "{}"},
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match="tool_call requires id"):
+        list(provider.stream(ProviderRequest(system="system", messages=[])))

@@ -1,8 +1,10 @@
+from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
 from agentos.context import ContextRenderer, ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     ProviderFunctionSpec,
     ProviderToolSpec,
+    UserMessage,
     provider_message_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder
@@ -88,3 +90,34 @@ def test_provider_request_builder_does_not_render_tool_schema_into_system() -> N
     ]
     assert "dangerous_schema_marker" not in request.system
     assert "secret" not in request.system
+
+
+def test_provider_request_builder_projects_pending_attachments_once() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    content = attachments.prepare_user_message("分析图片", [attachment])
+    messages.append_user(content)
+    builder = ProviderRequestBuilder(
+        context_renderer=ContextRenderer(),
+        message_runtime=messages,
+        attachment_runtime=attachments,
+    )
+
+    first_request = builder.build(context)
+    second_request = builder.build(context)
+
+    assert first_request.messages == [
+        UserMessage(
+            content=(
+                TextPart("分析图片"),
+                ImagePart(attachment),
+            ),
+        ),
+    ]
+    assert second_request.messages == [UserMessage(content=content)]

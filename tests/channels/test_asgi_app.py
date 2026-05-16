@@ -156,6 +156,32 @@ def build_app(agent: Agent):
     )
 
 
+def test_asgi_app_rejects_oversized_body() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    app = AsgiAgentApp(
+        sessions=InMemoryAgentSessionProvider(
+            lambda session_id: build_agent_with_response("unused"),
+        ),
+        max_body_bytes=8,
+    )
+
+    sent = asyncio.run(
+        call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns",
+            body=b'{"message":"too large"}',
+        ),
+    )
+
+    assert response_status(sent) == 413
+    assert json.loads(response_body(sent)) == {
+        "status": "failed",
+        "error": "request body too large",
+    }
+
+
 def test_asgi_app_health_route_returns_json() -> None:
     sent = asyncio.run(
         call_asgi(

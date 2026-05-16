@@ -14,7 +14,12 @@ from agentos.providers.base import (
 from agentos.providers.fake import FakeProvider
 from agentos.providers.messages import (
     AssistantMessage,
+    FilePart,
+    ImagePart,
+    ProviderContentPart,
     ProviderFunctionSpec,
+    ProviderMessageContent,
+    TextPart,
     ToolResultMessage,
     UserMessage,
     provider_message_from_dict,
@@ -24,6 +29,8 @@ from agentos.providers.messages import (
 )
 from agentos.providers.openai import OpenAIProvider
 from agentos.providers.openai_compatible import (
+    AsyncOpenAICompatibleTransport,
+    HttpxAsyncJSONTransport,
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
     OpenAICompatibleTransport,
@@ -47,14 +54,20 @@ from agentos.providers.stream import (
 __all__ = [
     "AnthropicProvider",
     "AssistantMessage",
+    "AsyncOpenAICompatibleTransport",
     "AsyncProvider",
     "FakeProvider",
+    "FilePart",
+    "HttpxAsyncJSONTransport",
+    "ImagePart",
     "OpenAICompatibleProvider",
     "OpenAICompatibleProviderError",
     "OpenAICompatibleTransport",
     "OpenAIProvider",
     "ProviderMessage",
+    "ProviderContentPart",
     "ProviderFunctionSpec",
+    "ProviderMessageContent",
     "ProviderRequest",
     "ProviderResponse",
     "Provider",
@@ -72,6 +85,7 @@ __all__ = [
     "ProviderToolCallDelta",
     "ProviderUsageDelta",
     "StreamingProvider",
+    "TextPart",
     "ToolResultMessage",
     "UrlLibJSONTransport",
     "UserMessage",

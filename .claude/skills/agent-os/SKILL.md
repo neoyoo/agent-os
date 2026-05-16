@@ -36,6 +36,7 @@ flow/03-implementation.md  → Hand off to subagents via superpowers workflow
 | "I want to build an agent" / "new agent" | `flow/01-requirements.md` |
 | "Generate the spec" / already answered questions | `flow/02-spec-generation.md` |
 | "Start implementation" / spec exists | `flow/03-implementation.md` |
+| "What kind of agent can I build?" / capability check | `modules/agent-forms.md` |
 | Specific module question | `modules/<module>.md` |
 
 ## SDK Source Location

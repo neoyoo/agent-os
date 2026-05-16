@@ -1,5 +1,6 @@
 import pytest
 
+from agentos.attachments import AttachmentRuntime
 from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
 from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
@@ -283,6 +284,49 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
         "Original answer",
         "Current task",
     ]
+
+
+def test_tool_call_router_routes_attachment_recall_namespace() -> None:
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        attachment_runtime=attachments,
+    )
+
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_recall",
+            name="recall_context",
+            arguments={"handle": f"att:{attachment.handle}"},
+        ),
+    )
+
+    assert result.tool_call_id == "call_recall"
+    assert "attachment recall_context applied" in result.content
+
+
+def test_tool_call_router_returns_tool_result_for_unknown_attachment_handle() -> None:
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        attachment_runtime=AttachmentRuntime(),
+    )
+
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_recall",
+            name="recall_context",
+            arguments={"handle": "att:missing"},
+        ),
+    )
+
+    assert result.tool_call_id == "call_recall"
+    assert "attachment recall_context failed" in result.content
+    assert "unknown attachment" in result.content
 
 
 def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> None:

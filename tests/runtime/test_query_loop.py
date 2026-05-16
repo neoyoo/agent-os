@@ -1,9 +1,17 @@
 import pytest
 
+from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
+from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRenderer, ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderResponse, provider_message_to_dict
+from agentos.providers import (
+    FakeProvider,
+    ProviderToolCall,
+    ProviderResponse,
+    UserMessage,
+    provider_message_to_dict,
+)
 from agentos.policies import BudgetPolicy
 from agentos.recall import RecallRuntime
 from agentos.runtime import QueryLoop, ProviderRequestBuilder
@@ -50,6 +58,94 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
         {"role": "user", "content": "Hello"},
     ]
     assert "Run a fake provider loop." in provider.requests[0].system
+
+
+def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    provider = FakeProvider(["first", "second"])
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            attachment_runtime=attachments,
+        ),
+        provider=provider,
+    )
+
+    loop.run_turn("分析图片", attachments=[attachment])
+    loop.run_turn("继续")
+
+    first_user = provider.requests[0].messages[0]
+    second_user = provider.requests[1].messages[0]
+    assert first_user == UserMessage(
+        content=(
+            TextPart("分析图片"),
+            ImagePart(attachment),
+        ),
+    )
+    assert isinstance(second_user.content, str)
+    assert "Attachment att_1" in second_user.content
+
+
+def test_query_loop_recalls_attachment_through_recall_context_namespace() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_recall",
+                        name="recall_context",
+                        arguments={"handle": f"att:{attachment.handle}"},
+                    ),
+                ],
+            ),
+            ProviderResponse(content="inspected"),
+        ],
+    )
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        context_runtime=context,
+        attachment_runtime=attachments,
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+            attachment_runtime=attachments,
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("再看一下附件")
+
+    assert result == "inspected"
+    assert provider.requests[1].messages[-1] == UserMessage(
+        content=(
+            TextPart(f"Recalled attachment {attachment.handle} for inspection."),
+            ImagePart(attachment),
+        ),
+    )
 
 
 def test_query_loop_rejects_truncated_provider_final_response() -> None:

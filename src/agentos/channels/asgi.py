@@ -23,6 +23,10 @@ AsgiReceive = Callable[[], Awaitable[dict[str, object]]]
 AsgiSend = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+class RequestBodyTooLarge(ValueError):
+    """ASGI request body 超过本应用允许的上限。"""
+
+
 class AsgiAgentApp:
     """最小 ASGI channel app，不依赖具体 Web framework。"""
 
@@ -32,6 +36,7 @@ class AsgiAgentApp:
         sessions: AgentSessionProvider,
         auth_policy: ChannelAuthPolicy | None = None,
         a2a_server: A2AServerAdapter | None = None,
+        max_body_bytes: int = 1_048_576,
     ) -> None:
         """创建 ASGI app。"""
 
@@ -39,6 +44,7 @@ class AsgiAgentApp:
         self._auth_policy = auth_policy or AllowAllChannelAuthPolicy()
         self._http = HttpAgentChannel(sessions)
         self._a2a_server = a2a_server
+        self._max_body_bytes = max_body_bytes
 
     async def __call__(
         self,
@@ -83,7 +89,15 @@ class AsgiAgentApp:
             await self._send_json(send, 404, {"status": "failed", "error": "not found"})
             return
 
-        body = await self._read_body(receive)
+        try:
+            body = await self._read_body(receive)
+        except RequestBodyTooLarge as error:
+            await self._send_json(
+                send,
+                413,
+                {"status": "failed", "error": str(error)},
+            )
+            return
         if is_stream:
             await self._handle_sse_turn(session_id, body, receive, send)
             return
@@ -109,7 +123,15 @@ class AsgiAgentApp:
         if self._a2a_server is None:
             await self._send_json(send, 404, {"status": "failed", "error": "not found"})
             return
-        body = await self._read_body(receive)
+        try:
+            body = await self._read_body(receive)
+        except RequestBodyTooLarge as error:
+            await self._send_json(
+                send,
+                413,
+                {"status": "failed", "error": str(error)},
+            )
+            return
         try:
             payload = json.loads(body.decode("utf-8"))
         except json.JSONDecodeError as error:
@@ -246,6 +268,8 @@ class AsgiAgentApp:
                 return body
             chunk = message.get("body", b"")
             if isinstance(chunk, bytes):
+                if len(body) + len(chunk) > self._max_body_bytes:
+                    raise RequestBodyTooLarge("request body too large")
                 body += chunk
             if not bool(message.get("more_body", False)):
                 return body

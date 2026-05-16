@@ -65,27 +65,29 @@ class AsyncQueryLoop:
                 final_content = event.content
         return final_content
 
-    async def run_turn_stream(
+    def run_turn_stream(
         self,
         user_message: str,
         options: RunOptions | None = None,
     ) -> AsyncIterator[TurnStreamEvent]:
         """异步运行 turn，产出 typed stream events。"""
 
-        async for event in iterate_sync_in_executor(
+        return iterate_sync_in_executor(
             lambda: self.sync_loop.run_turn_stream(user_message, options),
             on_cancel=self.sync_loop.request_interrupt,
-        ):
-            yield event
+            before_start=self.sync_loop.set_async_provider_event_loop,
+            after_worker=self.sync_loop.clear_async_provider_event_loop,
+        )
 
-    async def run_continuation_stream(
+    def run_continuation_stream(
         self,
         options: RunOptions | None = None,
     ) -> AsyncIterator[TurnStreamEvent]:
         """异步运行 runtime continuation turn。"""
 
-        async for event in iterate_sync_in_executor(
+        return iterate_sync_in_executor(
             lambda: self.sync_loop.run_continuation_stream(options),
             on_cancel=self.sync_loop.request_interrupt,
-        ):
-            yield event
+            before_start=self.sync_loop.set_async_provider_event_loop,
+            after_worker=self.sync_loop.clear_async_provider_event_loop,
+        )

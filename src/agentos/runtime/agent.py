@@ -27,6 +27,50 @@ class AgentResult:
     content: str
 
 
+class _AgentAsyncStream:
+    """Agent async stream 适配器，负责维护 interrupt/cancel 状态。"""
+
+    def __init__(
+        self,
+        agent: "Agent",
+        stream: AsyncIterator[TurnStreamEvent],
+    ) -> None:
+        self._agent = agent
+        self._stream = stream
+        self._task: asyncio.Task[object] | None = None
+
+    def __aiter__(self) -> "_AgentAsyncStream":
+        return self
+
+    async def __anext__(self) -> TurnStreamEvent:
+        self._set_current_task()
+        try:
+            return await self._stream.__anext__()
+        except StopAsyncIteration:
+            self._clear_current_task()
+            raise
+        except asyncio.CancelledError:
+            self._agent.query_loop.request_interrupt()
+            raise
+
+    async def aclose(self) -> None:
+        self._set_current_task()
+        try:
+            aclose = getattr(self._stream, "aclose", None)
+            if callable(aclose):
+                await aclose()
+        finally:
+            self._clear_current_task()
+
+    def _set_current_task(self) -> None:
+        self._task = asyncio.current_task()
+        self._agent._current_async_task = self._task
+
+    def _clear_current_task(self) -> None:
+        if self._agent._current_async_task is self._task:
+            self._agent._current_async_task = None
+
+
 @dataclass(slots=True)
 class Agent:
     """用户侧 agent facade，隐藏 QueryLoop 装配细节。"""
@@ -72,6 +116,19 @@ class Agent:
 
         return self.query_loop.interrupted
 
+    @property
+    def attachments(self) -> object:
+        """返回当前 Agent 配置的 AttachmentRuntime。"""
+
+        attachment_runtime = getattr(
+            self.query_loop.request_builder,
+            "attachment_runtime",
+            None,
+        )
+        if attachment_runtime is None:
+            raise RuntimeError("attachment runtime is not configured")
+        return attachment_runtime
+
     def interrupt(self) -> None:
         """请求在下一个安全点中断运行。"""
 
@@ -88,6 +145,7 @@ class Agent:
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> AgentResult:
@@ -96,6 +154,7 @@ class Agent:
         final_content = ""
         for event in self.stream(
             user_message,
+            attachments=attachments,
             thinking=thinking,
             show_thinking=show_thinking,
         ):
@@ -107,6 +166,7 @@ class Agent:
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> AgentResult:
@@ -115,6 +175,7 @@ class Agent:
         final_content = ""
         async for event in self.async_stream(
             user_message,
+            attachments=attachments,
             thinking=thinking,
             show_thinking=show_thinking,
         ):
@@ -122,59 +183,71 @@ class Agent:
                 final_content = event.content
         return AgentResult(content=final_content)
 
-    async def async_stream(
+    def async_stream(
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> AsyncIterator[TurnStreamEvent]:
         """异步运行 turn，v1 用 executor 包装同步 stream。"""
 
-        current_task = asyncio.current_task()
-        self._current_async_task = current_task
-        try:
-            async for event in self._stream_sync_in_executor(
+        return _AgentAsyncStream(
+            self,
+            self._stream_sync_in_executor(
                 lambda: self.stream(
                     user_message,
+                    attachments=attachments,
                     thinking=thinking,
                     show_thinking=show_thinking,
                 ),
-            ):
-                yield event
-        except asyncio.CancelledError:
-            self.query_loop.request_interrupt()
-            raise
-        finally:
-            if self._current_async_task is current_task:
-                self._current_async_task = None
+            ),
+        )
+
+    def _stream_sync_in_executor(
+        self,
+        factory: Callable[[], Iterator[TurnStreamEvent]],
+    ) -> AsyncIterator[TurnStreamEvent]:
+        """在线程池中消费同步 stream，避免阻塞 asyncio event loop。"""
+
+        before_start = getattr(
+            self.query_loop,
+            "set_async_provider_event_loop",
+            None,
+        )
+        after_worker = getattr(
+            self.query_loop,
+            "clear_async_provider_event_loop",
+            None,
+        )
+        return iterate_sync_in_executor(
+            factory,
+            on_cancel=self.query_loop.request_interrupt,
+            before_start=before_start if callable(before_start) else None,
+            after_worker=after_worker if callable(after_worker) else None,
+        )
 
     def stream(
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> Iterator[TurnStreamEvent]:
         """运行 turn，并返回 typed stream events。"""
 
         with self._turn_lock:
-            yield from self.query_loop.run_turn_stream(
-                user_message,
-                RunOptions(thinking=thinking, show_thinking=show_thinking),
-            )
-
-    async def _stream_sync_in_executor(
-        self,
-        factory: Callable[[], Iterator[TurnStreamEvent]],
-    ) -> AsyncIterator[TurnStreamEvent]:
-        """在线程池中消费同步 stream，避免阻塞 asyncio event loop。"""
-
-        async for event in iterate_sync_in_executor(
-            factory,
-            on_cancel=self.query_loop.request_interrupt,
-        ):
-            yield event
+            run_options = RunOptions(thinking=thinking, show_thinking=show_thinking)
+            if attachments is None:
+                yield from self.query_loop.run_turn_stream(user_message, run_options)
+            else:
+                yield from self.query_loop.run_turn_stream(
+                    user_message,
+                    run_options,
+                    attachments=attachments,
+                )
 
     def run_continuation(
         self,
@@ -210,6 +283,7 @@ class Agent:
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> Iterator[str]:
@@ -217,6 +291,7 @@ class Agent:
 
         for event in self.stream(
             user_message,
+            attachments=attachments,
             thinking=thinking,
             show_thinking=show_thinking,
         ):
@@ -228,6 +303,7 @@ class Agent:
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> Iterator[str]:
@@ -235,6 +311,7 @@ class Agent:
 
         for event in self.stream(
             user_message,
+            attachments=attachments,
             thinking=thinking,
             show_thinking=show_thinking,
         ):
@@ -246,6 +323,7 @@ class Agent:
         self,
         user_message: str,
         *,
+        attachments: list[object] | None = None,
         thinking: bool = False,
         show_thinking: bool = False,
         on_event: Callable[[TurnStreamEvent], None] | None = None,
@@ -259,6 +337,7 @@ class Agent:
         final_content = ""
         for event in self.stream(
             user_message,
+            attachments=attachments,
             thinking=thinking,
             show_thinking=show_thinking,
         ):

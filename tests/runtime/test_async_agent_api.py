@@ -7,6 +7,12 @@ from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderToolCall
+from agentos.providers.base import ProviderRequest, ProviderResponse
+from agentos.providers.stream import (
+    ProviderStreamCompleted,
+    ProviderStreamOptions,
+    ProviderStreamStarted,
+)
 from agentos.runtime import (
     Agent,
     AsyncQueryLoop,
@@ -147,3 +153,134 @@ def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
 
     assert done_before_interrupt is False
     assert interrupted is True
+
+
+def test_agent_async_stream_close_waits_for_worker_to_finish() -> None:
+    release_worker = threading.Event()
+
+    class BlockingLoop:
+        interrupted = False
+
+        def request_interrupt(self) -> None:
+            self.interrupted = True
+
+        def run_turn_stream(self, user_message: str, options=None):
+            yield TurnStreamStarted(user_message=user_message)
+            release_worker.wait(timeout=1)
+            yield TurnStreamCompleted(content="late")
+
+    async def close_after_first_event() -> tuple[bool, bool]:
+        loop = BlockingLoop()
+        agent = Agent(query_loop=loop)  # type: ignore[arg-type]
+        stream = agent.async_stream("hello")
+
+        first = await anext(stream)
+        assert first == TurnStreamStarted(user_message="hello")
+
+        close_task = asyncio.create_task(stream.aclose())
+        await asyncio.sleep(0.05)
+        was_done_before_release = close_task.done()
+        release_worker.set()
+        await close_task
+        return was_done_before_release, loop.interrupted
+
+    done_before_release, interrupted = asyncio.run(close_after_first_event())
+
+    assert done_before_release is False
+    assert interrupted is True
+
+
+def test_agent_async_stream_cancels_running_async_provider_task() -> None:
+    provider_started = threading.Event()
+    provider_cancelled = threading.Event()
+
+    class BlockingAsyncProvider:
+        def complete(self, request: ProviderRequest) -> ProviderResponse:
+            raise AssertionError("async Agent stream must not use sync complete")
+
+        async def async_stream(
+            self,
+            request: ProviderRequest,
+            options: ProviderStreamOptions,
+        ):
+            provider_started.set()
+            yield ProviderStreamStarted(
+                request_id="async_request",
+                thinking_requested=options.thinking,
+                thinking_supported=False,
+            )
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                provider_cancelled.set()
+                raise
+            yield ProviderStreamCompleted(
+                request_id="async_request",
+                response=ProviderResponse(content="late"),
+            )
+
+    async def cancel_after_provider_starts() -> bool:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        agent = Agent(
+            query_loop=AsyncQueryLoop(
+                context_runtime=context,
+                message_runtime=messages,
+                request_builder=ProviderRequestBuilder(
+                    context_renderer=ContextRenderer(),
+                    message_runtime=messages,
+                    tools=[],
+                ),
+                provider=BlockingAsyncProvider(),  # type: ignore[arg-type]
+            ).sync_loop,
+        )
+        stream = agent.async_stream("hello")
+
+        first = await anext(stream)
+        assert isinstance(first, TurnStreamStarted)
+
+        pending_next = asyncio.create_task(anext(stream))
+        started = await asyncio.to_thread(provider_started.wait, 1)
+        assert started is True
+        pending_next.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending_next
+        return await asyncio.to_thread(provider_cancelled.wait, 1)
+
+    assert asyncio.run(cancel_after_provider_starts()) is True
+
+
+def test_agent_async_stream_uses_async_complete_when_stream_is_unavailable() -> None:
+    class AsyncCompleteProvider:
+        complete_called = False
+
+        def complete(self, request: ProviderRequest) -> ProviderResponse:
+            self.complete_called = True
+            raise AssertionError("async Agent stream must not use sync complete")
+
+        async def async_complete(self, request: ProviderRequest) -> ProviderResponse:
+            return ProviderResponse(content="async complete")
+
+    async def collect() -> tuple[list[object], bool]:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        provider = AsyncCompleteProvider()
+        agent = Agent(
+            query_loop=AsyncQueryLoop(
+                context_runtime=context,
+                message_runtime=messages,
+                request_builder=ProviderRequestBuilder(
+                    context_renderer=ContextRenderer(),
+                    message_runtime=messages,
+                    tools=[],
+                ),
+                provider=provider,  # type: ignore[arg-type]
+            ).sync_loop,
+        )
+        events = [event async for event in agent.async_stream("hello")]
+        return events, provider.complete_called
+
+    events, complete_called = asyncio.run(collect())
+
+    assert complete_called is False
+    assert events[-1] == TurnStreamCompleted(content="async complete")

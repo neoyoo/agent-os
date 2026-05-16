@@ -1,3 +1,7 @@
+from pathlib import Path
+
+from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
+from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy
 from agentos.observability.snapshots import (
     build_provider_request_snapshot,
@@ -13,10 +17,10 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
+    UserMessage,
     provider_message_to_dict,
     provider_tool_spec_to_dict,
 )
-from agentos.capabilities import ToolExecutionResult
 
 
 def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only() -> None:
@@ -86,6 +90,100 @@ def test_provider_request_snapshot_full_mode_captures_payloads() -> None:
             },
         },
     )
+
+
+def test_provider_request_snapshot_redacts_attachment_sources() -> None:
+    attachment = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+    request = ProviderRequest(
+        system="system text",
+        messages=[
+            UserMessage(
+                content=(
+                    TextPart("分析图片"),
+                    ImagePart(attachment),
+                ),
+            ),
+        ],
+    )
+
+    snapshot = build_provider_request_snapshot(
+        request,
+        CapturePolicy.full_for_local_development(),
+    )
+
+    assert snapshot.messages == (
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "分析图片"},
+                {
+                    "type": "image",
+                    "attachment": {
+                        "handle": "att_1",
+                        "filename": "diagram.png",
+                        "mime_type": "image/png",
+                        "size_bytes": 11,
+                    },
+                    "detail": "auto",
+                },
+            ],
+        },
+    )
+    assert "image-bytes" not in str(snapshot.messages)
+    assert snapshot.messages_sha256 == stable_sha256(
+        [provider_message_to_dict(message) for message in request.messages],
+    )
+
+
+def test_provider_request_snapshot_sanitizes_non_json_tool_arguments() -> None:
+    request = ProviderRequest(
+        system="system text",
+        messages=[
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "name": "inspect",
+                        "arguments": {
+                            "payload": b"secret-bytes",
+                            "path": Path("/tmp/private.txt"),
+                        },
+                    },
+                ],
+            },
+        ],
+    )
+
+    snapshot = build_provider_request_snapshot(
+        request,
+        CapturePolicy.full_for_local_development(),
+    )
+
+    assert snapshot.messages == (
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "name": "inspect",
+                    "arguments": {
+                        "payload": "<bytes:12>",
+                        "path": "<path>",
+                    },
+                },
+            ],
+        },
+    )
+    assert "secret-bytes" not in str(snapshot.messages)
 
 
 def test_provider_response_snapshot_includes_tool_calls_stop_reason_and_usage() -> None:

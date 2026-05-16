@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agentos.attachments import AttachmentRuntime
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
 from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
@@ -144,6 +145,7 @@ class AgentBuilder:
 
         messages = self._message_runtime or MessageRuntime()
         context = self._context_runtime or ContextRuntime(event_bus=self._event_bus)
+        attachments = AttachmentRuntime()
         compression_runtime = self._compression_runtime
         if self._compression_requested:
             compression_runtime = CompressionRuntime(
@@ -176,15 +178,19 @@ class AgentBuilder:
                 tool_registry=tool_registry,
                 context_runtime=context,
                 recall_runtime=recall_runtime,
+                attachment_runtime=attachments,
             )
             provider_tools = tool_router.tool_specs()
         elif tool_router is not None:
+            if getattr(tool_router, "attachment_runtime", None) is None:
+                tool_router.attachment_runtime = attachments
             provider_tools = tool_router.tool_specs()
         else:
             tool_router = ToolCallRouter(
                 tool_registry=tool_registry,
                 context_runtime=context,
                 recall_runtime=recall_runtime,
+                attachment_runtime=attachments,
             )
             provider_tools = tool_router.tool_specs()
         renderer = self._context_renderer or self._default_renderer(
@@ -195,6 +201,7 @@ class AgentBuilder:
             context_renderer=renderer,
             message_runtime=messages,
             tools=provider_tools,
+            attachment_runtime=attachments,
         )
         kwargs = {
             "context_runtime": context,
