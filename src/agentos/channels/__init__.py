@@ -19,6 +19,11 @@ from agentos.channels.auth import (
     ChannelAuthPolicy,
 )
 from agentos.channels.http import HttpAgentChannel
+from agentos.channels.rate_limit import (
+    RateLimitDecision,
+    RateLimiter,
+    SlidingWindowRateLimiter,
+)
 from agentos.channels.session import (
     AgentSessionProvider,
     InMemoryAgentSessionProvider,
@@ -48,6 +53,9 @@ __all__ = [
     "ChannelTurnResult",
     "HttpAgentChannel",
     "InMemoryAgentSessionProvider",
+    "RateLimitDecision",
+    "RateLimiter",
     "SseAgentChannel",
+    "SlidingWindowRateLimiter",
     "UrllibA2ATransport",
 ]

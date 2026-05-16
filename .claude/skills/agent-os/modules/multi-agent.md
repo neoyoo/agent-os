@@ -117,11 +117,11 @@ Endpoint-backed agents still use `RemoteTaskExecutor` + A2A HTTP dispatch. This 
 
 Source: `src/agentos/multi/remote.py`, `src/agentos/channels/a2a.py`, `tests/multi/test_remote_dispatch.py`.
 
-## Current Deferrals
+## Production Recovery Helpers
 
-- Live Redis/Postgres integration tests are not implemented.
-- Redis pending/retry reclaim is not implemented.
-- Outbox reconciler for failed result-ready notification delivery is not implemented.
-- Cross-node continuation trigger is not implemented.
+- `OutboxReconciler` scans task outbox rows and resends terminal task result envelopes.
+- `RedisAgentMessageQueue.reclaim_pending()` reclaims idle Redis Stream pending messages and moves exhausted messages to a dead-letter stream.
+- `RedisContinuationTrigger` publishes task completion notices through Redis Pub/Sub and can fall back to TaskStore polling.
+- Live Redis/Postgres tests live under `tests/integration/` and are skipped unless `AGENTOS_RUN_INTEGRATION=1` is set with `docker-compose.test.yml` services.
 
-Source: `docs/todo-distributed-multi-agent-messaging.md`.
+Source: `src/agentos/multi/reconciler.py`, `src/agentos/multi/redis_queue.py`, `src/agentos/multi/redis_continuation.py`, `tests/multi/test_outbox_reconciler.py`, `tests/multi/test_redis_pending_retry.py`, `tests/multi/test_redis_continuation.py`, `tests/integration/test_live_backends.py`, `docker-compose.test.yml`.

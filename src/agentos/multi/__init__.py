@@ -17,6 +17,8 @@ from agentos.multi.inbox import (
     AgentInboxMissingError,
 )
 from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
+from agentos.multi.reconciler import OutboxEntry, OutboxReconciler
+from agentos.multi.redis_continuation import RedisContinuationTrigger
 from agentos.multi.spawn import SpawnExecutor
 from agentos.multi.task_store import TaskClaim, TaskStore
 from agentos.multi.tasks import TaskTable
@@ -78,10 +80,13 @@ __all__ = [
     "CoordinationMode",
     "InMemoryRegistry",
     "LocalContinuationTrigger",
+    "OutboxEntry",
+    "OutboxReconciler",
     "PostgresTaskStore",
     "QueueDelivery",
     "RemoteTaskExecutor",
     "RedisAgentMessageQueue",
+    "RedisContinuationTrigger",
     "SpawnExecutor",
     "SubagentInitRequest",
     "SubagentFactory",

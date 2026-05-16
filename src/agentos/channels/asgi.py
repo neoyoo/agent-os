@@ -13,6 +13,7 @@ from agentos.channels.auth import (
     ChannelAuthPolicy,
 )
 from agentos.channels.http import HttpAgentChannel
+from agentos.channels.rate_limit import RateLimiter
 from agentos.channels.session import AgentSessionProvider
 from agentos.channels.types import ChannelTurnRequest, parse_channel_turn_request
 from agentos.runtime import Agent
@@ -37,6 +38,10 @@ class AsgiAgentApp:
         auth_policy: ChannelAuthPolicy | None = None,
         a2a_server: A2AServerAdapter | None = None,
         max_body_bytes: int = 1_048_576,
+        readiness_checks: Mapping[str, Callable[[], object]] | None = None,
+        health_checks: Mapping[str, Callable[[], object]] | None = None,
+        rate_limiter: RateLimiter | None = None,
+        shutdown_handlers: list[Callable[[], object]] | None = None,
     ) -> None:
         """创建 ASGI app。"""
 
@@ -45,6 +50,10 @@ class AsgiAgentApp:
         self._http = HttpAgentChannel(sessions)
         self._a2a_server = a2a_server
         self._max_body_bytes = max_body_bytes
+        self._readiness_checks = dict(readiness_checks or {})
+        self._health_checks = dict(health_checks or {})
+        self._rate_limiter = rate_limiter
+        self._shutdown_handlers = list(shutdown_handlers or [])
 
     async def __call__(
         self,
@@ -54,6 +63,9 @@ class AsgiAgentApp:
     ) -> None:
         """处理一个 ASGI HTTP request。"""
 
+        if scope.get("type") == "lifespan":
+            await self._handle_lifespan(receive, send)
+            return
         if scope.get("type") != "http":
             await self._send_json(send, 500, {"status": "failed", "error": "unsupported scope"})
             return
@@ -71,8 +83,11 @@ class AsgiAgentApp:
         method = str(scope.get("method", "GET")).upper()
         path = str(scope.get("path", "/"))
 
-        if method == "GET" and path == "/v1/health":
+        if method == "GET" and path in {"/health", "/v1/health"}:
             await self._send_json(send, 200, {"status": "ok"})
+            return
+        if method == "GET" and path in {"/ready", "/v1/ready"}:
+            await self._handle_ready(send)
             return
         if method == "GET" and path == "/a2a/health":
             if self._a2a_server is None:
@@ -88,6 +103,16 @@ class AsgiAgentApp:
         if session_id is None:
             await self._send_json(send, 404, {"status": "failed", "error": "not found"})
             return
+        if self._rate_limiter is not None:
+            decision = self._rate_limiter.check(session_id)
+            if not decision.allowed:
+                await self._send_json(
+                    send,
+                    429,
+                    {"status": "failed", "error": "rate limit exceeded"},
+                    headers=[(b"retry-after", str(decision.retry_after_seconds).encode("ascii"))],
+                )
+                return
 
         try:
             body = await self._read_body(receive)
@@ -274,6 +299,55 @@ class AsgiAgentApp:
             if not bool(message.get("more_body", False)):
                 return body
 
+    async def _handle_lifespan(self, receive: AsgiReceive, send: AsgiSend) -> None:
+        """处理 ASGI lifespan startup/shutdown。"""
+
+        while True:
+            message = await receive()
+            message_type = message.get("type")
+            if message_type == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif message_type == "lifespan.shutdown":
+                try:
+                    for handler in self._shutdown_handlers:
+                        handler()
+                    shutdown = getattr(self._sessions, "shutdown", None)
+                    if callable(shutdown):
+                        shutdown()
+                except Exception as error:
+                    await send(
+                        {
+                            "type": "lifespan.shutdown.failed",
+                            "message": str(error),
+                        },
+                    )
+                    return
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+            else:
+                return
+
+    async def _handle_ready(self, send: AsgiSend) -> None:
+        checks: dict[str, str] = {}
+        ready = True
+        for name, check in {**self._health_checks, **self._readiness_checks}.items():
+            try:
+                result = check()
+                if isinstance(result, dict):
+                    status = result.get("status")
+                    ok = status in {"ok", "ready", True}
+                else:
+                    ok = bool(result)
+            except Exception:
+                ok = False
+            checks[name] = "ok" if ok else "failed"
+            ready = ready and ok
+        await self._send_json(
+            send,
+            200 if ready else 503,
+            {"status": "ready" if ready else "not_ready", "checks": checks},
+        )
+
     def _match_turn_path(self, method: str, path: str) -> tuple[str | None, bool]:
         if method != "POST":
             return None, False
@@ -306,6 +380,7 @@ class AsgiAgentApp:
         send: AsgiSend,
         status: int,
         payload: dict[str, object],
+        headers: list[tuple[bytes, bytes]] | None = None,
     ) -> None:
         body = json.dumps(
             payload,
@@ -316,7 +391,10 @@ class AsgiAgentApp:
             {
                 "type": "http.response.start",
                 "status": status,
-                "headers": [(b"content-type", b"application/json; charset=utf-8")],
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    *(headers or []),
+                ],
             },
         )
         await send({"type": "http.response.body", "body": body, "more_body": False})

@@ -322,14 +322,6 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
 
 
 def test_openai_compatible_provider_rejects_system_messages_in_active_window() -> None:
-    transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
-    provider = OpenAICompatibleProvider(
-        api_key="test-key",
-        base_url="https://api.deepseek.example",
-        model="deepseek-chat",
-        transport=transport,
-    )
-
     try:
         ProviderRequest(
             system="system",

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
-from agentos.events import AgentEvent, EventSubscriber
+
+from agentos.events import AgentEvent, EventSubscriber as EventSubscriber
 
 
 @dataclass(frozen=True, slots=True)

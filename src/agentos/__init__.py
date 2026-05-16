@@ -8,6 +8,7 @@ from agentos.channels import (
     AsgiAgentApp,
     HttpAgentChannel,
     InMemoryAgentSessionProvider,
+    SlidingWindowRateLimiter,
     SseAgentChannel,
 )
 from agentos.hooks import HookManager
@@ -23,7 +24,9 @@ from agentos.multi import (
     AgentCoordinator,
     AgentInbox,
     InMemoryRegistry,
+    OutboxReconciler,
     RemoteTaskExecutor,
+    RedisContinuationTrigger,
     TaskTable,
 )
 from agentos.providers import Provider
@@ -47,6 +50,7 @@ from agentos.runtime import (
     AgentResult,
     ProviderRequestBuilder,
     QueryLoop,
+    RetryPolicy,
     RunOptions,
 )
 
@@ -68,6 +72,7 @@ __all__ = [
     "InMemoryAgentSessionProvider",
     "InMemoryRegistry",
     "MemoryRuntime",
+    "OutboxReconciler",
     "PersistentAgentRegistry",
     "PostgresAgentRegistryStore",
     "PostgresDurableSessionStore",
@@ -77,11 +82,14 @@ __all__ = [
     "ProviderRequestBuilder",
     "QdrantRecallIndex",
     "QueryLoop",
+    "RetryPolicy",
+    "RedisContinuationTrigger",
     "RedisHotSessionStore",
     "RemoteTaskExecutor",
     "RunOptions",
     "SegmentRecallDocument",
     "ServiceResolver",
+    "SlidingWindowRateLimiter",
     "SseAgentChannel",
     "StaticResolver",
     "TaskTable",

@@ -38,6 +38,10 @@ class PostgresConnection(Protocol):
         """执行 SQL 并返回 cursor。"""
 
 
+class BackendUnavailableError(RuntimeError):
+    """生产后端连接不可用。"""
+
+
 class PostgresDurableSessionStore:
     """Postgres-backed DurableSessionStore adapter。"""
 
@@ -45,11 +49,26 @@ class PostgresDurableSessionStore:
         self,
         dsn: str,
         connection: object | None = None,
+        pool: object | None = None,
     ) -> None:
         """创建 Postgres durable store；未安装 postgres extra 时给出清晰错误。"""
 
+        self._pool = pool
         if connection is not None:
             self._connection = connection
+            self._dsn = dsn
+            return
+        if pool is not None:
+            getconn = getattr(pool, "getconn", None)
+            connection_method = getattr(pool, "connection", None)
+            if callable(getconn):
+                self._connection = getconn()
+            elif callable(connection_method):
+                context = connection_method()
+                self._connection = context.__enter__()
+                self._pool_context = context
+            else:
+                raise RuntimeError("Postgres pool must provide getconn() or connection()")
             self._dsn = dsn
             return
         try:
@@ -61,6 +80,21 @@ class PostgresDurableSessionStore:
             ) from error
         self._connection = psycopg.connect(dsn)
         self._dsn = dsn
+
+    @classmethod
+    def from_pool(cls, dsn: str, pool: object | None = None) -> "PostgresDurableSessionStore":
+        """使用 psycopg_pool ConnectionPool 创建 store。"""
+
+        if pool is None:
+            try:
+                from psycopg_pool import ConnectionPool
+            except ImportError as error:
+                raise RuntimeError(
+                    "Postgres pool support requires the optional dependency "
+                    "`agentos[postgres]`.",
+                ) from error
+            pool = ConnectionPool(dsn)
+        return cls(dsn, pool=pool)
 
     def save_session(self, session: SessionState) -> None:
         """保存 session state。"""
@@ -246,12 +280,32 @@ class PostgresDurableSessionStore:
         params: tuple[object, ...] | None = None,
     ) -> PostgresCursor:
         connection = cast(PostgresConnection, self._connection)
-        return connection.execute(sql, params or ())
+        try:
+            return connection.execute(sql, params or ())
+        except Exception as error:
+            raise BackendUnavailableError("Postgres backend unavailable") from error
 
     def _commit(self) -> None:
         commit = getattr(self._connection, "commit", None)
         if commit is not None:
             commit()
+
+    def close(self) -> None:
+        """关闭或归还当前 Postgres connection。"""
+
+        pool = getattr(self, "_pool", None)
+        if pool is not None:
+            putconn = getattr(pool, "putconn", None)
+            if callable(putconn):
+                putconn(self._connection)
+                return
+        context = getattr(self, "_pool_context", None)
+        if context is not None:
+            context.__exit__(None, None, None)
+            return
+        close = getattr(self._connection, "close", None)
+        if callable(close):
+            close()
 
     def _json_value(self, value: object) -> object:
         """兼容 psycopg JSONB dict/list 返回值和测试 fake 的 JSON str。"""

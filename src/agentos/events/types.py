@@ -41,6 +41,16 @@ class ProviderResponseReceivedEvent(AgentEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderRetryEvent(AgentEvent):
+    """provider 调用失败后准备 retry。"""
+
+    attempt: int = 0
+    max_retries: int = 0
+    error: str = ""
+    delay_seconds: float = 0
+
+
+@dataclass(frozen=True, slots=True)
 class AssistantMessageAppendedEvent(AgentEvent):
     """assistant 消息已追加到 MessageRuntime。"""
 

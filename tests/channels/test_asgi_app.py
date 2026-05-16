@@ -101,12 +101,17 @@ async def call_asgi(
     path: str,
     body: bytes = b"",
     headers: list[tuple[bytes, bytes]] | None = None,
+    scope_type: str = "http",
     receive_after_body: list[dict[str, object]] | None = None,
 ) -> list[dict[str, Any]]:
-    messages = [
-        {"type": "http.request", "body": body, "more_body": False},
-        *(receive_after_body or []),
-    ]
+    messages = (
+        list(receive_after_body or [])
+        if scope_type == "lifespan"
+        else [
+            {"type": "http.request", "body": body, "more_body": False},
+            *(receive_after_body or []),
+        ]
+    )
     sent: list[dict[str, Any]] = []
 
     async def receive() -> dict[str, object]:
@@ -120,7 +125,7 @@ async def call_asgi(
 
     await app(  # type: ignore[misc]
         {
-            "type": "http",
+            "type": scope_type,
             "method": method,
             "path": path,
             "headers": headers or [],

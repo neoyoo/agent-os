@@ -12,6 +12,7 @@ description: Phased requirements gathering for agent-os SDK projects — asks 6 
 2. For each dimension, explain what it means in agent-os terms, offer concrete options, and state the default.
 3. After all 6 dimensions, summarize decisions in a table and ask for final confirmation.
 4. Do NOT generate code or spec until user confirms the summary.
+5. ALWAYS respond in the user's language. The templates below are English reference — translate and adapt when presenting to the user. If the user writes in Chinese, all questions, options, and explanations MUST be in Chinese.
 </HARD-GATE>
 
 ## Pre-Check

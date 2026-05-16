@@ -34,6 +34,12 @@ from agentos.observability.instrumented import (
     InstrumentedToolCallRouter,
 )
 from agentos.observability.instrument import instrument_query_loop
+from agentos.observability.logging import (
+    PythonStructuredLogger,
+    StructuredLogFormatter,
+    StructuredLogger,
+    configure_structured_logger,
+)
 from agentos.observability.langfuse import (
     langfuse_otel_headers,
     langfuse_otel_trace_endpoint,
@@ -86,6 +92,9 @@ __all__ = [
     "Redactor",
     "RuntimeTraceContext",
     "Span",
+    "PythonStructuredLogger",
+    "StructuredLogFormatter",
+    "StructuredLogger",
     "ToolCallSnapshot",
     "ToolResultSnapshot",
     "TraceContextPropagator",
@@ -99,6 +108,7 @@ __all__ = [
     "current_runtime_trace_context",
     "current_trace_ids",
     "default_redactor",
+    "configure_structured_logger",
     "event_record_from_dict",
     "event_record_to_dict",
     "inject_trace_headers",

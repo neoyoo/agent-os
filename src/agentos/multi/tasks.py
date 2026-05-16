@@ -340,6 +340,33 @@ class TaskTable:
             )
             return True
 
+    def release_running_leases(
+        self,
+        *,
+        worker_id: str | None = None,
+        now: float | None = None,
+    ) -> int:
+        """shutdown 时释放 running lease，使任务可被其它 worker 重新领取。"""
+
+        updated_at = time.time() if now is None else now
+        released = 0
+        with self._lock:
+            for task_id, record in list(self._records.items()):
+                if record.status != "running":
+                    continue
+                if worker_id is not None and record.worker_id != worker_id:
+                    continue
+                self._records[task_id] = replace(
+                    record,
+                    status="queued",
+                    worker_id=None,
+                    lease_expires_at=None,
+                    updated_at=updated_at,
+                    version=record.version + 1,
+                )
+                released += 1
+        return released
+
     def active_count_for_target(self, agent_id: str) -> int:
         """返回指定 target agent 的 queued/running 任务数。"""
 

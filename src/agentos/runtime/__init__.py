@@ -19,6 +19,7 @@ from agentos.events import (
     MemoryContextSetEvent,
     ProviderRequestBuiltEvent,
     ProviderResponseReceivedEvent,
+    ProviderRetryEvent,
     AgentEvent,
     RecallContextFailedEvent,
     RecallContextInjectedEvent,
@@ -42,6 +43,7 @@ from agentos.runtime.agent import Agent, AgentResult
 from agentos.runtime.async_query_loop import AsyncQueryLoop
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.query_loop import QueryLoop, TurnNoticeProvider
+from agentos.runtime.retry import ProviderCircuitOpenError, RetryPolicy
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -91,7 +93,10 @@ __all__ = [
     "ProviderRequestBuilder",
     "ProviderRequestBuiltEvent",
     "ProviderResponseReceivedEvent",
+    "ProviderRetryEvent",
+    "ProviderCircuitOpenError",
     "QueryLoop",
+    "RetryPolicy",
     "RunOptions",
     "AgentEvent",
     "RecallContextFailedEvent",

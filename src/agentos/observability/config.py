@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import logging
 import re
 from typing import Callable, Literal
 
@@ -122,6 +123,9 @@ class ObservabilityConfig:
 
     tracer: object
     capture_policy: CapturePolicy = field(default_factory=CapturePolicy.metadata_only)
+    logging_enabled: bool = False
+    logger_name: str = "agentos"
+    logging_level: int = logging.INFO
 
 
 def json_attribute(value: object, *, policy: CapturePolicy) -> str:

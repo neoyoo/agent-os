@@ -8,6 +8,7 @@ from agentos.observability.instrumented import (
     InstrumentedQueryLoop,
     InstrumentedToolCallRouter,
 )
+from agentos.observability.logging import configure_structured_logger
 from agentos.runtime import QueryLoop
 
 
@@ -53,6 +54,7 @@ def instrument_query_loop(
         request_builder=instrumented_builder,  # type: ignore[arg-type]
         tool_call_router=instrumented_router,
         compression_runtime=instrumented_compression,  # type: ignore[arg-type]
+        structured_logger=configure_structured_logger(config),
     )
     return InstrumentedQueryLoop(
         configured_loop,

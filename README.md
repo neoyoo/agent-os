@@ -8,7 +8,7 @@ agent-os is a **runtime SDK for building AI agents**. It handles the hard parts 
 
 It is **not** a chatbot wrapper. It is **not** a framework you subclass. It's a composable set of runtime modules with Protocol-based boundaries.
 
-## Quick Start
+## Quickstart
 
 ```python
 from agentos import AgentBuilder

@@ -29,23 +29,27 @@ class OpenAIProvider:
 
     client: Any
     model: str
+    timeout_seconds: float | None = None
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用注入的 OpenAI client，并标准化响应。"""
 
         self._ensure_no_active_system_messages(request)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: dict[str, object] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": request.system},
                 *[self._message(message) for message in request.messages],
             ],
-            tools=(
+            "tools": (
                 [provider_tool_spec_to_dict(tool) for tool in request.tools]
                 if request.tools
                 else None
             ),
-        )
+        }
+        if self.timeout_seconds is not None:
+            kwargs["timeout"] = self.timeout_seconds
+        response = self.client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         message = choice.message
         return ProviderResponse(

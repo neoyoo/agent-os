@@ -151,13 +151,17 @@ registry.register("before_provider_call", log_provider_call, priority=50)
 ```python
 from agentos import AgentBuilder
 from agentos.providers import AnthropicProvider
-from agentos.runtime.event_bus import EventBus, TurnStartedEvent, TurnCompletedEvent
+from agentos.runtime.event_bus import EventBus
+from agentos.events import TurnCompletedEvent
 
 bus = EventBus()
 
-@bus.on(TurnCompletedEvent)
-def on_complete(event: TurnCompletedEvent):
-    print(f"Turn completed: {event.turn_number}")
+class PrintCompleted:
+    def record(self, event):
+        if isinstance(event, TurnCompletedEvent):
+            print(f"Turn completed: {event.turn_id}")
+
+bus.subscribers.append(PrintCompleted())
 
 agent = (
     AgentBuilder()
@@ -166,6 +170,24 @@ agent = (
     .build()
 )
 ```
+
+## Production HTTP API
+
+```python
+from agentos.channels import AsgiAgentApp, InMemoryAgentSessionProvider, SlidingWindowRateLimiter
+
+app = AsgiAgentApp(
+    sessions=InMemoryAgentSessionProvider(make_agent),
+    readiness_checks={"provider": lambda: True},
+    rate_limiter=SlidingWindowRateLimiter(max_requests=60, window_seconds=60),
+)
+
+# GET /health
+# GET /ready
+# POST /v1/sessions/{id}/turns
+```
+
+Source: `src/agentos/channels/asgi.py`, `src/agentos/channels/rate_limit.py`, `tests/channels/test_health_endpoint.py`, `tests/channels/test_rate_limit.py`.
 
 ## Multi-Node (Redis + Postgres)
 

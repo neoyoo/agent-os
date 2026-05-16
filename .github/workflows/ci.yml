@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Compile
+        run: uv run python -m compileall -q src tests
+      - name: Test
+        run: uv run pytest -q
+      - name: Integration tests
+        if: ${{ env.AGENTOS_RUN_INTEGRATION == '1' }}
+        run: uv run pytest -q tests/integration

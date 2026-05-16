@@ -8,6 +8,7 @@ from typing import Protocol, Sequence, cast
 from agentos.multi.serializers import task_record_from_dict, task_record_to_dict
 from agentos.multi.task_store import TaskClaim
 from agentos.multi.types import TaskHandle, TaskRecord, TaskResult, TaskStatus
+from agentos.persistence.postgres import BackendUnavailableError
 
 
 class PostgresCursor(Protocol):
@@ -34,11 +35,30 @@ class PostgresConnection(Protocol):
 class PostgresTaskStore:
     """Postgres-backed TaskStore；schema 由 migration 预先创建。"""
 
-    def __init__(self, dsn: str, connection: object | None = None) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        connection: object | None = None,
+        pool: object | None = None,
+    ) -> None:
         """创建 Postgres task store；未安装 postgres extra 时给出清晰错误。"""
 
+        self._pool = pool
         if connection is not None:
             self._connection = connection
+            self._dsn = dsn
+            return
+        if pool is not None:
+            getconn = getattr(pool, "getconn", None)
+            connection_method = getattr(pool, "connection", None)
+            if callable(getconn):
+                self._connection = getconn()
+            elif callable(connection_method):
+                context = connection_method()
+                self._connection = context.__enter__()
+                self._pool_context = context
+            else:
+                raise RuntimeError("Postgres pool must provide getconn() or connection()")
             self._dsn = dsn
             return
         try:
@@ -50,6 +70,20 @@ class PostgresTaskStore:
             ) from error
         self._connection = psycopg.connect(dsn)
         self._dsn = dsn
+
+    @classmethod
+    def from_pool(cls, dsn: str, pool: object | None = None) -> "PostgresTaskStore":
+        """使用 psycopg_pool ConnectionPool 创建 store。"""
+
+        if pool is None:
+            try:
+                from psycopg_pool import ConnectionPool
+            except ImportError as error:
+                raise RuntimeError(
+                    "PostgresTaskStore pool support requires `agentos[postgres]`.",
+                ) from error
+            pool = ConnectionPool(dsn)
+        return cls(dsn, pool=pool)
 
     def create(self, record: TaskRecord) -> TaskHandle:
         """创建 task record。"""
@@ -462,6 +496,101 @@ class PostgresTaskStore:
         )
         return self._transition(current, updated)
 
+    def release_running_leases(
+        self,
+        *,
+        worker_id: str | None = None,
+        now: float | None = None,
+    ) -> int:
+        """shutdown 时释放 running lease，使任务可被重新 claim。"""
+
+        released_at = time.time() if now is None else now
+        if worker_id is None:
+            rows = self._execute(
+                """
+                UPDATE agentos_multi_agent_tasks
+                SET status = 'queued',
+                    worker_id = NULL,
+                    lease_expires_at = NULL,
+                    version = version + 1,
+                    updated_at = %s,
+                    payload = payload
+                      || jsonb_build_object(
+                        'status', 'queued',
+                        'worker_id', NULL,
+                        'lease_expires_at', NULL,
+                        'updated_at', %s::double precision,
+                        'version', version + 1
+                      )
+                WHERE status = 'running'
+                RETURNING task_id
+                """,
+                (released_at, released_at),
+            ).fetchall()
+        else:
+            rows = self._execute(
+                """
+                UPDATE agentos_multi_agent_tasks
+                SET status = 'queued',
+                    worker_id = NULL,
+                    lease_expires_at = NULL,
+                    version = version + 1,
+                    updated_at = %s,
+                    payload = payload
+                      || jsonb_build_object(
+                        'status', 'queued',
+                        'worker_id', NULL,
+                        'lease_expires_at', NULL,
+                        'updated_at', %s::double precision,
+                        'version', version + 1
+                      )
+                WHERE status = 'running' AND worker_id = %s
+                RETURNING task_id
+                """,
+                (released_at, released_at, worker_id),
+            ).fetchall()
+        self._commit()
+        return len(rows)
+
+    def pending_outbox(self, *, limit: int) -> list[object]:
+        """返回未投递 outbox rows，供 OutboxReconciler 使用。"""
+
+        from agentos.multi.reconciler import OutboxEntry
+
+        rows = self._execute(
+            """
+            SELECT outbox_id, event_type, payload
+            FROM agentos_multi_agent_task_outbox
+            WHERE delivered_at IS NULL
+            ORDER BY outbox_id
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            OutboxEntry(
+                outbox_id=int(row[0]),
+                event_type=str(row[1]),
+                record=task_record_from_dict(self._json_value(row[2])),
+            )
+            for row in rows
+        ]
+
+    def mark_outbox_delivered(self, outbox_id: int, *, delivered_at: float) -> bool:
+        """标记 outbox row 已投递。"""
+
+        row = self._execute(
+            """
+            UPDATE agentos_multi_agent_task_outbox
+            SET delivered_at = %s
+            WHERE outbox_id = %s AND delivered_at IS NULL
+            RETURNING outbox_id
+            """,
+            (delivered_at, outbox_id),
+        ).fetchone()
+        self._commit()
+        return row is not None
+
     def _terminal_transition(
         self,
         task_id: str,
@@ -586,12 +715,32 @@ class PostgresTaskStore:
         sql: str,
         params: tuple[object, ...] = (),
     ) -> PostgresCursor:
-        return cast(PostgresConnection, self._connection).execute(sql, params)
+        try:
+            return cast(PostgresConnection, self._connection).execute(sql, params)
+        except Exception as error:
+            raise BackendUnavailableError("Postgres backend unavailable") from error
 
     def _commit(self) -> None:
         commit = getattr(self._connection, "commit", None)
         if commit is not None:
             commit()
+
+    def close(self) -> None:
+        """关闭或归还当前 Postgres connection。"""
+
+        pool = getattr(self, "_pool", None)
+        if pool is not None:
+            putconn = getattr(pool, "putconn", None)
+            if callable(putconn):
+                putconn(self._connection)
+                return
+        context = getattr(self, "_pool_context", None)
+        if context is not None:
+            context.__exit__(None, None, None)
+            return
+        close = getattr(self._connection, "close", None)
+        if callable(close):
+            close()
 
     def _json_dump(self, value: dict[str, object]) -> str:
         return json.dumps(value, ensure_ascii=False, allow_nan=False)

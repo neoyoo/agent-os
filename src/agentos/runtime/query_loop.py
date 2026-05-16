@@ -26,6 +26,7 @@ from agentos.runtime.event_bus import (
     EventBus,
     ProviderRequestBuiltEvent,
     ProviderResponseReceivedEvent,
+    ProviderRetryEvent,
     AgentEvent,
     ToolCallRequestedEvent,
     ToolExecutionCompletedEvent,
@@ -41,6 +42,7 @@ from agentos.runtime._async_provider_bridge import (
     stream_async_provider_from_thread,
 )
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
+from agentos.runtime.retry import RetryPolicy
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -85,6 +87,13 @@ class ToolCallRouterBoundary(Protocol):
         """执行 provider tool call。"""
 
 
+class StructuredLoggerBoundary(Protocol):
+    """QueryLoop 依赖的结构化日志边界。"""
+
+    def log(self, event: str, **fields: object) -> None:
+        """记录一个结构化 runtime 事件。"""
+
+
 @dataclass(slots=True)
 class QueryLoop:
     """最小 agent turn 调度器。"""
@@ -99,6 +108,8 @@ class QueryLoop:
     hook_manager: HookManager | None = None
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
+    retry_policy: RetryPolicy | None = None
+    structured_logger: StructuredLoggerBoundary | None = None
     max_tool_iterations: int = 8
     _provider_stream_counter: int = field(default=0, init=False, repr=False)
     _interrupted: bool = field(default=False, init=False, repr=False)
@@ -173,6 +184,7 @@ class QueryLoop:
         run_options = options or RunOptions()
         self._raise_if_interrupted()
         turn = self._start_turn(user_message)
+        self._log("turn_start", user_message_length=len(user_message))
         stored_user_message = self._prepare_user_message(
             user_message,
             attachments or [],
@@ -206,6 +218,7 @@ class QueryLoop:
         if turn is not None:
             turn.complete()
         self._emit(TurnCompletedEvent(**self._event_context(turn)))
+        self._log("turn_end")
         yield TurnStreamCompleted(content=response_content)
 
     def _prepare_user_message(
@@ -295,6 +308,11 @@ class QueryLoop:
             request = self.build_request()
             request = self._before_provider_call(request)
             self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
+            self._log(
+                "provider_call",
+                message_count=len(request.messages),
+                tool_count=len(request.tools),
+            )
             response = yield from self._consume_provider_stream(request, options)
             response = self._after_provider_call(request, response)
             self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
@@ -333,6 +351,11 @@ class QueryLoop:
             for tool_call in response.tool_calls:
                 self._raise_if_interrupted()
                 yield ToolStreamStarted(
+                    tool_name=tool_call.name,
+                    tool_call_id=tool_call.id,
+                )
+                self._log(
+                    "tool_exec",
                     tool_name=tool_call.name,
                     tool_call_id=tool_call.id,
                 )
@@ -405,9 +428,43 @@ class QueryLoop:
             thinking=options.thinking,
             show_thinking=options.show_thinking,
         )
+        policy = self.retry_policy
+        if policy is not None:
+            policy.raise_if_open()
+        attempt = 0
+        while True:
+            try:
+                events = list(self._provider_stream_events(request, provider_options))
+                if policy is not None:
+                    policy.record_success()
+                break
+            except Exception as error:
+                attempt += 1
+                if policy is None or not policy.should_retry(error, attempt):
+                    if policy is not None:
+                        policy.record_failure()
+                    raise
+                delay = policy.delay_for_attempt(attempt)
+                self._emit(
+                    ProviderRetryEvent(
+                        attempt=attempt,
+                        max_retries=policy.max_retries,
+                        error=str(error),
+                        delay_seconds=delay,
+                        **self._event_context(None),
+                    ),
+                )
+                self._log(
+                    "provider_retry",
+                    attempt=attempt,
+                    max_retries=policy.max_retries,
+                    error=str(error),
+                    delay_seconds=delay,
+                )
+                policy.sleep(delay)
         response: ProviderResponse | None = None
 
-        for event in self._provider_stream_events(request, provider_options):
+        for event in events:
             if isinstance(event, ProviderContentDelta):
                 yield AssistantContentDelta(index=event.index, text=event.text)
             elif isinstance(event, ProviderThinkingDelta):
@@ -634,6 +691,18 @@ class QueryLoop:
         if self.event_bus is None:
             return
         self.event_bus.emit(event)
+
+    def _log(self, event: str, **fields: object) -> None:
+        """通过可选结构化日志边界记录 runtime metadata。"""
+
+        if self.structured_logger is None:
+            return
+        context = self._event_context(None)
+        if context["session_id"] is not None:
+            fields.setdefault("session_id", context["session_id"])
+        if context["turn_id"] is not None:
+            fields.setdefault("turn_id", context["turn_id"])
+        self.structured_logger.log(event, **fields)
 
     def _event_context(self, turn: TurnState | None) -> dict[str, str | None]:
         """返回 typed event 使用的 session/turn id。"""

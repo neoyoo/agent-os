@@ -36,18 +36,22 @@ class AnthropicProvider:
     client: Any
     model: str
     max_tokens: int = 4096
+    timeout_seconds: float | None = None
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用注入的 Anthropic client，并标准化响应。"""
 
         self._ensure_no_active_system_messages(request)
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=request.system,
-            messages=self._messages(request.messages),
-            tools=self._tools(request.tools) or None,
-        )
+        kwargs: dict[str, object] = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "system": request.system,
+            "messages": self._messages(request.messages),
+            "tools": self._tools(request.tools) or None,
+        }
+        if self.timeout_seconds is not None:
+            kwargs["timeout"] = self.timeout_seconds
+        response = self.client.messages.create(**kwargs)
         text_parts: list[str] = []
         tool_calls: list[ProviderToolCall] = []
         for block in response.content:

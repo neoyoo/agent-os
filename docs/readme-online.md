@@ -71,7 +71,7 @@ Runtime Notice
 | Extra | 依赖 | 当前用途 |
 |---|---|---|
 | `redis` | `redis>=5.0` | `RedisHotSessionStore`、`RedisAgentMessageQueue` |
-| `postgres` | `psycopg[binary]>=3.1` | `PostgresDurableSessionStore`、`PostgresAgentRegistryStore`、`PostgresTaskStore` |
+| `postgres` | `psycopg[binary]>=3.1`、`psycopg-pool>=3.2` | `PostgresDurableSessionStore`、`PostgresAgentRegistryStore`、`PostgresTaskStore` |
 | `qdrant` | `qdrant-client>=1.9` | `QdrantRecallIndex` |
 | `observability` | OpenTelemetry API/SDK/OTLP HTTP exporter | OTel 和 Langfuse OTLP tracer |
 | `async-http` | `httpx>=0.27` | OpenAI-compatible async transport |
@@ -244,7 +244,7 @@ agent = (
 
 ### 5.1 ASGI App
 
-`AsgiAgentApp` 是无框架绑定的 ASGI HTTP app。它依赖 `AgentSessionProvider` 通过 `session_id` 取回 agent，并支持 auth policy、请求体大小限制、JSON turn、SSE turn 和可选 A2A server。
+`AsgiAgentApp` 是无框架绑定的 ASGI HTTP app。它依赖 `AgentSessionProvider` 通过 `session_id` 取回 agent，并支持 auth policy、请求体大小限制、JSON turn、SSE turn、health/readiness、可注入 rate limiter、ASGI lifespan shutdown handlers 和可选 A2A server。
 
 ```python
 from agentos import AsgiAgentApp, InMemoryAgentSessionProvider
@@ -253,7 +253,7 @@ sessions = InMemoryAgentSessionProvider(agent_factory=make_agent)
 app = AsgiAgentApp(sessions=sessions)
 ```
 
-源码来源：[`src/agentos/channels/asgi.py`](../src/agentos/channels/asgi.py)，[`src/agentos/channels/session.py`](../src/agentos/channels/session.py)，[`src/agentos/channels/auth.py`](../src/agentos/channels/auth.py)，[`tests/channels/test_asgi_app.py`](../tests/channels/test_asgi_app.py)，[`tests/channels/test_session_provider.py`](../tests/channels/test_session_provider.py)
+源码来源：[`src/agentos/channels/asgi.py`](../src/agentos/channels/asgi.py)，[`src/agentos/channels/rate_limit.py`](../src/agentos/channels/rate_limit.py)，[`src/agentos/channels/session.py`](../src/agentos/channels/session.py)，[`src/agentos/channels/auth.py`](../src/agentos/channels/auth.py)，[`tests/channels/test_asgi_app.py`](../tests/channels/test_asgi_app.py)，[`tests/channels/test_health_endpoint.py`](../tests/channels/test_health_endpoint.py)，[`tests/channels/test_rate_limit.py`](../tests/channels/test_rate_limit.py)，[`tests/channels/test_session_provider.py`](../tests/channels/test_session_provider.py)
 
 ### 5.2 Endpoints
 
@@ -261,15 +261,17 @@ app = AsgiAgentApp(sessions=sessions)
 
 | Method | Path | 行为 |
 |---|---|---|
+| `GET` | `/health` | 返回 `{"status": "ok"}` |
 | `GET` | `/v1/health` | 返回 `{"status": "ok"}` |
+| `GET` | `/ready` / `/v1/ready` | 运行注入的 readiness checks，失败时返回 503 |
 | `POST` | `/v1/sessions/{session_id}/turns` | JSON turn，内部调用 `HttpAgentChannel.handle_turn()` |
 | `POST` | `/v1/sessions/{session_id}/turns/stream` | SSE turn，消费 `agent.async_stream()` 或 fallback 到同步 stream |
 | `POST` | `/a2a/tasks` | 当配置 `a2a_server` 时处理 inbound A2A task |
 | `GET` | `/a2a/health` | 当配置 `a2a_server` 时返回 A2A health |
 
-请求体由 `parse_channel_turn_request()` 解析，要求 JSON object 中存在非空 `message`，并支持 `thinking` 和 `show_thinking`。
+请求体由 `parse_channel_turn_request()` 解析，要求 JSON object 中存在非空 `message`，并支持 `thinking`、`show_thinking` 和可选 `max_message_length` 校验。配置 `SlidingWindowRateLimiter` 后，turn endpoint 会按 `session_id` 限流，超限返回 429 和 `Retry-After` header。
 
-源码来源：[`src/agentos/channels/asgi.py`](../src/agentos/channels/asgi.py)，[`src/agentos/channels/http.py`](../src/agentos/channels/http.py)，[`src/agentos/channels/sse.py`](../src/agentos/channels/sse.py)，[`src/agentos/channels/types.py`](../src/agentos/channels/types.py)，[`tests/channels/test_asgi_app.py`](../tests/channels/test_asgi_app.py)，[`tests/channels/test_turn_request_parser.py`](../tests/channels/test_turn_request_parser.py)
+源码来源：[`src/agentos/channels/asgi.py`](../src/agentos/channels/asgi.py)，[`src/agentos/channels/rate_limit.py`](../src/agentos/channels/rate_limit.py)，[`src/agentos/channels/http.py`](../src/agentos/channels/http.py)，[`src/agentos/channels/sse.py`](../src/agentos/channels/sse.py)，[`src/agentos/channels/types.py`](../src/agentos/channels/types.py)，[`tests/channels/test_asgi_app.py`](../tests/channels/test_asgi_app.py)，[`tests/channels/test_health_endpoint.py`](../tests/channels/test_health_endpoint.py)，[`tests/channels/test_rate_limit.py`](../tests/channels/test_rate_limit.py)，[`tests/channels/test_turn_request_parser.py`](../tests/channels/test_turn_request_parser.py)
 
 ---
 
@@ -316,9 +318,9 @@ app = AsgiAgentApp(sessions=sessions)
 | `cancel` | queued task 直接取消；running task 写入 cancel intent，并 best-effort interrupt 本地目标 agent |
 | `execute_expert_envelope` | 执行 expert inbox 中的 `task_request` envelope |
 
-`TaskStore` 是分布式任务 truth source 边界；`TaskTable` 是 in-memory adapter，`PostgresTaskStore` 是 Postgres adapter。`AgentMessageQueue` 是 delivery / notification 边界；`AgentInbox` 是 in-memory adapter，`RedisAgentMessageQueue` 是 Redis Streams adapter。远程 endpoint-backed agent 仍通过 `RemoteTaskExecutor` 和 `A2AAdapter` 提交 HTTP JSON task。
+`TaskStore` 是分布式任务 truth source 边界；`TaskTable` 是 in-memory adapter，`PostgresTaskStore` 是 Postgres adapter。`AgentMessageQueue` 是 delivery / notification 边界；`AgentInbox` 是 in-memory adapter，`RedisAgentMessageQueue` 是 Redis Streams adapter。`OutboxReconciler` 会补发 Postgres outbox 中未投递的 terminal result notification；`RedisAgentMessageQueue.reclaim_pending()` 支持 Redis Streams pending reclaim 和 dead-letter；`RedisContinuationTrigger` 支持 Redis Pub/Sub continuation 通知，并可 fallback 到 TaskStore polling。远程 endpoint-backed agent 仍通过 `RemoteTaskExecutor` 和 `A2AAdapter` 提交 HTTP JSON task。
 
-源码来源：[`src/agentos/multi/coordinator.py`](../src/agentos/multi/coordinator.py)，[`src/agentos/multi/task_store.py`](../src/agentos/multi/task_store.py)，[`src/agentos/multi/tasks.py`](../src/agentos/multi/tasks.py)，[`src/agentos/multi/message_queue.py`](../src/agentos/multi/message_queue.py)，[`src/agentos/multi/inbox.py`](../src/agentos/multi/inbox.py)，[`src/agentos/multi/postgres_tasks.py`](../src/agentos/multi/postgres_tasks.py)，[`src/agentos/multi/redis_queue.py`](../src/agentos/multi/redis_queue.py)，[`src/agentos/multi/spawn.py`](../src/agentos/multi/spawn.py)，[`src/agentos/multi/remote.py`](../src/agentos/multi/remote.py)，[`src/agentos/multi/registry.py`](../src/agentos/multi/registry.py)，[`src/agentos/channels/a2a.py`](../src/agentos/channels/a2a.py)，[`tests/multi`](../tests/multi)，[`tests/channels/test_a2a_adapter.py`](../tests/channels/test_a2a_adapter.py)
+源码来源：[`src/agentos/multi/coordinator.py`](../src/agentos/multi/coordinator.py)，[`src/agentos/multi/task_store.py`](../src/agentos/multi/task_store.py)，[`src/agentos/multi/tasks.py`](../src/agentos/multi/tasks.py)，[`src/agentos/multi/message_queue.py`](../src/agentos/multi/message_queue.py)，[`src/agentos/multi/inbox.py`](../src/agentos/multi/inbox.py)，[`src/agentos/multi/postgres_tasks.py`](../src/agentos/multi/postgres_tasks.py)，[`src/agentos/multi/redis_queue.py`](../src/agentos/multi/redis_queue.py)，[`src/agentos/multi/reconciler.py`](../src/agentos/multi/reconciler.py)，[`src/agentos/multi/redis_continuation.py`](../src/agentos/multi/redis_continuation.py)，[`src/agentos/multi/spawn.py`](../src/agentos/multi/spawn.py)，[`src/agentos/multi/remote.py`](../src/agentos/multi/remote.py)，[`src/agentos/multi/registry.py`](../src/agentos/multi/registry.py)，[`src/agentos/channels/a2a.py`](../src/agentos/channels/a2a.py)，[`tests/multi`](../tests/multi)，[`tests/channels/test_a2a_adapter.py`](../tests/channels/test_a2a_adapter.py)
 
 ---
 
@@ -334,7 +336,9 @@ app = AsgiAgentApp(sessions=sessions)
 
 `instrument_query_loop(loop, config)` 不修改原始 loop，而是用 wrapper 包装 provider、provider request builder、tool router 和 compression runtime，并返回 `InstrumentedQueryLoop`。`CapturePolicy` 默认是 metadata-only；redacted/full 模式需要显式选择。
 
-源码来源：[`src/agentos/observability/instrument.py`](../src/agentos/observability/instrument.py)，[`src/agentos/observability/instrumented.py`](../src/agentos/observability/instrumented.py)，[`src/agentos/observability/config.py`](../src/agentos/observability/config.py)，[`tests/observability/test_query_loop_instrumentation.py`](../tests/observability/test_query_loop_instrumentation.py)，[`tests/observability/test_capture_policy.py`](../tests/observability/test_capture_policy.py)
+`ObservabilityConfig.logging_enabled` 默认关闭。开启后，`configure_structured_logger()` 使用标准库 logging 输出 JSON lines，`QueryLoop` 记录 `turn_start`、`provider_call`、`tool_exec` 和 `turn_end`。
+
+源码来源：[`src/agentos/observability/instrument.py`](../src/agentos/observability/instrument.py)，[`src/agentos/observability/instrumented.py`](../src/agentos/observability/instrumented.py)，[`src/agentos/observability/config.py`](../src/agentos/observability/config.py)，[`src/agentos/observability/logging.py`](../src/agentos/observability/logging.py)，[`src/agentos/runtime/query_loop.py`](../src/agentos/runtime/query_loop.py)，[`tests/observability/test_query_loop_instrumentation.py`](../tests/observability/test_query_loop_instrumentation.py)，[`tests/observability/test_capture_policy.py`](../tests/observability/test_capture_policy.py)，[`tests/observability/test_structured_logging.py`](../tests/observability/test_structured_logging.py)
 
 ### 8.3 OTel And Langfuse
 

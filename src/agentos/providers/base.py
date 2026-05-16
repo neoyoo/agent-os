@@ -87,8 +87,14 @@ class ProviderResponse:
 class Provider(Protocol):
     """provider runtime 的最小协议。"""
 
+    timeout_seconds: float | None
+
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """根据标准请求返回 assistant 响应。"""
+
+
+class ProviderTimeoutError(TimeoutError):
+    """Provider 调用超时。"""
 
 
 class AsyncProvider(Protocol):

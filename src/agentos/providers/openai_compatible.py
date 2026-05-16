@@ -1,4 +1,5 @@
 import json
+import socket
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -15,6 +16,7 @@ from agentos.providers.base import (
     ProviderMessage,
     ProviderRequest,
     ProviderResponse,
+    ProviderTimeoutError,
     ProviderToolCall,
     ProviderUsage,
 )
@@ -110,6 +112,7 @@ class UrlLibJSONTransport:
                 f"OpenAI-compatible request failed with HTTP {error.code}: {body}",
             ) from error
         except URLError as error:
+            self._map_transport_error(error)
             raise OpenAICompatibleProviderError(
                 f"OpenAI-compatible request failed: {error.reason}",
             ) from error
@@ -155,8 +158,18 @@ class UrlLibJSONTransport:
                 f"OpenAI-compatible request failed with HTTP {error.code}: {body}",
             ) from error
         except URLError as error:
+            self._map_transport_error(error)
             raise OpenAICompatibleProviderError(
                 f"OpenAI-compatible request failed: {error.reason}",
+            ) from error
+
+    def _map_transport_error(self, error: URLError) -> None:
+        """把标准库 timeout 转成统一 ProviderTimeoutError。"""
+
+        reason = getattr(error, "reason", None)
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            raise ProviderTimeoutError(
+                "OpenAI-compatible request timed out",
             ) from error
 
 
@@ -255,6 +268,7 @@ class OpenAICompatibleProvider:
     base_url: str
     model: str
     timeout: float = 60.0
+    timeout_seconds: float | None = None
     transport: OpenAICompatibleTransport | None = None
     async_transport: AsyncOpenAICompatibleTransport | None = None
     thinking: dict[str, object] | None = None
@@ -270,7 +284,7 @@ class OpenAICompatibleProvider:
                 "Content-Type": "application/json",
             },
             payload=self._payload(request),
-            timeout=self.timeout,
+            timeout=self._timeout(),
         )
         return self._response(response)
 
@@ -285,7 +299,7 @@ class OpenAICompatibleProvider:
                 "Content-Type": "application/json",
             },
             payload=self._payload(request),
-            timeout=self.timeout,
+            timeout=self._timeout(),
         )
         return self._response(response)
 
@@ -320,7 +334,7 @@ class OpenAICompatibleProvider:
                 "Content-Type": "application/json",
             },
             payload=payload,
-            timeout=self.timeout,
+            timeout=self._timeout(),
         ):
             response_id = str(chunk.get("id") or response_id)
             response_model = (
@@ -463,7 +477,7 @@ class OpenAICompatibleProvider:
                 "Content-Type": "application/json",
             },
             payload=payload,
-            timeout=self.timeout,
+            timeout=self._timeout(),
         ):
             response_id = str(chunk.get("id") or response_id)
             response_model = (
@@ -600,6 +614,11 @@ class OpenAICompatibleProvider:
         if base_url.endswith("/chat/completions"):
             return base_url
         return f"{base_url}/chat/completions"
+
+    def _timeout(self) -> float:
+        """返回 provider 调用超时秒数。"""
+
+        return self.timeout if self.timeout_seconds is None else self.timeout_seconds
 
     def _message(self, message: ProviderMessage) -> dict[str, object]:
         """把 SDK 内部 provider message 转为 OpenAI-compatible message。"""

@@ -11,10 +11,15 @@ dependencies = []
 
 [project.scripts]
 agent-os-small-agent = "agentos.examples.small_openai_agent:main"
+agent-os = "agentos.cli:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.8",
+]
+server = [
+    "uvicorn>=0.30",
 ]
 observability = [
     "opentelemetry-api>=1.28",
@@ -32,6 +37,7 @@ qdrant = [
 ]
 postgres = [
     "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.2",
 ]
 production-memory = [
     "redis>=5.0",
@@ -45,3 +51,13 @@ packages = ["src/agentos"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: live Postgres/Redis tests that require docker-compose.test.yml",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F"]

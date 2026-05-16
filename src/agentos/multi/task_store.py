@@ -112,3 +112,11 @@ class TaskStore(Protocol):
 
     def mark_result_notified(self, task_id: str, *, now: float) -> bool:
         """标记 terminal result 已发送 result-ready 通知。"""
+
+    def release_running_leases(
+        self,
+        *,
+        worker_id: str | None = None,
+        now: float | None = None,
+    ) -> int:
+        """shutdown 时释放 running lease。"""

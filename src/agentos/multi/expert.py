@@ -14,19 +14,25 @@ class ExpertAgentRunner:
         self.coordinator = coordinator
         self.agent_id = agent_id
         self._stopped = Event()
+        self._idle = Event()
+        self._idle.set()
 
     def run_once(self, timeout: float | None = None) -> bool:
         """等待并处理当前 inbox 中的一批 task_request。"""
 
-        if not self.coordinator.inbox.wait(self.agent_id, timeout):
-            return False
-        handled = False
-        for delivery in self.coordinator.inbox.collect(self.agent_id):
-            result = self.coordinator.execute_expert_envelope(delivery.envelope)
-            self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
-            if result is not None:
-                handled = True
-        return handled
+        self._idle.clear()
+        try:
+            if not self.coordinator.inbox.wait(self.agent_id, timeout):
+                return False
+            handled = False
+            for delivery in self.coordinator.inbox.collect(self.agent_id):
+                result = self.coordinator.execute_expert_envelope(delivery.envelope)
+                self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
+                if result is not None:
+                    handled = True
+            return handled
+        finally:
+            self._idle.set()
 
     def run_forever(self, timeout: float = 0.1) -> None:
         """持续消费 inbox，直到 stop 被调用。"""
@@ -34,7 +40,8 @@ class ExpertAgentRunner:
         while not self._stopped.is_set():
             self.run_once(timeout=timeout)
 
-    def stop(self) -> None:
+    def stop(self, timeout_seconds: float | None = None) -> bool:
         """请求 runner 停止。"""
 
         self._stopped.set()
+        return self._idle.wait(timeout=timeout_seconds)

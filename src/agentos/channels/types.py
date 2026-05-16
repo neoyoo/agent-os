@@ -32,7 +32,11 @@ class ChannelError(Exception):
         self.status_code = status_code
 
 
-def parse_channel_turn_request(body: bytes | str) -> ChannelTurnRequest:
+def parse_channel_turn_request(
+    body: bytes | str,
+    *,
+    max_message_length: int | None = None,
+) -> ChannelTurnRequest:
     """解析 channel turn JSON body。"""
 
     raw = body.decode("utf-8") if isinstance(body, bytes) else body
@@ -45,6 +49,8 @@ def parse_channel_turn_request(body: bytes | str) -> ChannelTurnRequest:
     message = payload.get("message")
     if not isinstance(message, str) or not message.strip():
         raise ValueError("message is required")
+    if max_message_length is not None and len(message) > max_message_length:
+        raise ValueError("message exceeds maximum length")
     return ChannelTurnRequest(
         message=message,
         thinking=bool(payload.get("thinking", False)),
