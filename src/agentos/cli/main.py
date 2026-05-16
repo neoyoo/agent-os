@@ -70,7 +70,7 @@ def _run_asgi(app: str, *, host: str, port: int) -> int:
 
 
 def _migrate(*, dsn: str | None, dry_run: bool) -> int:
-    migrations = sorted(Path("docs/migrations").glob("*.sql"))
+    migrations = sorted(_migration_dir().glob("*.sql"))
     if dry_run or not dsn:
         for migration in migrations:
             print(migration)
@@ -86,6 +86,12 @@ def _migrate(*, dsn: str | None, dry_run: bool) -> int:
             connection.execute(up_sql)
         connection.commit()
     return 0
+
+
+def _migration_dir() -> Path:
+    """返回随源码树发布的 Postgres migrations 目录。"""
+
+    return Path(__file__).resolve().parents[3] / "docs" / "migrations"
 
 
 if __name__ == "__main__":

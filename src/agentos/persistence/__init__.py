@@ -10,11 +10,14 @@ from agentos.persistence.base import (
 from agentos.persistence.filesystem import FileSystemPersistence
 from agentos.persistence.memory import MemoryPersistence
 from agentos.persistence.postgres import BackendUnavailableError, PostgresDurableSessionStore
+from agentos.persistence.protocols import PostgresConnection, PostgresCursor
 from agentos.persistence.sqlite import SQLitePersistence
 
 __all__ = [
     "FileSystemPersistence",
     "MemoryPersistence",
+    "PostgresConnection",
+    "PostgresCursor",
     "PostgresDurableSessionStore",
     "BackendUnavailableError",
     "SNAPSHOT_VERSION",

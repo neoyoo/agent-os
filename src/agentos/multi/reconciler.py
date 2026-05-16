@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Protocol
 from uuid import uuid4
 
 from agentos.multi.message_queue import AgentMessageQueue
 from agentos.multi.types import AgentEnvelope, TaskRecord
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,20 +49,28 @@ class OutboxReconciler:
             record = entry.record
             if record.result is None:
                 continue
-            self.message_queue.send(
-                AgentEnvelope(
-                    envelope_id=f"env_{uuid4().hex}",
-                    from_agent_id=record.target_agent_id,
-                    to_agent_id=record.parent_agent_id,
-                    type="task_result",
-                    payload=record.result,
-                    created_at=now,
-                    correlation_id=record.task_id,
-                ),
-            )
-            if self.task_store.mark_outbox_delivered(
-                entry.outbox_id,
-                delivered_at=now,
-            ):
-                delivered += 1
+            try:
+                self.message_queue.send(
+                    AgentEnvelope(
+                        envelope_id=f"env_{uuid4().hex}",
+                        from_agent_id=record.target_agent_id,
+                        to_agent_id=record.parent_agent_id,
+                        type="task_result",
+                        payload=record.result,
+                        created_at=now,
+                        correlation_id=record.task_id,
+                    ),
+                )
+                if self.task_store.mark_outbox_delivered(
+                    entry.outbox_id,
+                    delivered_at=now,
+                ):
+                    delivered += 1
+            except Exception as error:
+                logger.warning(
+                    "outbox reconciliation failed for outbox_id=%s task_id=%s: %s",
+                    entry.outbox_id,
+                    record.task_id,
+                    error,
+                )
         return delivered
