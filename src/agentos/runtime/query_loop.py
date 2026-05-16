@@ -2,8 +2,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextState
+from agentos.hooks import HookManager, HookResult
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
     Provider,
@@ -89,6 +91,7 @@ class QueryLoop:
     compression_runtime: CompressionRuntime | None = None
     tool_call_router: ToolCallRouterBoundary | None = None
     event_bus: EventBus | None = None
+    hook_manager: HookManager | None = None
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
     max_tool_iterations: int = 8
@@ -233,8 +236,10 @@ class QueryLoop:
         while True:
             self._raise_if_interrupted()
             request = self.build_request()
+            request = self._before_provider_call(request)
             self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
             response = yield from self._consume_provider_stream(request, options)
+            response = self._after_provider_call(request, response)
             self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
             self._ensure_provider_response_usable(response)
             tool_calls = [
@@ -289,7 +294,12 @@ class QueryLoop:
                     ),
                 )
                 try:
-                    result = self.tool_call_router.execute_tool_call(tool_call)
+                    hook_result = self._before_tool_call(tool_call)
+                    if hook_result is not None:
+                        result = hook_result
+                    else:
+                        result = self.tool_call_router.execute_tool_call(tool_call)
+                    result = self._after_tool_call(tool_call, result)
                 except Exception as error:
                     self.message_runtime.active_window.remove_refs(
                         appended_message_ids,
@@ -356,6 +366,106 @@ class QueryLoop:
         if response is None:
             raise RuntimeError("provider stream ended without completion event")
         return response
+
+    def _before_provider_call(self, request: ProviderRequest) -> ProviderRequest:
+        """执行 before_provider_call hook，可 deny 或替换 request。"""
+
+        result = self._dispatch_hook(
+            "before_provider_call",
+            {"request": request},
+        )
+        self._raise_if_denied(result, "provider call")
+        if result.action == "modify" and result.payload is not None:
+            modified_request = result.payload.get("request")
+            if isinstance(modified_request, ProviderRequest):
+                return modified_request
+        return request
+
+    def _after_provider_call(
+        self,
+        request: ProviderRequest,
+        response: ProviderResponse,
+    ) -> ProviderResponse:
+        """执行 after_provider_call hook，可替换 response。"""
+
+        result = self._dispatch_hook(
+            "after_provider_call",
+            {"request": request, "response": response},
+        )
+        self._raise_if_denied(result, "provider response")
+        if result.action == "modify" and result.payload is not None:
+            modified_response = result.payload.get("response")
+            if isinstance(modified_response, ProviderResponse):
+                return modified_response
+        return response
+
+    def _before_tool_call(
+        self,
+        tool_call: object,
+    ) -> ToolExecutionResult | None:
+        """执行 before_tool_call hook，deny 时生成明确 tool result。"""
+
+        tool_name = str(getattr(tool_call, "name", ""))
+        tool_call_id = str(getattr(tool_call, "id", ""))
+        result = self._dispatch_hook(
+            "before_tool_call",
+            {
+                "tool_call": tool_call,
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+            },
+        )
+        if result.action == "deny":
+            reason = result.reason or "denied"
+            return ToolExecutionResult(
+                tool_call_id=tool_call_id,
+                content=f"tool call denied by hook: {reason}",
+            )
+        return None
+
+    def _after_tool_call(
+        self,
+        tool_call: object,
+        result: object,
+    ) -> object:
+        """执行 after_tool_call hook，可替换 tool result。"""
+
+        hook_result = self._dispatch_hook(
+            "after_tool_call",
+            {
+                "tool_call": tool_call,
+                "tool_name": str(getattr(tool_call, "name", "")),
+                "tool_call_id": str(getattr(tool_call, "id", "")),
+                "result": result,
+            },
+        )
+        self._raise_if_denied(hook_result, "tool result")
+        if hook_result.action == "modify" and hook_result.payload is not None:
+            modified_result = hook_result.payload.get("result")
+            if modified_result is not None:
+                return modified_result
+        return result
+
+    def _dispatch_hook(
+        self,
+        hook_name: str,
+        payload: dict[str, object] | None = None,
+    ) -> HookResult:
+        """执行可选 HookManager。"""
+
+        if self.hook_manager is None:
+            return HookResult(action="allow", payload=dict(payload or {}))
+        return self.hook_manager.dispatch(  # type: ignore[arg-type]
+            hook_name,
+            payload,
+        )
+
+    def _raise_if_denied(self, result: HookResult, target: str) -> None:
+        """把 hook deny 转为明确 RuntimeError。"""
+
+        if result.action == "deny":
+            reason = result.reason or "denied"
+            raise RuntimeError(f"{target} denied by hook: {reason}")
 
     def _raise_if_interrupted(self) -> None:
         """在安全点响应 interrupt 请求。"""

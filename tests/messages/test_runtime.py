@@ -1,4 +1,5 @@
 from agentos.messages import MessageRuntime, ToolCall, ToolPairWindowError
+from agentos.providers import provider_message_to_dict
 
 
 def test_message_runtime_appends_original_messages_and_active_refs() -> None:
@@ -20,7 +21,10 @@ def test_active_messages_materialize_provider_shape() -> None:
     runtime.append_user("Hello")
     runtime.append_assistant("Hi")
 
-    assert runtime.materialize_provider_messages() == [
+    assert [
+        provider_message_to_dict(message)
+        for message in runtime.materialize_provider_messages()
+    ] == [
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi"},
     ]
@@ -48,11 +52,15 @@ def test_temporary_recalled_refs_are_deduplicated_before_next_request() -> None:
     first_request = runtime.materialize_provider_messages()
     second_request = runtime.materialize_provider_messages()
 
-    assert [message["content"] for message in first_request] == [
+    assert [
+        provider_message_to_dict(message)["content"] for message in first_request
+    ] == [
         "Original detail",
         "Current task",
     ]
-    assert [message["content"] for message in second_request] == ["Current task"]
+    assert [
+        provider_message_to_dict(message)["content"] for message in second_request
+    ] == ["Current task"]
 
 
 def test_message_store_is_append_only_when_active_refs_are_removed() -> None:

@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 
-from agentos.providers import ProviderToolSpec
+from agentos.providers import ProviderToolSpec, provider_tool_spec_from_dict
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +60,7 @@ _WORKING_STATE_FIELD_SCHEMA = {
     "required": ["name", "type", "purpose"],
 }
 
-_CONTEXT_PROTOCOL_TOOL_SPECS: list[ProviderToolSpec] = [
+_CONTEXT_PROTOCOL_TOOL_SPECS: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
@@ -166,4 +166,7 @@ _CONTEXT_PROTOCOL_TOOL_SPECS: list[ProviderToolSpec] = [
 def context_protocol_tool_specs() -> list[ProviderToolSpec]:
     """返回 context protocol tools 的 provider schema 副本。"""
 
-    return deepcopy(_CONTEXT_PROTOCOL_TOOL_SPECS)
+    return [
+        provider_tool_spec_from_dict(spec)
+        for spec in deepcopy(_CONTEXT_PROTOCOL_TOOL_SPECS)
+    ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
@@ -21,7 +22,8 @@ class SpawnExecutor:
     ) -> Future[TaskResult]:
         """提交一个 subagent 任务。"""
 
-        return self._executor.submit(run)
+        context = contextvars.copy_context()
+        return self._executor.submit(context.run, run)
 
     def shutdown(self) -> None:
         """关闭底层线程池。"""

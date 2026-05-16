@@ -1,7 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-from agentos.providers import ProviderToolSpec
+from agentos.providers import (
+    ProviderFunctionSpec,
+    ProviderToolSpec,
+)
 
 
 ToolKind = Literal["external", "context", "skill", "mcp"]
@@ -28,11 +31,10 @@ class RegisteredTool:
     def provider_spec(self) -> ProviderToolSpec:
         """转换为 provider tools 参数中的 schema。"""
 
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": dict(self.parameters),
-            },
-        }
+        return ProviderToolSpec(
+            function=ProviderFunctionSpec(
+                name=self.name,
+                description=self.description,
+                parameters=dict(self.parameters),
+            ),
+        )

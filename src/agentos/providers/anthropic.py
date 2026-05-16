@@ -2,11 +2,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentos.providers.base import (
+    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
+)
+from agentos.providers.messages import (
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    provider_message_to_dict,
 )
 
 
@@ -26,7 +33,7 @@ class AnthropicProvider:
             model=self.model,
             max_tokens=self.max_tokens,
             system=request.system,
-            messages=request.messages,
+            messages=self._messages(request.messages),
             tools=self._tools(request.tools) or None,
         )
         text_parts: list[str] = []
@@ -56,25 +63,88 @@ class AnthropicProvider:
         """拒绝 active window 中的 system 消息，避免 provider 收到双 system。"""
 
         for message in request.messages:
-            if message.get("role") == "system":
+            if not isinstance(
+                message,
+                (UserMessage, AssistantMessage, ToolResultMessage),
+            ):
                 raise ValueError(
                     "active messages must not include system role; use "
                     "ProviderRequest.system",
                 )
+
+    def _message(self, message: ProviderMessage) -> dict[str, object]:
+        """把 provider message 转为 Anthropic Messages API 形态。"""
+
+        if isinstance(message, UserMessage):
+            return {"role": "user", "content": message.content}
+        if isinstance(message, AssistantMessage):
+            content: list[dict[str, object]] = []
+            if message.content:
+                content.append({"type": "text", "text": message.content})
+            for tool_call in message.tool_calls:
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tool_call.id,
+                        "name": tool_call.name,
+                        "input": tool_call.arguments,
+                    },
+                )
+            return {
+                "role": "assistant",
+                "content": content if content else message.content,
+            }
+        if isinstance(message, ToolResultMessage):
+            return {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": message.tool_call_id,
+                        "content": message.content,
+                    },
+                ],
+            }
+
+        return provider_message_to_dict(message)
+
+    def _messages(self, messages: list[ProviderMessage]) -> list[dict[str, object]]:
+        """转换并合并连续 tool_result，满足 Anthropic 角色交替规则。"""
+
+        return self._merge_consecutive_tool_results(
+            [self._message(message) for message in messages],
+        )
+
+    def _merge_consecutive_tool_results(
+        self,
+        messages: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """把连续 tool_result user blocks 合并为一条 user 消息。"""
+
+        merged: list[dict[str, object]] = []
+        for message in messages:
+            if (
+                message.get("role") == "user"
+                and isinstance(message.get("content"), list)
+                and merged
+                and merged[-1].get("role") == "user"
+                and isinstance(merged[-1].get("content"), list)
+            ):
+                merged[-1]["content"].extend(message["content"])  # type: ignore[union-attr]
+                continue
+            merged.append(message)
+        return merged
 
     def _tools(self, tools: list[ProviderToolSpec]) -> list[dict[str, object]]:
         """把内部 function tool schema 转成 Anthropic input_schema 形态。"""
 
         converted: list[dict[str, object]] = []
         for tool in tools:
-            function = tool.get("function")
-            if not isinstance(function, dict):
-                continue
             converted.append(
                 {
-                    "name": function["name"],
-                    "description": function["description"],
-                    "input_schema": function["parameters"],
+                    "name": tool.function.name,
+                    "description": tool.function.description,
+                    "input_schema": tool.function.parameters,
                 },
             )
         return converted

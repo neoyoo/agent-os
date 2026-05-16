@@ -2,9 +2,11 @@
 
 ## Scope
 
-为 compression 模块新增 `LlmCompressor`，复用现有 `Provider.complete()` 做 LLM-based summarization，替代 `RuleBasedCompressor` 成为推荐默认。
+为 compression 模块新增 `LlmCompressor`，复用现有 `Provider.complete()` 做 LLM-based summarization，作为 opt-in 的高质量压缩实现。
 
 本设计不改变 `Compressor` protocol、`CompressionRuntime`、`Evictor` 或 `BudgetPolicy` 的接口。
+
+`RuleBasedCompressor` 继续作为默认实现。`LlmCompressor` 不能隐式启用，因为它会在压缩路径额外触发 provider 调用，增加延迟和成本。用户必须通过 `CompressionRuntime(compressor=...)` 或 `AgentBuilder.with_compression(LlmCompressor(provider))` 显式选择。
 
 ## 问题
 
@@ -154,6 +156,8 @@ agent = (
 )
 ```
 
+`AgentBuilder.with_compression()` 不应默认创建 `LlmCompressor`。如果调用者不传 compressor，v1 使用 deterministic `RuleBasedCompressor`，避免最简 agent 路径产生隐式 LLM 压缩调用。
+
 ### RuleBasedCompressor 保留
 
 不删除、不改变。它在以下场景仍然有用：
@@ -161,6 +165,7 @@ agent = (
 - 测试（确定性输出，无 API 调用）
 - 离线 / 无 LLM 场景
 - FallbackCompressor 的 fallback
+- AgentBuilder 未显式传入 compressor 时的默认压缩器
 
 ## 测试计划
 
@@ -178,5 +183,6 @@ agent = (
 - 复用现有 Provider.complete()，不引入新 LLM 依赖
 - Prompt 模板可注入替换
 - CompressionRuntime 无需改动即可接受 LlmCompressor
+- LlmCompressor 只在显式注入时启用，不改变默认压缩行为
 - RuleBasedCompressor 不受影响
 - 新文件无外部依赖

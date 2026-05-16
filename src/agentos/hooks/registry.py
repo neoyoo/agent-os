@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 
 from agentos.hooks.base import HookFailurePolicy, HookHandler, HookName
@@ -10,6 +11,7 @@ class HookRegistration:
     hook_name: HookName
     handler: HookHandler
     failure_policy: HookFailurePolicy = "continue"
+    priority: int = 100
 
 
 class HookRegistry:
@@ -25,14 +27,21 @@ class HookRegistry:
         hook_name: HookName,
         handler: HookHandler,
         failure_policy: HookFailurePolicy = "continue",
+        priority: int = 100,
     ) -> None:
         """注册 hook，注册顺序就是执行顺序。"""
 
+        if asyncio.iscoroutinefunction(handler):
+            raise TypeError(
+                "async handler not supported in synchronous HookManager; "
+                f"got {handler!r}",
+            )
         self._registrations.append(
             HookRegistration(
                 hook_name=hook_name,
                 handler=handler,
                 failure_policy=failure_policy,
+                priority=priority,
             ),
         )
 

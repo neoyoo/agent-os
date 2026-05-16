@@ -30,6 +30,7 @@ from agentos.multi.types import (
     TaskRequest,
     TaskResult,
 )
+from agentos.observability import inject_trace_headers
 from agentos.runtime import Agent
 
 
@@ -107,6 +108,7 @@ class AgentCoordinator:
             instruction=instruction,
             allowed_tool_names=tuple(allowed_tool_names),
             timeout_seconds=timeout_seconds,
+            trace_context=self._trace_context(),
         )
         record = TaskRecord(
             task_id=task_id,
@@ -193,6 +195,7 @@ class AgentCoordinator:
             instruction=instruction,
             allowed_tool_names=tuple(allowed_tool_names),
             timeout_seconds=timeout_seconds,
+            trace_context=self._trace_context(),
         )
         record = TaskRecord(
             task_id=task_id,
@@ -572,6 +575,11 @@ class AgentCoordinator:
     def _emit(self, event: AgentEvent) -> None:
         if self.event_bus is not None:
             self.event_bus.emit(event)
+
+    def _trace_context(self) -> dict[str, str] | None:
+        headers: dict[str, str] = {}
+        inject_trace_headers(headers)
+        return headers or None
 
     def _notify_task_completed(self, parent_agent_id: str, task_id: str) -> None:
         if self.continuation_trigger is not None:

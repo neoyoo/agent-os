@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from collections.abc import Callable
 from typing import Mapping
 
 from agentos.hooks.base import HookContext, HookExecutionFailure, HookName, HookResult
@@ -22,7 +23,11 @@ class HookManager:
 
         current_payload = dict(payload or {})
         modified = False
-        for registration in self.registry.hooks_for(hook_name):
+        registrations = sorted(
+            self.registry.hooks_for(hook_name),
+            key=lambda registration: registration.priority,
+        )
+        for registration in registrations:
             context = HookContext(
                 name=hook_name,
                 payload=MappingProxyType(current_payload),
@@ -51,3 +56,21 @@ class HookManager:
         if modified:
             return HookResult(action="modify", payload=current_payload)
         return HookResult(action="allow", payload=current_payload)
+
+    def on(
+        self,
+        hook_name: HookName,
+        *,
+        priority: int = 100,
+    ) -> Callable[[object], object]:
+        """用 decorator 注册同步 hook handler。"""
+
+        def decorator(handler: object) -> object:
+            self.registry.register(
+                hook_name,
+                handler,  # type: ignore[arg-type]
+                priority=priority,
+            )
+            return handler
+
+        return decorator

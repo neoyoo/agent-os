@@ -14,6 +14,7 @@ from agentos.observability.context import (
     current_runtime_trace_context,
     current_trace_ids,
     inject_trace_headers,
+    use_incoming_trace_headers,
     use_default_trace_propagator,
     use_observability_context,
     use_runtime_trace_context,
@@ -108,6 +109,7 @@ __all__ = [
     "langfuse_otel_trace_endpoint",
     "stable_sha256",
     "use_default_trace_propagator",
+    "use_incoming_trace_headers",
     "use_observability_context",
     "use_runtime_trace_context",
 ]

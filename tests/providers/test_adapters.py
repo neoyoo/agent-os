@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 
 from agentos.providers import (
+    AssistantMessage,
     AnthropicProvider,
     OpenAIProvider,
     ProviderRequest,
     ProviderToolCall,
     ProviderUsage,
+    ToolResultMessage,
+    UserMessage,
 )
 
 
@@ -86,13 +89,13 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
         cached_input_tokens=2,
         reasoning_output_tokens=1,
     )
-    assert response.tool_calls == [
+    assert response.tool_calls == (
         ProviderToolCall(
             id="call_1",
             name="read_file",
             arguments={"path": "pyproject.toml"},
         ),
-    ]
+    )
 
 
 def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
@@ -169,10 +172,84 @@ def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
         cached_input_tokens=2,
         cache_creation_input_tokens=3,
     )
-    assert response.tool_calls == [
+    assert response.tool_calls == (
         ProviderToolCall(
             id="call_1",
             name="read_file",
             arguments={"path": "pyproject.toml"},
         ),
+    )
+
+
+def test_anthropic_provider_converts_tool_messages_to_anthropic_blocks() -> None:
+    class FakeMessages:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] | None = None
+
+        def create(self, **kwargs: object) -> object:
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                id="msg_1",
+                model="claude-test",
+                stop_reason="end_turn",
+                usage=None,
+                content=[SimpleNamespace(type="text", text="done")],
+            )
+
+    messages = FakeMessages()
+    provider = AnthropicProvider(
+        client=SimpleNamespace(messages=messages),
+        model="claude-test",
+    )
+
+    provider.complete(
+        ProviderRequest(
+            system="system text",
+            messages=[
+                UserMessage(content="read project name"),
+                AssistantMessage(
+                    content="",
+                    tool_calls=(
+                        ProviderToolCall(
+                            id="call_1",
+                            name="read_file",
+                            arguments={"path": "pyproject.toml"},
+                        ),
+                    ),
+                ),
+                ToolResultMessage(tool_call_id="call_1", content="project = agent-os"),
+                ToolResultMessage(tool_call_id="call_2", content="version = 0.1"),
+            ],
+        ),
+    )
+
+    assert messages.kwargs is not None
+    assert messages.kwargs["messages"] == [
+        {"role": "user", "content": "read project name"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": {"path": "pyproject.toml"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "project = agent-os",
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_2",
+                    "content": "version = 0.1",
+                },
+            ],
+        },
     ]

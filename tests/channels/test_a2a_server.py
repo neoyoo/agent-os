@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from agentos.multi import TaskRequest, TaskResult
+from agentos.observability import (
+    InMemoryTracer,
+    current_trace_ids,
+    inject_trace_headers,
+    use_default_trace_propagator,
+)
 from tests.multi.helpers import build_agent_with_response
 
 
@@ -16,6 +22,23 @@ class StaticRunner:
             summary="runner done",
             artifacts={"allowed": list(request.allowed_tool_names)},
             elapsed_seconds=0.5,
+        )
+
+
+class TracedRunner:
+    def __init__(self, tracer: InMemoryTracer) -> None:
+        self.tracer = tracer
+        self.trace_id: str | None = None
+        self.parent_span_id: str | None = None
+
+    def run_task(self, request: TaskRequest) -> TaskResult:
+        with self.tracer.start_span("remote-task"):
+            self.trace_id = current_trace_ids().trace_id
+        self.parent_span_id = self.tracer.records[-1].parent_span_id
+        return TaskResult(
+            task_id=request.task_id,
+            status="completed",
+            summary="traced",
         )
 
 
@@ -68,6 +91,26 @@ def test_a2a_server_adapter_handles_task_payload() -> None:
             timeout_seconds=12,
         ),
     ]
+
+
+def test_a2a_server_adapter_extracts_incoming_trace_headers() -> None:
+    from agentos.channels.a2a_server import A2AServerAdapter
+
+    tracer = InMemoryTracer()
+    headers: dict[str, str] = {}
+    with use_default_trace_propagator(tracer):
+        with tracer.start_span("parent"):
+            parent_ids = current_trace_ids()
+            inject_trace_headers(headers)
+
+        runner = TracedRunner(tracer)
+        A2AServerAdapter(runner).handle_task(
+            {"task_id": "task_1", "instruction": "do remote work"},
+            headers=headers,
+        )
+
+    assert runner.trace_id == parent_ids.trace_id
+    assert runner.parent_span_id == parent_ids.span_id
 
 
 def test_a2a_server_adapter_returns_failed_result_for_invalid_payload() -> None:

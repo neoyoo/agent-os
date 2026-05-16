@@ -20,10 +20,13 @@ from agentos.providers import (
     ProviderStreamEvent,
     ProviderStreamCompleted,
     ProviderStreamOptions,
+    ProviderToolSpec,
     ProviderRequest,
     ProviderResponse,
     Provider,
     complete_response_to_stream_events,
+    provider_message_to_dict,
+    provider_tool_spec_to_dict,
 )
 from agentos.runtime import (
     AssistantContentDelta,
@@ -252,7 +255,26 @@ def traced_provider(provider: Provider) -> TracedProvider:
 def _json_dumps(value: object) -> str:
     """用稳定格式输出 JSON，便于人工阅读和测试断言。"""
 
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        default=_json_default,
+    )
+
+
+def _json_default(value: object) -> object:
+    """把强类型 provider 边界对象转换为 JSON-safe dict。"""
+
+    if isinstance(value, ProviderToolSpec):
+        return provider_tool_spec_to_dict(value)
+    try:
+        return provider_message_to_dict(value)  # type: ignore[arg-type]
+    except TypeError:
+        raise TypeError(
+            f"Object of type {type(value).__name__} is not JSON serializable",
+        )
 
 
 def build_agent(

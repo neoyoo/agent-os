@@ -3,6 +3,13 @@ from dataclasses import dataclass, field
 from agentos.messages.store import MessageStore
 from agentos.messages.types import Message, MessageRole, ToolCall
 from agentos.messages.window import ActiveWindow
+from agentos.providers import (
+    AssistantMessage,
+    ProviderMessage,
+    ProviderToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
 
 
 @dataclass(slots=True)
@@ -65,11 +72,11 @@ class MessageRuntime:
             self.active_window.clear_temporary()
         return messages
 
-    def materialize_provider_messages(self) -> list[dict[str, object]]:
+    def materialize_provider_messages(self) -> list[ProviderMessage]:
         """返回 provider request 可直接使用的 active messages。"""
 
         return [
-            message.to_provider_dict()
+            self._to_provider_message(message)
             for message in self.materialize_active(consume_temporary=True)
         ]
 
@@ -100,3 +107,29 @@ class MessageRuntime:
         )
         self.active_window.append(message.id)
         return message
+
+    def _to_provider_message(self, message: Message) -> ProviderMessage:
+        """把内部 Message 转为 provider 边界强类型消息。"""
+
+        if message.role == "user":
+            return UserMessage(content=message.content)
+        if message.role == "assistant":
+            return AssistantMessage(
+                content=message.content,
+                tool_calls=tuple(
+                    ProviderToolCall(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        arguments=dict(tool_call.arguments),
+                    )
+                    for tool_call in message.tool_calls
+                ),
+            )
+        if message.role == "tool":
+            if message.tool_call_id is None:
+                raise ValueError("tool message requires tool_call_id")
+            return ToolResultMessage(
+                tool_call_id=message.tool_call_id,
+                content=message.content,
+            )
+        raise ValueError(f"unsupported message role: {message.role}")

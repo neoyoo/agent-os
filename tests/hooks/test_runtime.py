@@ -118,3 +118,37 @@ def test_hook_context_payload_is_read_only() -> None:
 
     with pytest.raises(TypeError):
         captured[0].payload["tool_name"] = "write_file"
+
+
+def test_hook_manager_dispatches_lower_priority_first() -> None:
+    calls: list[str] = []
+    registry = HookRegistry()
+    registry.register("before_tool_call", lambda context: calls.append("late"), priority=100)
+    registry.register("before_tool_call", lambda context: calls.append("early"), priority=50)
+
+    HookManager(registry).dispatch("before_tool_call")
+
+    assert calls == ["early", "late"]
+
+
+def test_hook_manager_decorator_registers_handler() -> None:
+    calls: list[str] = []
+    manager = HookManager(HookRegistry())
+
+    @manager.on("after_provider_call", priority=25)
+    def record(context: HookContext) -> None:
+        calls.append(str(context.payload["model"]))
+
+    manager.dispatch("after_provider_call", {"model": "fake"})
+
+    assert calls == ["fake"]
+
+
+def test_hook_registry_rejects_async_handlers() -> None:
+    registry = HookRegistry()
+
+    async def handler(context: HookContext) -> None:
+        return None
+
+    with pytest.raises(TypeError, match="async handler not supported"):
+        registry.register("before_provider_call", handler)

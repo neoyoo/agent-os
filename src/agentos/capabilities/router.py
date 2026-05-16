@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 
 from agentos.capabilities.executor import ToolExecutionResult, ToolExecutor
@@ -48,6 +49,16 @@ class ToolCallRouter:
                 raise RuntimeError("mcp adapter is required for MCP tool calls")
             return self.mcp_adapter.execute(tool_call)
         return self._tool_executor().execute(tool_call)
+
+    async def async_execute_tool_call(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ToolExecutionResult:
+        """异步执行 provider tool call；阻塞外部工具放入线程执行。"""
+
+        if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
+            return self.execute_tool_call(tool_call)
+        return await asyncio.to_thread(self.execute_tool_call, tool_call)
 
     def _tool_executor(self) -> ToolExecutor:
         """延迟创建外部工具 executor。"""

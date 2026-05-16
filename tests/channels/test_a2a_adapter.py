@@ -7,7 +7,9 @@ from agentos.multi import AgentCard, TaskRequest
 
 class FakeTransport:
     def __init__(self) -> None:
-        self.posts: list[tuple[str, dict[str, object], float]] = []
+        self.posts: list[
+            tuple[str, dict[str, object], float, dict[str, str] | None]
+        ] = []
         self.gets: list[tuple[str, float]] = []
 
     def post_json(
@@ -15,8 +17,10 @@ class FakeTransport:
         url: str,
         payload: dict[str, object],
         timeout_seconds: float,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        self.posts.append((url, payload, timeout_seconds))
+        self.posts.append((url, payload, timeout_seconds, headers))
         return {
             "task_id": payload["task_id"],
             "status": "completed",
@@ -73,8 +77,25 @@ def test_a2a_adapter_sends_task_request_to_remote_endpoint() -> None:
                 "timeout_seconds": 12,
             },
             12,
+            None,
         ),
     ]
+
+
+def test_a2a_adapter_sends_trace_context_as_headers() -> None:
+    from agentos.channels import A2AAdapter
+
+    transport = FakeTransport()
+    adapter = A2AAdapter(transport=transport)
+    request = TaskRequest(
+        task_id="task_1",
+        instruction="search docs",
+        trace_context={"traceparent": "00-" + "1" * 32 + "-" + "2" * 16 + "-01"},
+    )
+
+    adapter.send_task(remote_card(), request)
+
+    assert transport.posts[0][3] == request.trace_context
 
 
 def test_a2a_adapter_checks_remote_health() -> None:

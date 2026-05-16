@@ -2,9 +2,27 @@
 
 ## Scope
 
-扩展现有 Hook 系统：增加 7 个新 hook 点、hook 优先级、async hook 支持。
+扩展现有 Hook 系统，但按阶段落地，避免把没有稳定调用点的 hook 名先暴露成公共 API。
 
 保持向后兼容——现有 4 个 hook 和 HookHandler protocol 不变。
+
+v1 只完成：
+
+- 现有 4 个 hook 点端到端接入 runtime/tool 路径：
+  - `before_provider_call`
+  - `after_provider_call`
+  - `before_tool_call`
+  - `after_tool_call`
+- hook priority
+- decorator 注册 API
+
+v1 不做：
+
+- 新增 7 个 hook 点
+- async hook handler
+- `on_session_end` 的 `__del__` 兜底
+
+新 hook 点必须等对应代码路径和修改语义稳定后逐个加入。async hook 必须等 `AsyncQueryLoop` 存在后，通过 async runtime 原生 await，不在同步 loop 中用 `run_until_complete()` 包装。
 
 ## 问题
 
@@ -31,7 +49,9 @@ HookName = Literal[
 - 无优先级——执行顺序是注册顺序，多个 hook 时无法控制先后
 - 纯同步——如果 hook 需要调外部 API（webhook、日志服务），会阻塞 agent loop
 
-## 新 Hook 点设计
+## 后续 Hook 点设计（Deferred）
+
+以下 hook 点是后续候选，不进入 v1 验收。原因是每个 hook 都需要明确调用点、payload schema、modify/deny 语义和测试，否则会出现“声明了 hook 名但从未触发”的占位 API。
 
 ### 扩展 HookName
 
@@ -86,7 +106,7 @@ HookName = Literal[
 
 #### `on_session_end`
 
-- **触发时机**：`Agent.close()` 显式调用，或 GC 时的 `__del__`
+- **触发时机**：`Agent.close()` 显式调用，或 session provider 显式释放/关闭 session
 - **Payload**：`{"session_id": str, "turn_count": int}`
 - **不可修改**（观察型 hook）
 - **用途**：持久化 session 状态、清理资源、发送统计
@@ -154,78 +174,72 @@ def on(self, hook_name: HookName, *, priority: int = 100):
     return decorator
 ```
 
-## Async Hook 支持
+## Async Hook 支持（Deferred）
 
-### AsyncHookHandler Protocol
+async hook 不进入同步 `QueryLoop` 阶段。
+
+不能采用以下方案：
+
+```python
+loop = asyncio.get_running_loop()
+future = asyncio.ensure_future(handler(context))
+return asyncio.get_event_loop().run_until_complete(future)
+```
+
+如果当前线程已经有 running event loop（例如 ASGI handler），`run_until_complete()` 会抛出 `RuntimeError("This event loop is already running")`。在同步 loop 里强行等待 async handler 也会把 hook 的 IO 延迟引入主 turn 热路径。
+
+后续 async hook 的正确方向是：
+
+- 保留同步 `HookManager.dispatch()` 只执行同步 handler。
+- 在 `AsyncQueryLoop` 阶段新增 `HookManager.dispatch_async()`。
+- `dispatch_async()` 原生 `await` async handler，并可兼容同步 handler。
+- ASGI/channel 层只调用 async agent API，不在同步 hook manager 中桥接 event loop。
+
+### AsyncHookHandler Protocol（后续）
 
 ```python
 class AsyncHookHandler(Protocol):
     async def __call__(self, context: HookContext) -> HookResult | None: ...
 ```
 
-### HookManager 检测与执行
-
-```python
-def dispatch(self, hook_name, payload):
-    for registration in sorted_registrations:
-        handler = registration.handler
-        if asyncio.iscoroutinefunction(handler):
-            # 在同步 QueryLoop 下用 asyncio.run 包装
-            result = self._run_async_handler(handler, context)
-        else:
-            result = handler(context)
-```
-
-`_run_async_handler` 逻辑：
-
-```python
-def _run_async_handler(self, handler, context):
-    try:
-        loop = asyncio.get_running_loop()
-        # 已在 async 环境：创建 task 并同步等待
-        future = asyncio.ensure_future(handler(context))
-        return asyncio.get_event_loop().run_until_complete(future)
-    except RuntimeError:
-        # 不在 async 环境：直接 asyncio.run
-        return asyncio.run(handler(context))
-```
-
 ### 向后兼容
 
 - `HookHandler`（同步）protocol 不变
 - 现有注册的同步 handler 正常运行，无感知
-- HookRegistration 接受 `HookHandler | AsyncHookHandler`
+- 后续 `HookRegistration` 可以接受 `HookHandler | AsyncHookHandler`，但同步 dispatch 遇到 async handler 应明确拒绝或要求使用 `dispatch_async()`
 
 ## 集成点（需改动的文件）
 
-| 文件 | 改动 |
-|------|------|
-| `hooks/base.py` | 扩展 HookName、新增 AsyncHookHandler、HookRegistration 加 priority |
-| `hooks/registry.py` | register() 接受 priority |
-| `hooks/manager.py` | dispatch() 加排序、async 检测；新增 `on()` decorator |
-| `runtime/query_loop.py` | 在 build_request 前后加 context render hook 调用 |
-| `messages/runtime.py` | append_* 方法前加 before_message_append hook 调用 |
-| `compression/runtime.py` | maybe_compress() 中加 compression start/complete hook 调用 |
-| `runtime/agent.py` | run/stream 首次调用时触发 on_session_start；新增 close() 触发 on_session_end |
+| 文件 | v1 改动 | 后续改动 |
+|------|---------|----------|
+| `hooks/base.py` | HookRegistration 加 priority 所需类型 | 扩展 HookName、新增 AsyncHookHandler |
+| `hooks/registry.py` | register() 接受 priority | 无 |
+| `hooks/manager.py` | dispatch() 加 priority 排序；新增 `on()` decorator | 新增 `dispatch_async()` |
+| `runtime/query_loop.py` | 接入 `before_provider_call` / `after_provider_call` | context render hook 另开 spec |
+| `capabilities/router.py` 或 `runtime/query_loop.py` | 接入 `before_tool_call` / `after_tool_call` | async tool hook 另开 spec |
+| `messages/runtime.py` | 不改 | `before_message_append` 另开 spec |
+| `compression/runtime.py` | 不改 | compression hook 另开 spec |
+| `runtime/agent.py` | 不改 | session lifecycle hook 另开 spec，且只支持显式 close/session provider 生命周期，不依赖 `__del__` |
 
 ## 测试计划
 
-- 新 hook 注册和触发
+- 现有 4 个 hook 注册和触发
 - priority 排序：priority=50 先于 priority=100
 - 同 priority 保持注册顺序
-- before_context_render 可修改 context_state
-- before_message_append deny 阻止消息写入
-- on_session_start 只触发一次
-- on_compression_start 可修改 selected_message_ids
-- async handler 在同步 loop 下正常执行
+- before_provider_call deny 阻止 provider 调用并返回明确错误
+- before_provider_call modify 可修改 provider request payload（如果 v1 选择支持 modify）
+- after_provider_call 可观察 provider response
+- before_tool_call deny 阻止工具执行并写入明确 tool error result
+- after_tool_call 可观察工具执行结果
 - 现有 4 个 hook 的行为不变
 - decorator 注册方式可用
 
 ## 验收标准
 
-- HookName 扩展到 11 个
-- 所有新 hook 在对应代码路径触发
+- 现有 4 个 HookName 不变且全部有真实调用点
 - priority 排序正确
-- async handler 支持
+- decorator 注册 API 可用
+- async handler 明确 deferred；同步 dispatch 不使用 `run_until_complete()` 桥接
+- 新增 7 个 hook 点明确 deferred，不能作为 v1 公共 API 暴露
 - 现有 hook 和 HookHandler protocol 向后兼容
 - 无新外部依赖

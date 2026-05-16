@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 import json
 from typing import Any
 
@@ -13,8 +14,9 @@ from agentos.channels.auth import (
 )
 from agentos.channels.http import HttpAgentChannel
 from agentos.channels.session import AgentSessionProvider
-from agentos.channels.sse import SseAgentChannel
+from agentos.channels.types import ChannelTurnRequest, parse_channel_turn_request
 from agentos.runtime import Agent
+from agentos.runtime.stream_serializers import event_to_sse
 
 
 AsgiReceive = Callable[[], Awaitable[dict[str, object]]]
@@ -22,11 +24,7 @@ AsgiSend = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class AsgiAgentApp:
-    """最小 ASGI channel app，不依赖具体 Web framework。
-
-    当前版本在 ASGI 调用内同步消费 Agent stream，适合本地/dev 或由
-    外层 server 做线程隔离的部署；生产级 async offloading 后续补齐。
-    """
+    """最小 ASGI channel app，不依赖具体 Web framework。"""
 
     def __init__(
         self,
@@ -40,7 +38,6 @@ class AsgiAgentApp:
         self._sessions = sessions
         self._auth_policy = auth_policy or AllowAllChannelAuthPolicy()
         self._http = HttpAgentChannel(sessions)
-        self._sse = SseAgentChannel(sessions)
         self._a2a_server = a2a_server
 
     async def __call__(
@@ -78,7 +75,7 @@ class AsgiAgentApp:
             await self._send_json(send, 200, self._a2a_server.handle_health())
             return
         if method == "POST" and path == "/a2a/tasks":
-            await self._handle_a2a_task(receive, send)
+            await self._handle_a2a_task(receive, send, headers=self._headers(scope))
             return
 
         session_id, is_stream = self._match_turn_path(method, path)
@@ -90,7 +87,7 @@ class AsgiAgentApp:
         if is_stream:
             await self._handle_sse_turn(session_id, body, receive, send)
             return
-        result = self._http.handle_turn(session_id, body)
+        result = await asyncio.to_thread(self._http.handle_turn, session_id, body)
         await self._send_json(
             send,
             result.status_code,
@@ -106,6 +103,8 @@ class AsgiAgentApp:
         self,
         receive: AsgiReceive,
         send: AsgiSend,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> None:
         if self._a2a_server is None:
             await self._send_json(send, 404, {"status": "failed", "error": "not found"})
@@ -117,7 +116,11 @@ class AsgiAgentApp:
             payload = {"error": str(error)}
         if not isinstance(payload, dict):
             payload = {"error": "payload must be an object"}
-        await self._send_json(send, 200, self._a2a_server.handle_task(payload))
+        await self._send_json(
+            send,
+            200,
+            self._a2a_server.handle_task(payload, headers=headers),
+        )
 
     async def _handle_sse_turn(
         self,
@@ -134,36 +137,106 @@ class AsgiAgentApp:
             },
         )
         disconnect_task = asyncio.create_task(receive())
-        stream_agent: Agent | None = None
-
-        def record_stream_agent(agent: Agent) -> None:
-            nonlocal stream_agent
-            stream_agent = agent
-
-        stream = self._sse.stream_turn(session_id, body, on_agent=record_stream_agent)
+        agent: Agent | None = None
+        stream_task: asyncio.Task[None] | None = None
         try:
-            for chunk in stream:
-                await asyncio.sleep(0)
-                if disconnect_task.done():
-                    message = disconnect_task.result()
-                    if message.get("type") == "http.disconnect":
-                        if stream_agent is not None:
-                            stream_agent.interrupt()
-                        break
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": chunk.encode("utf-8"),
-                        "more_body": True,
-                    },
-                )
+            try:
+                request = parse_channel_turn_request(body)
+            except ValueError as error:
+                await self._send_sse_chunk(send, self._error_sse_chunk(str(error)))
+                return
+
+            agent = self._sessions.get_agent(session_id)
+            stream_task = asyncio.create_task(
+                self._send_agent_sse_stream(agent, request, send),
+            )
+            done, _pending = await asyncio.wait(
+                {stream_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in done:
+                message = disconnect_task.result()
+                if message.get("type") == "http.disconnect":
+                    agent.interrupt()
+                    stream_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await stream_task
+            else:
+                if not disconnect_task.done():
+                    disconnect_task.cancel()
+                await stream_task
         finally:
-            close = getattr(stream, "close", None)
-            if callable(close):
-                close()
+            if stream_task is not None and not stream_task.done():
+                stream_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stream_task
             if not disconnect_task.done():
                 disconnect_task.cancel()
-        await send({"type": "http.response.body", "body": b"", "more_body": False})
+            if agent is not None:
+                self._sessions.release_agent(session_id, agent)
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async def _send_agent_sse_stream(
+        self,
+        agent: Agent,
+        request: ChannelTurnRequest,
+        send: AsgiSend,
+    ) -> None:
+        """消费 Agent.async_stream 并写出 SSE chunks。"""
+
+        async_stream = getattr(agent, "async_stream", None)
+        if callable(async_stream):
+            async for event in async_stream(
+                request.message,
+                thinking=request.thinking,
+                show_thinking=request.show_thinking,
+            ):
+                await self._send_sse_event(event, request, send)
+            return
+
+        events = await asyncio.to_thread(
+            lambda: list(
+                agent.stream(
+                    request.message,
+                    thinking=request.thinking,
+                    show_thinking=request.show_thinking,
+                ),
+            ),
+        )
+        for event in events:
+            await self._send_sse_event(event, request, send)
+
+    async def _send_sse_event(
+        self,
+        event: object,
+        request: ChannelTurnRequest,
+        send: AsgiSend,
+    ) -> None:
+        """把 typed stream event 写成一个 SSE chunk。"""
+
+        chunk = event_to_sse(
+            event,
+            show_thinking=request.show_thinking,
+        )
+        if chunk is not None:
+            await self._send_sse_chunk(send, chunk)
+
+    async def _send_sse_chunk(self, send: AsgiSend, chunk: str) -> None:
+        await send(
+            {
+                "type": "http.response.body",
+                "body": chunk.encode("utf-8"),
+                "more_body": True,
+            },
+        )
+
+    def _error_sse_chunk(self, error: str) -> str:
+        payload = json.dumps(
+            {"type": "error", "status": "failed", "error": error},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return f"event: error\ndata: {payload}\n\n"
 
     async def _read_body(self, receive: AsgiReceive) -> bytes:
         body = b""

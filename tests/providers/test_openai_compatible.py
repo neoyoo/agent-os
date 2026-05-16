@@ -169,13 +169,13 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
         cached_input_tokens=2,
         reasoning_output_tokens=1,
     )
-    assert response.tool_calls == [
+    assert response.tool_calls == (
         ProviderToolCall(
             id="call_1",
             name="read_file",
             arguments={"path": "pyproject.toml"},
         ),
-    ]
+    )
 
 
 def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:
@@ -240,16 +240,14 @@ def test_openai_compatible_provider_rejects_system_messages_in_active_window() -
     )
 
     try:
-        provider.complete(
-            ProviderRequest(
-                system="system",
-                messages=[
-                    {"role": "system", "content": "extra system"},
-                    {"role": "user", "content": "hi"},
-                ],
-            ),
+        ProviderRequest(
+            system="system",
+            messages=[
+                {"role": "system", "content": "extra system"},
+                {"role": "user", "content": "hi"},
+            ],
         )
-    except OpenAICompatibleProviderError as error:
-        assert "ProviderRequest.system" in str(error)
+    except ValueError as error:
+        assert "unsupported provider message role" in str(error)
     else:
-        raise AssertionError("Expected OpenAICompatibleProviderError")
+        raise AssertionError("Expected ValueError")

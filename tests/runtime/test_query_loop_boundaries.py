@@ -2,7 +2,7 @@ import inspect
 
 from agentos.context import ContextRenderer, ContextState
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider
+from agentos.providers import FakeProvider, provider_message_to_dict
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
 
 
@@ -27,7 +27,9 @@ def test_provider_request_builder_accepts_context_runtime_boundary() -> None:
     request = builder.build(SnapshotOnlyContext())
 
     assert "snapshot used" in request.system
-    assert request.messages == [{"role": "user", "content": "hello"}]
+    assert [provider_message_to_dict(message) for message in request.messages] == [
+        {"role": "user", "content": "hello"},
+    ]
 
 
 def test_query_loop_build_request_does_not_read_context_state_directly() -> None:

@@ -1,6 +1,7 @@
 """Agent OS：以 context-first 架构构建的 Python agent runtime SDK。"""
 
 from agentos.capabilities import ToolCallRouter
+from agentos.builder import AgentBuilder
 from agentos.channels import (
     A2AAdapter,
     A2AServerAdapter,
@@ -26,6 +27,13 @@ from agentos.multi import (
     TaskTable,
 )
 from agentos.providers import Provider
+from agentos.providers import (
+    AssistantMessage,
+    ProviderFunctionSpec,
+    ProviderToolSpec,
+    ToolResultMessage,
+    UserMessage,
+)
 from agentos.persistence import PostgresDurableSessionStore
 from agentos.registry import (
     AgentResolver,
@@ -46,12 +54,14 @@ __all__ = [
     "A2AAdapter",
     "A2AServerAdapter",
     "Agent",
+    "AgentBuilder",
     "AgentCard",
     "AgentCoordinator",
     "AgentInbox",
     "AgentResolver",
     "AgentResult",
     "AsgiAgentApp",
+    "AssistantMessage",
     "CompressedSegmentPackage",
     "HookManager",
     "HttpAgentChannel",
@@ -62,6 +72,8 @@ __all__ = [
     "PostgresAgentRegistryStore",
     "PostgresDurableSessionStore",
     "Provider",
+    "ProviderFunctionSpec",
+    "ProviderToolSpec",
     "ProviderRequestBuilder",
     "QdrantRecallIndex",
     "QueryLoop",
@@ -74,6 +86,8 @@ __all__ = [
     "StaticResolver",
     "TaskTable",
     "ToolCallRouter",
+    "ToolResultMessage",
+    "UserMessage",
     "__version__",
 ]
 

@@ -3,10 +3,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentos.providers.base import (
+    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderUsage,
+)
+from agentos.providers.messages import (
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    provider_tool_spec_to_dict,
 )
 
 
@@ -25,9 +32,13 @@ class OpenAIProvider:
             model=self.model,
             messages=[
                 {"role": "system", "content": request.system},
-                *request.messages,
+                *[self._message(message) for message in request.messages],
             ],
-            tools=request.tools or None,
+            tools=(
+                [provider_tool_spec_to_dict(tool) for tool in request.tools]
+                if request.tools
+                else None
+            ),
         )
         choice = response.choices[0]
         message = choice.message
@@ -45,11 +56,51 @@ class OpenAIProvider:
         """拒绝 active window 中的 system 消息，避免 provider 收到双 system。"""
 
         for message in request.messages:
-            if message.get("role") == "system":
+            if not isinstance(
+                message,
+                (UserMessage, AssistantMessage, ToolResultMessage),
+            ):
                 raise ValueError(
                     "active messages must not include system role; use "
                     "ProviderRequest.system",
                 )
+
+    def _message(self, message: ProviderMessage) -> dict[str, object]:
+        """把 provider message 转为 OpenAI chat message。"""
+
+        if isinstance(message, UserMessage):
+            return {"role": "user", "content": message.content}
+        if isinstance(message, AssistantMessage):
+            result: dict[str, object] = {
+                "role": "assistant",
+                "content": message.content,
+            }
+            if message.tool_calls:
+                result["content"] = message.content or None
+                result["tool_calls"] = [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.name,
+                            "arguments": json.dumps(
+                                tool_call.arguments,
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ]
+            return result
+        if isinstance(message, ToolResultMessage):
+            return {
+                "role": "tool",
+                "tool_call_id": message.tool_call_id,
+                "content": message.content,
+            }
+        raise ValueError(
+            "active messages must not include system role; use ProviderRequest.system",
+        )
 
     def _tool_calls(self, raw_tool_calls: list[object]) -> list[ProviderToolCall]:
         """把 OpenAI tool_calls 标准化为 ProviderToolCall。"""

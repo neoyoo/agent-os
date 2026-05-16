@@ -46,7 +46,13 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 tracestate: langfuse=xxx,dd=yyy
 ```
 
-agentos 现有 `InMemoryTracer` 和 `observability/context.py` 已实现 W3C traceparent 的 inject/extract。本设计复用这套机制，**不引入新的 trace header 格式**。
+agentos 现有 `InMemoryTracer`、`TraceContextPropagator` 和 `observability/context.py` 已实现 W3C traceparent 的 inject/extract。本设计复用这套机制，**不引入新的 trace header 格式**。
+
+实现约束：
+
+- 优先使用 `agentos.observability.inject_trace_headers()` 等 public helper。
+- 如果需要 incoming header 作用域，先新增 public helper（例如 `use_incoming_trace_headers(headers)`），不要从 multi/channels 直接导入 `_DEFAULT_TRACE_PROPAGATOR` 这类 private ContextVar。
+- 不把 trace id/span id 渲染进默认 LLM prompt 或 MessageStore。
 
 ---
 
@@ -214,11 +220,9 @@ def handle_task(
     payload: dict[str, object],
     headers: dict[str, str] | None = None,  # 新增
 ) -> dict[str, object]:
-    from agentos.observability.context import use_default_trace_propagator
-    from agentos.observability.tracer import InMemoryTracer  # 或 OTEL tracer
+    from agentos.observability import use_incoming_trace_headers
 
-    propagator = _DEFAULT_TRACE_PROPAGATOR.get()
-    with propagator.use_incoming_headers(headers):
+    with use_incoming_trace_headers(headers):
         try:
             request = self._parse_request(payload)
             result = self._runner.run_task(request)
@@ -278,9 +282,11 @@ def _run_spawned_subagent(self, ..., request: TaskRequest) -> TaskResult:
 
 ---
 
-## 7. TraceContextExtractor / TraceContextInjector 协议
+## 7. Public trace propagation helpers
 
-为让 trace context 传播在不依赖 `InMemoryTracer` 具体实现的情况下可测试，新增两个轻量协议：
+当前 `TraceContextPropagator` 已同时覆盖 incoming extract、outgoing inject 和 current ids。v1 不需要再发明新的 header 格式，也不需要让 multi/channels 依赖 `InMemoryTracer` 具体实现。
+
+如果实现时需要更细粒度的类型边界，可以新增两个轻量协议：
 
 ```python
 # src/agentos/observability/tracer.py（追加）
@@ -303,6 +309,23 @@ class TraceContextExtractor(Protocol):
 ```
 
 `TraceContextPropagator`（已存在）已同时实现了这两个角色（`inject_headers` + `use_incoming_headers`），两个新协议是对已有接口的细粒度拆分，供测试和工厂方法使用。
+
+同时在 `observability/context.py` 增加 public helper：
+
+```python
+@contextmanager
+def use_incoming_trace_headers(
+    headers: Mapping[str, str] | None,
+    tracer: TraceContextPropagator | None = None,
+) -> Iterator[None]:
+    """把 incoming trace headers 应用到当前作用域。"""
+
+    propagator = tracer or _DEFAULT_TRACE_PROPAGATOR.get()
+    with propagator.use_incoming_headers(headers):
+        yield
+```
+
+multi/channels 只能调用这个 public helper，不能直接读取 `_DEFAULT_TRACE_PROPAGATOR`。
 
 ---
 
@@ -355,7 +378,8 @@ class OtelTraceContextPropagator:
 | `channels/a2a.py` | 签名扩展 | `A2ATransport.post_json()` 加 `headers` 参数；`A2AAdapter.send_task()` 传 trace_headers |
 | `channels/a2a_server.py` | 签名扩展 | `A2AServerAdapter.handle_task()` 加 `headers` 参数；`with propagator.use_incoming_headers(headers)` |
 | `channels/asgi.py` | 逻辑追加 | `_handle_a2a_task()` 传 `headers` 给 `handle_task()` |
-| `observability/tracer.py` | 接口追加 | 新增 `TraceContextInjector` / `TraceContextExtractor` protocol（可选） |
+| `observability/context.py` | helper 追加 | 新增 `use_incoming_trace_headers()` public helper |
+| `observability/tracer.py` | 接口追加 | 新增 `TraceContextInjector` / `TraceContextExtractor` protocol（可选，只有类型检查需要时再加） |
 
 所有变更均为**向后兼容追加**（新增可选字段 / 可选参数），不破坏现有测试。
 
@@ -413,6 +437,7 @@ tests/multi/test_e2e_trace_propagation.py
 - [ ] `AgentCoordinator.spawn()` 有活跃 span 时，`SpawnExecutor` 子线程继承父线程 trace context
 - [ ] `A2ATransport.post_json()` 接受可选 `headers` 参数；`UrllibA2ATransport` 实现正确合并到 HTTP headers
 - [ ] `A2AServerAdapter.handle_task()` 接受可选 `headers` 参数；用 `use_incoming_headers()` 恢复 trace context
+- [ ] multi/channels 只使用 public observability helper，不导入 `_DEFAULT_TRACE_PROPAGATOR`
 - [ ] `AsgiAgentApp._handle_a2a_task()` 把请求 headers 传给 `handle_task()`
 - [ ] 端到端测试：两个本地 agent 的 span 共享同一 `trace_id`（`InMemoryTracer`）
 - [ ] 端到端测试：远程 agent span 的 `parent_span_id` 等于父 agent dispatch 时的 `span_id`

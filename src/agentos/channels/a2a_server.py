@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import Protocol
 
 from agentos.multi.types import TaskRequest, TaskResult
+from agentos.observability import use_incoming_trace_headers
 from agentos.runtime import Agent
 
 
@@ -43,19 +45,24 @@ class A2AServerAdapter:
 
         self._runner = runner
 
-    def handle_task(self, payload: dict[str, object]) -> dict[str, object]:
+    def handle_task(
+        self,
+        payload: dict[str, object],
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, object]:
         """处理 /a2a/tasks payload 并返回 JSON-safe TaskResult。"""
 
-        try:
-            request = self._parse_request(payload)
-            result = self._runner.run_task(request)
-        except Exception as error:
-            result = TaskResult(
-                task_id=str(payload.get("task_id", "")),
-                status="failed",
-                summary="task failed",
-                error=str(error),
-            )
+        with use_incoming_trace_headers(headers):
+            try:
+                request = self._parse_request(payload)
+                result = self._runner.run_task(request)
+            except Exception as error:
+                result = TaskResult(
+                    task_id=str(payload.get("task_id", "")),
+                    status="failed",
+                    summary="task failed",
+                    error=str(error),
+                )
         return self._result_to_dict(result)
 
     def handle_health(self) -> dict[str, object]:

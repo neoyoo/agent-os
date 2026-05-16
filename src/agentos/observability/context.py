@@ -113,6 +113,18 @@ def inject_trace_headers(
     return headers
 
 
+@contextmanager
+def use_incoming_trace_headers(
+    headers: Mapping[str, str] | None,
+    tracer: TraceContextPropagator | None = None,
+) -> Iterator[None]:
+    """把 incoming trace headers 应用到当前作用域。"""
+
+    propagator = tracer or _DEFAULT_TRACE_PROPAGATOR.get()
+    with propagator.use_incoming_headers(headers):
+        yield
+
+
 def current_trace_ids(
     tracer: TraceContextPropagator | None = None,
 ) -> TraceIds:

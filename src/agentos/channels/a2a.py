@@ -27,6 +27,8 @@ class A2ATransport(Protocol):
         url: str,
         payload: dict[str, object],
         timeout_seconds: float,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
         """POST JSON 并返回 JSON 对象。"""
 
@@ -46,14 +48,19 @@ class UrllibA2ATransport:
         url: str,
         payload: dict[str, object],
         timeout_seconds: float,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
         """POST JSON 并返回 JSON 对象。"""
 
         body = json.dumps(payload).encode("utf-8")
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
         request = urllib_request.Request(
             url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=request_headers,
             method="POST",
         )
         with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
@@ -89,6 +96,7 @@ class A2AAdapter:
             self._url(card, "/a2a/tasks"),
             payload,
             request.timeout_seconds,
+            headers=request.trace_context,
         )
         return TaskResult(
             task_id=str(response["task_id"]),

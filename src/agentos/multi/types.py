@@ -42,6 +42,7 @@ class TaskRequest:
     instruction: str
     allowed_tool_names: tuple[str, ...] = ()
     timeout_seconds: float = 300
+    trace_context: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)

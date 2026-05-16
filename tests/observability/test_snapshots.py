@@ -7,10 +7,14 @@ from agentos.observability.snapshots import (
     stable_sha256,
 )
 from agentos.providers import (
+    ProviderFunctionSpec,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
+    ProviderToolSpec,
     ProviderUsage,
+    provider_message_to_dict,
+    provider_tool_spec_to_dict,
 )
 from agentos.capabilities import ToolExecutionResult
 
@@ -19,7 +23,15 @@ def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only
     request = ProviderRequest(
         system="system secret",
         messages=[{"role": "user", "content": "hello"}],
-        tools=[{"type": "function", "function": {"name": "read_file"}}],
+        tools=[
+            ProviderToolSpec(
+                function=ProviderFunctionSpec(
+                    name="read_file",
+                    description="Read file.",
+                    parameters={"type": "object"},
+                ),
+            ),
+        ],
     )
 
     snapshot = build_provider_request_snapshot(
@@ -34,15 +46,27 @@ def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only
     assert snapshot.message_count == 1
     assert snapshot.tool_count == 1
     assert snapshot.system_sha256 == stable_sha256("system secret")
-    assert snapshot.messages_sha256 == stable_sha256(request.messages)
-    assert snapshot.tools_sha256 == stable_sha256(request.tools)
+    assert snapshot.messages_sha256 == stable_sha256(
+        [provider_message_to_dict(message) for message in request.messages],
+    )
+    assert snapshot.tools_sha256 == stable_sha256(
+        [provider_tool_spec_to_dict(tool) for tool in request.tools],
+    )
 
 
 def test_provider_request_snapshot_full_mode_captures_payloads() -> None:
     request = ProviderRequest(
         system="system text",
         messages=[{"role": "user", "content": "hello"}],
-        tools=[{"type": "function", "function": {"name": "read_file"}}],
+        tools=[
+            ProviderToolSpec(
+                function=ProviderFunctionSpec(
+                    name="read_file",
+                    description="Read file.",
+                    parameters={"type": "object"},
+                ),
+            ),
+        ],
     )
 
     snapshot = build_provider_request_snapshot(
@@ -52,7 +76,16 @@ def test_provider_request_snapshot_full_mode_captures_payloads() -> None:
 
     assert snapshot.system == "system text"
     assert snapshot.messages == ({"role": "user", "content": "hello"},)
-    assert snapshot.tools == ({"type": "function", "function": {"name": "read_file"}},)
+    assert snapshot.tools == (
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read file.",
+                "parameters": {"type": "object"},
+            },
+        },
+    )
 
 
 def test_provider_response_snapshot_includes_tool_calls_stop_reason_and_usage() -> None:

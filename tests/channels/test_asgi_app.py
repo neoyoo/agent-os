@@ -23,6 +23,29 @@ class StaticRunner:
         )
 
 
+class HeaderRecordingA2AServer:
+    def __init__(self) -> None:
+        self.headers: dict[str, str] | None = None
+
+    def handle_task(
+        self,
+        payload: dict[str, object],
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        self.headers = headers
+        return {
+            "task_id": str(payload["task_id"]),
+            "status": "completed",
+            "summary": "a2a done",
+            "artifacts": {},
+            "error": None,
+            "elapsed_seconds": 0,
+        }
+
+    def handle_health(self) -> dict[str, object]:
+        return {"status": "ok"}
+
+
 class DenyAuth:
     def authorize(self, headers: Mapping[str, str]) -> None:
         raise ChannelAuthError("denied")
@@ -77,6 +100,7 @@ async def call_asgi(
     method: str,
     path: str,
     body: bytes = b"",
+    headers: list[tuple[bytes, bytes]] | None = None,
     receive_after_body: list[dict[str, object]] | None = None,
 ) -> list[dict[str, Any]]:
     messages = [
@@ -99,7 +123,7 @@ async def call_asgi(
             "type": "http",
             "method": method,
             "path": path,
-            "headers": [],
+            "headers": headers or [],
         },
         receive,
         send,
@@ -174,6 +198,25 @@ def test_asgi_app_routes_sse_turn() -> None:
     assert b"event: done" in response_body(sent)
 
 
+def test_asgi_app_closes_sse_stream_on_parse_error() -> None:
+    sent = asyncio.run(
+        call_asgi(
+            build_app(build_agent_with_response("unused")),
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"missing":"message"}',
+        ),
+    )
+
+    assert response_status(sent) == 200
+    assert b"event: error" in response_body(sent)
+    assert sent[-1] == {
+        "type": "http.response.body",
+        "body": b"",
+        "more_body": False,
+    }
+
+
 def test_asgi_app_routes_a2a_task() -> None:
     sent = asyncio.run(
         call_asgi(
@@ -186,6 +229,32 @@ def test_asgi_app_routes_a2a_task() -> None:
 
     assert response_status(sent) == 200
     assert json.loads(response_body(sent))["summary"] == "a2a done"
+
+
+def test_asgi_app_passes_headers_to_a2a_server() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    a2a_server = HeaderRecordingA2AServer()
+    app = AsgiAgentApp(
+        sessions=InMemoryAgentSessionProvider(
+            lambda session_id: build_agent_with_response("unused"),
+        ),
+        a2a_server=a2a_server,  # type: ignore[arg-type]
+    )
+
+    sent = asyncio.run(
+        call_asgi(
+            app,
+            method="POST",
+            path="/a2a/tasks",
+            body=b'{"task_id":"task_1","instruction":"work"}',
+            headers=[(b"traceparent", b"00-" + b"1" * 32 + b"-" + b"2" * 16 + b"-01")],
+        ),
+    )
+
+    assert response_status(sent) == 200
+    assert a2a_server.headers is not None
+    assert a2a_server.headers["traceparent"].startswith("00-")
 
 
 def test_asgi_app_returns_404_for_unknown_route() -> None:

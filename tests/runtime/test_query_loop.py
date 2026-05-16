@@ -3,7 +3,7 @@ import pytest
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRenderer, ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderResponse
+from agentos.providers import FakeProvider, ProviderResponse, provider_message_to_dict
 from agentos.policies import BudgetPolicy
 from agentos.recall import RecallRuntime
 from agentos.runtime import QueryLoop, ProviderRequestBuilder
@@ -39,11 +39,16 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
     response = loop.run_turn("Hello")
 
     assert response == "Fake assistant response."
-    assert messages.materialize_provider_messages() == [
+    assert [
+        provider_message_to_dict(message)
+        for message in messages.materialize_provider_messages()
+    ] == [
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Fake assistant response."},
     ]
-    assert provider.requests[0].messages == [{"role": "user", "content": "Hello"}]
+    assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
+        {"role": "user", "content": "Hello"},
+    ]
     assert "Run a fake provider loop." in provider.requests[0].system
 
 
@@ -113,10 +118,10 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
     loop.run_turn("First detail")
     loop.run_turn("Current task")
 
-    assert provider.requests[0].messages == [
+    assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
         {"role": "user", "content": "First detail"},
     ]
-    assert provider.requests[1].messages == [
+    assert [provider_message_to_dict(message) for message in provider.requests[1].messages] == [
         {"role": "user", "content": "Current task"},
     ]
     assert '<segment id="seg_1"' in provider.requests[1].system
@@ -128,13 +133,19 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
     recalled_request = loop.build_request()
     next_request = loop.build_request()
 
-    assert [message["content"] for message in recalled_request.messages] == [
+    assert [
+        provider_message_to_dict(message)["content"]
+        for message in recalled_request.messages
+    ] == [
         "First detail",
         "Captured first history.",
         "Current task",
         "Second answer.",
     ]
-    assert [message["content"] for message in next_request.messages] == [
+    assert [
+        provider_message_to_dict(message)["content"]
+        for message in next_request.messages
+    ] == [
         "Current task",
         "Second answer.",
     ]

@@ -39,6 +39,7 @@ from agentos.events import (
     WorkingStateUpdatedEvent,
 )
 from agentos.runtime.agent import Agent, AgentResult
+from agentos.runtime.async_query_loop import AsyncQueryLoop
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.query_loop import QueryLoop, TurnNoticeProvider
 from agentos.runtime.session import SessionState
@@ -78,6 +79,7 @@ __all__ = [
     "AssistantMessageAppendedEvent",
     "AssistantThinkingDelta",
     "AgentResult",
+    "AsyncQueryLoop",
     "ChapterStartedEvent",
     "CompressedSegmentAppendedEvent",
     "CompressionCompletedEvent",

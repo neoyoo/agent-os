@@ -24,14 +24,20 @@ without weakening the existing context-first module boundaries.
 1. `AgentBuilder v1`
    - Complete a small builder surface: provider, tools, compression, and direct
      component overrides.
-   - Defer memory, observability, async, and broad convenience presets until the
-     underlying wiring is already present.
+   - Defer `system_prompt()`, memory, observability, async, and broad
+     convenience presets until the underlying wiring is already present.
+   - Defer `hook_manager()` / `with_hooks()` until HookManager has tested
+     runtime call sites.
+   - Use `ContextRenderer` / `RuntimeContract` as the future prompt extension
+     path; do not add raw system prompt string override in v1.
    - Preserve the standard `Agent` facade and avoid a wrapper layer.
 
 2. `Strong-typed ProviderMessage`
    - Replace provider-facing message dicts with frozen dataclasses.
    - Strong-type the existing canonical OpenAI-style function tool schema rather
      than changing provider tool semantics.
+   - Do not flatten `ProviderToolSpec` into Anthropic-style
+     `{name, description, input_schema}`.
    - Keep provider-specific dict conversion inside provider adapters.
 
 3. `LlmCompressor`
@@ -47,13 +53,17 @@ without weakening the existing context-first module boundaries.
 5. `Hook Wiring And Enhancement`
    - First wire the existing four hook points end-to-end into runtime paths.
    - Add new hook points only after each has a tested call site.
-   - Defer async hooks until an async runtime path exists.
+   - Add priority and decorator registration in the synchronous hook manager.
+   - Defer async hooks until an async runtime path exists; do not bridge with
+     `run_until_complete()` inside synchronous dispatch.
 
 6. `Async QueryLoop`
    - Treat as a separate runtime phase, not a small channel fix.
    - Keep synchronous `QueryLoop` stable.
    - Use ASGI blocking behavior as a driver for this phase, but do not bury a
      partial async model inside channel adapters.
+   - Do not change the existing synchronous `AgentSessionProvider` protocol in
+     v1; add a parallel async provider later if needed.
 
 ## Review Fixes Required Before Starting
 
@@ -63,6 +73,8 @@ without weakening the existing context-first module boundaries.
   root insertion through `pythonpath = ["."]`.
 - ASGI SSE synchronous iteration remains an accepted Phase 8 MVP limitation and
   is deferred to the async/offload phase above.
+- The six specs must stay aligned with the corrections above before
+  implementation starts.
 
 ## Verification Baseline
 

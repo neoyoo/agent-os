@@ -6,6 +6,22 @@
 
 ---
 
+## Scope Contract
+
+本设计是独立 runtime phase，不是 Phase 8 channel 小修。
+
+实施必须分阶段：
+
+1. 新增 `Agent.async_run()` / `Agent.async_stream()`，先把现有同步 `Agent.stream()` 放进 executor，修复 ASGI event loop 阻塞问题。
+2. 新增 `AsyncQueryLoop` 和 `AsyncProvider` protocol。
+3. 为 tool router 增加 async 执行边界。
+4. 按 provider 逐个补原生 async 实现。
+5. ASGI SSE 优先使用 `agent.async_stream()`，不再同步迭代 `Agent.stream()`。
+
+v1 不要求一次性实现所有 provider 的原生 async client。同步 provider fallback 到 executor 是可接受的第一步。同步 `QueryLoop`、`Agent.run()`、`Agent.stream()` 必须保持稳定。
+
+`AgentSessionProvider` 不在 v1 改成 async protocol；如后续需要异步 session 获取，应新增平行的 `AsyncAgentSessionProvider`，避免 breaking change。
+
 ## 1. 问题描述
 
 `QueryLoop` 是 agentos 的 agent turn 调度器，当前实现完全同步：
@@ -402,7 +418,7 @@ async def _handle_sse_turn(self, session_id, body, receive, send):
     await send({"type": "http.response.start", "status": 200, ...})
     disconnect_task = asyncio.create_task(receive())
 
-    agent = await self._sessions.get_agent(session_id)
+    agent = self._sessions.get_agent(session_id)
 
     # 优先走 async_stream（真正非阻塞）
     if hasattr(agent, "async_stream"):
@@ -521,7 +537,7 @@ tests/runtime/test_async_query_loop.py
 tests/channels/test_asgi_app_async.py
 ```
 
-- 使用 `httpx.AsyncClient` + `ASGITransport`
+- 使用 deterministic fake ASGI receive/send，不引入 httpx 作为测试依赖
 - 测试 SSE endpoint 并发两个 session 不互阻塞
 - 测试客户端断开后 agent 收到中断信号
 
@@ -540,7 +556,7 @@ tests/channels/test_asgi_app_async.py
 | Phase C | `ToolCallRouter.async_execute_tool_call()` | capabilities/router.py |
 | Phase D | `Agent.async_run()` / `Agent.async_stream()` | runtime/agent.py |
 | Phase E | `AsgiAgentApp` SSE handler 切换为 async 路径 | channels/asgi.py |
-| Phase F | `AgentSessionProvider.get_agent()` 改为 async | channels/session.py |
+| Phase F | 可选新增 `AsyncAgentSessionProvider` | channels/session.py |
 
 每个 phase 独立 PR，有明确 rollback 点。
 
@@ -554,5 +570,6 @@ tests/channels/test_asgi_app_async.py
 - [ ] `Agent.async_run()` 和 `Agent.async_stream()` 可用
 - [ ] `AsgiAgentApp` SSE handler 不再使用 `asyncio.sleep(0)`
 - [ ] 两个并发 SSE session 不互相阻塞（集成测试通过）
+- [ ] 不修改现有 `AgentSessionProvider` 同步 protocol；需要时新增 async 平行协议
 - [ ] 现有同步 `QueryLoop` / `Agent.run()` / `Agent.stream()` 全部测试继续通过
 - [ ] `CancelledError` 测试：cancel async task 后 SSE 连接正确关闭

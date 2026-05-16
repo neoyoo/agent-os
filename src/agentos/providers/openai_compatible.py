@@ -12,6 +12,12 @@ from agentos.providers.base import (
     ProviderToolCall,
     ProviderUsage,
 )
+from agentos.providers.messages import (
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    provider_tool_spec_to_dict,
+)
 from agentos.providers.stream import (
     ProviderContentDelta,
     ProviderStreamCompleted,
@@ -306,7 +312,9 @@ class OpenAICompatibleProvider:
             ],
         }
         if request.tools:
-            payload["tools"] = request.tools
+            payload["tools"] = [
+                provider_tool_spec_to_dict(tool) for tool in request.tools
+            ]
         if self.thinking is not None:
             payload["thinking"] = dict(self.thinking)
         return payload
@@ -322,38 +330,41 @@ class OpenAICompatibleProvider:
     def _message(self, message: ProviderMessage) -> dict[str, object]:
         """把 SDK 内部 provider message 转为 OpenAI-compatible message。"""
 
-        role = str(message["role"])
-        if role == "system":
-            raise OpenAICompatibleProviderError(
-                "active messages must not include system role; use "
-                "ProviderRequest.system",
-            )
-        result: dict[str, object] = {
-            "role": role,
-            "content": message.get("content", ""),
-        }
-        if role == "assistant" and message.get("tool_calls"):
-            result["content"] = message.get("content") or None
+        if isinstance(message, UserMessage):
+            return {"role": "user", "content": message.content}
+        if isinstance(message, AssistantMessage):
+            result: dict[str, object] = {
+                "role": "assistant",
+                "content": message.content,
+            }
+            if not message.tool_calls:
+                return result
+            result["content"] = message.content or None
             result["tool_calls"] = [
                 self._request_tool_call(tool_call)
-                for tool_call in message["tool_calls"]  # type: ignore[index]
+                for tool_call in message.tool_calls
             ]
-        if role == "tool" and message.get("tool_call_id") is not None:
-            result["tool_call_id"] = message["tool_call_id"]
-        return result
+            return result
+        if isinstance(message, ToolResultMessage):
+            return {
+                "role": "tool",
+                "tool_call_id": message.tool_call_id,
+                "content": message.content,
+            }
+        raise OpenAICompatibleProviderError(
+            "active messages must not include system role; use ProviderRequest.system",
+        )
 
-    def _request_tool_call(self, tool_call: object) -> dict[str, object]:
+    def _request_tool_call(self, tool_call: ProviderToolCall) -> dict[str, object]:
         """把内部 tool call 摘要转为 OpenAI function tool_call。"""
 
-        if not isinstance(tool_call, dict):
-            raise ValueError("provider tool_call message must be an object")
         return {
-            "id": tool_call["id"],
+            "id": tool_call.id,
             "type": "function",
             "function": {
-                "name": tool_call["name"],
+                "name": tool_call.name,
                 "arguments": json.dumps(
-                    tool_call.get("arguments", {}),
+                    tool_call.arguments,
                     ensure_ascii=False,
                 ),
             },

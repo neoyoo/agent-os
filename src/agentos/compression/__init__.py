@@ -3,6 +3,11 @@
 from agentos.compression.compressor import Compressor, RuleBasedCompressor
 from agentos.compression.evictor import Evictor
 from agentos.compression.index import CompressionIndex
+from agentos.compression.llm_compressor import (
+    DEFAULT_COMPRESSION_PROMPT,
+    FallbackCompressor,
+    LlmCompressor,
+)
 from agentos.compression.runtime import (
     CompressionContextBoundary,
     CompressionMemorySink,
@@ -15,6 +20,9 @@ __all__ = [
     "CompressionIndex",
     "CompressionMemorySink",
     "CompressionRuntime",
+    "DEFAULT_COMPRESSION_PROMPT",
     "Evictor",
+    "FallbackCompressor",
+    "LlmCompressor",
     "RuleBasedCompressor",
 ]

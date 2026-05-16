@@ -1,7 +1,12 @@
 from dataclasses import dataclass
-import re
 from typing import Protocol, Sequence
 
+from agentos.compression._helpers import (
+    build_searchable_text,
+    clip_text,
+    extract_keywords,
+    extract_tool_hints,
+)
 from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import Message
@@ -90,51 +95,26 @@ class RuleBasedCompressor:
     def _clip(self, value: str, limit: int) -> str:
         """限制摘要片段长度，避免 fallback 摘要过长。"""
 
-        normalized = " ".join(value.split())
-        if len(normalized) <= limit:
-            return normalized
-        return f"{normalized[: limit - 3]}..."
+        return clip_text(value, limit=limit)
 
     def _keywords(self, messages: Sequence[Message]) -> tuple[str, ...]:
         """从源消息中提取适合词法检索的稳定关键词。"""
 
-        keywords: list[str] = []
-        for message in messages:
-            for token in re.findall(r"[A-Za-z0-9_./:-]+", message.content):
-                if self._is_keyword(token):
-                    keywords.append(token.strip(".,;:"))
-            for tool_call in message.tool_calls:
-                keywords.append(tool_call.name)
-                for value in tool_call.arguments.values():
-                    if isinstance(value, str):
-                        keywords.extend(
-                            token.strip(".,;:")
-                            for token in re.findall(r"[A-Za-z0-9_./:-]+", value)
-                            if self._is_keyword(token)
-                        )
-        return self._dedupe(keywords)
+        return extract_keywords(messages)
 
     def _tool_hints(self, messages: Sequence[Message]) -> tuple[str, ...]:
         """提取工具调用名称和关键参数摘要。"""
 
-        hints: list[str] = []
-        for message in messages:
-            for tool_call in message.tool_calls:
-                path = tool_call.arguments.get("path")
-                if isinstance(path, str):
-                    hints.append(f"{tool_call.name}(path={path})")
-                else:
-                    hints.append(tool_call.name)
-        return self._dedupe(hints)
+        return extract_tool_hints(messages)
 
     def _searchable_text(self, messages: Sequence[Message]) -> str:
         """生成 recall index 使用的短检索文本。"""
 
-        text = " ".join(
-            f"{message.role}: {self._clip(message.content, limit=120)}"
-            for message in messages[: self.max_items]
+        return build_searchable_text(
+            messages,
+            max_items=self.max_items,
+            limit=self.max_searchable_text_chars,
         )
-        return self._clip(text, limit=self.max_searchable_text_chars)
 
     def _is_keyword(self, token: str) -> bool:
         """判断 token 是否值得进入 recall document。"""

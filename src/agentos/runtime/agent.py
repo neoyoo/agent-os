@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from threading import RLock
+from typing import AsyncIterator
 
+from agentos.runtime._async_bridge import iterate_sync_in_executor
 from agentos.runtime.query_loop import QueryLoop
 from agentos.runtime.stream_events import (
     AssistantContentDelta,
@@ -30,6 +33,11 @@ class Agent:
 
     query_loop: QueryLoop
     _turn_lock: RLock
+    _current_async_task: asyncio.Task[object] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __init__(
         self,
@@ -39,6 +47,7 @@ class Agent:
         """从 QueryLoop 或 QueryLoop kwargs 创建 Agent。"""
 
         self._turn_lock = RLock()
+        self._current_async_task = None
         if query_loop is None and query_loop_kwargs is None:
             raise ValueError("query_loop or query_loop_kwargs is required")
         if query_loop is not None:
@@ -67,6 +76,8 @@ class Agent:
         """请求在下一个安全点中断运行。"""
 
         self.query_loop.request_interrupt()
+        if self._current_async_task is not None:
+            self._current_async_task.cancel()
 
     def clear_interrupt(self) -> None:
         """清除中断请求。"""
@@ -92,6 +103,52 @@ class Agent:
                 final_content = event.content
         return AgentResult(content=final_content)
 
+    async def async_run(
+        self,
+        user_message: str,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ) -> AgentResult:
+        """异步运行完整 turn，并返回最终内容。"""
+
+        final_content = ""
+        async for event in self.async_stream(
+            user_message,
+            thinking=thinking,
+            show_thinking=show_thinking,
+        ):
+            if isinstance(event, TurnStreamCompleted):
+                final_content = event.content
+        return AgentResult(content=final_content)
+
+    async def async_stream(
+        self,
+        user_message: str,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ) -> AsyncIterator[TurnStreamEvent]:
+        """异步运行 turn，v1 用 executor 包装同步 stream。"""
+
+        current_task = asyncio.current_task()
+        self._current_async_task = current_task
+        try:
+            async for event in self._stream_sync_in_executor(
+                lambda: self.stream(
+                    user_message,
+                    thinking=thinking,
+                    show_thinking=show_thinking,
+                ),
+            ):
+                yield event
+        except asyncio.CancelledError:
+            self.query_loop.request_interrupt()
+            raise
+        finally:
+            if self._current_async_task is current_task:
+                self._current_async_task = None
+
     def stream(
         self,
         user_message: str,
@@ -106,6 +163,18 @@ class Agent:
                 user_message,
                 RunOptions(thinking=thinking, show_thinking=show_thinking),
             )
+
+    async def _stream_sync_in_executor(
+        self,
+        factory: Callable[[], Iterator[TurnStreamEvent]],
+    ) -> AsyncIterator[TurnStreamEvent]:
+        """在线程池中消费同步 stream，避免阻塞 asyncio event loop。"""
+
+        async for event in iterate_sync_in_executor(
+            factory,
+            on_cancel=self.query_loop.request_interrupt,
+        ):
+            yield event
 
     def run_continuation(
         self,

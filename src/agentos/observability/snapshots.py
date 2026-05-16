@@ -11,6 +11,8 @@ from agentos.providers import (
     ProviderResponse,
     ProviderToolCall,
     ProviderUsage,
+    provider_message_to_dict,
+    provider_tool_spec_to_dict,
 )
 
 
@@ -92,12 +94,18 @@ def build_provider_request_snapshot(
             else None
         ),
         messages=(
-            _captured_dicts(request.messages, policy)
+            _captured_dicts(
+                [provider_message_to_dict(message) for message in request.messages],
+                policy,
+            )
             if policy.capture_messages
             else None
         ),
         tools=(
-            _captured_dicts(request.tools, policy)
+            _captured_dicts(
+                [provider_tool_spec_to_dict(tool) for tool in request.tools],
+                policy,
+            )
             if policy.capture_tool_schemas
             else None
         ),
@@ -105,8 +113,12 @@ def build_provider_request_snapshot(
         message_count=len(request.messages),
         tool_count=len(request.tools),
         system_sha256=stable_sha256(request.system),
-        messages_sha256=stable_sha256(request.messages),
-        tools_sha256=stable_sha256(request.tools),
+        messages_sha256=stable_sha256(
+            [provider_message_to_dict(message) for message in request.messages],
+        ),
+        tools_sha256=stable_sha256(
+            [provider_tool_spec_to_dict(tool) for tool in request.tools],
+        ),
     )
 
 

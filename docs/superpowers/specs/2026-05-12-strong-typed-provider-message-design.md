@@ -2,9 +2,24 @@
 
 ## Scope
 
-将 `ProviderMessage = dict[str, object]` 和 `ProviderToolSpec = dict[str, Any]` 替换为 frozen dataclass 联合类型，消除 provider 层最大的类型安全漏洞。
+将 `ProviderMessage = dict[str, object]` 替换为 frozen dataclass 联合类型，消除 provider 层最大的类型安全漏洞。
 
 本设计只改 provider 边界的消息类型，不改 MessageRuntime 内部的 Message 类型（那是另一层）。
+
+`ProviderToolSpec` 也需要类型收窄，但不能改变现有 canonical tool schema。当前 capabilities 层和 context protocol tool 都输出 OpenAI-style function schema：
+
+```python
+{
+    "type": "function",
+    "function": {
+        "name": "...",
+        "description": "...",
+        "parameters": {...},
+    },
+}
+```
+
+AnthropicProvider 再从这个 canonical schema 转换为 Anthropic `input_schema`。因此本设计不能把 `ProviderToolSpec` 扁平化成 `{name, description, input_schema}`，否则会重写 capabilities -> provider 适配链。
 
 ## 问题
 
@@ -68,12 +83,29 @@ ProviderMessage = UserMessage | AssistantMessage | ToolResultMessage
 
 ```python
 @dataclass(frozen=True, slots=True)
-class ProviderToolSpec:
-    """Provider 工具 schema 声明。"""
+class ProviderFunctionSpec:
+    """OpenAI-style function tool schema 的 function 部分。"""
+
     name: str
     description: str
-    input_schema: dict[str, object]
+    parameters: dict[str, object]
+
+@dataclass(frozen=True, slots=True)
+class ProviderToolSpec:
+    """Provider 工具 schema 声明，保留 canonical function-tool 形态。"""
+
+    type: Literal["function"]
+    function: ProviderFunctionSpec
 ```
+
+兼容迁移期可以保留 dict 输入转换 helper：
+
+```python
+def provider_tool_spec_to_dict(spec: ProviderToolSpec) -> dict[str, object]: ...
+def provider_tool_spec_from_dict(value: dict[str, object]) -> ProviderToolSpec: ...
+```
+
+所有 provider adapter 内部仍负责把 canonical tool schema 转换为具体 provider API 形态。
 
 ### ProviderRequest 更新
 
@@ -95,7 +127,7 @@ class ProviderRequest:
 - `_build_user_message()` → 返回 `UserMessage(content=...)`
 - `_build_assistant_message()` → 返回 `AssistantMessage(content=..., tool_calls=...)`
 - `_build_tool_result()` → 返回 `ToolResultMessage(tool_call_id=..., content=...)`
-- `_build_tool_specs()` → 返回 `list[ProviderToolSpec]`
+- `_build_tool_specs()` → 返回 `list[ProviderToolSpec]`，但语义仍是 canonical OpenAI-style function schema
 
 ### 2. QueryLoop
 
@@ -133,6 +165,8 @@ def _message_to_api(self, msg: ProviderMessage) -> dict:
 
 同样需要内部 `_message_to_api()` 转换。每个 provider 只改一处。
 
+tool schema 转换仍从 `ProviderToolSpec(type="function", function=...)` 生成 provider-specific dict；不能要求 capabilities 层生成 Anthropic-style `input_schema`。
+
 ### 5. MessageRuntime
 
 `materialize_provider_messages()` 返回类型从 `list[dict]` 变为 `list[ProviderMessage]`。
@@ -149,6 +183,7 @@ def _message_to_api(self, msg: ProviderMessage) -> dict:
    def provider_message_from_dict(d: dict[str, object]) -> ProviderMessage: ...
    ```
 4. 老 `dict[str, object]` 类型别名保留但标记 `@deprecated`
+5. `ProviderToolSpec` 如果同步强类型化，必须通过 `provider_tool_spec_from_dict()` 接收现有 capabilities/context_protocol 的 dict 输出，第一阶段不要求一次性改完所有工具声明 call site
 
 ### Phase 2：清理
 
@@ -158,13 +193,15 @@ def _message_to_api(self, msg: ProviderMessage) -> dict:
 ### 不需要的
 
 - 不需要 Pydantic — frozen dataclass 足够
-- 不需要 JSON schema 生成 — ProviderToolSpec.input_schema 已经是 dict
+- 不需要 JSON schema 生成 — ProviderFunctionSpec.parameters 继续保存现有 JSON schema dict
+- 不需要把 tool schema 改成 Anthropic-style `{name, description, input_schema}` — provider adapter 自己转换
 - 不需要改 Message（messages/types.py 的内部类型）— 那是不同的抽象层
 
 ## 测试计划
 
 - UserMessage / AssistantMessage / ToolResultMessage 构造和字段访问
 - ProviderToolSpec 构造
+- ProviderToolSpec 与现有 OpenAI-style dict 双向转换正确
 - ProviderRequest 接受新类型消息列表
 - `provider_message_to_dict()` 双向转换正确
 - AnthropicProvider 接受新类型消息并正确调用 API
@@ -177,6 +214,7 @@ def _message_to_api(self, msg: ProviderMessage) -> dict:
 
 - `ProviderMessage` 是 union type，IDE 能自动补全字段
 - Provider 实现内部处理 dict 转换，不暴露 dict
+- `ProviderToolSpec` 保留 canonical function-tool 语义，不破坏 `RegisteredTool.provider_spec()`、context protocol tools 或 provider adapter 转换链
 - 所有现有测试继续通过
 - 新消息类型是 frozen + slots
 - 从 `agentos` 顶层可导入新消息类型
