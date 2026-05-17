@@ -52,3 +52,7 @@ def test_redis_queue_claims_idle_pending_and_dead_letters_exhausted_messages() -
     assert [delivery.delivery_id for delivery in deliveries] == ["1-0"]
     assert client.claimed == ["1-0"]
     assert client.dead_letters[0][0].endswith(":dead")
+
+    payload = json.loads(client.dead_letters[0][1]["payload"])
+    assert payload["pending"]["message_id"] == "2-0"
+    assert payload["pending"]["times_delivered"] == 4

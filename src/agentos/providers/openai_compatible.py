@@ -1,5 +1,6 @@
 import json
 import socket
+import warnings
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -267,11 +268,24 @@ class OpenAICompatibleProvider:
     api_key: str
     base_url: str
     model: str
-    timeout: float = 60.0
-    timeout_seconds: float | None = None
+    timeout: float | None = None
+    timeout_seconds: float = 60.0
     transport: OpenAICompatibleTransport | None = None
     async_transport: AsyncOpenAICompatibleTransport | None = None
     thinking: dict[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        """兼容 legacy timeout，同时把公开配置收敛到 timeout_seconds。"""
+
+        if self.timeout is None:
+            return
+        warnings.warn(
+            "`timeout` is deprecated; use `timeout_seconds` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if self.timeout_seconds == 60.0:
+            self.timeout_seconds = self.timeout
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用 OpenAI-compatible `/chat/completions` 并标准化响应。"""
@@ -618,7 +632,7 @@ class OpenAICompatibleProvider:
     def _timeout(self) -> float:
         """返回 provider 调用超时秒数。"""
 
-        return self.timeout if self.timeout_seconds is None else self.timeout_seconds
+        return self.timeout_seconds
 
     def _message(self, message: ProviderMessage) -> dict[str, object]:
         """把 SDK 内部 provider message 转为 OpenAI-compatible message。"""

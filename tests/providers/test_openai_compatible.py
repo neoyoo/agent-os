@@ -78,7 +78,7 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
         base_url="https://api.deepseek.example",
         model="deepseek-chat",
         transport=transport,
-        timeout=12.0,
+        timeout_seconds=12.0,
     )
 
     response = provider.complete(

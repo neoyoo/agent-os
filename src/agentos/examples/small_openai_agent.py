@@ -109,7 +109,7 @@ def provider_from_env(env_file: str | Path = ".env") -> OpenAICompatibleProvider
         api_key=api_key,
         base_url=base_url,
         model=model,
-        timeout=float(os.environ.get("OPENAI_TIMEOUT", "60")),
+        timeout_seconds=float(os.environ.get("OPENAI_TIMEOUT", "60")),
         thinking=thinking,
     )
 

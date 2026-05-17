@@ -41,3 +41,19 @@ def test_asgi_app_rate_limits_by_session_id() -> None:
     }
     headers = dict(second[0]["headers"])
     assert b"retry-after" in headers
+
+
+def test_sliding_window_rate_limiter_evicts_idle_session_buckets() -> None:
+    now = 0.0
+    limiter = SlidingWindowRateLimiter(
+        max_requests=1,
+        window_seconds=10,
+        now=lambda: now,
+    )
+
+    assert limiter.check("old_session").allowed
+    now = 20.0
+    assert limiter.check("active_session").allowed
+
+    assert "old_session" not in limiter._requests
+    assert "active_session" in limiter._requests

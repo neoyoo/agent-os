@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from importlib.resources import files
 from pathlib import Path
 import sys
 
@@ -70,7 +71,7 @@ def _run_asgi(app: str, *, host: str, port: int) -> int:
 
 
 def _migrate(*, dsn: str | None, dry_run: bool) -> int:
-    migrations = sorted(_migration_dir().glob("*.sql"))
+    migrations = _migration_paths()
     if dry_run or not dsn:
         for migration in migrations:
             print(migration)
@@ -88,10 +89,17 @@ def _migrate(*, dsn: str | None, dry_run: bool) -> int:
     return 0
 
 
-def _migration_dir() -> Path:
-    """返回随源码树发布的 Postgres migrations 目录。"""
+def _migration_paths() -> list[object]:
+    """返回随 package 发布的 Postgres migrations。"""
 
-    return Path(__file__).resolve().parents[3] / "docs" / "migrations"
+    return sorted(
+        (
+            item
+            for item in files("agentos.migrations").iterdir()
+            if item.name.endswith(".sql")
+        ),
+        key=lambda item: item.name,
+    )
 
 
 if __name__ == "__main__":

@@ -38,6 +38,28 @@ def test_openai_compatible_provider_accepts_timeout_seconds_alias() -> None:
     assert transport.timeout == 7
 
 
+def test_openai_compatible_provider_deprecates_legacy_timeout() -> None:
+    with pytest.warns(DeprecationWarning, match="timeout_seconds"):
+        provider = OpenAICompatibleProvider(
+            api_key="key",
+            base_url="https://example.test",
+            model="model",
+            timeout=7,
+        )
+
+    assert provider.timeout_seconds == 7
+
+
+def test_openai_compatible_provider_defaults_to_timeout_seconds() -> None:
+    provider = OpenAICompatibleProvider(
+        api_key="key",
+        base_url="https://example.test",
+        model="model",
+    )
+
+    assert provider.timeout_seconds == 60
+
+
 def test_urllib_transport_maps_socket_timeout_to_provider_timeout_error() -> None:
     transport = UrlLibJSONTransport()
 

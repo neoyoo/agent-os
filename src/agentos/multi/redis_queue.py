@@ -217,7 +217,12 @@ class RedisAgentMessageQueue:
             {
                 "message_id": message_id,
                 "payload": json.dumps(
-                    {"pending": {key: self._message_id(value) for key, value in item.items()}},
+                    {
+                        "pending": {
+                            key: self._json_safe_pending_value(value)
+                            for key, value in item.items()
+                        },
+                    },
                     ensure_ascii=False,
                 ),
             },
@@ -239,4 +244,11 @@ class RedisAgentMessageQueue:
     def _message_id(self, value: object) -> str:
         if isinstance(value, bytes):
             return value.decode("utf-8")
+        return str(value)
+
+    def _json_safe_pending_value(self, value: object) -> object:
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
         return str(value)

@@ -44,6 +44,7 @@ class SlidingWindowRateLimiter:
 
         now = self._now()
         window_start = now - self._window_seconds
+        self._evict(window_start)
         bucket = self._requests[key]
         while bucket and bucket[0] <= window_start:
             bucket.popleft()
@@ -52,3 +53,12 @@ class SlidingWindowRateLimiter:
             return RateLimitDecision(False, retry_after)
         bucket.append(now)
         return RateLimitDecision(True, 0)
+
+    def _evict(self, window_start: float) -> None:
+        """清理已经没有窗口内请求的 session bucket。"""
+
+        for key, bucket in list(self._requests.items()):
+            while bucket and bucket[0] <= window_start:
+                bucket.popleft()
+            if not bucket:
+                del self._requests[key]

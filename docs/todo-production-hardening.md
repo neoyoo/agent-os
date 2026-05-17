@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-SDK 核心引擎已达 production-grade 架构质量（Protocol 边界、CAS 状态机、零硬依赖、515 个本地测试通过，4 个 live integration cases 默认跳过）。
+SDK 核心引擎已达 production-grade 架构质量（Protocol 边界、CAS 状态机、零硬依赖、520 个本地测试通过，4 个 live integration cases 默认跳过）。
 以下是从"可运行"到"可在生产环境部署和被外部开发者采用"之间的差距清单。
 
 ---
