@@ -9,8 +9,11 @@ from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.providers import (
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
+    ProviderResponse,
     ProviderRequest,
     ProviderToolCall,
+    ProviderToolCallDelta,
+    ProviderStreamCompleted,
     ProviderUsage,
     UrlLibJSONTransport,
     UserMessage,
@@ -40,6 +43,29 @@ class FakeTransport:
             },
         )
         return self.response
+
+
+class FakeStreamTransport:
+    def __init__(self, chunks: list[dict[str, object]]) -> None:
+        self.chunks = chunks
+        self.calls: list[dict[str, object]] = []
+
+    def post_json_stream(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout: float,
+    ):
+        self.calls.append(
+            {
+                "url": url,
+                "headers": headers,
+                "payload": payload,
+                "timeout": timeout,
+            },
+        )
+        yield from self.chunks
 
 
 def test_openai_compatible_provider_posts_chat_completion_request() -> None:
@@ -395,6 +421,52 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
             },
         ],
     }
+
+
+def test_openai_compatible_stream_generates_tool_call_id_when_missing() -> None:
+    transport = FakeStreamTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": '{"skill_name":"drawing-quotation"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="qwen-test",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
+    completed = [event for event in events if isinstance(event, ProviderStreamCompleted)]
+    assert deltas[0].tool_call_id == "call_0"
+    assert isinstance(completed[0].response, ProviderResponse)
+    assert completed[0].response.tool_calls == (
+        ProviderToolCall(
+            id="call_0",
+            name="load_skill",
+            arguments={"skill_name": "drawing-quotation"},
+        ),
+    )
 
 
 def test_openai_compatible_provider_rejects_system_messages_in_active_window() -> None:

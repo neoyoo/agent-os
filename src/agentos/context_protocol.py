@@ -97,7 +97,10 @@ _CONTEXT_PROTOCOL_TOOL_SPECS: list[dict[str, object]] = [
                     "value": {
                         "anyOf": [
                             {"type": "string"},
-                            {"type": "array", "items": {"type": "string"}},
+                            {"type": "number"},
+                            {"type": "boolean"},
+                            {"type": "object"},
+                            {"type": "array"},
                         ],
                         "description": "字段的新值。",
                     },

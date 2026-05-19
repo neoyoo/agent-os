@@ -412,7 +412,7 @@ class OpenAICompatibleProvider:
                 index = int(raw_tool_call.get("index", 0))
                 builder = tool_builders.setdefault(
                     index,
-                    {"id": "", "name": "", "arguments": ""},
+                    {"id": f"call_{index}", "name": "", "arguments": ""},
                 )
                 tool_call_id = raw_tool_call.get("id")
                 if isinstance(tool_call_id, str):
@@ -555,7 +555,7 @@ class OpenAICompatibleProvider:
                 index = int(raw_tool_call.get("index", 0))
                 builder = tool_builders.setdefault(
                     index,
-                    {"id": "", "name": "", "arguments": ""},
+                    {"id": f"call_{index}", "name": "", "arguments": ""},
                 )
                 tool_call_id = raw_tool_call.get("id")
                 if isinstance(tool_call_id, str):

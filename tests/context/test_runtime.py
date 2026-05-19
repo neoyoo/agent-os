@@ -90,6 +90,21 @@ def test_update_state_preserves_json_object_values() -> None:
     }
 
 
+def test_update_state_tool_schema_accepts_json_values() -> None:
+    from agentos.context_protocol import context_protocol_tool_specs
+
+    update_state = [
+        spec
+        for spec in context_protocol_tool_specs()
+        if spec.function.name == "update_state"
+    ][0]
+    value_schema = update_state.function.parameters["properties"]["value"]
+
+    assert {"type": "object"} in value_schema["anyOf"]
+    assert {"type": "number"} in value_schema["anyOf"]
+    assert {"type": "boolean"} in value_schema["anyOf"]
+
+
 def test_working_state_snapshot_cannot_be_mutated_directly() -> None:
     runtime = ContextRuntime()
     runtime.declare_schema(
