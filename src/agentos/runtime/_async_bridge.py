@@ -43,7 +43,7 @@ class SyncIteratorAsyncBridge(Generic[T]):
         try:
             item = await self._queue.get()
         except asyncio.CancelledError:
-            await self.aclose()
+            await self._aclose_from_cancelled_task()
             raise
         if item is None:
             self._closed = True
@@ -103,6 +103,23 @@ class SyncIteratorAsyncBridge(Generic[T]):
     async def _wait_for_worker(self) -> None:
         if self._future is not None:
             await asyncio.shield(self._future)
+
+    async def _aclose_from_cancelled_task(self) -> None:
+        """Run close cleanup even though the current task has been cancelled."""
+
+        task = asyncio.current_task()
+        uncancel = getattr(task, "uncancel", None)
+        pending_cancels = 0
+        if callable(uncancel):
+            while task is not None and task.cancelling():
+                pending_cancels += 1
+                uncancel()
+        try:
+            await self.aclose()
+        finally:
+            if task is not None:
+                for _ in range(pending_cancels):
+                    task.cancel()
 
 
 def iterate_sync_in_executor(
