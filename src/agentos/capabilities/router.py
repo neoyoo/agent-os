@@ -60,7 +60,10 @@ class ToolCallRouter:
 
         if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
             return self.execute_tool_call(tool_call)
-        return await asyncio.to_thread(self.execute_tool_call, tool_call)
+        if tool_call.name.startswith("mcp__"):
+            return await asyncio.to_thread(self.execute_tool_call, tool_call)
+        self.security_policy.ensure_tool_allowed(tool_call.name)
+        return await self._tool_executor().async_execute(tool_call)
 
     def _tool_executor(self) -> ToolExecutor:
         """延迟创建外部工具 executor。"""

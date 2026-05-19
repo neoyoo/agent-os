@@ -1,6 +1,9 @@
+import asyncio
 from dataclasses import dataclass
+import inspect
 
 from agentos.capabilities.registry import ToolRegistry
+from agentos.capabilities.tools import RegisteredTool
 from agentos.policies import SecurityPolicy
 from agentos.providers import ProviderToolCall
 
@@ -28,15 +31,35 @@ class ToolExecutor:
         """执行 provider tool call 对应的外部工具。"""
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
-        try:
-            tool = self.registry.get(tool_call.name)
-        except KeyError as error:
-            raise ToolExecutionError(f"unknown tool: {tool_call.name}") from error
+        tool = self._tool_for_call(tool_call)
         self._validate_arguments(tool_call, tool.parameters)
+        content = tool.handler(dict(tool_call.arguments))
+        if inspect.isawaitable(content):
+            close = getattr(content, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError("async handler requires AsyncQueryLoop")
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
-            content=tool.handler(dict(tool_call.arguments)),
+            content=content,
         )
+
+    async def async_execute(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
+        """异步执行 provider tool call；sync handler 在线程中执行。"""
+
+        self.security_policy.ensure_tool_allowed(tool_call.name)
+        tool = self._tool_for_call(tool_call)
+        self._validate_arguments(tool_call, tool.parameters)
+        if inspect.iscoroutinefunction(tool.handler):
+            content = await tool.handler(dict(tool_call.arguments))
+            return ToolExecutionResult(tool_call_id=tool_call.id, content=content)
+        return await asyncio.to_thread(self.execute, tool_call)
+
+    def _tool_for_call(self, tool_call: ProviderToolCall) -> RegisteredTool:
+        try:
+            return self.registry.get(tool_call.name)
+        except KeyError as error:
+            raise ToolExecutionError(f"unknown tool: {tool_call.name}") from error
 
     def _validate_arguments(
         self,

@@ -191,7 +191,21 @@ class Agent:
         thinking: bool = False,
         show_thinking: bool = False,
     ) -> AsyncIterator[TurnStreamEvent]:
-        """异步运行 turn，v1 用 executor 包装同步 stream。"""
+        """异步运行 turn，优先使用 native async loop，sync loop 放入 executor。"""
+
+        run_options = RunOptions(thinking=thinking, show_thinking=show_thinking)
+        run_turn_stream = getattr(self.query_loop, "run_turn_stream", None)
+        if callable(run_turn_stream):
+            if attachments is None:
+                maybe_async_stream = run_turn_stream(user_message, run_options)
+            else:
+                maybe_async_stream = run_turn_stream(
+                    user_message,
+                    run_options,
+                    attachments=attachments,
+                )
+            if hasattr(maybe_async_stream, "__aiter__"):
+                return _AgentAsyncStream(self, maybe_async_stream)
 
         return _AgentAsyncStream(
             self,
