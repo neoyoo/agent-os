@@ -276,6 +276,82 @@ def test_openai_compatible_provider_can_disable_thinking() -> None:
     assert transport.calls[0]["payload"]["thinking"] == {"type": "disabled"}
 
 
+def test_openai_compatible_provider_merges_extra_body_into_payload() -> None:
+    transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+        extra_body={
+            "vl_high_resolution_images": True,
+            "temperature": 0,
+        },
+    )
+
+    provider.complete(
+        ProviderRequest(system="system", messages=[{"role": "user", "content": "hi"}]),
+    )
+
+    payload = transport.calls[0]["payload"]
+    assert payload["vl_high_resolution_images"] is True
+    assert payload["temperature"] == 0
+    assert payload["model"] == "deepseek-chat"
+    assert payload["messages"][0] == {"role": "system", "content": "system"}
+
+
+def test_openai_compatible_provider_core_payload_overrides_extra_body() -> None:
+    transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+        thinking={"type": "disabled"},
+        extra_body={
+            "model": "wrong-model",
+            "messages": [],
+            "tools": [],
+            "thinking": {"type": "enabled"},
+        },
+    )
+
+    provider.complete(
+        ProviderRequest(
+            system="system",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "description": "read file",
+                        "parameters": {"type": "object"},
+                    },
+                },
+            ],
+        ),
+    )
+
+    payload = transport.calls[0]["payload"]
+    assert payload["model"] == "deepseek-chat"
+    assert payload["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "hi"},
+    ]
+    assert payload["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "read file",
+                "parameters": {"type": "object"},
+            },
+        },
+    ]
+    assert payload["thinking"] == {"type": "disabled"}
+
+
 def test_openai_compatible_provider_maps_image_content_parts() -> None:
     transport = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
     provider = OpenAICompatibleProvider(
