@@ -248,6 +248,41 @@ def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None
     assert context.state.working_state["task_goal"] == "Run a small agent."
 
 
+def test_tool_call_router_returns_tool_result_for_undeclared_update_state_field() -> None:
+    context = ContextRuntime()
+    context.declare_schema(
+        [
+            WorkingStateField(
+                name="drawing_info",
+                type="dict",
+                purpose="drawing facts",
+            ),
+        ],
+    )
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        context_runtime=context,
+    )
+
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_bad_update",
+            name="update_state",
+            arguments={
+                "field_name": "part_info",
+                "value": "{}",
+            },
+        ),
+    )
+
+    assert result.tool_call_id == "call_bad_update"
+    assert result.content == (
+        "context tool update_state rejected: working state field not declared: "
+        "part_info"
+    )
+    assert context.state.working_state == {}
+
+
 def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
@@ -308,6 +343,57 @@ def test_tool_call_router_routes_attachment_recall_namespace() -> None:
 
     assert result.tool_call_id == "call_recall"
     assert "attachment recall_context applied" in result.content
+
+
+def test_tool_call_router_exposes_and_routes_load_image_tool() -> None:
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        attachment_runtime=attachments,
+    )
+
+    tool_names = [
+        spec["function"]["name"]
+        for spec in runtime.tool_specs()
+    ]
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_image",
+            name="load_image",
+            arguments={"handle": f"att:{attachment.handle}"},
+        ),
+    )
+
+    assert "load_image" in tool_names
+    assert result.tool_call_id == "call_image"
+    assert '"status":"success"' in result.content
+    assert '"image_handle":"att_1"' in result.content
+    assert '"filename":"diagram.png"' in result.content
+    assert "image-bytes" not in result.content
+
+
+def test_tool_call_router_returns_tool_result_for_unknown_load_image_handle() -> None:
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        attachment_runtime=AttachmentRuntime(),
+    )
+
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_image",
+            name="load_image",
+            arguments={"handle": "att:missing"},
+        ),
+    )
+
+    assert result.tool_call_id == "call_image"
+    assert '"status":"error"' in result.content
+    assert "unknown attachment" in result.content
 
 
 def test_tool_call_router_returns_tool_result_for_unknown_attachment_handle() -> None:

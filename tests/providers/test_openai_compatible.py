@@ -276,6 +276,21 @@ def test_openai_compatible_provider_can_disable_thinking() -> None:
     assert transport.calls[0]["payload"]["thinking"] == {"type": "disabled"}
 
 
+def test_openai_compatible_provider_merges_extra_body() -> None:
+    transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+        extra_body={"vl_high_resolution_images": True},
+    )
+
+    provider.complete(ProviderRequest(system="system", messages=[]))
+
+    assert transport.calls[0]["payload"]["vl_high_resolution_images"] is True
+
+
 def test_openai_compatible_provider_maps_image_content_parts() -> None:
     transport = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
     provider = OpenAICompatibleProvider(
@@ -296,6 +311,49 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
         ProviderRequest(
             system="system",
             messages=[
+                    UserMessage(
+                        content=(
+                            ImagePart(attachment),
+                            TextPart("分析图片"),
+                        ),
+                    ),
+            ],
+        ),
+    )
+
+    assert transport.calls[0]["payload"]["messages"][1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                    "detail": "auto",
+                },
+            },
+            {"type": "text", "text": "分析图片"},
+        ],
+    }
+
+
+def test_openai_compatible_provider_exposes_request_payload_for_audit() -> None:
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+    )
+    attachment = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+
+    payload = provider.request_payload(
+        ProviderRequest(
+            system="system",
+            messages=[
                 UserMessage(
                     content=(
                         TextPart("分析图片"),
@@ -306,19 +364,9 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
         ),
     )
 
-    assert transport.calls[0]["payload"]["messages"][1] == {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "分析图片"},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
-                    "detail": "auto",
-                },
-            },
-        ],
-    }
+    assert payload["messages"][1]["content"][1]["image_url"]["url"] == (
+        "data:image/png;base64,aW1hZ2UtYnl0ZXM="
+    )
 
 
 def test_openai_compatible_provider_rejects_system_messages_in_active_window() -> None:

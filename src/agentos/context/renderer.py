@@ -131,6 +131,11 @@ class ContextRenderer:
                     f"- 任务局部修正使用 `{update_state_tool}`；schema 不足使用 "
                     f"`{extend_schema_tool}`；任务实质变更使用 `{start_chapter_tool}`。"
                 ),
+                (
+                    f"- `working-state` 必须遵循 `declared-schema`；调用 "
+                    f"`{update_state_tool}` 时，`update_state.field_name` 必须是 "
+                    "`declared-schema` 中已声明的字段名。"
+                ),
                 f"- 如果 schema 缺少必要字段，使用 `{extend_schema_tool}`。",
                 f"- 如果用户任务发生实质变化，使用 `{start_chapter_tool}`。",
                 "- 简单问答不要创建 working state。",
@@ -152,7 +157,7 @@ class ContextRenderer:
                 "- Uploaded attachments may be visible for only the current turn.",
                 (
                     "- If an attachment is listed as not loaded and you need to inspect "
-                    f"it again, call `{recall_context_tool}(handle=\"att:...\")`."
+                    "it, call `load_image(handle=\"att:...\")`."
                 ),
                 "- Do not infer unseen attachment details from filename or preview.",
                 "- If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.",

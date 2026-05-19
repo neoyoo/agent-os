@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -19,6 +20,7 @@ from agentos.providers import (
     ProviderStreamFailed,
     ProviderStreamOptions,
     ProviderThinkingDelta,
+    ProviderToolCall,
     complete_response_to_stream_events,
 )
 from agentos.runtime.event_bus import (
@@ -199,21 +201,24 @@ class QueryLoop:
         yield TurnStreamStarted(user_message=user_message)
 
         try:
-            response_content = yield from self._run_provider_loop_stream(
-                turn,
-                run_options,
-            )
-        except Exception as error:
-            if turn is not None:
-                turn.fail(str(error))
-            self._emit(
-                TurnFailedEvent(
-                    error=str(error),
-                    **self._event_context(turn),
-                ),
-            )
-            yield TurnStreamFailed(error=error)
-            raise
+            try:
+                response_content = yield from self._run_provider_loop_stream(
+                    turn,
+                    run_options,
+                )
+            except Exception as error:
+                if turn is not None:
+                    turn.fail(str(error))
+                self._emit(
+                    TurnFailedEvent(
+                        error=str(error),
+                        **self._event_context(turn),
+                    ),
+                )
+                yield TurnStreamFailed(error=error)
+                raise
+        finally:
+            self._clear_turn_recalled_attachments()
 
         if turn is not None:
             turn.complete()
@@ -261,21 +266,24 @@ class QueryLoop:
             yield TurnStreamStarted(user_message="")
 
             try:
-                response_content = yield from self._run_provider_loop_stream(
-                    turn,
-                    run_options,
-                )
-            except Exception as error:
-                if turn is not None:
-                    turn.fail(str(error))
-                self._emit(
-                    TurnFailedEvent(
-                        error=str(error),
-                        **self._event_context(turn),
-                    ),
-                )
-                yield TurnStreamFailed(error=error)
-                raise
+                try:
+                    response_content = yield from self._run_provider_loop_stream(
+                        turn,
+                        run_options,
+                    )
+                except Exception as error:
+                    if turn is not None:
+                        turn.fail(str(error))
+                    self._emit(
+                        TurnFailedEvent(
+                            error=str(error),
+                            **self._event_context(turn),
+                        ),
+                    )
+                    yield TurnStreamFailed(error=error)
+                    raise
+            finally:
+                self._clear_turn_recalled_attachments()
 
             if turn is not None:
                 turn.complete()
@@ -295,6 +303,14 @@ class QueryLoop:
         if callable(clear_runtime_notices):
             clear_runtime_notices()
 
+    def _clear_turn_recalled_attachments(self) -> None:
+        attachment_runtime = getattr(self.request_builder, "attachment_runtime", None)
+        if attachment_runtime is None:
+            return
+        clear = getattr(attachment_runtime, "clear_turn_recalled_attachments", None)
+        if callable(clear):
+            clear()
+
     def _run_provider_loop_stream(
         self,
         turn: TurnState | None,
@@ -303,6 +319,7 @@ class QueryLoop:
         """执行 provider streaming loop，直到返回 final assistant response。"""
 
         iterations = 0
+        applied_tool_signatures: set[str] = set()
         while True:
             self._raise_if_interrupted()
             request = self.build_request()
@@ -374,12 +391,22 @@ class QueryLoop:
                     ),
                 )
                 try:
-                    hook_result = self._before_tool_call(tool_call)
-                    if hook_result is not None:
-                        result = hook_result
+                    duplicate_result = self._duplicate_tool_call_result(
+                        tool_call,
+                        applied_tool_signatures,
+                    )
+                    if duplicate_result is not None:
+                        result = duplicate_result
                     else:
-                        result = self.tool_call_router.execute_tool_call(tool_call)
-                    result = self._after_tool_call(tool_call, result)
+                        hook_result = self._before_tool_call(tool_call)
+                        if hook_result is not None:
+                            result = hook_result
+                        else:
+                            result = self.tool_call_router.execute_tool_call(tool_call)
+                        result = self._after_tool_call(tool_call, result)
+                        applied_tool_signatures.add(
+                            self._tool_call_signature(tool_call),
+                        )
                 except Exception as error:
                     self.message_runtime.active_window.remove_refs(
                         appended_message_ids,
@@ -417,6 +444,34 @@ class QueryLoop:
                     content=result.content,
                 )
 
+    def _duplicate_tool_call_result(
+        self,
+        tool_call: ProviderToolCall,
+        applied_tool_signatures: set[str],
+    ) -> ToolExecutionResult | None:
+        signature = self._tool_call_signature(tool_call)
+        if signature not in applied_tool_signatures:
+            return None
+        return ToolExecutionResult(
+            tool_call_id=tool_call.id,
+            content=(
+                f"duplicate tool call ignored: {tool_call.name} with identical "
+                "arguments was already applied in this turn; continue with the "
+                "next step or return the final answer"
+            ),
+        )
+
+    def _tool_call_signature(self, tool_call: ProviderToolCall) -> str:
+        return json.dumps(
+            {
+                "name": tool_call.name,
+                "arguments": tool_call.arguments,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
     def _consume_provider_stream(
         self,
         request: ProviderRequest,
@@ -432,9 +487,27 @@ class QueryLoop:
         if policy is not None:
             policy.raise_if_open()
         attempt = 0
+        response: ProviderResponse | None = None
         while True:
             try:
-                events = list(self._provider_stream_events(request, provider_options))
+                stream_events = self._provider_stream_events(request, provider_options)
+                for event in stream_events:
+                    if isinstance(event, ProviderContentDelta):
+                        yield AssistantContentDelta(index=event.index, text=event.text)
+                    elif isinstance(event, ProviderThinkingDelta):
+                        if options.show_thinking:
+                            yield AssistantThinkingDelta(
+                                index=event.index,
+                                text=event.text,
+                            )
+                    elif isinstance(event, ProviderStreamCompleted):
+                        response = event.response
+                    elif isinstance(event, ProviderStreamFailed):
+                        raise event.error
+                    elif isinstance(event, ProviderStreamCancelled):
+                        raise RuntimeError(
+                            event.reason or "provider stream was cancelled",
+                        )
                 if policy is not None:
                     policy.record_success()
                 break
@@ -462,21 +535,6 @@ class QueryLoop:
                     delay_seconds=delay,
                 )
                 policy.sleep(delay)
-        response: ProviderResponse | None = None
-
-        for event in events:
-            if isinstance(event, ProviderContentDelta):
-                yield AssistantContentDelta(index=event.index, text=event.text)
-            elif isinstance(event, ProviderThinkingDelta):
-                if options.show_thinking:
-                    yield AssistantThinkingDelta(index=event.index, text=event.text)
-            elif isinstance(event, ProviderStreamCompleted):
-                response = event.response
-            elif isinstance(event, ProviderStreamFailed):
-                raise event.error
-            elif isinstance(event, ProviderStreamCancelled):
-                raise RuntimeError(event.reason or "provider stream was cancelled")
-
         if response is None:
             raise RuntimeError("provider stream ended without completion event")
         return response

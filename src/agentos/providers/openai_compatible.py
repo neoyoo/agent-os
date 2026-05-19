@@ -3,6 +3,7 @@ import socket
 import warnings
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -273,6 +274,8 @@ class OpenAICompatibleProvider:
     transport: OpenAICompatibleTransport | None = None
     async_transport: AsyncOpenAICompatibleTransport | None = None
     thinking: dict[str, object] | None = None
+    extra_body: dict[str, object] | None = None
+    _fallback_tool_call_counter: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """兼容 legacy timeout，同时把公开配置收敛到 timeout_seconds。"""
@@ -619,7 +622,14 @@ class OpenAICompatibleProvider:
             ]
         if self.thinking is not None:
             payload["thinking"] = dict(self.thinking)
+        if self.extra_body is not None:
+            payload.update(dict(self.extra_body))
         return payload
+
+    def request_payload(self, request: ProviderRequest) -> dict[str, object]:
+        """Return the exact OpenAI-compatible HTTP JSON payload for observability."""
+
+        return self._payload(request)
 
     def _chat_completions_url(self) -> str:
         """返回 chat completions endpoint URL。"""
@@ -750,14 +760,11 @@ class OpenAICompatibleProvider:
         for index in sorted(tool_builders):
             item = tool_builders[index]
             arguments = item["arguments"] or "{}"
-            tool_call_id = require_tool_call_id(
-                item["id"],
-                provider_name="OpenAI-compatible",
-            )
             tool_call_name = require_tool_call_name(
                 item["name"],
                 provider_name="OpenAI-compatible",
             )
+            tool_call_id = item["id"] or self._next_fallback_tool_call_id()
             tool_calls.append(
                 ProviderToolCall(
                     id=tool_call_id,
@@ -769,6 +776,10 @@ class OpenAICompatibleProvider:
                 ),
             )
         return tool_calls
+
+    def _next_fallback_tool_call_id(self) -> str:
+        self._fallback_tool_call_counter += 1
+        return f"call_{self._fallback_tool_call_counter}"
 
     def _usage(self, raw_usage: object) -> ProviderUsage | None:
         """把 OpenAI-compatible JSON usage 标准化。"""

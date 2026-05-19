@@ -1,18 +1,44 @@
 import asyncio
+import json
 from dataclasses import dataclass, field
 
 from agentos.attachments.types import AttachmentError
 from agentos.capabilities.executor import ToolExecutionResult, ToolExecutor
 from agentos.capabilities.mcp import MCPToolAdapter
 from agentos.capabilities.registry import ToolRegistry
-from agentos.context import ContextRuntime, WorkingStateField
+from agentos.context import ContextProtocolError, ContextRuntime, WorkingStateField
 from agentos.context_protocol import (
     CONTEXT_PROTOCOL_TOOL_NAMES,
     context_protocol_tool_specs,
 )
 from agentos.policies import SecurityPolicy
 from agentos.providers import ProviderToolCall, ProviderToolSpec
+from agentos.providers import provider_tool_spec_from_dict
 from agentos.recall import RecallRuntime
+
+
+LOAD_IMAGE_TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": "load_image",
+        "description": (
+            "Load an uploaded image attachment into subsequent model requests "
+            "for the current turn. The tool result only confirms the image; "
+            "image bytes are attached by the runtime."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string",
+                    "description": "Attachment handle such as att:att_1.",
+                },
+            },
+            "required": ["handle"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 @dataclass(slots=True)
@@ -32,6 +58,7 @@ class ToolCallRouter:
 
         return [
             *context_protocol_tool_specs(),
+            provider_tool_spec_from_dict(LOAD_IMAGE_TOOL_SPEC),
             *self.tool_registry.provider_tool_specs(kinds={"external", "skill"}),
             *(
                 self.mcp_adapter.provider_tool_specs()
@@ -44,6 +71,8 @@ class ToolCallRouter:
         """执行 provider tool call，并按工具类型路由。"""
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
+        if tool_call.name == "load_image":
+            return self._execute_load_image(tool_call)
         if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
             return self._execute_context_tool(tool_call)
         if tool_call.name.startswith("mcp__"):
@@ -85,22 +114,30 @@ class ToolCallRouter:
             raise RuntimeError("context runtime is required for context tools")
 
         arguments = tool_call.arguments
-        if tool_call.name == "declare_schema":
-            self.context_runtime.declare_schema(self._working_state_fields(arguments))
-        elif tool_call.name == "update_state":
-            self.context_runtime.update_state(
-                field_name=str(arguments["field_name"]),
-                value=arguments["value"],  # type: ignore[arg-type]
+        try:
+            if tool_call.name == "declare_schema":
+                self.context_runtime.declare_schema(
+                    self._working_state_fields(arguments),
+                )
+            elif tool_call.name == "update_state":
+                self.context_runtime.update_state(
+                    field_name=str(arguments["field_name"]),
+                    value=arguments["value"],  # type: ignore[arg-type]
+                )
+            elif tool_call.name == "extend_schema":
+                self.context_runtime.extend_schema(self._working_state_fields(arguments))
+            elif tool_call.name == "start_chapter":
+                fields = arguments.get("fields")
+                self.context_runtime.start_chapter(
+                    None if fields is None else self._working_state_fields(arguments),
+                )
+            else:
+                raise RuntimeError(f"unknown context tool: {tool_call.name}")
+        except ContextProtocolError as error:
+            return ToolExecutionResult(
+                tool_call_id=tool_call.id,
+                content=f"context tool {tool_call.name} rejected: {error}",
             )
-        elif tool_call.name == "extend_schema":
-            self.context_runtime.extend_schema(self._working_state_fields(arguments))
-        elif tool_call.name == "start_chapter":
-            fields = arguments.get("fields")
-            self.context_runtime.start_chapter(
-                None if fields is None else self._working_state_fields(arguments),
-            )
-        else:
-            raise RuntimeError(f"unknown context tool: {tool_call.name}")
 
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
@@ -164,6 +201,43 @@ class ToolCallRouter:
                 "attachment recall_context applied; scheduled "
                 f"{attachment_handle} for next provider request"
             ),
+        )
+
+    def _execute_load_image(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ToolExecutionResult:
+        if self.attachment_runtime is None:
+            raise RuntimeError("attachment runtime is required for load_image")
+        handle = str(tool_call.arguments.get("handle", ""))
+        load_image_handle = getattr(
+            self.attachment_runtime,
+            "load_image_handle",
+            None,
+        )
+        if not callable(load_image_handle):
+            raise RuntimeError("attachment_runtime must define load_image_handle()")
+        try:
+            attachment = load_image_handle(handle)
+        except AttachmentError as error:
+            payload = {
+                "status": "error",
+                "error": str(error),
+            }
+        else:
+            payload = {
+                "status": "success",
+                "image_handle": str(getattr(attachment, "handle", "")),
+                "filename": getattr(attachment, "filename", None),
+                "mime_type": str(getattr(attachment, "mime_type", "")),
+                "message": (
+                    "image loaded; it will be attached to subsequent model "
+                    "requests in this turn"
+                ),
+            }
+        return ToolExecutionResult(
+            tool_call_id=tool_call.id,
+            content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         )
 
     def _working_state_fields(

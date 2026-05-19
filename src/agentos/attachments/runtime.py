@@ -37,10 +37,14 @@ class AttachmentRuntime:
     store: AttachmentStore = field(default_factory=AttachmentStore)
     allowed_mime_types: frozenset[str] = DEFAULT_ALLOWED_MIME_TYPES
     max_size_bytes: int = DEFAULT_MAX_SIZE_BYTES
+    recalled_attachment_request_budget: int = 1
     _next_index: int = 1
     _pending_user_handles: list[str] = field(default_factory=list)
     _pending_user_text_by_handle: dict[str, str] = field(default_factory=dict)
     _pending_recall_handles: list[str] = field(default_factory=list)
+    _turn_recall_handles: list[str] = field(default_factory=list)
+    _turn_recall_remaining_by_handle: dict[str, int] = field(default_factory=dict)
+    _turn_loaded_image_handles: list[str] = field(default_factory=list)
 
     def upload(self, path: str | Path, mime_type: str) -> Attachment:
         """登记本地文件附件。"""
@@ -131,6 +135,24 @@ class AttachmentRuntime:
         self._pending_recall_handles.append(attachment.handle)
         return attachment
 
+    def load_image_handle(self, handle: str) -> Attachment:
+        attachment_handle = self._strip_attachment_namespace(handle)
+        attachment = self.store.get(attachment_handle)
+        if not attachment.mime_type.startswith("image/"):
+            raise AttachmentError("load_image requires image MIME")
+        if attachment.handle not in self._turn_loaded_image_handles:
+            self._turn_loaded_image_handles.append(attachment.handle)
+        return attachment
+
+    def clear_turn_loaded_images(self) -> None:
+        self._turn_loaded_image_handles.clear()
+
+    def clear_turn_recalled_attachments(self) -> None:
+        self._pending_recall_handles.clear()
+        self._turn_recall_handles.clear()
+        self._turn_recall_remaining_by_handle.clear()
+        self.clear_turn_loaded_images()
+
     def project_provider_messages(
         self,
         messages: list[ProviderMessage],
@@ -138,7 +160,7 @@ class AttachmentRuntime:
         """把待展开附件投影进下一次 provider request，然后消费展开状态。"""
 
         user_handles, user_text = self._consume_user_handles()
-        recall_handles = self._consume_recall_handles()
+        recall_handles = self._active_recall_handles()
         projected = list(messages)
         if user_handles:
             projected = self._project_user_handles(projected, user_handles, user_text)
@@ -146,17 +168,22 @@ class AttachmentRuntime:
             projected.append(
                 UserMessage(
                     content=(
+                        *[
+                            self._content_part_for_attachment(self.store.get(handle))
+                            for handle in recall_handles
+                        ],
                         TextPart(
                             "Recalled attachment "
                             + ", ".join(recall_handles)
                             + " for inspection.",
                         ),
-                        *[
-                            self._content_part_for_attachment(self.store.get(handle))
-                            for handle in recall_handles
-                        ],
                     ),
                 ),
+            )
+        if self._turn_loaded_image_handles:
+            projected = self._project_loaded_images(
+                projected,
+                self._turn_loaded_image_handles,
             )
         return projected
 
@@ -178,15 +205,41 @@ class AttachmentRuntime:
                 )
                 messages[index] = UserMessage(
                     content=(
-                        TextPart(text),
                         *[
                             self._content_part_for_attachment(self.store.get(handle))
                             for handle in handles
                         ],
+                        TextPart(text),
                     ),
                 )
                 return messages
         raise AttachmentError("cannot expand attachments without a user message")
+
+    def _project_loaded_images(
+        self,
+        messages: list[ProviderMessage],
+        handles: list[str],
+    ) -> list[ProviderMessage]:
+        """Keep loaded images attached to the original user task message."""
+
+        loaded_parts = self._loaded_image_parts(handles)
+        for index, message in enumerate(messages):
+            if isinstance(message, UserMessage):
+                messages[index] = UserMessage(
+                    content=(
+                        *self._content_as_parts(message.content),
+                        *loaded_parts,
+                    ),
+                )
+                return messages
+        raise AttachmentError("cannot project loaded images without a user message")
+
+    def _content_as_parts(self, content: object) -> tuple[object, ...]:
+        if isinstance(content, str):
+            return (TextPart(content),)
+        if isinstance(content, tuple):
+            return content
+        return (TextPart(str(content)),)
 
     def _consume_user_handles(self) -> tuple[list[str], str | None]:
         handles = list(dict.fromkeys(self._pending_user_handles))
@@ -202,6 +255,51 @@ class AttachmentRuntime:
         handles = list(dict.fromkeys(self._pending_recall_handles))
         self._pending_recall_handles.clear()
         return handles
+
+    def _active_recall_handles(self) -> list[str]:
+        for handle in self._consume_recall_handles():
+            if handle not in self._turn_recall_handles:
+                self._turn_recall_handles.append(handle)
+            self._turn_recall_remaining_by_handle[handle] = max(
+                1,
+                self.recalled_attachment_request_budget,
+            )
+        handles = [
+            handle
+            for handle in self._turn_recall_handles
+            if self._turn_recall_remaining_by_handle.get(handle, 0) > 0
+        ]
+        for handle in handles:
+            self._turn_recall_remaining_by_handle[handle] -= 1
+        self._turn_recall_handles = [
+            handle
+            for handle in self._turn_recall_handles
+            if self._turn_recall_remaining_by_handle.get(handle, 0) > 0
+        ]
+        for handle in list(self._turn_recall_remaining_by_handle):
+            if self._turn_recall_remaining_by_handle[handle] <= 0:
+                del self._turn_recall_remaining_by_handle[handle]
+        return handles
+
+    def _loaded_images_message(self, handles: list[str]) -> UserMessage:
+        return UserMessage(content=self._loaded_image_parts(handles))
+
+    def _loaded_image_parts(self, handles: list[str]) -> tuple[object, ...]:
+        attachments = [self.store.get(handle) for handle in handles]
+        labels = ", ".join(
+            f"{attachment.filename or '(unnamed)'} (handle: att:{attachment.handle})"
+            for attachment in attachments
+        )
+        return (
+                TextPart(
+                    f"Loaded image {labels} for inspection. "
+                    "Use the attached image content when answering.",
+                ),
+                *[
+                    self._content_part_for_attachment(attachment)
+                    for attachment in attachments
+                ],
+        )
 
     def _next_handle(self) -> str:
         handle = f"att_{self._next_index}"

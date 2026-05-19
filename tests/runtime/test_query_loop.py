@@ -88,8 +88,8 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
     second_user = provider.requests[1].messages[0]
     assert first_user == UserMessage(
         content=(
-            TextPart("分析图片"),
             ImagePart(attachment),
+            TextPart("分析图片"),
         ),
     )
     assert isinstance(second_user.content, str)
@@ -142,9 +142,163 @@ def test_query_loop_recalls_attachment_through_recall_context_namespace() -> Non
     assert result == "inspected"
     assert provider.requests[1].messages[-1] == UserMessage(
         content=(
+            ImagePart(attachment),
             TextPart(f"Recalled attachment {attachment.handle} for inspection."),
+        ),
+    )
+
+
+def test_query_loop_keeps_loaded_image_visible_through_tool_iterations() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_image",
+                        name="load_image",
+                        arguments={"handle": f"att:{attachment.handle}"},
+                    ),
+                ],
+            ),
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_state",
+                        name="declare_schema",
+                        arguments={
+                            "fields": [
+                                {
+                                    "name": "drawing_seen",
+                                    "type": "str",
+                                    "purpose": "whether image was inspected",
+                                },
+                            ],
+                        },
+                    ),
+                ],
+            ),
+            ProviderResponse(content="inspected"),
+        ],
+    )
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        context_runtime=context,
+        attachment_runtime=attachments,
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+            attachment_runtime=attachments,
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("load then inspect")
+
+    assert result == "inspected"
+    assert provider.requests[1].messages[0] == UserMessage(
+        content=(
+            TextPart("load then inspect"),
+            TextPart(
+                "Loaded image diagram.png (handle: att:att_1) for inspection. "
+                "Use the attached image content when answering.",
+            ),
             ImagePart(attachment),
         ),
+    )
+    assert provider.requests[2].messages[0] == provider.requests[1].messages[0]
+    assert not (
+        isinstance(provider.requests[2].messages[-1], UserMessage)
+        and isinstance(provider.requests[2].messages[-1].content, tuple)
+        and any(
+            isinstance(part, ImagePart)
+            for part in provider.requests[2].messages[-1].content
+        )
+    )
+    assert all(
+        not (
+            isinstance(message, UserMessage)
+            and isinstance(message.content, tuple)
+            and any(isinstance(part, ImagePart) for part in message.content)
+        )
+        for message in messages.materialize_provider_messages()
+    )
+
+
+def test_query_loop_ignores_duplicate_tool_call_in_same_turn() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    repeated = ProviderToolCall(
+        id="call_state",
+        name="update_state",
+        arguments={"field_name": "drawing_info", "value": "same"},
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_schema",
+                        name="declare_schema",
+                        arguments={
+                            "fields": [
+                                {
+                                    "name": "drawing_info",
+                                    "type": "str",
+                                    "purpose": "drawing facts",
+                                },
+                            ],
+                        },
+                    ),
+                ],
+            ),
+            ProviderResponse(tool_calls=[repeated]),
+            ProviderResponse(tool_calls=[repeated]),
+            ProviderResponse(content="done"),
+        ],
+    )
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        context_runtime=context,
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("analyze")
+
+    assert result == "done"
+    assert context.state.working_state["drawing_info"] == "same"
+    tool_messages = [
+        provider_message_to_dict(message)
+        for message in messages.materialize_provider_messages()
+        if provider_message_to_dict(message)["role"] == "tool"
+    ]
+    assert tool_messages[-1]["content"] == (
+        "duplicate tool call ignored: update_state with identical arguments "
+        "was already applied in this turn; continue with the next step or "
+        "return the final answer"
     )
 
 

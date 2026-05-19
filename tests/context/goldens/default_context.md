@@ -49,6 +49,7 @@ None.
 
 - 当前 schema 在本 chapter 内锁定。
 - 任务局部修正使用 `update_state`；schema 不足使用 `extend_schema`；任务实质变更使用 `start_chapter`。
+- `working-state` 必须遵循 `declared-schema`；调用 `update_state` 时，`update_state.field_name` 必须是 `declared-schema` 中已声明的字段名。
 - 如果 schema 缺少必要字段，使用 `extend_schema`。
 - 如果用户任务发生实质变化，使用 `start_chapter`。
 - 简单问答不要创建 working state。
@@ -68,7 +69,7 @@ None.
 ## Attachments
 
 - Uploaded attachments may be visible for only the current turn.
-- If an attachment is listed as not loaded and you need to inspect it again, call `recall_context(handle="att:...")`.
+- If an attachment is listed as not loaded and you need to inspect it, call `load_image(handle="att:...")`.
 - Do not infer unseen attachment details from filename or preview.
 - If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.
 

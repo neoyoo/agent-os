@@ -114,7 +114,7 @@ def test_default_renderer_omits_empty_working_state_sections() -> None:
 def test_context_renderer_documents_attachment_recall_rules() -> None:
     rendered = ContextRenderer().render(ContextState())
 
-    assert 'recall_context(handle="att:...")' in rendered
+    assert 'load_image(handle="att:...")' in rendered
     assert "currently loaded attachments" in rendered
     assert "Attachment placeholders / previews" in rendered
 
@@ -210,6 +210,14 @@ def test_default_renderer_explains_chapter_change_granularity() -> None:
     assert "任务局部修正使用 `update_state`" in rendered
     assert "schema 不足使用 `extend_schema`" in rendered
     assert "任务实质变更使用 `start_chapter`" in rendered
+
+
+def test_default_renderer_requires_working_state_to_follow_declared_schema() -> None:
+    rendered = ContextRenderer().render(ContextState())
+
+    assert "`update_state.field_name`" in rendered
+    assert "`declared-schema`" in rendered
+    assert "`working-state`" in rendered
 
 
 def test_context_management_rules_do_not_hardcode_protocol_tool_names() -> None:

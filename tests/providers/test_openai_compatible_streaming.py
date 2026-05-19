@@ -300,6 +300,111 @@ def test_openai_compatible_streams_tool_call_deltas() -> None:
     assert events[-1].response.tool_calls[0].arguments == {"path": "pyproject.toml"}
 
 
+def test_openai_compatible_stream_generates_missing_tool_call_id() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": '{"skill_name": "drawing-quotation"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    assert isinstance(events[-1], ProviderStreamCompleted)
+    assert events[-1].response.tool_calls[0].id == "call_1"
+    assert events[-1].response.tool_calls[0].name == "load_skill"
+    assert events[-1].response.tool_calls[0].arguments == {
+        "skill_name": "drawing-quotation",
+    }
+
+
+def test_openai_compatible_stream_generates_unique_missing_tool_call_ids() -> None:
+    first_transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "update_state",
+                                        "arguments": '{"field_name":"a","value":"1"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    second_transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_2",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "update_state",
+                                        "arguments": '{"field_name":"a","value":"1"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=first_transport,
+    )
+
+    first = list(provider.stream(ProviderRequest(system="system", messages=[])))
+    provider.transport = second_transport
+    second = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    assert first[-1].response.tool_calls[0].id != second[-1].response.tool_calls[0].id
+
+
 def test_openai_compatible_stream_rejects_non_object_tool_arguments() -> None:
     transport = FakeStreamingTransport(
         [
@@ -366,5 +471,5 @@ def test_openai_compatible_stream_rejects_missing_tool_identity() -> None:
         transport=transport,
     )
 
-    with pytest.raises(ValueError, match="tool_call requires id"):
+    with pytest.raises(ValueError, match="tool_call requires function name"):
         list(provider.stream(ProviderRequest(system="system", messages=[])))
