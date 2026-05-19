@@ -72,9 +72,13 @@ def test_phase5_phase6_public_api_exports() -> None:
     observability = importlib.import_module("agentos.observability")
 
     for name in [
+        "FileSystemSkillSource",
+        "SkillContentSource",
         "SkillDefinition",
         "SkillRegistry",
         "SkillLoadResult",
+        "SkillResourceLoadResult",
+        "SkillResourceRef",
         "MCPToolInfo",
         "MCPClient",
         "MCPRegistry",
