@@ -1,5 +1,7 @@
 # Ephemeral Attachment Lifecycle 设计
 
+> Status note: this historical design predated the implemented attachment boundary. Current SDK behavior is image-only: uploaded images are projected as `ImagePart` on entry, re-inspection uses `load_image(handle="att:...")`, and `recall_context` is reserved for compressed/semantic text recall returned as a normal tool result.
+
 ## Scope Contract
 
 本设计补齐 agentos 的大文件 / 多模态附件上下文生命周期。

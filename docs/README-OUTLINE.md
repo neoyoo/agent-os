@@ -92,14 +92,15 @@ messages =
 | `update_state` | 更新一个已声明字段的值 | 任务推进时 |
 | `extend_schema` | 追加新字段 | 任务复杂化时 |
 | `start_chapter` | 开启新 chapter，重置 working state | 主题切换时 |
-| `recall_context` | 按 handle 或 query 召回压缩历史 | 需要回顾时 |
+| `recall_context` | 按 handle 或 query 召回压缩文本/历史，结果作为 tool result 返回 | 需要回顾时 |
+| `load_image` | 将已上传图片附件加载到下一次模型请求 | 需要重新查看图片时 |
 
 ### 3.3 Context 生命周期示例
 
 用一个具体的 3-turn 对话示例展示：
 - Turn 1：用户提问 → agent 调 declare_schema → working state 可见
 - Turn 2：agent 调 update_state → 状态推进 → 窗口触发 compression → 旧消息被摘要
-- Turn 3：agent 调 recall_context → 召回压缩段的原文 → 注入本轮 messages
+- Turn 3：agent 调 recall_context → 召回压缩段原文 → 以标准 tool result 回写消息序列
 
 ---
 

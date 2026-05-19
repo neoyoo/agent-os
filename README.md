@@ -112,7 +112,7 @@ This guide doubles as a **Claude Code / Codex skill** — when loaded into an AI
 
 ## Context Protocol
 
-Every agent built with agent-os has access to 5 built-in context tools that the model uses to manage its own cognitive state:
+Every agent built with agent-os has access to 6 built-in context tools that the model uses to manage its own cognitive state and image re-inspection:
 
 | Tool | Purpose |
 |------|---------|
@@ -120,9 +120,12 @@ Every agent built with agent-os has access to 5 built-in context tools that the 
 | `update_state` | Update a working state field value |
 | `extend_schema` | Add fields when current schema is insufficient |
 | `start_chapter` | Start new chapter when task changes substantially |
-| `recall_context` | Retrieve compressed history segments by handle or query |
+| `recall_context` | Retrieve compressed text/history by handle or semantic query; returned content is a normal tool result |
+| `load_image` | Load an uploaded image attachment into the next provider request for re-inspection |
 
 These are automatically wired by `AgentBuilder` — you don't need to register them.
+
+`recall_context` is only for compressed or semantic text recall. Attachment handles use `load_image(handle="att:...")`; the current attachment runtime projects image content only.
 
 ## Tests
 

@@ -297,9 +297,12 @@ update_state
 extend_schema
 start_chapter
 recall_context
+load_image
 ```
 
-统一使用 `recall_context` 命名。它召回的是压缩段对应的原始消息片段，不是某个固定 turn；旧设计笔记中的 `recall_turn` 应视为被取代的旧称。
+统一使用 `recall_context` 命名。它召回的是压缩文本/历史对应的原始消息片段，不是某个固定 turn；旧设计笔记中的 `recall_turn` 应视为被取代的旧称。召回内容由 `ToolCallRouter` 格式化为标准 tool result，不作为 system prompt 或临时 user/assistant message 注入。
+
+图片附件使用独立的 `load_image(handle="att:...")` 工具重新加载；当前附件 runtime 只面向 image 投影，不通过 `recall_context` 处理附件。
 
 `read_state`、`abort_chapter`、`mark_important` 不作为默认 LLM 可见工具，可作为 debug/ops 能力后续添加。
 
@@ -371,11 +374,9 @@ RecallRuntime looks up CompressionIndex
   ↓
 MessageStore returns source messages
   ↓
-MessageRuntime injects temporary recalled messages
+ToolCallRouter formats messages into a <recalled-context> tool result
   ↓
-next request includes recalled content
-  ↓
-following request removes temporary recalled content
+MessageRuntime appends the tool result to the normal message sequence
 ```
 
 ### 8.3 Compressor 类型
@@ -405,7 +406,7 @@ Capability Plane 统一声明 tools、skills、MCP；`ToolCallRouter` 负责把 
 ### 9.2 工具分类
 
 ```text
-Context tools      # declare_schema / update_state / extend_schema / start_chapter / recall_context
+Context tools      # declare_schema / update_state / extend_schema / start_chapter / recall_context / load_image
 Builtin tools      # read_file / edit_file / run_shell / ask_user 等
 MCP tools          # 来自 MCP server
 Skill tool         # 加载 skill 指令
