@@ -12,10 +12,15 @@ from agentos.capabilities.mcp import (
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.router import ToolCallRouter
 from agentos.capabilities.skills import (
+    FileSystemSkillSource,
+    SkillContentSource,
     SkillDefinition,
     SkillLoadResult,
     SkillRegistry,
+    SkillResourceLoadResult,
+    SkillResourceRef,
     builtin_schema_template_skill,
+    register_skill_loader_tools,
     register_skill_loader_tool,
 )
 from agentos.capabilities.tools import RegisteredTool, ToolHandler
@@ -29,14 +34,19 @@ __all__ = [
     "MCPToolAdapter",
     "MCPToolInfo",
     "RegisteredTool",
+    "FileSystemSkillSource",
+    "SkillContentSource",
     "SkillDefinition",
     "SkillLoadResult",
     "SkillRegistry",
+    "SkillResourceLoadResult",
+    "SkillResourceRef",
     "ToolExecutionError",
     "ToolExecutionResult",
     "ToolHandler",
     "ToolRegistry",
     "builtin_schema_template_skill",
     "read_file_tool",
+    "register_skill_loader_tools",
     "register_skill_loader_tool",
 ]
