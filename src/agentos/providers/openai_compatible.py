@@ -1,3 +1,4 @@
+import copy
 import json
 import socket
 import warnings
@@ -607,7 +608,9 @@ class OpenAICompatibleProvider:
     def _payload(self, request: ProviderRequest) -> dict[str, object]:
         """构造 OpenAI-compatible chat completions payload。"""
 
-        payload: dict[str, object] = dict(self.extra_body or {})
+        payload: dict[str, object] = (
+            copy.deepcopy(self.extra_body) if self.extra_body else {}
+        )
         payload.update(
             {
                 "model": self.model,

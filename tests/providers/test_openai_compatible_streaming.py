@@ -151,6 +151,91 @@ def test_openai_compatible_async_stream_uses_async_transport() -> None:
     assert events[-1].response.content == "async"
 
 
+def test_openai_compatible_streaming_payload_includes_extra_body() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+        extra_body={
+            "vl_high_resolution_images": True,
+            "metadata": {"route": "qwen-vl"},
+        },
+    )
+
+    list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    payload = transport.calls[0]["payload"]
+    assert payload["stream"] is True
+    assert payload["vl_high_resolution_images"] is True
+    assert payload["metadata"] == {"route": "qwen-vl"}
+    assert payload["model"] == "deepseek-chat"
+
+
+def test_openai_compatible_async_streaming_payload_includes_extra_body() -> None:
+    class FakeAsyncStreamingTransport:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def post_json_stream(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ):
+            self.calls.append(
+                {
+                    "url": url,
+                    "headers": headers,
+                    "payload": payload,
+                    "timeout": timeout,
+                },
+            )
+            yield {
+                "id": "chatcmpl_async",
+                "model": "deepseek-chat",
+                "choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+
+    async def collect_payload() -> dict[str, object]:
+        transport = FakeAsyncStreamingTransport()
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            async_transport=transport,
+            extra_body={
+                "vl_high_resolution_images": True,
+                "metadata": {"route": "qwen-vl"},
+            },
+        )
+        events = [
+            event
+            async for event in provider.async_stream(
+                ProviderRequest(system="system", messages=[]),
+            )
+        ]
+        assert isinstance(events[-1], ProviderStreamCompleted)
+        return transport.calls[0]["payload"]
+
+    payload = asyncio.run(collect_payload())
+
+    assert payload["stream"] is True
+    assert payload["vl_high_resolution_images"] is True
+    assert payload["metadata"] == {"route": "qwen-vl"}
+    assert payload["model"] == "deepseek-chat"
+
+
 def test_openai_compatible_async_stream_cancellation_reaches_transport() -> None:
     started = asyncio.Event()
     cancelled = asyncio.Event()

@@ -300,6 +300,24 @@ def test_openai_compatible_provider_merges_extra_body_into_payload() -> None:
     assert payload["messages"][0] == {"role": "system", "content": "system"}
 
 
+def test_openai_compatible_provider_deep_copies_extra_body() -> None:
+    transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
+    extra_body = {"metadata": {"route": "qwen-vl"}}
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+        extra_body=extra_body,
+    )
+
+    provider.complete(ProviderRequest(system="system", messages=[]))
+
+    payload = transport.calls[0]["payload"]
+    assert payload["metadata"] == {"route": "qwen-vl"}
+    assert payload["metadata"] is not extra_body["metadata"]
+
+
 def test_openai_compatible_provider_core_payload_overrides_extra_body() -> None:
     transport = FakeTransport({"choices": [{"message": {"content": "done"}}]})
     provider = OpenAICompatibleProvider(
