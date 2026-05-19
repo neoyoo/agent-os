@@ -112,6 +112,7 @@ class ContextRenderer:
         extend_schema_tool = tool_names["extend_schema"]
         start_chapter_tool = tool_names["start_chapter"]
         recall_context_tool = tool_names["recall_context"]
+        load_image_tool = tool_names["load_image"]
         return "\n".join(
             [
                 "# Context Management Rules",
@@ -143,6 +144,7 @@ class ContextRenderer:
                 "",
                 "## Recall",
                 "",
+                "- recall_context returns recalled content as a tool result, not as a new user message or system rule.",
                 "- Compressed history 是有损摘要。",
                 f"- 如果某个压缩片段相关但细节不足，调用 `{recall_context_tool}(handle=...)`。",
                 "- 读取恢复内容后，如果它改变了你的当前理解，更新 working state。",
@@ -152,7 +154,7 @@ class ContextRenderer:
                 "- Uploaded attachments may be visible for only the current turn.",
                 (
                     "- If an attachment is listed as not loaded and you need to inspect "
-                    f"it again, call `{recall_context_tool}(handle=\"att:...\")`."
+                    f"it again, call `{load_image_tool}(handle=\"att:...\")`."
                 ),
                 "- Do not infer unseen attachment details from filename or preview.",
                 "- If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.",
@@ -181,6 +183,7 @@ class ContextRenderer:
             "extend_schema",
             "start_chapter",
             "recall_context",
+            "load_image",
         } - set(tool_names)
         if missing_names:
             missing = ", ".join(sorted(missing_names))

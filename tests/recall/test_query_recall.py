@@ -22,31 +22,31 @@ def build_memory_runtime() -> tuple[MemoryRuntime, InMemoryDurableSessionStore]:
     package = CompressedSegmentPackage(
         segment=CompressedSegment(
             id="seg_1",
-            topic="读取 pyproject.toml 里的项目名",
-            summary="工具返回 project.name = agent-os。",
+            topic="read pyproject name",
+            summary="The tool returned project.name = agent-os.",
         ),
         source_refs=("msg_1", "msg_2"),
         recall_document=SegmentRecallDocument(
             session_id="session_1",
             segment_id="seg_1",
-            topic="读取 pyproject.toml 里的项目名",
-            summary="工具返回 project.name = agent-os。",
+            topic="read pyproject name",
+            summary="The tool returned project.name = agent-os.",
             keywords=("pyproject.toml", "agent-os"),
         ),
     )
     runtime.record_compressed_segment(package)
     durable_store.append_message(
         "session_1",
-        Message(id="msg_1", role="user", content="读取 pyproject.toml"),
+        Message(id="msg_1", role="user", content="Read pyproject.toml"),
     )
     durable_store.append_message(
         "session_1",
-        Message(id="msg_2", role="assistant", content="项目名是 agent-os"),
+        Message(id="msg_2", role="assistant", content="Project name is agent-os"),
     )
     return runtime, durable_store
 
 
-def test_recall_context_query_hydrates_messages_and_injects_once() -> None:
+def test_recall_context_query_hydrates_messages_without_injecting_window() -> None:
     memory_runtime, _ = build_memory_runtime()
     messages = MessageRuntime()
     recall = RecallRuntime(
@@ -56,16 +56,11 @@ def test_recall_context_query_hydrates_messages_and_injects_once() -> None:
         session_id="session_1",
     )
 
-    recalled = recall.recall_context(query="pyproject 项目名", limit=1)
+    recalled = recall.recall_context(query="pyproject project name", limit=1)
 
     assert [message.id for message in recalled] == ["msg_1", "msg_2"]
-    first_request = messages.materialize_provider_messages()
-    second_request = messages.materialize_provider_messages()
-    assert [message["content"] for message in first_request] == [
-        "读取 pyproject.toml",
-        "项目名是 agent-os",
-    ]
-    assert second_request == []
+    assert messages.store.get("msg_1").content == "Read pyproject.toml"
+    assert messages.materialize_provider_messages() == []
 
 
 def test_recall_context_rejects_handle_and_query_together() -> None:

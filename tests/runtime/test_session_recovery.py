@@ -85,7 +85,7 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
     ).build(restored_context)
 
     assert request.system == rendered_before_save
-    assert request.messages[0]["content"] == "old detail"
+    assert request.messages[0]["content"] == "current task"
     assert request.messages[-1]["content"] == "second answer"
     assert restored.session_state.new_turn("after restore").id == "turn_3"
     assert restored.event_records[0].event_type == "WorkingStateSchemaDeclaredEvent"

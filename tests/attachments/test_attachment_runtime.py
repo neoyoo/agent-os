@@ -6,7 +6,6 @@ from agentos.attachments import (
     AttachmentError,
     AttachmentRuntime,
     BytesSource,
-    FilePart,
     ImagePart,
     TextPart,
 )
@@ -26,7 +25,7 @@ def test_upload_bytes_creates_private_placeholder() -> None:
     assert attachment.handle.startswith("att_")
     assert "diagram.png" in placeholder
     assert "image/png" in placeholder
-    assert "recall_context(handle=\"att:" in placeholder
+    assert "load_image(handle=\"att:" in placeholder
     assert "image-bytes" not in placeholder
     assert "base64" not in placeholder.lower()
 
@@ -38,20 +37,20 @@ def test_prepare_user_message_expands_attachment_once() -> None:
         filename="diagram.png",
         mime_type="image/png",
     )
-    content = runtime.prepare_user_message("分析图片", [attachment])
+    content = runtime.prepare_user_message("Analyze image", [attachment])
 
     first_request = runtime.project_provider_messages([UserMessage(content=content)])
     second_request = runtime.project_provider_messages([UserMessage(content=content)])
 
     assert isinstance(first_request[0], UserMessage)
     assert first_request[0].content == (
-        TextPart("分析图片"),
+        TextPart("Analyze image"),
         ImagePart(attachment),
     )
     assert second_request == [UserMessage(content=content)]
 
 
-def test_recall_attachment_handle_schedules_one_shot_expansion() -> None:
+def test_load_image_handle_schedules_one_shot_expansion() -> None:
     runtime = AttachmentRuntime()
     attachment = runtime.upload_bytes(
         b"image-bytes",
@@ -59,43 +58,35 @@ def test_recall_attachment_handle_schedules_one_shot_expansion() -> None:
         mime_type="image/png",
     )
 
-    runtime.recall_attachment_handle(f"att:{attachment.handle}")
+    runtime.load_image_handle(f"att:{attachment.handle}")
     first_request = runtime.project_provider_messages([UserMessage(content="next")])
     second_request = runtime.project_provider_messages([UserMessage(content="next")])
 
     assert first_request[-1] == UserMessage(
         content=(
-            TextPart(f"Recalled attachment {attachment.handle} for inspection."),
+            TextPart(f"Loaded image {attachment.handle} for inspection."),
             ImagePart(attachment),
         ),
     )
     assert second_request == [UserMessage(content="next")]
 
 
-def test_recall_unknown_attachment_handle_raises() -> None:
+def test_load_image_unknown_attachment_handle_raises() -> None:
     runtime = AttachmentRuntime()
 
     with pytest.raises(AttachmentError, match="unknown attachment"):
-        runtime.recall_attachment_handle("att:missing")
+        runtime.load_image_handle("att:missing")
 
 
-def test_pdf_attachments_project_as_file_parts() -> None:
+def test_upload_rejects_non_image_attachment_mime() -> None:
     runtime = AttachmentRuntime()
-    attachment = runtime.upload_bytes(
-        b"pdf data",
-        filename="doc.pdf",
-        mime_type="application/pdf",
-    )
-    content = runtime.prepare_user_message("分析 PDF", [attachment])
 
-    request = runtime.project_provider_messages([UserMessage(content=content)])
-
-    assert request[0] == UserMessage(
-        content=(
-            TextPart("分析 PDF"),
-            FilePart(attachment),
-        ),
-    )
+    with pytest.raises(AttachmentError, match="unsupported attachment MIME"):
+        runtime.upload_bytes(
+            b"pdf data",
+            filename="doc.pdf",
+            mime_type="application/pdf",
+        )
 
 
 def test_upload_rejects_unsupported_mime_and_oversized_bytes() -> None:

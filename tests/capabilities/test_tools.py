@@ -143,12 +143,13 @@ def test_tool_call_router_exposes_context_protocol_tool_specs() -> None:
         for spec in runtime.tool_specs()
     ]
 
-    assert tool_names[:5] == [
+    assert tool_names[:6] == [
         "declare_schema",
         "update_state",
         "extend_schema",
         "start_chapter",
         "recall_context",
+        "load_image",
     ]
 
 
@@ -278,15 +279,15 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     )
 
     assert result.tool_call_id == "call_recall"
-    assert "recalled 2 message(s)" in result.content
+    assert '<recalled-context source="compressed_history" handle="seg_1">' in result.content
+    assert '<message role="user"' in result.content
+    assert "Original detail" in result.content
     assert [message["content"] for message in messages.materialize_provider_messages()] == [
-        "Original detail",
-        "Original answer",
         "Current task",
     ]
 
 
-def test_tool_call_router_routes_attachment_recall_namespace() -> None:
+def test_tool_call_router_routes_load_image_namespace() -> None:
     attachments = AttachmentRuntime()
     attachment = attachments.upload_bytes(
         b"image-bytes",
@@ -300,17 +301,17 @@ def test_tool_call_router_routes_attachment_recall_namespace() -> None:
 
     result = runtime.execute_tool_call(
         ProviderToolCall(
-            id="call_recall",
-            name="recall_context",
+            id="call_load_image",
+            name="load_image",
             arguments={"handle": f"att:{attachment.handle}"},
         ),
     )
 
-    assert result.tool_call_id == "call_recall"
-    assert "attachment recall_context applied" in result.content
+    assert result.tool_call_id == "call_load_image"
+    assert "load_image applied" in result.content
 
 
-def test_tool_call_router_returns_tool_result_for_unknown_attachment_handle() -> None:
+def test_tool_call_router_returns_tool_result_for_unknown_image_handle() -> None:
     runtime = ToolCallRouter(
         tool_registry=ToolRegistry(),
         attachment_runtime=AttachmentRuntime(),
@@ -318,15 +319,31 @@ def test_tool_call_router_returns_tool_result_for_unknown_attachment_handle() ->
 
     result = runtime.execute_tool_call(
         ProviderToolCall(
-            id="call_recall",
-            name="recall_context",
+            id="call_load_image",
+            name="load_image",
             arguments={"handle": "att:missing"},
         ),
     )
 
-    assert result.tool_call_id == "call_recall"
-    assert "attachment recall_context failed" in result.content
+    assert result.tool_call_id == "call_load_image"
+    assert "load_image failed" in result.content
     assert "unknown attachment" in result.content
+
+
+def test_tool_call_router_does_not_route_attachment_handles_through_recall_context() -> None:
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        attachment_runtime=AttachmentRuntime(),
+    )
+
+    with pytest.raises(RuntimeError, match="recall runtime is required"):
+        runtime.execute_tool_call(
+            ProviderToolCall(
+                id="call_recall",
+                name="recall_context",
+                arguments={"handle": "att:missing"},
+            ),
+        )
 
 
 def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> None:
@@ -376,7 +393,6 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
     )
 
     assert result.tool_call_id == "call_recall"
-    assert "recalled 1 message(s)" in result.content
-    assert [message["content"] for message in messages.materialize_provider_messages()] == [
-        "读取 pyproject.toml",
-    ]
+    assert '<recalled-context source="semantic_recall"' in result.content
+    assert "pyproject.toml" in result.content
+    assert messages.materialize_provider_messages() == []

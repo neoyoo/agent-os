@@ -108,6 +108,7 @@ def test_agent_builder_default_path_includes_context_protocol_tools() -> None:
 
     tool_names = {spec.function.name for spec in provider.requests[0].tools}
     assert CONTEXT_PROTOCOL_TOOL_NAMES.issubset(tool_names)
+    assert "load_image" in tool_names
     assert agent.query_loop.tool_call_router is not None
     assert agent.query_loop.tool_call_router.recall_runtime is not None
     assert result.content == "schema declared"
@@ -150,17 +151,21 @@ def test_agent_builder_wires_recall_context_to_compression_index() -> None:
     result = agent.run("Current task")
 
     assert result.content == "recalled done"
-    assert provider_message_to_dict(provider.requests[2].messages[0]) == {
-        "role": "user",
-        "content": "First detail",
-    }
-    assert provider_message_to_dict(provider.requests[2].messages[1]) == {
-        "role": "assistant",
-        "content": "Captured first history.",
-    }
+    assert "First detail" not in str(
+        [provider_message_to_dict(message) for message in provider.requests[2].messages[:-1]],
+    )
     assert provider_message_to_dict(provider.requests[2].messages[-1]) == {
         "role": "tool",
-        "content": "context tool recall_context applied; recalled 2 message(s)",
+        "content": (
+            '<recalled-context source="compressed_history" handle="seg_1">\n'
+            '  <message role="user" id="msg_1">\n'
+            "    First detail\n"
+            "  </message>\n"
+            '  <message role="assistant" id="msg_2">\n'
+            "    Captured first history.\n"
+            "  </message>\n"
+            "</recalled-context>"
+        ),
         "tool_call_id": "call_recall",
     }
 

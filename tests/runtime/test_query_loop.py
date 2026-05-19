@@ -96,7 +96,7 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
     assert "Attachment att_1" in second_user.content
 
 
-def test_query_loop_recalls_attachment_through_recall_context_namespace() -> None:
+def test_query_loop_loads_image_through_load_image_tool() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
     attachments = AttachmentRuntime()
@@ -110,8 +110,8 @@ def test_query_loop_recalls_attachment_through_recall_context_namespace() -> Non
             ProviderResponse(
                 tool_calls=[
                     ProviderToolCall(
-                        id="call_recall",
-                        name="recall_context",
+                        id="call_load_image",
+                        name="load_image",
                         arguments={"handle": f"att:{attachment.handle}"},
                     ),
                 ],
@@ -142,7 +142,7 @@ def test_query_loop_recalls_attachment_through_recall_context_namespace() -> Non
     assert result == "inspected"
     assert provider.requests[1].messages[-1] == UserMessage(
         content=(
-            TextPart(f"Recalled attachment {attachment.handle} for inspection."),
+            TextPart(f"Loaded image {attachment.handle} for inspection."),
             ImagePart(attachment),
         ),
     )
@@ -233,8 +233,6 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         provider_message_to_dict(message)["content"]
         for message in recalled_request.messages
     ] == [
-        "First detail",
-        "Captured first history.",
         "Current task",
         "Second answer.",
     ]
