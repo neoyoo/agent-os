@@ -415,7 +415,7 @@ class OpenAICompatibleProvider:
                     {"id": f"call_{index}", "name": "", "arguments": ""},
                 )
                 tool_call_id = raw_tool_call.get("id")
-                if isinstance(tool_call_id, str):
+                if isinstance(tool_call_id, str) and tool_call_id:
                     builder["id"] = tool_call_id
                 function = raw_tool_call.get("function")
                 name_delta = None
@@ -558,7 +558,7 @@ class OpenAICompatibleProvider:
                     {"id": f"call_{index}", "name": "", "arguments": ""},
                 )
                 tool_call_id = raw_tool_call.get("id")
-                if isinstance(tool_call_id, str):
+                if isinstance(tool_call_id, str) and tool_call_id:
                     builder["id"] = tool_call_id
                 function = raw_tool_call.get("function")
                 name_delta = None

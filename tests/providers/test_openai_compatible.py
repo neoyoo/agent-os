@@ -469,6 +469,44 @@ def test_openai_compatible_stream_generates_tool_call_id_when_missing() -> None:
     )
 
 
+def test_openai_compatible_stream_ignores_empty_tool_call_id_delta() -> None:
+    transport = FakeStreamTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "",
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": "{}",
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.example/v1",
+        model="qwen-test",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    completed = [event for event in events if isinstance(event, ProviderStreamCompleted)]
+    assert completed[0].response.tool_calls[0].id == "call_0"
+
+
 def test_openai_compatible_provider_rejects_system_messages_in_active_window() -> None:
     try:
         ProviderRequest(
