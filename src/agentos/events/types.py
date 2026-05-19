@@ -183,7 +183,7 @@ class RecallContextFailedEvent(AgentEvent):
 
 @dataclass(frozen=True, slots=True)
 class RecallContextInjectedEvent(AgentEvent):
-    """recall_context 已注入 temporary refs。"""
+    """recall_context 已解析出可返回消息。"""
 
     handle: str = ""
     message_ids: tuple[str, ...] = ()

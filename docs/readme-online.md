@@ -144,17 +144,22 @@ ProviderRequest(
 | `update_state` | 更新一个已声明 working state 字段 |
 | `extend_schema` | 在已有 schema 上追加字段 |
 | `start_chapter` | 开启新 chapter，并重置 working state |
-| `recall_context` | 按 handle 或 query 恢复压缩片段关联的原始消息 |
+| `recall_context` | 按 handle 或 query 恢复压缩文本/历史，并以 tool result 返回 |
+| `load_image` | 将已上传图片附件加载到当前 turn 的后续 provider requests |
 
-`ToolCallRouter.tool_specs()` 会把这些 context tools 与外部工具、skill tool、MCP tools 一起作为 provider tools 暴露；`ToolCallRouter.execute_tool_call()` 会把 context tools 路由到 `ContextRuntime` 或 `RecallRuntime`。
+`ToolCallRouter.tool_specs()` 会把这些 context tools 与外部工具、skill tool、MCP tools 一起作为 provider tools 暴露；`ToolCallRouter.execute_tool_call()` 会把 context tools 路由到 `ContextRuntime`、`RecallRuntime` 或 `AttachmentRuntime`。
 
-源码来源：[`src/agentos/context_protocol.py`](../src/agentos/context_protocol.py)，[`src/agentos/capabilities/router.py`](../src/agentos/capabilities/router.py)，[`src/agentos/context/runtime.py`](../src/agentos/context/runtime.py)，[`src/agentos/recall/runtime.py`](../src/agentos/recall/runtime.py)，[`tests/architecture/test_public_api.py`](../tests/architecture/test_public_api.py)
+源码来源：[`src/agentos/context_protocol.py`](../src/agentos/context_protocol.py)，[`src/agentos/capabilities/router.py`](../src/agentos/capabilities/router.py)，[`src/agentos/context/runtime.py`](../src/agentos/context/runtime.py)，[`src/agentos/recall/runtime.py`](../src/agentos/recall/runtime.py)，[`src/agentos/attachments/runtime.py`](../src/agentos/attachments/runtime.py)，[`tests/architecture/test_public_api.py`](../tests/architecture/test_public_api.py)
 
 ### 3.3 Compression And Recall Flow
 
-`CompressionRuntime.maybe_compress()` 在 provider request 构建前运行。它跳过 temporary recalled refs，读取 active messages，交给 `Evictor` 选择要压缩的 message ids，用 compressor 生成 `CompressedSegmentPackage`，先写 memory sink，再把 LLM 可见 segment 追加到 `ContextRuntime`，记录 `CompressionIndex`，最后从 active window 移除 refs。
+`CompressionRuntime.maybe_compress()` 在 provider request 构建前运行。它读取 active messages，交给 `Evictor` 选择要压缩的 message ids，用 compressor 生成 `CompressedSegmentPackage`，先写 memory sink，再把 LLM 可见 segment 追加到 `ContextRuntime`，记录 `CompressionIndex`，最后从 active window 移除 refs。
 
-`RecallRuntime.recall_context()` 支持两条路径：按 handle 从 `CompressionIndex` 找 source refs；按 query 需要 `MemoryRuntime` 和 `session_id`，先查 recall index，再按 handle 恢复原始消息。召回消息会 hydrate 到本地 `MessageStore`，并作为 temporary refs 注入下一次 provider request；`MessageRuntime.materialize_provider_messages()` 消费后清除 temporary refs。
+`RecallRuntime.recall_context()` 支持两条路径：按 handle 从 `CompressionIndex` 找 source refs；按 query 需要 `MemoryRuntime` 和 `session_id`，先查 recall index，再按 handle 恢复原始消息。`ToolCallRouter` 会把召回消息格式化为 `<recalled-context>` tool result，随后作为标准 tool result 进入消息序列；它不会伪装成新的 user/assistant message，也不会写入 system prompt。
+
+图片附件走独立的 `AttachmentRuntime`。首轮上传的图片会作为 user message 的 `ImagePart` 投影给 provider；后续如果模型需要重新查看图片，必须调用 `load_image(handle="att:...")`。调用后，该图片在当前 turn 的后续所有 provider requests 中持续可见；turn 结束时 SDK 自动清空已加载图片列表。下一个 turn 如需引用同一附件，模型必须显式重新调用 `load_image`。
+
+**MIME types**: `AttachmentRuntime` 仅接受 `image/gif`、`image/jpeg`、`image/png`、`image/webp`。上传 PDF 或其他类型将抛 `AttachmentError("unsupported attachment MIME type")`。`FilePart` 类仍保留，直接构造 provider message 不受影响。
 
 源码来源：[`src/agentos/runtime/query_loop.py`](../src/agentos/runtime/query_loop.py)，[`src/agentos/compression/runtime.py`](../src/agentos/compression/runtime.py)，[`src/agentos/compression/index.py`](../src/agentos/compression/index.py)，[`src/agentos/compression/compressor.py`](../src/agentos/compression/compressor.py)，[`src/agentos/recall/runtime.py`](../src/agentos/recall/runtime.py)，[`src/agentos/messages/runtime.py`](../src/agentos/messages/runtime.py)，[`tests/compression/test_runtime.py`](../tests/compression/test_runtime.py)，[`tests/recall/test_runtime.py`](../tests/recall/test_runtime.py)
 
