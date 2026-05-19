@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry
@@ -7,12 +8,16 @@ from agentos.capabilities.mcp import (
     MCPToolAdapter,
     MCPToolInfo,
 )
-from agentos.capabilities.skills import SkillRegistry, register_skill_loader_tool
+from agentos.capabilities.skills import (
+    FileSystemSkillSource,
+    SkillRegistry,
+    register_skill_loader_tools,
+)
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.context.projection import CapabilityPlane
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
-from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime import AsyncQueryLoop, ProviderRequestBuilder, QueryLoop
 
 
 class FakeMCPClient:
@@ -46,9 +51,12 @@ def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None
         ),
         encoding="utf-8",
     )
-    skill_registry = SkillRegistry.from_paths([tmp_path])
+    async def load_registry() -> SkillRegistry:
+        return await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
+
+    skill_registry = asyncio.run(load_registry())
     tool_registry = ToolRegistry()
-    register_skill_loader_tool(tool_registry, skill_registry)
+    register_skill_loader_tools(tool_registry, skill_registry)
     messages = MessageRuntime()
     router = ToolCallRouter(tool_registry=tool_registry)
     provider = FakeProvider(
@@ -66,8 +74,9 @@ def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None
             "I will follow the review skill.",
         ],
     )
-    loop = QueryLoop(
-        context_runtime=ContextRuntime(),
+    context_runtime = ContextRuntime()
+    loop = AsyncQueryLoop(
+        context_runtime=context_runtime,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
             context_renderer=ContextRenderer(
@@ -82,7 +91,7 @@ def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None
         tool_call_router=router,
     )
 
-    response = loop.run_turn("Review this code")
+    response = asyncio.run(loop.run_turn("Review this code"))
 
     assert response == "I will follow the review skill."
     assert "# Review Body" in provider.requests[1].messages[-1]["content"]

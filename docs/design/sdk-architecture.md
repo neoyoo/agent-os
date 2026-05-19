@@ -51,6 +51,11 @@ ai-knowledge 模块体系决定 SDK 的工程骨架。
 | `channel-remote` | `channels/` | CLI / HTTP / 服务化入口 |
 | `sandbox-isolation` | `policies/security.py`, `capabilities/executor.py` | 工具权限和执行隔离 |
 
+`capabilities/skills.py` 的内容来源边界是 async `SkillContentSource`。
+`SkillRegistry.aload(...)` 只在启动阶段加载 metadata，`load_skill` 和
+`load_skill_resource` 作为 async tool handler 执行，供 Redis、HTTP 或
+filesystem-backed source 在不阻塞 async query loop 的情况下按需加载正文和资源。
+
 ---
 
 ## 3. 目标包结构

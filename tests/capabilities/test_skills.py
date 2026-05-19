@@ -1,12 +1,14 @@
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.skills import (
+    FileSystemSkillSource,
     SkillRegistry,
     builtin_schema_template_skill,
-    register_skill_loader_tool,
+    register_skill_loader_tools,
 )
 from agentos.providers import ProviderToolCall
 
@@ -47,10 +49,15 @@ def test_skill_registry_discovers_flat_directory_and_learned_layouts(
         "# Repo Style\nUse agentos imports.\n",
     )
 
-    registry = SkillRegistry.from_paths(
-        [tmp_path],
-        allowed={"systematic-debugging", "code-review"},
-    )
+    async def load_registry() -> SkillRegistry:
+        return await SkillRegistry.aload(
+            FileSystemSkillSource(
+                [tmp_path],
+                allowed={"systematic-debugging", "code-review"},
+            ),
+        )
+
+    registry = asyncio.run(load_registry())
 
     declarations = registry.capability_declarations()
     assert [(item.name, item.when_to_use) for item in declarations] == [
@@ -58,7 +65,8 @@ def test_skill_registry_discovers_flat_directory_and_learned_layouts(
         ("systematic-debugging", "遇到 bug 或测试失败时使用。"),
         ("code-review", "审查已完成改动时使用。"),
     ]
-    assert registry.load("repo-style").content == "# Repo Style\nUse agentos imports.\n"
+    loaded = asyncio.run(registry.load("repo-style"))
+    assert loaded.content == "# Repo Style\nUse agentos imports.\n"
 
 
 def test_skill_loader_tool_returns_content_or_deterministic_error(
@@ -73,25 +81,29 @@ def test_skill_loader_tool_returns_content_or_deterministic_error(
         ),
         "# Debugging\nRead errors first.\n",
     )
-    skills = SkillRegistry.from_paths([tmp_path])
-    tools = ToolRegistry()
-    register_skill_loader_tool(tools, skills)
-    router = ToolCallRouter(tool_registry=tools)
+    async def run() -> tuple[object, object]:
+        skills = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
+        tools = ToolRegistry()
+        register_skill_loader_tools(tools, skills)
+        router = ToolCallRouter(tool_registry=tools)
 
-    loaded = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="load_skill",
-            arguments={"skill_name": "systematic-debugging"},
-        ),
-    )
-    missing = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_2",
-            name="load_skill",
-            arguments={"skill_name": "unknown"},
-        ),
-    )
+        loaded = await router.async_execute_tool_call(
+            ProviderToolCall(
+                id="call_1",
+                name="load_skill",
+                arguments={"skill_name": "systematic-debugging"},
+            ),
+        )
+        missing = await router.async_execute_tool_call(
+            ProviderToolCall(
+                id="call_2",
+                name="load_skill",
+                arguments={"skill_name": "unknown"},
+            ),
+        )
+        return loaded, missing
+
+    loaded, missing = asyncio.run(run())
 
     assert loaded.tool_call_id == "call_1"
     assert "# Skill: systematic-debugging" in loaded.content
@@ -115,7 +127,10 @@ def test_skill_frontmatter_supports_yaml_multiline_values(tmp_path: Path) -> Non
         "# Planning\nWrite a plan.\n",
     )
 
-    registry = SkillRegistry.from_paths([tmp_path])
+    async def load_registry() -> SkillRegistry:
+        return await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
+
+    registry = asyncio.run(load_registry())
 
     assert registry.capability_declarations()[0].when_to_use == (
         "第一行规则。\n第二行规则。"
@@ -123,9 +138,12 @@ def test_skill_frontmatter_supports_yaml_multiline_values(tmp_path: Path) -> Non
 
 
 def test_builtin_schema_template_skill_is_available_but_not_special_cased() -> None:
-    registry = SkillRegistry(builtin_skills=[builtin_schema_template_skill()])
+    async def load_registry() -> SkillRegistry:
+        return await SkillRegistry.aload(builtin_skills=[builtin_schema_template_skill()])
 
-    result = registry.load("schema-template")
+    registry = asyncio.run(load_registry())
+
+    result = asyncio.run(registry.load("schema-template"))
 
     assert "declare_schema" in result.content
     assert "update_state" in result.content
@@ -136,5 +154,8 @@ def test_skill_registry_rejects_duplicate_builtin_names() -> None:
     first = builtin_schema_template_skill()
     second = builtin_schema_template_skill()
 
+    async def load_registry() -> SkillRegistry:
+        return await SkillRegistry.aload(builtin_skills=[first, second])
+
     with pytest.raises(ValueError, match="duplicate skill"):
-        SkillRegistry(builtin_skills=[first, second])
+        asyncio.run(load_registry())

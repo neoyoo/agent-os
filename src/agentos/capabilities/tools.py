@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from agentos.providers import (
     ProviderFunctionSpec,
@@ -10,11 +11,11 @@ from agentos.providers import (
 ToolKind = Literal["external", "context", "skill", "mcp"]
 
 
-class ToolHandler(Protocol):
-    """外部工具 handler。"""
+ToolHandler = Callable[[dict[str, object]], str]
+"""同步外部工具 handler。"""
 
-    def __call__(self, arguments: dict[str, object]) -> str:
-        """执行工具并返回可写入 tool result 的字符串。"""
+AsyncToolHandler = Callable[[dict[str, object]], Awaitable[str]]
+"""异步外部工具 handler。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +25,7 @@ class RegisteredTool:
     name: str
     description: str
     parameters: dict[str, object]
-    handler: ToolHandler
+    handler: ToolHandler | AsyncToolHandler
     kind: ToolKind = "external"
     metadata: dict[str, object] = field(default_factory=dict)
 
