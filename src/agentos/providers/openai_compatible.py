@@ -1,9 +1,10 @@
 import copy
 import json
 import socket
+import time
 import warnings
 from collections.abc import AsyncIterator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -275,6 +276,7 @@ class OpenAICompatibleProvider:
     async_transport: AsyncOpenAICompatibleTransport | None = None
     thinking: dict[str, object] | None = None
     extra_body: dict[str, object] | None = None
+    _fallback_tool_call_ids: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """兼容 legacy timeout，同时把公开配置收敛到 timeout_seconds。"""
@@ -757,10 +759,7 @@ class OpenAICompatibleProvider:
         for index in sorted(tool_builders):
             item = tool_builders[index]
             arguments = item["arguments"] or "{}"
-            tool_call_id = require_tool_call_id(
-                item["id"],
-                provider_name="OpenAI-compatible",
-            )
+            tool_call_id = item["id"] or self._next_fallback_tool_call_id()
             tool_call_name = require_tool_call_name(
                 item["name"],
                 provider_name="OpenAI-compatible",
@@ -776,6 +775,16 @@ class OpenAICompatibleProvider:
                 ),
             )
         return tool_calls
+
+    def _next_fallback_tool_call_id(self) -> str:
+        base_id = f"call_ts_{time.time_ns()}"
+        candidate = base_id
+        suffix = 2
+        while candidate in self._fallback_tool_call_ids:
+            candidate = f"{base_id}_{suffix}"
+            suffix += 1
+        self._fallback_tool_call_ids.add(candidate)
+        return candidate
 
     def _usage(self, raw_usage: object) -> ProviderUsage | None:
         """把 OpenAI-compatible JSON usage 标准化。"""

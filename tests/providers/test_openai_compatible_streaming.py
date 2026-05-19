@@ -385,6 +385,146 @@ def test_openai_compatible_streams_tool_call_deltas() -> None:
     assert events[-1].response.tool_calls[0].arguments == {"path": "pyproject.toml"}
 
 
+def test_openai_compatible_stream_generates_missing_tool_call_id(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.time.time_ns",
+        lambda: 1_700_000_000_000_000_000,
+    )
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": '{"skill_name": "drawing"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    assert isinstance(events[-1], ProviderStreamCompleted)
+    assert events[-1].response.tool_calls[0].id == (
+        "call_ts_1700000000000000000"
+    )
+    assert events[-1].response.tool_calls[0].name == "load_skill"
+    assert events[-1].response.tool_calls[0].arguments == {
+        "skill_name": "drawing",
+    }
+
+
+def test_openai_compatible_stream_generates_unique_missing_tool_call_ids(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.time.time_ns",
+        lambda: 1_700_000_000_000_000_000,
+    )
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "update_state",
+                                        "arguments": '{"field_name": "a", "value": 1}',
+                                    },
+                                },
+                                {
+                                    "index": 1,
+                                    "function": {
+                                        "name": "update_state",
+                                        "arguments": '{"field_name": "b", "value": 2}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    ids = [tool_call.id for tool_call in events[-1].response.tool_calls]
+    assert ids == [
+        "call_ts_1700000000000000000",
+        "call_ts_1700000000000000000_2",
+    ]
+
+
+def test_openai_compatible_stream_preserves_provider_tool_call_id() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "provider_call_1",
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": '{"skill_name": "drawing"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    assert events[-1].response.tool_calls[0].id == "provider_call_1"
+
+
 def test_openai_compatible_stream_rejects_non_object_tool_arguments() -> None:
     transport = FakeStreamingTransport(
         [
@@ -422,7 +562,7 @@ def test_openai_compatible_stream_rejects_non_object_tool_arguments() -> None:
         list(provider.stream(ProviderRequest(system="system", messages=[])))
 
 
-def test_openai_compatible_stream_rejects_missing_tool_identity() -> None:
+def test_openai_compatible_stream_rejects_missing_tool_name() -> None:
     transport = FakeStreamingTransport(
         [
             {
@@ -451,5 +591,5 @@ def test_openai_compatible_stream_rejects_missing_tool_identity() -> None:
         transport=transport,
     )
 
-    with pytest.raises(ValueError, match="tool_call requires id"):
+    with pytest.raises(ValueError, match="tool_call requires function name"):
         list(provider.stream(ProviderRequest(system="system", messages=[])))
