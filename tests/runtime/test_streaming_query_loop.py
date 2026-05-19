@@ -6,6 +6,7 @@ from agentos.providers import (
     FakeProvider,
     ProviderContentDelta,
     ProviderResponse,
+    ProviderStreamCancelled,
     ProviderStreamCompleted,
     ProviderStreamFailed,
     ProviderStreamStarted,
@@ -98,6 +99,38 @@ class FailsAfterDeltaProvider:
         )
 
 
+class CancelsBeforeDeltaProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def stream(self, request, options=None):
+        self.calls += 1
+        yield ProviderStreamStarted(request_id=f"cancel_{self.calls}")
+        if self.calls == 1:
+            yield ProviderStreamCancelled(request_id="cancel_1")
+            return
+        yield ProviderStreamCompleted(
+            request_id="cancel_2",
+            response=ProviderResponse(content="recovered", stop_reason="stop"),
+            stop_reason="stop",
+        )
+
+
+class CancelsAfterDeltaProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def stream(self, request, options=None):
+        self.calls += 1
+        yield ProviderStreamStarted(request_id=f"cancel_{self.calls}")
+        yield ProviderContentDelta(
+            request_id=f"cancel_{self.calls}",
+            index=1,
+            text="partial",
+        )
+        yield ProviderStreamCancelled(request_id=f"cancel_{self.calls}")
+
+
 def test_query_loop_yields_content_delta_before_provider_stream_completes() -> None:
     provider = LiveDeltaProvider()
     loop = build_loop(provider)  # type: ignore[arg-type]
@@ -122,6 +155,31 @@ def test_query_loop_does_not_retry_after_streaming_visible_delta() -> None:
     assert isinstance(next(events), TurnStreamStarted)
     assert next(events) == AssistantContentDelta(index=1, text="partial")
     with pytest.raises(RuntimeError, match="stream failed after partial output"):
+        list(events)
+    assert provider.calls == 1
+
+
+def test_provider_stream_cancelled_before_delta_follows_retry_policy() -> None:
+    provider = CancelsBeforeDeltaProvider()
+    loop = build_loop(provider)  # type: ignore[arg-type]
+    loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+
+    events = list(loop.run_turn_stream("hi"))
+
+    assert events[-1] == TurnStreamCompleted(content="recovered")
+    assert provider.calls == 2
+
+
+def test_provider_stream_cancelled_after_delta_does_not_retry() -> None:
+    provider = CancelsAfterDeltaProvider()
+    loop = build_loop(provider)  # type: ignore[arg-type]
+    loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+
+    events = loop.run_turn_stream("hi")
+
+    assert isinstance(next(events), TurnStreamStarted)
+    assert next(events) == AssistantContentDelta(index=1, text="partial")
+    with pytest.raises(RuntimeError, match="provider stream was cancelled"):
         list(events)
     assert provider.calls == 1
 
