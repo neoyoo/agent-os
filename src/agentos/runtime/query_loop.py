@@ -432,15 +432,40 @@ class QueryLoop:
         if policy is not None:
             policy.raise_if_open()
         attempt = 0
+        response: ProviderResponse | None = None
         while True:
+            emitted_visible_delta = False
             try:
-                events = list(self._provider_stream_events(request, provider_options))
+                stream_events = self._provider_stream_events(request, provider_options)
+                for event in stream_events:
+                    if isinstance(event, ProviderContentDelta):
+                        emitted_visible_delta = True
+                        yield AssistantContentDelta(index=event.index, text=event.text)
+                    elif isinstance(event, ProviderThinkingDelta):
+                        if options.show_thinking:
+                            emitted_visible_delta = True
+                            yield AssistantThinkingDelta(
+                                index=event.index,
+                                text=event.text,
+                            )
+                    elif isinstance(event, ProviderStreamCompleted):
+                        response = event.response
+                    elif isinstance(event, ProviderStreamFailed):
+                        raise event.error
+                    elif isinstance(event, ProviderStreamCancelled):
+                        raise RuntimeError(
+                            event.reason or "provider stream was cancelled",
+                        )
                 if policy is not None:
                     policy.record_success()
                 break
             except Exception as error:
                 attempt += 1
-                if policy is None or not policy.should_retry(error, attempt):
+                if (
+                    emitted_visible_delta
+                    or policy is None
+                    or not policy.should_retry(error, attempt)
+                ):
                     if policy is not None:
                         policy.record_failure()
                     raise
@@ -462,21 +487,6 @@ class QueryLoop:
                     delay_seconds=delay,
                 )
                 policy.sleep(delay)
-        response: ProviderResponse | None = None
-
-        for event in events:
-            if isinstance(event, ProviderContentDelta):
-                yield AssistantContentDelta(index=event.index, text=event.text)
-            elif isinstance(event, ProviderThinkingDelta):
-                if options.show_thinking:
-                    yield AssistantThinkingDelta(index=event.index, text=event.text)
-            elif isinstance(event, ProviderStreamCompleted):
-                response = event.response
-            elif isinstance(event, ProviderStreamFailed):
-                raise event.error
-            elif isinstance(event, ProviderStreamCancelled):
-                raise RuntimeError(event.reason or "provider stream was cancelled")
-
         if response is None:
             raise RuntimeError("provider stream ended without completion event")
         return response
