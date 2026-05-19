@@ -1,7 +1,7 @@
 import pytest
 
 from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
-from agentos.capabilities import ToolCallRouter, ToolRegistry
+from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRenderer, ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
@@ -146,6 +146,119 @@ def test_query_loop_recalls_attachment_through_recall_context_namespace() -> Non
             ImagePart(attachment),
         ),
     )
+
+
+def test_duplicate_tool_call_returns_suppression_result() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    calls: list[dict[str, object]] = []
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="record_value",
+            description="Record a value.",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: calls.append(arguments) or "recorded",
+        ),
+    )
+    router = ToolCallRouter(tool_registry=registry, context_runtime=context)
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_1",
+                        name="record_value",
+                        arguments={"value": "same"},
+                    ),
+                    ProviderToolCall(
+                        id="call_2",
+                        name="record_value",
+                        arguments={"value": "same"},
+                    ),
+                ],
+            ),
+            ProviderResponse(content="done"),
+        ],
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("record")
+
+    assert result == "done"
+    assert calls == [{"value": "same"}]
+    provider_messages = [
+        provider_message_to_dict(message) for message in provider.requests[1].messages
+    ]
+    assert provider_messages[-2] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "recorded",
+    }
+    assert provider_messages[-1]["role"] == "tool"
+    assert provider_messages[-1]["tool_call_id"] == "call_2"
+    assert "duplicate tool call ignored" in str(provider_messages[-1]["content"])
+
+
+def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    calls: list[dict[str, object]] = []
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="record_value",
+            description="Record a value.",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: calls.append(arguments) or "recorded",
+        ),
+    )
+    router = ToolCallRouter(tool_registry=registry, context_runtime=context)
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_1",
+                        name="record_value",
+                        arguments={"value": "first"},
+                    ),
+                    ProviderToolCall(
+                        id="call_2",
+                        name="record_value",
+                        arguments={"value": "second"},
+                    ),
+                ],
+            ),
+            ProviderResponse(content="done"),
+        ],
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("record")
+
+    assert result == "done"
+    assert calls == [{"value": "first"}, {"value": "second"}]
 
 
 def test_query_loop_rejects_truncated_provider_final_response() -> None:
