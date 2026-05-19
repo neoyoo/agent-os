@@ -152,17 +152,18 @@ def test_agent_builder_wires_recall_context_to_compression_index() -> None:
     assert result.content == "recalled done"
     assert provider_message_to_dict(provider.requests[2].messages[0]) == {
         "role": "user",
-        "content": "First detail",
+        "content": "Current task",
     }
-    assert provider_message_to_dict(provider.requests[2].messages[1]) == {
-        "role": "assistant",
-        "content": "Captured first history.",
-    }
-    assert provider_message_to_dict(provider.requests[2].messages[-1]) == {
+    tool_message = provider_message_to_dict(provider.requests[2].messages[-1])
+    assert tool_message == {
         "role": "tool",
-        "content": "context tool recall_context applied; recalled 2 message(s)",
+        "content": tool_message["content"],
         "tool_call_id": "call_recall",
     }
+    assert '<recalled-context source="compressed_history" handle="seg_1">' in str(
+        tool_message["content"],
+    )
+    assert "First detail" in str(tool_message["content"])
 
 
 def test_agent_builder_with_compression_creates_compression_runtime() -> None:

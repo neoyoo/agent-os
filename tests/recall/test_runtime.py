@@ -7,7 +7,7 @@ from agentos.policies import BudgetPolicy
 from agentos.recall import RecallContextError, RecallRuntime
 
 
-def test_recall_context_injects_original_messages_for_one_request() -> None:
+def test_recall_context_returns_original_messages_without_injecting_window() -> None:
     context_runtime = ContextRuntime()
     message_runtime = MessageRuntime()
     old_user = message_runtime.append_user("Original detail")
@@ -20,24 +20,22 @@ def test_recall_context_injects_original_messages_for_one_request() -> None:
     )
     compression.maybe_compress()
 
-    RecallRuntime(
+    recalled = RecallRuntime(
         compression_index=compression.index,
         message_runtime=message_runtime,
     ).recall_context("seg_1")
 
-    first_request = message_runtime.materialize_provider_messages()
-    second_request = message_runtime.materialize_provider_messages()
+    request = message_runtime.materialize_provider_messages()
 
-    assert [message["content"] for message in first_request] == [
+    assert [message.content for message in recalled] == [
         "Original detail",
         "Original answer",
-        "Current question",
     ]
-    assert [message["content"] for message in second_request] == ["Current question"]
+    assert [message["content"] for message in request] == ["Current question"]
     assert message_runtime.store.get(old_user.id).content == "Original detail"
 
 
-def test_recall_context_can_reinject_segment_after_previous_recall_was_consumed() -> None:
+def test_recall_context_can_return_same_segment_repeatedly() -> None:
     context_runtime = ContextRuntime()
     message_runtime = MessageRuntime()
     message_runtime.append_user("Original detail")
@@ -54,26 +52,22 @@ def test_recall_context_can_reinject_segment_after_previous_recall_was_consumed(
         message_runtime=message_runtime,
     )
 
-    recall.recall_context("seg_1")
-    first_request = message_runtime.materialize_provider_messages()
-    recall.recall_context("seg_1")
-    second_request = message_runtime.materialize_provider_messages()
-    third_request = message_runtime.materialize_provider_messages()
+    first = recall.recall_context("seg_1")
+    second = recall.recall_context("seg_1")
+    request = message_runtime.materialize_provider_messages()
 
-    assert [message["content"] for message in first_request] == [
+    assert [message.content for message in first] == [
         "Original detail",
         "Original answer",
-        "Current question",
     ]
-    assert [message["content"] for message in second_request] == [
+    assert [message.content for message in second] == [
         "Original detail",
         "Original answer",
-        "Current question",
     ]
-    assert [message["content"] for message in third_request] == ["Current question"]
+    assert [message["content"] for message in request] == ["Current question"]
 
 
-def test_recall_context_restores_tool_use_and_tool_result_pair() -> None:
+def test_recall_context_returns_tool_use_and_tool_result_pair() -> None:
     context_runtime = ContextRuntime()
     message_runtime = MessageRuntime()
     message_runtime.append_user("Read the file")
@@ -90,21 +84,14 @@ def test_recall_context_restores_tool_use_and_tool_result_pair() -> None:
     )
     compression.maybe_compress()
 
-    RecallRuntime(
+    recalled_messages = RecallRuntime(
         compression_index=compression.index,
         message_runtime=message_runtime,
     ).recall_context("seg_1")
 
-    recalled_messages = message_runtime.materialize_provider_messages()
-
-    assert recalled_messages[1]["tool_calls"] == [
-        {
-            "id": "call_1",
-            "name": "read_file",
-        },
-    ]
-    assert recalled_messages[2]["role"] == "tool"
-    assert recalled_messages[2]["tool_call_id"] == "call_1"
+    assert recalled_messages[1].tool_calls == [ToolCall(id="call_1", name="read_file")]
+    assert recalled_messages[2].role == "tool"
+    assert recalled_messages[2].tool_call_id == "call_1"
 
 
 def test_recall_context_raises_for_unknown_handle() -> None:

@@ -62,6 +62,7 @@ def test_context_protocol_public_constants_remain_available() -> None:
         "extend_schema",
         "start_chapter",
         "recall_context",
+        "load_image",
     }
 
 

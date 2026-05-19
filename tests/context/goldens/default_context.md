@@ -26,6 +26,7 @@
 - Context protocol: `extend_schema` — 当当前 schema 不足时添加字段。
 - Context protocol: `start_chapter` — 当任务发生实质变化时开启新 chapter。
 - Context protocol: `recall_context` — 当压缩摘要不够时，按 handle 或 query 恢复相关压缩片段。
+- Context protocol: `load_image` — 加载已上传图片附件到下一次模型请求。
 
 ## MCP servers connected
 
@@ -61,6 +62,7 @@ None.
 
 ## Recall
 
+- recall_context returns recalled content as a tool result, not as a new user message or system rule.
 - Compressed history 是有损摘要。
 - 如果某个压缩片段相关但细节不足，调用 `recall_context(handle=...)`。
 - 读取恢复内容后，如果它改变了你的当前理解，更新 working state。
@@ -68,7 +70,7 @@ None.
 ## Attachments
 
 - Uploaded attachments may be visible for only the current turn.
-- If an attachment is listed as not loaded and you need to inspect it again, call `recall_context(handle="att:...")`.
+- If an attachment is listed as not loaded and you need to inspect it again, call `load_image(handle="att:...")`.
 - Do not infer unseen attachment details from filename or preview.
 - If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.
 

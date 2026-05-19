@@ -46,13 +46,6 @@ class MessageRuntime:
             tool_call_id=tool_call_id,
         )
 
-    def inject_temporary_recalled(self, message_ids: list[str]) -> None:
-        """注入一次性召回 refs，供下一次 provider request 使用。"""
-
-        for message_id in message_ids:
-            self.store.get(message_id)
-        self.active_window.prepend_temporary(message_ids)
-
     def hydrate_messages(self, messages: list[Message]) -> None:
         """把外部存储召回的原始消息水合进本地 MessageStore。"""
 

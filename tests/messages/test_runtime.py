@@ -40,29 +40,6 @@ def test_tool_call_provider_dict_deep_copies_arguments() -> None:
     assert provider_dict["arguments"] == {"path": {"value": "pyproject.toml"}}
 
 
-def test_temporary_recalled_refs_are_deduplicated_before_next_request() -> None:
-    runtime = MessageRuntime()
-    first = runtime.append_user("Original detail")
-    runtime.append_user("Current task")
-    runtime.active_window.remove_refs([first.id], runtime.store)
-
-    runtime.inject_temporary_recalled([first.id])
-    runtime.inject_temporary_recalled([first.id])
-
-    first_request = runtime.materialize_provider_messages()
-    second_request = runtime.materialize_provider_messages()
-
-    assert [
-        provider_message_to_dict(message)["content"] for message in first_request
-    ] == [
-        "Original detail",
-        "Current task",
-    ]
-    assert [
-        provider_message_to_dict(message)["content"] for message in second_request
-    ] == ["Current task"]
-
-
 def test_message_store_is_append_only_when_active_refs_are_removed() -> None:
     runtime = MessageRuntime()
     user = runtime.append_user("Old")
@@ -92,30 +69,3 @@ def test_active_window_protects_tool_use_tool_result_pairs() -> None:
     runtime.active_window.remove_refs([assistant.id, result.id], runtime.store)
 
     assert runtime.materialize_active() == []
-
-
-def test_tool_pair_validation_ignores_temporary_recalled_refs() -> None:
-    runtime = MessageRuntime()
-    old_assistant = runtime.append_assistant(
-        "Old tool call",
-        tool_calls=[ToolCall(id="call_1", name="read_file")],
-    )
-    old_result = runtime.append_tool_result("call_1", "old file content")
-    runtime.active_window.remove_refs([old_assistant.id, old_result.id], runtime.store)
-
-    current_assistant = runtime.append_assistant(
-        "Current tool call",
-        tool_calls=[ToolCall(id="call_1", name="read_file")],
-    )
-    current_result = runtime.append_tool_result("call_1", "current file content")
-    runtime.inject_temporary_recalled([old_assistant.id, old_result.id])
-
-    runtime.active_window.remove_refs(
-        [current_assistant.id, current_result.id],
-        runtime.store,
-    )
-
-    assert [message.id for message in runtime.materialize_active()] == [
-        old_assistant.id,
-        old_result.id,
-    ]

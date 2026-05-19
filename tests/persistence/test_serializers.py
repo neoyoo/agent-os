@@ -65,7 +65,7 @@ def test_message_runtime_round_trips_originals_active_refs_and_next_id() -> None
     )
     tool = runtime.append_tool_result("call_1", "Skill body")
     runtime.active_window.remove_refs([user.id], runtime.store)
-    runtime.inject_temporary_recalled([user.id])
+    runtime.active_window.prepend_temporary([user.id])
 
     restored = message_runtime_from_dict(message_runtime_to_dict(runtime))
     new_message = restored.append_user("Next")

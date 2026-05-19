@@ -10,6 +10,7 @@ from agentos.context_protocol import (
     CONTEXT_PROTOCOL_TOOL_NAMES,
     context_protocol_tool_specs,
 )
+from agentos.messages import Message
 from agentos.policies import SecurityPolicy
 from agentos.providers import ProviderToolCall, ProviderToolSpec
 from agentos.recall import RecallRuntime
@@ -83,6 +84,8 @@ class ToolCallRouter:
 
         if tool_call.name == "recall_context":
             return self._execute_recall_context(tool_call)
+        if tool_call.name == "load_image":
+            return self._execute_load_image(tool_call)
 
         if self.context_runtime is None:
             raise RuntimeError("context runtime is required for context tools")
@@ -116,12 +119,10 @@ class ToolCallRouter:
     ) -> ToolExecutionResult:
         """把 recall_context 工具调用交给 RecallRuntime。"""
 
-        arguments = tool_call.arguments
-        handle = arguments.get("handle")
-        if isinstance(handle, str) and handle.startswith("att:"):
-            return self._execute_attachment_recall(tool_call, handle)
         if self.recall_runtime is None:
             raise RuntimeError("recall runtime is required for recall_context")
+        arguments = tool_call.arguments
+        handle = arguments.get("handle")
         query = arguments.get("query")
         limit = int(arguments.get("limit", 1))
         recalled_messages = self.recall_runtime.recall_context(
@@ -131,40 +132,71 @@ class ToolCallRouter:
         )
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
-            content=f"context tool recall_context applied; recalled "
-            f"{len(recalled_messages)} message(s)",
+            content=self._format_recalled_context(
+                handle=None if handle is None else str(handle),
+                query=None if query is None else str(query),
+                messages=recalled_messages,
+            ),
         )
 
-    def _execute_attachment_recall(
+    def _format_recalled_context(
+        self,
+        *,
+        handle: str | None,
+        query: str | None,
+        messages: list[Message],
+    ) -> str:
+        source = "compressed_history" if handle is not None else "semantic_recall"
+        identifier = handle if handle is not None else query or ""
+        lines = [
+            f'<recalled-context source="{source}" handle="{self._escape_attr(identifier)}">',
+        ]
+        for message in messages:
+            lines.extend(
+                [
+                    f'  <message role="{message.role}" id="{self._escape_attr(message.id)}">',
+                    self._indent_text(message.content, "    "),
+                    "  </message>",
+                ],
+            )
+        lines.append("</recalled-context>")
+        return "\n".join(lines)
+
+    def _execute_load_image(
         self,
         tool_call: ProviderToolCall,
-        handle: str,
     ) -> ToolExecutionResult:
-        """把 att: recall_context handle 交给 AttachmentRuntime。"""
+        """把 load_image 工具调用交给 AttachmentRuntime。"""
 
         if self.attachment_runtime is None:
-            raise RuntimeError("attachment runtime is required for attachment recall")
-        recall_attachment_handle = getattr(
+            raise RuntimeError("attachment runtime is required for load_image")
+        load_image_handle = getattr(
             self.attachment_runtime,
-            "recall_attachment_handle",
+            "load_image_handle",
             None,
         )
-        if not callable(recall_attachment_handle):
+        if not callable(load_image_handle):
             raise RuntimeError(
-                "attachment_runtime must define recall_attachment_handle()",
+                "attachment_runtime must define load_image_handle()",
+            )
+        handle = tool_call.arguments.get("handle")
+        if not isinstance(handle, str):
+            return ToolExecutionResult(
+                tool_call_id=tool_call.id,
+                content="load_image failed: handle is required",
             )
         try:
-            attachment = recall_attachment_handle(handle)
+            attachment = load_image_handle(handle)
         except AttachmentError as error:
             return ToolExecutionResult(
                 tool_call_id=tool_call.id,
-                content=f"attachment recall_context failed: {error}",
+                content=f"load_image failed: {error}",
             )
         attachment_handle = str(getattr(attachment, "handle", handle))
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
             content=(
-                "attachment recall_context applied; scheduled "
+                "load_image applied; scheduled "
                 f"{attachment_handle} for next provider request"
             ),
         )
@@ -190,3 +222,15 @@ class ToolCallRouter:
                 ),
             )
         return fields
+
+    def _escape_attr(self, value: str) -> str:
+        return (
+            value.replace("&", "&amp;")
+            .replace('"', "&quot;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    def _indent_text(self, value: str, prefix: str) -> str:
+        escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return "\n".join(f"{prefix}{line}" for line in escaped.splitlines() or [""])

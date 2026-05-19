@@ -111,10 +111,11 @@ def test_default_renderer_omits_empty_working_state_sections() -> None:
     assert "# Capability Plane" in rendered
 
 
-def test_context_renderer_documents_attachment_recall_rules() -> None:
+def test_context_renderer_documents_image_attachment_rules() -> None:
     rendered = ContextRenderer().render(ContextState())
 
-    assert 'recall_context(handle="att:...")' in rendered
+    assert 'load_image(handle="att:...")' in rendered
+    assert 'recall_context(handle="att:' not in rendered
     assert "currently loaded attachments" in rendered
     assert "Attachment placeholders / previews" in rendered
 
@@ -197,6 +198,7 @@ def test_default_renderer_lists_context_protocol_tools() -> None:
         "extend_schema",
         "start_chapter",
         "recall_context",
+        "load_image",
     ]:
         assert f"`{tool_name}`" in rendered
 

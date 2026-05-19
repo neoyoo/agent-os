@@ -201,27 +201,30 @@ class QueryLoop:
         yield TurnStreamStarted(user_message=user_message)
 
         try:
-            response_content = yield from self._run_provider_loop_stream(
-                turn,
-                run_options,
-            )
-        except Exception as error:
-            if turn is not None:
-                turn.fail(str(error))
-            self._emit(
-                TurnFailedEvent(
-                    error=str(error),
-                    **self._event_context(turn),
-                ),
-            )
-            yield TurnStreamFailed(error=error)
-            raise
+            try:
+                response_content = yield from self._run_provider_loop_stream(
+                    turn,
+                    run_options,
+                )
+            except Exception as error:
+                if turn is not None:
+                    turn.fail(str(error))
+                self._emit(
+                    TurnFailedEvent(
+                        error=str(error),
+                        **self._event_context(turn),
+                    ),
+                )
+                yield TurnStreamFailed(error=error)
+                raise
 
-        if turn is not None:
-            turn.complete()
-        self._emit(TurnCompletedEvent(**self._event_context(turn)))
-        self._log("turn_end")
-        yield TurnStreamCompleted(content=response_content)
+            if turn is not None:
+                turn.complete()
+            self._emit(TurnCompletedEvent(**self._event_context(turn)))
+            self._log("turn_end")
+            yield TurnStreamCompleted(content=response_content)
+        finally:
+            self._clear_turn_loaded_images()
 
     def _prepare_user_message(
         self,
@@ -285,6 +288,7 @@ class QueryLoop:
             yield TurnStreamCompleted(content=response_content)
         finally:
             self._clear_runtime_notices()
+            self._clear_turn_loaded_images()
 
     def _clear_runtime_notices(self) -> None:
         """清空 context runtime 中可能残留的一次性 runtime notice。"""
@@ -296,6 +300,18 @@ class QueryLoop:
         )
         if callable(clear_runtime_notices):
             clear_runtime_notices()
+
+    def _clear_turn_loaded_images(self) -> None:
+        """清空 attachment runtime 中的 turn-scoped image state。"""
+
+        attachment_runtime = getattr(self.request_builder, "attachment_runtime", None)
+        clear_turn_loaded_images = getattr(
+            attachment_runtime,
+            "clear_turn_loaded_images",
+            None,
+        )
+        if callable(clear_turn_loaded_images):
+            clear_turn_loaded_images()
 
     def _run_provider_loop_stream(
         self,

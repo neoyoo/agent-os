@@ -19,7 +19,7 @@ class RecallContextError(ValueError):
 
 @dataclass(slots=True)
 class RecallRuntime:
-    """执行 `recall_context` 并注入一次性原文消息。"""
+    """执行 `recall_context` 并返回原文消息。"""
 
     compression_index: CompressionIndex
     message_runtime: MessageRuntime
@@ -35,7 +35,7 @@ class RecallRuntime:
         query: str | None = None,
         limit: int = 1,
     ) -> list[Message]:
-        """按 handle 或 query 恢复原始消息，并供下一次请求使用。"""
+        """按 handle 或 query 恢复原始消息。"""
 
         if (handle is None) == (query is None):
             raise RecallContextError("provide either handle or query for recall_context")
@@ -78,7 +78,6 @@ class RecallRuntime:
             self.message_runtime.store.get(message_id)
             for message_id in source_message_ids
         ]
-        self._inject_messages(recalled_messages)
         from agentos.runtime.event_bus import RecallContextInjectedEvent
 
         self._emit(
@@ -112,7 +111,7 @@ class RecallRuntime:
             query,
             limit,
         )
-        self._inject_messages(recalled_messages)
+        self.message_runtime.hydrate_messages(recalled_messages)
         from agentos.runtime.event_bus import RecallContextInjectedEvent
 
         self._emit(
@@ -123,14 +122,6 @@ class RecallRuntime:
             ),
         )
         return recalled_messages
-
-    def _inject_messages(self, messages: list[Message]) -> None:
-        """水合召回消息并注入一次性 refs。"""
-
-        self.message_runtime.hydrate_messages(messages)
-        self.message_runtime.inject_temporary_recalled(
-            [message.id for message in messages],
-        )
 
     def _emit(self, event: object) -> None:
         """向 EventBus 写入 recall event。"""

@@ -156,29 +156,34 @@ class AsyncQueryLoop:
         yield TurnStreamStarted(user_message=user_message)
 
         try:
-            response_content = ""
-            async for event in self._run_provider_loop_stream(turn, run_options):
-                if isinstance(event, _FinalContent):
-                    response_content = event.content
-                else:
-                    yield event
-        except Exception as error:
-            if turn is not None:
-                turn.fail(str(error))
-            self.sync_loop._emit(
-                TurnFailedEvent(
-                    error=str(error),
-                    **self.sync_loop._event_context(turn),
-                ),
-            )
-            yield TurnStreamFailed(error=error)
-            raise
+            try:
+                response_content = ""
+                async for event in self._run_provider_loop_stream(turn, run_options):
+                    if isinstance(event, _FinalContent):
+                        response_content = event.content
+                    else:
+                        yield event
+            except Exception as error:
+                if turn is not None:
+                    turn.fail(str(error))
+                self.sync_loop._emit(
+                    TurnFailedEvent(
+                        error=str(error),
+                        **self.sync_loop._event_context(turn),
+                    ),
+                )
+                yield TurnStreamFailed(error=error)
+                raise
 
-        if turn is not None:
-            turn.complete()
-        self.sync_loop._emit(TurnCompletedEvent(**self.sync_loop._event_context(turn)))
-        self.sync_loop._log("turn_end")
-        yield TurnStreamCompleted(content=response_content)
+            if turn is not None:
+                turn.complete()
+            self.sync_loop._emit(
+                TurnCompletedEvent(**self.sync_loop._event_context(turn)),
+            )
+            self.sync_loop._log("turn_end")
+            yield TurnStreamCompleted(content=response_content)
+        finally:
+            self.sync_loop._clear_turn_loaded_images()
 
     async def run_continuation_stream(
         self,
@@ -222,6 +227,7 @@ class AsyncQueryLoop:
             yield TurnStreamCompleted(content=response_content)
         finally:
             self.sync_loop._clear_runtime_notices()
+            self.sync_loop._clear_turn_loaded_images()
 
     async def _run_provider_loop_stream(
         self,

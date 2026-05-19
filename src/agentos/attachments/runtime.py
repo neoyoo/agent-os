@@ -10,7 +10,6 @@ from agentos.attachments.types import (
     BytesSource,
 )
 from agentos.providers.messages import (
-    FilePart,
     ImagePart,
     ProviderMessage,
     TextPart,
@@ -24,7 +23,6 @@ DEFAULT_ALLOWED_MIME_TYPES = frozenset(
         "image/jpeg",
         "image/png",
         "image/webp",
-        "application/pdf",
     },
 )
 DEFAULT_MAX_SIZE_BYTES = 25 * 1024 * 1024
@@ -32,7 +30,7 @@ DEFAULT_MAX_SIZE_BYTES = 25 * 1024 * 1024
 
 @dataclass(slots=True)
 class AttachmentRuntime:
-    """管理 session-scoped 附件和 provider request 一次性展开。"""
+    """管理 session-scoped 图片附件和 turn-scoped provider 投影。"""
 
     store: AttachmentStore = field(default_factory=AttachmentStore)
     allowed_mime_types: frozenset[str] = DEFAULT_ALLOWED_MIME_TYPES
@@ -40,7 +38,7 @@ class AttachmentRuntime:
     _next_index: int = 1
     _pending_user_handles: list[str] = field(default_factory=list)
     _pending_user_text_by_handle: dict[str, str] = field(default_factory=dict)
-    _pending_recall_handles: list[str] = field(default_factory=list)
+    _turn_loaded_image_handles: list[str] = field(default_factory=list)
 
     def upload(self, path: str | Path, mime_type: str) -> Attachment:
         """登记本地文件附件。"""
@@ -95,7 +93,7 @@ class AttachmentRuntime:
             return content
         handles = [attachment.handle for attachment in attachments]
         for handle in handles:
-            self.store.get(handle)
+            self._ensure_image_attachment(self.store.get(handle))
         self._pending_user_handles.extend(handles)
         for handle in handles:
             self._pending_user_text_by_handle[handle] = content
@@ -118,42 +116,49 @@ class AttachmentRuntime:
                 f"- preview: {preview}",
                 (
                     "- To inspect it again, call "
-                    f"recall_context(handle=\"att:{attachment.handle}\")."
+                    f"load_image(handle=\"att:{attachment.handle}\")."
                 ),
             ],
         )
 
-    def recall_attachment_handle(self, handle: str) -> Attachment:
-        """处理 recall_context 的 att: handle，并安排下一次 request 展开。"""
+    def load_image_handle(self, handle: str) -> Attachment:
+        """处理 load_image 的 att: handle，并在当前 turn 内持续展开。"""
 
         attachment_handle = self._strip_attachment_namespace(handle)
         attachment = self.store.get(attachment_handle)
-        self._pending_recall_handles.append(attachment.handle)
+        self._ensure_image_attachment(attachment)
+        if attachment.handle not in self._turn_loaded_image_handles:
+            self._turn_loaded_image_handles.append(attachment.handle)
         return attachment
+
+    def clear_turn_loaded_images(self) -> None:
+        """清理当前 turn 通过 load_image 加载的图片状态。"""
+
+        self._turn_loaded_image_handles.clear()
 
     def project_provider_messages(
         self,
         messages: list[ProviderMessage],
     ) -> list[ProviderMessage]:
-        """把待展开附件投影进下一次 provider request，然后消费展开状态。"""
+        """把待展开附件投影进 provider request。"""
 
         user_handles, user_text = self._consume_user_handles()
-        recall_handles = self._consume_recall_handles()
+        image_handles = list(dict.fromkeys(self._turn_loaded_image_handles))
         projected = list(messages)
         if user_handles:
             projected = self._project_user_handles(projected, user_handles, user_text)
-        if recall_handles:
+        if image_handles:
             projected.append(
                 UserMessage(
                     content=(
                         TextPart(
-                            "Recalled attachment "
-                            + ", ".join(recall_handles)
+                            "Loaded image "
+                            + ", ".join(image_handles)
                             + " for inspection.",
                         ),
                         *[
                             self._content_part_for_attachment(self.store.get(handle))
-                            for handle in recall_handles
+                            for handle in image_handles
                         ],
                     ),
                 ),
@@ -198,22 +203,26 @@ class AttachmentRuntime:
         self._pending_user_handles.clear()
         return handles, text
 
-    def _consume_recall_handles(self) -> list[str]:
-        handles = list(dict.fromkeys(self._pending_recall_handles))
-        self._pending_recall_handles.clear()
-        return handles
-
     def _next_handle(self) -> str:
         handle = f"att_{self._next_index}"
         self._next_index += 1
         return handle
 
-    def _content_part_for_attachment(self, attachment: Attachment) -> object:
+    def _content_part_for_attachment(self, attachment: Attachment) -> ImagePart:
         """按 MIME type 选择 canonical provider content part。"""
 
-        if attachment.mime_type.startswith("image/"):
-            return ImagePart(attachment)
-        return FilePart(attachment)
+        self._ensure_image_attachment(attachment)
+        return ImagePart(attachment)
+
+    def _ensure_image_attachment(self, attachment: Attachment) -> None:
+        if attachment.mime_type not in self.allowed_mime_types:
+            raise AttachmentError(
+                f"unsupported attachment MIME type: {attachment.mime_type}",
+            )
+        if not attachment.mime_type.startswith("image/"):
+            raise AttachmentError(
+                f"only image attachments can be projected: {attachment.mime_type}",
+            )
 
     def _validate_upload(self, *, mime_type: str, size_bytes: int) -> None:
         """执行 v1 最小 MIME 和大小策略。"""
@@ -228,8 +237,8 @@ class AttachmentRuntime:
 
     def _strip_attachment_namespace(self, handle: str) -> str:
         if not handle.startswith("att:"):
-            raise AttachmentError("attachment recall handle must start with 'att:'")
+            raise AttachmentError("attachment handle must start with 'att:'")
         stripped = handle.removeprefix("att:")
         if not stripped:
-            raise AttachmentError("attachment recall handle is empty")
+            raise AttachmentError("attachment handle is empty")
         return stripped

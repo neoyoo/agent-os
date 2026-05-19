@@ -46,7 +46,7 @@ def build_memory_runtime() -> tuple[MemoryRuntime, InMemoryDurableSessionStore]:
     return runtime, durable_store
 
 
-def test_recall_context_query_hydrates_messages_and_injects_once() -> None:
+def test_recall_context_query_hydrates_messages_without_injecting_window() -> None:
     memory_runtime, _ = build_memory_runtime()
     messages = MessageRuntime()
     recall = RecallRuntime(
@@ -59,13 +59,8 @@ def test_recall_context_query_hydrates_messages_and_injects_once() -> None:
     recalled = recall.recall_context(query="pyproject 项目名", limit=1)
 
     assert [message.id for message in recalled] == ["msg_1", "msg_2"]
-    first_request = messages.materialize_provider_messages()
-    second_request = messages.materialize_provider_messages()
-    assert [message["content"] for message in first_request] == [
-        "读取 pyproject.toml",
-        "项目名是 agent-os",
-    ]
-    assert second_request == []
+    assert messages.store.get("msg_1").content == "读取 pyproject.toml"
+    assert messages.materialize_provider_messages() == []
 
 
 def test_recall_context_rejects_handle_and_query_together() -> None:
