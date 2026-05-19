@@ -273,6 +273,7 @@ class OpenAICompatibleProvider:
     transport: OpenAICompatibleTransport | None = None
     async_transport: AsyncOpenAICompatibleTransport | None = None
     thinking: dict[str, object] | None = None
+    extra_body: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         """兼容 legacy timeout，同时把公开配置收敛到 timeout_seconds。"""
@@ -606,13 +607,16 @@ class OpenAICompatibleProvider:
     def _payload(self, request: ProviderRequest) -> dict[str, object]:
         """构造 OpenAI-compatible chat completions payload。"""
 
-        payload: dict[str, object] = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": request.system},
-                *[self._message(message) for message in request.messages],
-            ],
-        }
+        payload: dict[str, object] = dict(self.extra_body or {})
+        payload.update(
+            {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": request.system},
+                    *[self._message(message) for message in request.messages],
+                ],
+            },
+        )
         if request.tools:
             payload["tools"] = [
                 provider_tool_spec_to_dict(tool) for tool in request.tools
