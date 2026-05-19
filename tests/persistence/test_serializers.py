@@ -50,6 +50,33 @@ def test_context_state_round_trips_without_exposing_mutable_lists() -> None:
     assert restored.memory_context == ("User prefers Chinese.",)
 
 
+def test_context_state_round_trips_json_object_working_state() -> None:
+    state = ContextState(
+        working_state_schema=WorkingStateSchema(
+            fields=[
+                WorkingStateField(
+                    name="drawing_info",
+                    type="dict",
+                    purpose="Drawing facts.",
+                ),
+            ],
+        ),
+        working_state={
+            "drawing_info": {
+                "material": "C45",
+                "features": ["V槽", "中心孔"],
+            },
+        },
+    )
+
+    restored = context_state_from_dict(context_state_to_dict(state))
+
+    assert restored.working_state["drawing_info"] == {
+        "material": "C45",
+        "features": ["V槽", "中心孔"],
+    }
+
+
 def test_message_runtime_round_trips_originals_active_refs_and_next_id() -> None:
     runtime = MessageRuntime()
     user = runtime.append_user("Need docs")

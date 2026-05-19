@@ -348,6 +348,32 @@ def test_default_renderer_renders_declared_schema_and_working_state() -> None:
     assert "<c>Keep context ownership inside the context package.</c>" in rendered
 
 
+def test_default_renderer_renders_dict_working_state_as_json() -> None:
+    state = ContextState(
+        working_state_schema=WorkingStateSchema(
+            fields=[
+                WorkingStateField(
+                    name="drawing_info",
+                    type="dict",
+                    purpose="Drawing facts",
+                ),
+            ],
+        ),
+        working_state={
+            "drawing_info": {
+                "material": "C45",
+                "geometry": {"diameter_mm": 272},
+            },
+        },
+    )
+
+    rendered = ContextRenderer().render(state)
+
+    assert "<drawing_info>" in rendered
+    assert '"material": "C45"' in rendered
+    assert '"diameter_mm": 272' in rendered
+
+
 def test_default_renderer_preserves_declared_schema_field_order() -> None:
     state = ContextState(
         working_state_schema=WorkingStateSchema(

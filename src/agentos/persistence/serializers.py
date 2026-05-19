@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from agentos.compression.index import CompressionIndex
 from agentos.context.schema import WorkingStateField, WorkingStateSchema
@@ -19,6 +19,19 @@ from agentos.runtime.session import SessionState
 
 
 JsonDict = dict[str, Any]
+
+
+def json_safe_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): json_safe_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [json_safe_value(item) for item in value]
+    if isinstance(value, list):
+        return [json_safe_value(item) for item in value]
+    return value
 
 
 def working_state_schema_to_dict(schema: WorkingStateSchema) -> JsonDict:
@@ -59,7 +72,7 @@ def context_state_to_dict(state: ContextState) -> JsonDict:
             state.working_state_schema,
         ),
         "working_state": {
-            key: list(value) if isinstance(value, tuple) else value
+            key: json_safe_value(value)
             for key, value in state.working_state.items()
         },
         "compressed_history": [

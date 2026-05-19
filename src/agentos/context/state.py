@@ -1,12 +1,60 @@
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TypeAlias
 
 from agentos.context.schema import WorkingStateSchema
 
 
-WorkingStateValue = str | list[str] | tuple[str, ...]
-WorkingStateSnapshot = Mapping[str, str | tuple[str, ...]]
+class FrozenMapping(Mapping[str, "FrozenWorkingStateValue"]):
+    """Immutable mapping used for JSON-object working state values."""
+
+    def __init__(self, data: Mapping[str, "FrozenWorkingStateValue"]) -> None:
+        self._data = MappingProxyType(dict(data))
+
+    def __getitem__(self, key: str) -> "FrozenWorkingStateValue":
+        return self._data[key]
+
+    def __iter__(self):  # type: ignore[override]
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._data))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return False
+        return self._plain(self) == self._plain(other)
+
+    @classmethod
+    def _plain(cls, value: object) -> object:
+        if isinstance(value, FrozenMapping):
+            value = value._data
+        if isinstance(value, Mapping):
+            return {
+                str(key): cls._plain(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, tuple):
+            return [cls._plain(item) for item in value]
+        return value
+
+
+JsonScalar: TypeAlias = str | int | float | bool | None
+WorkingStateValue: TypeAlias = (
+    JsonScalar
+    | Sequence["WorkingStateValue"]
+    | Mapping[str, "WorkingStateValue"]
+)
+FrozenWorkingStateValue: TypeAlias = (
+    JsonScalar
+    | tuple["FrozenWorkingStateValue", ...]
+    | FrozenMapping
+    | Mapping[str, "FrozenWorkingStateValue"]
+)
+WorkingStateSnapshot = Mapping[str, FrozenWorkingStateValue]
 CompressedHistorySnapshot = tuple["CompressedSegment", ...]
 StringProjectionSnapshot = tuple[str, ...]
 
@@ -25,7 +73,7 @@ class ContextState:
     """由 context 包持有并渲染进默认 prompt 的状态。"""
 
     _working_state_schema: WorkingStateSchema
-    _working_state: dict[str, str | tuple[str, ...]]
+    _working_state: dict[str, FrozenWorkingStateValue]
     _compressed_history: list[CompressedSegment]
     _inherited_state: list[str]
     _memory_context: list[str]
@@ -123,12 +171,19 @@ class ContextState:
     def _coerce_working_state_value(
         self,
         value: WorkingStateValue,
-    ) -> str | tuple[str, ...]:
+    ) -> FrozenWorkingStateValue:
         """复制并冻结 working state 字段值。"""
 
-        if isinstance(value, str):
+        if isinstance(value, (str, int, float, bool)) or value is None:
             return value
-        return tuple(value)
+        if isinstance(value, Mapping):
+            return FrozenMapping(
+                {
+                    str(key): self._coerce_working_state_value(item)
+                    for key, item in value.items()
+                },
+            )
+        return tuple(self._coerce_working_state_value(item) for item in value)
 
     @property
     def working_state_schema(self) -> WorkingStateSchema:

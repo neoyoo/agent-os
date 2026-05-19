@@ -1,4 +1,5 @@
-from typing import Sequence
+import json
+from typing import Mapping, Sequence
 
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_DEFINITIONS
 from agentos.context.projection import (
@@ -231,18 +232,40 @@ class ContextRenderer:
     ) -> list[str]:
         """渲染单个 working state 字段。"""
 
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, tuple):
             tag = self._list_item_tag(key)
             lines = [f"  <{key}>"]
             lines.extend(f"    <{tag}>{item}</{tag}>" for item in value)
             lines.append(f"  </{key}>")
             return lines
 
+        if isinstance(value, Mapping):
+            rendered = json.dumps(
+                self._json_safe_value(value),
+                ensure_ascii=False,
+                indent=2,
+            )
+            return [
+                f"  <{key}>",
+                *[f"    {line}" for line in rendered.splitlines()],
+                f"  </{key}>",
+            ]
+
         return [
             f"  <{key}>",
             f"    {value}",
             f"  </{key}>",
         ]
+
+    def _json_safe_value(self, value: object) -> object:
+        if isinstance(value, Mapping):
+            return {
+                str(key): self._json_safe_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, tuple):
+            return [self._json_safe_value(item) for item in value]
+        return value
 
     def _inherited_state(self, inherited_state: Sequence[str]) -> str:
         """渲染跨 chapter 继承状态。"""

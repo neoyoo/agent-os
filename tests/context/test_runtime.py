@@ -70,6 +70,26 @@ def test_update_state_requires_declared_field() -> None:
         runtime.update_state("unknown", "bad")
 
 
+def test_update_state_preserves_json_object_values() -> None:
+    runtime = ContextRuntime()
+    value = {
+        "material": "C45",
+        "geometry": {"diameter_mm": 272},
+        "features": ["V槽", "中心孔"],
+    }
+    runtime.declare_schema([field("drawing_info", "dict")])
+
+    runtime.update_state("drawing_info", value)
+    value["material"] = "mutated"
+    value["features"].append("external mutation")
+
+    assert runtime.state.working_state["drawing_info"] == {
+        "material": "C45",
+        "geometry": {"diameter_mm": 272},
+        "features": ["V槽", "中心孔"],
+    }
+
+
 def test_working_state_snapshot_cannot_be_mutated_directly() -> None:
     runtime = ContextRuntime()
     runtime.declare_schema(
