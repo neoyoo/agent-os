@@ -412,7 +412,7 @@ class OpenAICompatibleProvider:
                 index = int(raw_tool_call.get("index", 0))
                 builder = tool_builders.setdefault(
                     index,
-                    {"id": f"call_{index}", "name": "", "arguments": ""},
+                    {"id": "", "name": "", "arguments": ""},
                 )
                 tool_call_id = raw_tool_call.get("id")
                 if isinstance(tool_call_id, str) and tool_call_id:
@@ -425,6 +425,8 @@ class OpenAICompatibleProvider:
                     if isinstance(raw_name, str):
                         builder["name"] += raw_name
                         name_delta = raw_name
+                        if builder["name"] and not builder["id"]:
+                            builder["id"] = f"call_{index}"
                     raw_arguments = function.get("arguments")
                     if isinstance(raw_arguments, str):
                         builder["arguments"] += raw_arguments
@@ -555,7 +557,7 @@ class OpenAICompatibleProvider:
                 index = int(raw_tool_call.get("index", 0))
                 builder = tool_builders.setdefault(
                     index,
-                    {"id": f"call_{index}", "name": "", "arguments": ""},
+                    {"id": "", "name": "", "arguments": ""},
                 )
                 tool_call_id = raw_tool_call.get("id")
                 if isinstance(tool_call_id, str) and tool_call_id:
@@ -568,6 +570,8 @@ class OpenAICompatibleProvider:
                     if isinstance(raw_name, str):
                         builder["name"] += raw_name
                         name_delta = raw_name
+                        if builder["name"] and not builder["id"]:
+                            builder["id"] = f"call_{index}"
                     raw_arguments = function.get("arguments")
                     if isinstance(raw_arguments, str):
                         builder["arguments"] += raw_arguments
