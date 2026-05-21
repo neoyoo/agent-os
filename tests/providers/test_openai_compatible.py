@@ -2,6 +2,7 @@ import inspect
 import asyncio
 from io import BytesIO
 from urllib.error import HTTPError
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,7 @@ from agentos.providers import (
     ProviderToolCallDelta,
     ProviderStreamCompleted,
     ProviderUsage,
+    HttpxAsyncJSONTransport,
     UrlLibJSONTransport,
     UserMessage,
 )
@@ -277,6 +279,109 @@ def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:
         assert "invalid model" in str(error)
     else:
         raise AssertionError("Expected OpenAICompatibleProviderError")
+
+
+def test_urllib_stream_transport_ignores_sse_metadata(monkeypatch) -> None:
+    class FakeStreamResponse:
+        def __enter__(self) -> "FakeStreamResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self):
+            yield b"event: ping\n"
+            yield b": keep-alive\n"
+            yield b"data:\n"
+            yield b'id: chunk-1\n'
+            yield (
+                b'data: {"id":"chatcmpl_1","choices":[{"delta":{"content":"ok"}}]}\n'
+            )
+            yield b"data: [DONE]\n"
+
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.urlopen",
+        lambda *args, **kwargs: FakeStreamResponse(),
+    )
+
+    chunks = list(
+        UrlLibJSONTransport().post_json_stream(
+            url="https://api.deepseek.example/chat/completions",
+            headers={},
+            payload={},
+            timeout=1.0,
+        ),
+    )
+
+    assert chunks == [
+        {
+            "id": "chatcmpl_1",
+            "choices": [{"delta": {"content": "ok"}}],
+        },
+    ]
+
+
+def test_async_stream_transport_ignores_sse_metadata(monkeypatch) -> None:
+    class FakeStreamResponse:
+        async def __aenter__(self) -> "FakeStreamResponse":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self):
+            yield "event: ping"
+            yield ": keep-alive"
+            yield "data:"
+            yield "retry: 1000"
+            yield '{"id":"raw-json","choices":[]}'
+            yield 'data: {"id":"chatcmpl_1","choices":[{"delta":{"content":"ok"}}]}'
+            yield "data: [DONE]"
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def stream(self, *args: object, **kwargs: object) -> FakeStreamResponse:
+            return FakeStreamResponse()
+
+    fake_httpx = SimpleNamespace(
+        AsyncClient=FakeAsyncClient,
+        HTTPStatusError=RuntimeError,
+        HTTPError=RuntimeError,
+    )
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.HttpxAsyncJSONTransport._httpx",
+        lambda self: fake_httpx,
+    )
+
+    async def collect() -> list[dict[str, object]]:
+        chunks = []
+        async for chunk in HttpxAsyncJSONTransport().post_json_stream(
+            url="https://api.deepseek.example/chat/completions",
+            headers={},
+            payload={},
+            timeout=1.0,
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    assert asyncio.run(collect()) == [
+        {"id": "raw-json", "choices": []},
+        {
+            "id": "chatcmpl_1",
+            "choices": [{"delta": {"content": "ok"}}],
+        },
+    ]
 
 
 def test_openai_compatible_provider_leaves_http_error_translation_to_transport() -> None:

@@ -42,6 +42,51 @@ class OpenAICompatibleProviderError(RuntimeError):
     """OpenAI-compatible provider 请求失败。"""
 
 
+class _StreamDone:
+    pass
+
+
+_STREAM_DONE = _StreamDone()
+_SSE_CONTROL_PREFIXES = (":", "event:", "id:", "retry:")
+
+
+def _parse_openai_stream_line(line: str) -> dict[str, object] | None | _StreamDone:
+    line = line.strip()
+    if not line:
+        return None
+    if line.startswith("data:"):
+        line = line.removeprefix("data:").strip()
+    elif line == "[DONE]":
+        return _STREAM_DONE
+    elif line.startswith(_SSE_CONTROL_PREFIXES):
+        return None
+    elif not line.startswith("{"):
+        raise OpenAICompatibleProviderError(
+            "OpenAI-compatible stream returned a non-JSON line: "
+            f"{_stream_line_preview(line)}",
+        )
+
+    if not line:
+        return None
+    if line == "[DONE]":
+        return _STREAM_DONE
+
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError as error:
+        raise OpenAICompatibleProviderError(
+            "OpenAI-compatible stream chunk is not valid JSON: "
+            f"{_stream_line_preview(line)}",
+        ) from error
+    if not isinstance(parsed, dict):
+        raise ValueError("stream chunk must be a JSON object")
+    return parsed
+
+
+def _stream_line_preview(line: str) -> str:
+    return repr(line[:200])
+
+
 class OpenAICompatibleTransport(Protocol):
     """OpenAI-compatible JSON HTTP transport。"""
 
@@ -142,16 +187,13 @@ class UrlLibJSONTransport:
         try:
             with urlopen(request, timeout=timeout) as response:  # noqa: S310
                 for raw_line in response:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line:
+                    parsed = _parse_openai_stream_line(
+                        raw_line.decode("utf-8"),
+                    )
+                    if parsed is None:
                         continue
-                    if line.startswith("data:"):
-                        line = line.removeprefix("data:").strip()
-                    if line == "[DONE]":
+                    if parsed is _STREAM_DONE:
                         break
-                    parsed = json.loads(line)
-                    if not isinstance(parsed, dict):
-                        raise ValueError("stream chunk must be a JSON object")
                     yield parsed
         except HTTPError as error:
             body = error.read().decode("utf-8", errors="replace")
@@ -227,16 +269,11 @@ class HttpxAsyncJSONTransport:
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line:
+                        parsed = _parse_openai_stream_line(line)
+                        if parsed is None:
                             continue
-                        if line.startswith("data:"):
-                            line = line.removeprefix("data:").strip()
-                        if line == "[DONE]":
+                        if parsed is _STREAM_DONE:
                             break
-                        parsed = json.loads(line)
-                        if not isinstance(parsed, dict):
-                            raise ValueError("stream chunk must be a JSON object")
                         yield parsed
         except httpx.HTTPStatusError as error:
             raise OpenAICompatibleProviderError(
