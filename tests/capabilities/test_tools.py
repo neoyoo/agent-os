@@ -5,6 +5,7 @@ from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
 from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
 from agentos.context import CompressedSegment, ContextRuntime, WorkingStateField
+from agentos.context.state import working_state_value_to_json
 from agentos.compression import CompressionIndex
 from agentos.memory import CompressedSegmentPackage, MemoryRuntime, SegmentRecallDocument
 from agentos.memory.in_memory import (
@@ -344,6 +345,39 @@ def test_tool_call_router_does_not_route_attachment_handles_through_recall_conte
                 arguments={"handle": "att:missing"},
             ),
         )
+
+
+def test_update_state_tool_accepts_nested_json_value() -> None:
+    context = ContextRuntime()
+    context.declare_schema(
+        [
+            WorkingStateField(
+                name="config",
+                type="obj",
+                purpose="嵌套配置对象",
+            ),
+        ],
+    )
+    runtime = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        context_runtime=context,
+    )
+    nested_value = {"theme": "dark", "limits": [1, 2, 3]}
+
+    result = runtime.execute_tool_call(
+        ProviderToolCall(
+            id="call_nested",
+            name="update_state",
+            arguments={
+                "field_name": "config",
+                "value": nested_value,
+            },
+        ),
+    )
+
+    assert result.content == "context tool update_state applied"
+    restored = working_state_value_to_json(context.state.working_state["config"])
+    assert restored == {"theme": "dark", "limits": [1, 2, 3]}
 
 
 def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> None:

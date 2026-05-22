@@ -97,9 +97,13 @@ _CONTEXT_PROTOCOL_TOOL_SPECS: list[dict[str, object]] = [
                     "value": {
                         "anyOf": [
                             {"type": "string"},
-                            {"type": "array", "items": {"type": "string"}},
+                            {"type": "number"},
+                            {"type": "boolean"},
+                            {"type": "null"},
+                            {"type": "array"},
+                            {"type": "object"},
                         ],
-                        "description": "字段的新值。",
+                        "description": "字段的新值。可以是任意 JSON-compatible 值：字符串、数字、布尔、null、数组、嵌套对象。复杂结构会渲染为 JSON。",
                     },
                 },
                 "required": ["field_name", "value"],
