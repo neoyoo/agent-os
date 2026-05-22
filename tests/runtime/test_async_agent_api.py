@@ -118,6 +118,7 @@ def test_agent_can_use_explicit_async_query_loop() -> None:
 
 def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
     release_worker = threading.Event()
+    worker_blocked = threading.Event()
 
     class BlockingLoop:
         interrupted = False
@@ -127,6 +128,7 @@ def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
 
         def run_turn_stream(self, user_message: str, options=None):
             yield TurnStreamStarted(user_message=user_message)
+            worker_blocked.set()
             release_worker.wait(timeout=1)
             yield TurnStreamCompleted(content="late")
 
@@ -137,9 +139,12 @@ def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
 
         first = await anext(stream)
         assert first == TurnStreamStarted(user_message="hello")
+        assert await asyncio.to_thread(worker_blocked.wait, 1) is True
 
         pending_next = asyncio.create_task(anext(stream))
-        await asyncio.sleep(0)
+        async with asyncio.timeout(1):
+            while agent._current_async_task is not pending_next:
+                await asyncio.sleep(0)
         pending_next.cancel()
         await asyncio.sleep(0.05)
         was_done_before_interrupt = pending_next.done()
@@ -157,6 +162,7 @@ def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
 
 def test_agent_async_stream_close_waits_for_worker_to_finish() -> None:
     release_worker = threading.Event()
+    worker_blocked = threading.Event()
 
     class BlockingLoop:
         interrupted = False
@@ -166,6 +172,7 @@ def test_agent_async_stream_close_waits_for_worker_to_finish() -> None:
 
         def run_turn_stream(self, user_message: str, options=None):
             yield TurnStreamStarted(user_message=user_message)
+            worker_blocked.set()
             release_worker.wait(timeout=1)
             yield TurnStreamCompleted(content="late")
 
@@ -176,8 +183,12 @@ def test_agent_async_stream_close_waits_for_worker_to_finish() -> None:
 
         first = await anext(stream)
         assert first == TurnStreamStarted(user_message="hello")
+        assert await asyncio.to_thread(worker_blocked.wait, 1) is True
 
         close_task = asyncio.create_task(stream.aclose())
+        async with asyncio.timeout(1):
+            while agent._current_async_task is not close_task:
+                await asyncio.sleep(0)
         await asyncio.sleep(0.05)
         was_done_before_release = close_task.done()
         release_worker.set()
