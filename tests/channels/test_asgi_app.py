@@ -78,6 +78,24 @@ class InterruptRecordingAgent:
         self.interrupt_calls += 1
 
 
+class BlockingAsyncStreamAgent:
+    def __init__(self) -> None:
+        self.interrupt_calls = 0
+
+    async def async_stream(
+        self,
+        user_message: str,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ):
+        yield AssistantContentDelta(index=1, text="first")
+        await asyncio.Event().wait()
+
+    def interrupt(self) -> None:
+        self.interrupt_calls += 1
+
+
 class NonCachingProvider:
     def __init__(self, *agents: InterruptRecordingAgent) -> None:
         self._agents = list(agents)
@@ -341,3 +359,82 @@ def test_asgi_app_interrupts_agent_on_sse_disconnect() -> None:
     assert provider.get_calls == 1
     assert stream_agent.interrupt_calls == 1
     assert provider.released == [stream_agent]
+
+
+def test_asgi_app_routes_explicit_interrupt_request() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    stream_agent = InterruptRecordingAgent()
+    provider = NonCachingProvider(stream_agent)
+    app = AsgiAgentApp(
+        sessions=provider,
+        a2a_server=A2AServerAdapter(StaticRunner()),
+    )
+
+    sent = asyncio.run(
+        call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/interrupt",
+        ),
+    )
+
+    assert response_status(sent) == 200
+    assert json.loads(response_body(sent)) == {
+        "session_id": "session_1",
+        "status": "interrupted",
+    }
+    assert provider.get_calls == 1
+    assert stream_agent.interrupt_calls == 1
+    assert provider.released == [stream_agent]
+
+
+def test_asgi_app_sends_sse_heartbeat_for_long_running_turn() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    stream_agent = BlockingAsyncStreamAgent()
+    provider = NonCachingProvider(stream_agent)  # type: ignore[arg-type]
+    app = AsgiAgentApp(
+        sessions=provider,
+        a2a_server=A2AServerAdapter(StaticRunner()),
+        sse_heartbeat_interval_seconds=0.01,
+    )
+
+    async def call_with_delayed_disconnect() -> list[dict[str, Any]]:
+        sent: list[dict[str, Any]] = []
+        messages = [
+            {
+                "type": "http.request",
+                "body": b'{"message":"hello"}',
+                "more_body": False,
+            },
+        ]
+
+        async def receive() -> dict[str, object]:
+            if messages:
+                return messages.pop(0)
+            await asyncio.sleep(0.035)
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await app(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/sessions/session_1/turns/stream",
+                "headers": [],
+            },
+            receive,
+            send,
+        )
+        return sent
+
+    sent = asyncio.run(call_with_delayed_disconnect())
+
+    assert response_status(sent) == 200
+    body = response_body(sent)
+    assert b"event: content_delta" in body
+    assert b": heartbeat\n\n" in body
+    assert stream_agent.interrupt_calls == 1

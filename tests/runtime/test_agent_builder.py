@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from agentos import Agent, AgentBuilder
@@ -77,6 +79,44 @@ def test_agent_builder_tools_are_visible_and_executable() -> None:
         == "lookup_status"
         for spec in provider.requests[0].tools
     )
+
+
+def test_agent_builder_build_async_runs_async_tool_handler() -> None:
+    async def async_lookup(arguments: dict[str, object]) -> str:
+        await asyncio.sleep(0)
+        return "async tool status: green"
+
+    tool = RegisteredTool(
+        name="async_lookup_status",
+        description="Lookup task status asynchronously.",
+        parameters={"type": "object", "properties": {}},
+        handler=async_lookup,
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_async_lookup",
+                        name="async_lookup_status",
+                        arguments={},
+                    ),
+                ],
+            ),
+            "Async tool result was handled.",
+        ],
+    )
+
+    agent = AgentBuilder().provider(provider).tools([tool]).build_async()
+    result = asyncio.run(agent.async_run("Use async_lookup_status."))
+
+    assert result.content == "Async tool result was handled."
+    assert type(agent.query_loop).__name__ == "AsyncQueryLoop"
+    assert provider_message_to_dict(provider.requests[1].messages[2]) == {
+        "role": "tool",
+        "content": "async tool status: green",
+        "tool_call_id": "call_async_lookup",
+    }
 
 
 def test_agent_builder_default_path_includes_context_protocol_tools() -> None:

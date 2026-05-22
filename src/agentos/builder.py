@@ -11,7 +11,7 @@ from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy
 from agentos.providers import Provider
 from agentos.recall import RecallRuntime
-from agentos.runtime import Agent, ProviderRequestBuilder
+from agentos.runtime import Agent, AsyncQueryLoop, ProviderRequestBuilder
 
 
 DEFAULT_COMPRESSION_BUDGET = BudgetPolicy(
@@ -137,6 +137,16 @@ class AgentBuilder:
     def build(self) -> Agent:
         """构建标准 Agent facade。"""
 
+        return Agent(query_loop_kwargs=self._query_loop_kwargs())
+
+    def build_async(self) -> Agent:
+        """构建使用原生 AsyncQueryLoop 的 Agent facade。"""
+
+        return Agent(query_loop=AsyncQueryLoop(**self._query_loop_kwargs()))  # type: ignore[arg-type]
+
+    def _query_loop_kwargs(self) -> dict[str, object]:
+        """组装 QueryLoop / AsyncQueryLoop 共用组件。"""
+
         if self._provider is None:
             raise ValueError(
                 "AgentBuilder requires .provider() before .build(). "
@@ -215,7 +225,7 @@ class AgentBuilder:
             kwargs["compression_runtime"] = compression_runtime
         if self._event_bus is not None:
             kwargs["event_bus"] = self._event_bus
-        return Agent(query_loop_kwargs=kwargs)
+        return kwargs
 
     def _default_renderer(
         self,

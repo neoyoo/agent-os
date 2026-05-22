@@ -42,6 +42,7 @@ class AsgiAgentApp:
         health_checks: Mapping[str, Callable[[], object]] | None = None,
         rate_limiter: RateLimiter | None = None,
         shutdown_handlers: list[Callable[[], object]] | None = None,
+        sse_heartbeat_interval_seconds: float | None = 15.0,
     ) -> None:
         """创建 ASGI app。"""
 
@@ -54,6 +55,7 @@ class AsgiAgentApp:
         self._health_checks = dict(health_checks or {})
         self._rate_limiter = rate_limiter
         self._shutdown_handlers = list(shutdown_handlers or [])
+        self._sse_heartbeat_interval_seconds = sse_heartbeat_interval_seconds
 
     async def __call__(
         self,
@@ -97,6 +99,11 @@ class AsgiAgentApp:
             return
         if method == "POST" and path == "/a2a/tasks":
             await self._handle_a2a_task(receive, send, headers=self._headers(scope))
+            return
+
+        interrupt_session_id = self._match_interrupt_path(method, path)
+        if interrupt_session_id is not None:
+            await self._handle_interrupt(interrupt_session_id, send)
             return
 
         session_id, is_stream = self._match_turn_path(method, path)
@@ -169,6 +176,18 @@ class AsgiAgentApp:
             self._a2a_server.handle_task(payload, headers=headers),
         )
 
+    async def _handle_interrupt(self, session_id: str, send: AsgiSend) -> None:
+        agent = self._sessions.get_agent(session_id)
+        try:
+            agent.interrupt()
+        finally:
+            self._sessions.release_agent(session_id, agent)
+        await self._send_json(
+            send,
+            200,
+            {"session_id": session_id, "status": "interrupted"},
+        )
+
     async def _handle_sse_turn(
         self,
         session_id: str,
@@ -186,6 +205,8 @@ class AsgiAgentApp:
         disconnect_task = asyncio.create_task(receive())
         agent: Agent | None = None
         stream_task: asyncio.Task[None] | None = None
+        heartbeat_task: asyncio.Task[None] | None = None
+        send_lock = asyncio.Lock()
         try:
             try:
                 request = parse_channel_turn_request(body)
@@ -195,8 +216,15 @@ class AsgiAgentApp:
 
             agent = self._sessions.get_agent(session_id)
             stream_task = asyncio.create_task(
-                self._send_agent_sse_stream(agent, request, send),
+                self._send_agent_sse_stream(agent, request, send, send_lock),
             )
+            if (
+                self._sse_heartbeat_interval_seconds is not None
+                and self._sse_heartbeat_interval_seconds > 0
+            ):
+                heartbeat_task = asyncio.create_task(
+                    self._send_sse_heartbeats(send, send_lock),
+                )
             done, _pending = await asyncio.wait(
                 {stream_task, disconnect_task},
                 return_when=asyncio.FIRST_COMPLETED,
@@ -217,6 +245,10 @@ class AsgiAgentApp:
                 stream_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await stream_task
+            if heartbeat_task is not None and not heartbeat_task.done():
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
             if not disconnect_task.done():
                 disconnect_task.cancel()
             if agent is not None:
@@ -228,6 +260,7 @@ class AsgiAgentApp:
         agent: Agent,
         request: ChannelTurnRequest,
         send: AsgiSend,
+        send_lock: asyncio.Lock | None = None,
     ) -> None:
         """消费 Agent.async_stream 并写出 SSE chunks。"""
 
@@ -238,7 +271,7 @@ class AsgiAgentApp:
                 thinking=request.thinking,
                 show_thinking=request.show_thinking,
             ):
-                await self._send_sse_event(event, request, send)
+                await self._send_sse_event(event, request, send, send_lock)
             return
 
         events = await asyncio.to_thread(
@@ -251,13 +284,14 @@ class AsgiAgentApp:
             ),
         )
         for event in events:
-            await self._send_sse_event(event, request, send)
+            await self._send_sse_event(event, request, send, send_lock)
 
     async def _send_sse_event(
         self,
         event: object,
         request: ChannelTurnRequest,
         send: AsgiSend,
+        send_lock: asyncio.Lock | None = None,
     ) -> None:
         """把 typed stream event 写成一个 SSE chunk。"""
 
@@ -266,9 +300,30 @@ class AsgiAgentApp:
             show_thinking=request.show_thinking,
         )
         if chunk is not None:
-            await self._send_sse_chunk(send, chunk)
+            await self._send_sse_chunk(send, chunk, send_lock)
 
-    async def _send_sse_chunk(self, send: AsgiSend, chunk: str) -> None:
+    async def _send_sse_heartbeats(
+        self,
+        send: AsgiSend,
+        send_lock: asyncio.Lock,
+    ) -> None:
+        """周期性发送 SSE comment，避免代理空闲超时。"""
+
+        assert self._sse_heartbeat_interval_seconds is not None
+        while True:
+            await asyncio.sleep(self._sse_heartbeat_interval_seconds)
+            await self._send_sse_chunk(send, ": heartbeat\n\n", send_lock)
+
+    async def _send_sse_chunk(
+        self,
+        send: AsgiSend,
+        chunk: str,
+        send_lock: asyncio.Lock | None = None,
+    ) -> None:
+        if send_lock is not None:
+            async with send_lock:
+                await self._send_sse_chunk(send, chunk)
+            return
         await send(
             {
                 "type": "http.response.body",
@@ -361,6 +416,18 @@ class AsgiAgentApp:
         ):
             return parts[2], True
         return None, False
+
+    def _match_interrupt_path(self, method: str, path: str) -> str | None:
+        if method != "POST":
+            return None
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 4
+            and parts[:2] == ["v1", "sessions"]
+            and parts[3] == "interrupt"
+        ):
+            return parts[2]
+        return None
 
     def _headers(self, scope: Mapping[str, object]) -> dict[str, str]:
         raw_headers = scope.get("headers", [])
