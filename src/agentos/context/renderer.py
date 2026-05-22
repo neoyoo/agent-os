@@ -1,3 +1,5 @@
+import json
+from collections.abc import Mapping
 from typing import Sequence
 
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_DEFINITIONS
@@ -8,7 +10,13 @@ from agentos.context.projection import (
     ToolDeclaration,
     ToolGroup,
 )
-from agentos.context.state import CompressedSegment, ContextState, WorkingStateValue
+from agentos.context.state import (
+    CompressedSegment,
+    ContextState,
+    FrozenMapping,
+    WorkingStateValue,
+    working_state_value_to_json,
+)
 
 
 DEFAULT_TOOL_GROUPS = [
@@ -231,16 +239,38 @@ class ContextRenderer:
     ) -> list[str]:
         """渲染单个 working state 字段。"""
 
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
             tag = self._list_item_tag(key)
             lines = [f"  <{key}>"]
             lines.extend(f"    <{tag}>{item}</{tag}>" for item in value)
             lines.append(f"  </{key}>")
             return lines
+        if isinstance(value, (FrozenMapping, Mapping, list, tuple)):
+            return self._render_json_working_state_field(key, value)
+        if value is not None and not isinstance(value, str):
+            return self._render_json_working_state_field(key, value)
 
         return [
             f"  <{key}>",
             f"    {value}",
+            f"  </{key}>",
+        ]
+
+    def _render_json_working_state_field(
+        self,
+        key: str,
+        value: object,
+    ) -> list[str]:
+        """用 JSON 渲染结构化 working state 字段。"""
+
+        rendered = json.dumps(
+            working_state_value_to_json(value),
+            ensure_ascii=False,
+            indent=2,
+        )
+        return [
+            f"  <{key}>",
+            *[f"    {line}" for line in rendered.splitlines()],
             f"  </{key}>",
         ]
 

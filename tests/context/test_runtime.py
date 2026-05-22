@@ -92,6 +92,34 @@ def test_working_state_snapshot_cannot_be_mutated_directly() -> None:
     assert runtime.state.working_state["task_goal"] == "Build context runtime."
 
 
+def test_update_state_preserves_json_object_values() -> None:
+    runtime = ContextRuntime()
+    runtime.declare_schema([field("candidate", "obj")])
+    candidate = {
+        "material": "C45",
+        "geometry": {"diameter": 12.5, "holes": 4},
+        "features": ["threaded", "coated"],
+        "approved": True,
+        "notes": None,
+    }
+
+    runtime.update_state("candidate", candidate)
+    candidate["material"] = "mutated"
+    candidate["geometry"]["diameter"] = 99.0
+    candidate["features"].append("external mutation")
+
+    snapshot = runtime.state.working_state
+    assert snapshot["candidate"] == {
+        "material": "C45",
+        "geometry": {"diameter": 12.5, "holes": 4},
+        "features": ["threaded", "coated"],
+        "approved": True,
+        "notes": None,
+    }
+    with pytest.raises(TypeError):
+        snapshot["candidate"]["geometry"]["diameter"] = 99.0  # type: ignore[index]
+
+
 def test_working_state_schema_cannot_be_replaced_directly() -> None:
     runtime = ContextRuntime()
     runtime.declare_schema([field("task_goal")])

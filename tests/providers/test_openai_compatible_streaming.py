@@ -424,6 +424,8 @@ def test_openai_compatible_stream_generates_missing_tool_call_id(monkeypatch) ->
     events = list(provider.stream(ProviderRequest(system="system", messages=[])))
 
     assert isinstance(events[-1], ProviderStreamCompleted)
+    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
+    assert tool_deltas[0].tool_call_id == "call_ts_1700000000000000000"
     assert events[-1].response.tool_calls[0].id == (
         "call_ts_1700000000000000000"
     )
@@ -487,6 +489,66 @@ def test_openai_compatible_stream_generates_unique_missing_tool_call_ids(
     ]
 
 
+def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.time.time_ns",
+        lambda: 1_700_000_000_000_000_000,
+    )
+
+    class FakeAsyncStreamingTransport:
+        async def post_json_stream(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ):
+            yield {
+                "id": "chatcmpl_async",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": '{"skill_name": "drawing"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            }
+
+    async def collect() -> list[object]:
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            async_transport=FakeAsyncStreamingTransport(),
+        )
+        return [
+            event
+            async for event in provider.async_stream(
+                ProviderRequest(system="system", messages=[]),
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
+    assert tool_deltas[0].tool_call_id == "call_ts_1700000000000000000"
+    assert events[-1].response.tool_calls[0].id == (
+        "call_ts_1700000000000000000"
+    )
+
+
 def test_openai_compatible_stream_preserves_provider_tool_call_id() -> None:
     transport = FakeStreamingTransport(
         [
@@ -522,6 +584,69 @@ def test_openai_compatible_stream_preserves_provider_tool_call_id() -> None:
 
     events = list(provider.stream(ProviderRequest(system="system", messages=[])))
 
+    assert events[-1].response.tool_calls[0].id == "provider_call_1"
+
+
+def test_openai_compatible_stream_ignores_empty_tool_call_id_delta() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "provider_call_1",
+                                    "function": {
+                                        "name": "load_skill",
+                                        "arguments": '{"skill_name"',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": None,
+                    },
+                ],
+            },
+            {
+                "id": "chatcmpl_1",
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "",
+                                    "function": {
+                                        "arguments": ': "drawing"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+
+    events = list(provider.stream(ProviderRequest(system="system", messages=[])))
+
+    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
+    assert [delta.tool_call_id for delta in tool_deltas] == [
+        "provider_call_1",
+        "provider_call_1",
+    ]
     assert events[-1].response.tool_calls[0].id == "provider_call_1"
 
 

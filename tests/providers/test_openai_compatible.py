@@ -7,6 +7,7 @@ import pytest
 
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.providers import (
+    HttpxAsyncJSONTransport,
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
     ProviderRequest,
@@ -251,6 +252,107 @@ def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:
         assert "invalid model" in str(error)
     else:
         raise AssertionError("Expected OpenAICompatibleProviderError")
+
+
+def test_openai_compatible_stream_transport_ignores_sse_metadata(monkeypatch) -> None:
+    class FakeStreamResponse:
+        def __iter__(self):
+            return iter(
+                [
+                    b": keep-alive\n",
+                    b"event: message\n",
+                    b"id: chunk_1\n",
+                    b"retry: 1000\n",
+                    b"data:\n",
+                    b'data: {"id":"chatcmpl_1","choices":[]}\n',
+                    b'{"id":"chatcmpl_2","choices":[]}\n',
+                    b"data: [DONE]\n",
+                ],
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "agentos.providers.openai_compatible.urlopen",
+        lambda *args, **kwargs: FakeStreamResponse(),
+    )
+
+    chunks = list(
+        UrlLibJSONTransport().post_json_stream(
+            url="https://api.deepseek.example/chat/completions",
+            headers={},
+            payload={},
+            timeout=1.0,
+        ),
+    )
+
+    assert [chunk["id"] for chunk in chunks] == ["chatcmpl_1", "chatcmpl_2"]
+
+
+def test_openai_compatible_async_stream_transport_ignores_sse_metadata(
+    monkeypatch,
+) -> None:
+    class FakeStreamResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self):
+            for line in [
+                ": keep-alive",
+                "event: message",
+                "id: chunk_1",
+                "retry: 1000",
+                "data:",
+                'data: {"id":"chatcmpl_1","choices":[]}',
+                '{"id":"chatcmpl_2","choices":[]}',
+                "data: [DONE]",
+            ]:
+                yield line
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def stream(self, *args: object, **kwargs: object) -> FakeStreamResponse:
+            return FakeStreamResponse()
+
+    class FakeHTTPX:
+        AsyncClient = FakeAsyncClient
+        HTTPStatusError = RuntimeError
+        HTTPError = RuntimeError
+
+    monkeypatch.setattr(HttpxAsyncJSONTransport, "_httpx", lambda self: FakeHTTPX)
+
+    async def collect() -> list[dict[str, object]]:
+        return [
+            chunk
+            async for chunk in HttpxAsyncJSONTransport().post_json_stream(
+                url="https://api.deepseek.example/chat/completions",
+                headers={},
+                payload={},
+                timeout=1.0,
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+
+    assert [chunk["id"] for chunk in chunks] == ["chatcmpl_1", "chatcmpl_2"]
 
 
 def test_openai_compatible_provider_leaves_http_error_translation_to_transport() -> None:
