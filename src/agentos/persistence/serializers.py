@@ -4,7 +4,11 @@ from typing import Any
 
 from agentos.compression.index import CompressionIndex
 from agentos.context.schema import WorkingStateField, WorkingStateSchema
-from agentos.context.state import CompressedSegment, ContextState
+from agentos.context.state import (
+    CompressedSegment,
+    ContextState,
+    working_state_value_to_json,
+)
 from agentos.messages.runtime import MessageRuntime
 from agentos.messages.store import MessageStore
 from agentos.messages.types import Message, MessageRef, ToolCall
@@ -59,7 +63,7 @@ def context_state_to_dict(state: ContextState) -> JsonDict:
             state.working_state_schema,
         ),
         "working_state": {
-            key: list(value) if isinstance(value, tuple) else value
+            key: working_state_value_to_json(value)
             for key, value in state.working_state.items()
         },
         "compressed_history": [

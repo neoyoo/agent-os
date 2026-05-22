@@ -1,14 +1,50 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TypeAlias
 
 from agentos.context.schema import WorkingStateSchema
 
 
-WorkingStateValue = str | list[str] | tuple[str, ...]
-WorkingStateSnapshot = Mapping[str, str | tuple[str, ...]]
+JsonScalar: TypeAlias = str | int | float | bool | None
+WorkingStateValue: TypeAlias = (
+    JsonScalar
+    | list[object]
+    | tuple[object, ...]
+    | Mapping[str, object]
+)
+FrozenWorkingStateValue: TypeAlias = JsonScalar | tuple[object, ...] | Mapping[str, object]
+WorkingStateSnapshot = Mapping[str, FrozenWorkingStateValue]
 CompressedHistorySnapshot = tuple["CompressedSegment", ...]
 StringProjectionSnapshot = tuple[str, ...]
+
+
+class FrozenMapping(Mapping[str, object]):
+    """递归冻结后的 JSON object working state 值。"""
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: Mapping[str, object]) -> None:
+        self._data = MappingProxyType(dict(data))
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return False
+        return working_state_value_to_json(self) == working_state_value_to_json(other)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._data))
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +61,7 @@ class ContextState:
     """由 context 包持有并渲染进默认 prompt 的状态。"""
 
     _working_state_schema: WorkingStateSchema
-    _working_state: dict[str, str | tuple[str, ...]]
+    _working_state: dict[str, FrozenWorkingStateValue]
     _compressed_history: list[CompressedSegment]
     _inherited_state: list[str]
     _memory_context: list[str]
@@ -123,12 +159,21 @@ class ContextState:
     def _coerce_working_state_value(
         self,
         value: WorkingStateValue,
-    ) -> str | tuple[str, ...]:
+    ) -> FrozenWorkingStateValue:
         """复制并冻结 working state 字段值。"""
 
-        if isinstance(value, str):
+        if value is None or isinstance(value, (str, int, float, bool)):
             return value
-        return tuple(value)
+        if isinstance(value, Mapping):
+            return FrozenMapping(
+                {
+                    str(key): self._coerce_working_state_value(item)
+                    for key, item in value.items()
+                },
+            )
+        if isinstance(value, (list, tuple)):
+            return tuple(self._coerce_working_state_value(item) for item in value)
+        raise TypeError("working state value must be JSON-compatible")
 
     @property
     def working_state_schema(self) -> WorkingStateSchema:
@@ -140,3 +185,25 @@ class ContextState:
         """由 ContextRuntime 替换当前 chapter schema。"""
 
         self._working_state_schema = schema
+
+
+def working_state_value_to_json(value: object) -> object:
+    """把冻结后的 working state 值还原为 JSON-safe Python 值。"""
+
+    if isinstance(value, FrozenMapping):
+        return {
+            key: working_state_value_to_json(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, Mapping):
+        return {
+            str(key): working_state_value_to_json(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [working_state_value_to_json(item) for item in value]
+    if isinstance(value, list):
+        return [working_state_value_to_json(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError("working state value must be JSON-compatible")

@@ -44,6 +44,37 @@ class OpenAICompatibleProviderError(RuntimeError):
     """OpenAI-compatible provider 请求失败。"""
 
 
+_STREAM_DONE = object()
+
+
+def _parse_openai_stream_line(line: str) -> dict[str, object] | object | None:
+    """解析单行 OpenAI-compatible SSE，忽略 SSE 控制字段。"""
+
+    line = line.strip()
+    if not line or line.startswith(":"):
+        return None
+    if ":" in line:
+        field_name = line.split(":", 1)[0]
+        if field_name in {"event", "id", "retry"}:
+            return None
+    if line.startswith("data:"):
+        line = line.removeprefix("data:").strip()
+    if not line:
+        return None
+    if line == "[DONE]":
+        return _STREAM_DONE
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError as error:
+        preview = line[:200]
+        raise OpenAICompatibleProviderError(
+            f"OpenAI-compatible stream chunk is not valid JSON: {preview}",
+        ) from error
+    if not isinstance(parsed, dict):
+        raise ValueError("stream chunk must be a JSON object")
+    return parsed
+
+
 class OpenAICompatibleTransport(Protocol):
     """OpenAI-compatible JSON HTTP transport。"""
 
@@ -144,16 +175,13 @@ class UrlLibJSONTransport:
         try:
             with urlopen(request, timeout=timeout) as response:  # noqa: S310
                 for raw_line in response:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line:
+                    parsed = _parse_openai_stream_line(
+                        raw_line.decode("utf-8"),
+                    )
+                    if parsed is None:
                         continue
-                    if line.startswith("data:"):
-                        line = line.removeprefix("data:").strip()
-                    if line == "[DONE]":
+                    if parsed is _STREAM_DONE:
                         break
-                    parsed = json.loads(line)
-                    if not isinstance(parsed, dict):
-                        raise ValueError("stream chunk must be a JSON object")
                     yield parsed
         except HTTPError as error:
             body = error.read().decode("utf-8", errors="replace")
@@ -229,16 +257,11 @@ class HttpxAsyncJSONTransport:
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line:
+                        parsed = _parse_openai_stream_line(line)
+                        if parsed is None:
                             continue
-                        if line.startswith("data:"):
-                            line = line.removeprefix("data:").strip()
-                        if line == "[DONE]":
+                        if parsed is _STREAM_DONE:
                             break
-                        parsed = json.loads(line)
-                        if not isinstance(parsed, dict):
-                            raise ValueError("stream chunk must be a JSON object")
                         yield parsed
         except httpx.HTTPStatusError as error:
             raise OpenAICompatibleProviderError(
@@ -417,26 +440,14 @@ class OpenAICompatibleProvider:
                     index,
                     {"id": "", "name": "", "arguments": ""},
                 )
-                tool_call_id = raw_tool_call.get("id")
-                if isinstance(tool_call_id, str):
-                    builder["id"] = tool_call_id
-                function = raw_tool_call.get("function")
-                name_delta = None
-                arguments_delta = None
-                if isinstance(function, dict):
-                    raw_name = function.get("name")
-                    if isinstance(raw_name, str):
-                        builder["name"] += raw_name
-                        name_delta = raw_name
-                    raw_arguments = function.get("arguments")
-                    if isinstance(raw_arguments, str):
-                        builder["arguments"] += raw_arguments
-                        arguments_delta = raw_arguments
+                tool_call_id, name_delta, arguments_delta = (
+                    self._apply_stream_tool_call_delta(builder, raw_tool_call)
+                )
                 tool_index += 1
                 yield ProviderToolCallDelta(
                     request_id=response_id,
                     index=tool_index,
-                    tool_call_id=builder["id"] or None,
+                    tool_call_id=tool_call_id,
                     name_delta=name_delta,
                     arguments_delta=arguments_delta,
                 )
@@ -560,26 +571,14 @@ class OpenAICompatibleProvider:
                     index,
                     {"id": "", "name": "", "arguments": ""},
                 )
-                tool_call_id = raw_tool_call.get("id")
-                if isinstance(tool_call_id, str):
-                    builder["id"] = tool_call_id
-                function = raw_tool_call.get("function")
-                name_delta = None
-                arguments_delta = None
-                if isinstance(function, dict):
-                    raw_name = function.get("name")
-                    if isinstance(raw_name, str):
-                        builder["name"] += raw_name
-                        name_delta = raw_name
-                    raw_arguments = function.get("arguments")
-                    if isinstance(raw_arguments, str):
-                        builder["arguments"] += raw_arguments
-                        arguments_delta = raw_arguments
+                tool_call_id, name_delta, arguments_delta = (
+                    self._apply_stream_tool_call_delta(builder, raw_tool_call)
+                )
                 tool_index += 1
                 yield ProviderToolCallDelta(
                     request_id=response_id,
                     index=tool_index,
-                    tool_call_id=builder["id"] or None,
+                    tool_call_id=tool_call_id,
                     name_delta=name_delta,
                     arguments_delta=arguments_delta,
                 )
@@ -775,6 +774,34 @@ class OpenAICompatibleProvider:
                 ),
             )
         return tool_calls
+
+    def _apply_stream_tool_call_delta(
+        self,
+        builder: dict[str, str],
+        raw_tool_call: dict[str, object],
+    ) -> tuple[str | None, str | None, str | None]:
+        """累计一个 streaming tool call delta 并返回本次 delta 事件字段。"""
+
+        tool_call_id = raw_tool_call.get("id")
+        if isinstance(tool_call_id, str) and tool_call_id:
+            builder["id"] = tool_call_id
+
+        function = raw_tool_call.get("function")
+        name_delta = None
+        arguments_delta = None
+        if isinstance(function, dict):
+            raw_name = function.get("name")
+            if isinstance(raw_name, str):
+                builder["name"] += raw_name
+                name_delta = raw_name
+            raw_arguments = function.get("arguments")
+            if isinstance(raw_arguments, str):
+                builder["arguments"] += raw_arguments
+                arguments_delta = raw_arguments
+
+        if not builder["id"] and builder["name"]:
+            builder["id"] = self._next_fallback_tool_call_id()
+        return builder["id"] or None, name_delta, arguments_delta
 
     def _next_fallback_tool_call_id(self) -> str:
         base_id = f"call_ts_{time.time_ns()}"

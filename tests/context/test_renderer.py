@@ -140,6 +140,36 @@ def test_default_renderer_renders_empty_working_state_when_schema_declared() -> 
     assert "<working-state>\n</working-state>" in rendered
 
 
+def test_default_renderer_renders_json_working_state_values() -> None:
+    rendered = ContextRenderer().render(
+        ContextState(
+            working_state_schema=WorkingStateSchema(
+                fields=[
+                    WorkingStateField(
+                        name="candidate",
+                        type="obj",
+                        purpose="当前候选方案",
+                    ),
+                ],
+            ),
+            working_state={
+                "candidate": {
+                    "material": "C45",
+                    "geometry": {"diameter": 12.5, "holes": 4},
+                    "features": ["threaded", "coated"],
+                },
+            },
+        ),
+    )
+
+    assert "    {" in rendered
+    assert '      "material": "C45",' in rendered
+    assert '      "geometry": {' in rendered
+    assert '        "diameter": 12.5,' in rendered
+    assert '      "features": [' in rendered
+    assert "    <c>material</c>" not in rendered
+
+
 def test_default_renderer_renders_inherited_state_only_when_present() -> None:
     empty_rendered = ContextRenderer().render(ContextState())
     assert "\n# Inherited State\n" not in empty_rendered
