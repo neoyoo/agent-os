@@ -49,6 +49,7 @@ agent-os 的核心不是 "又一个 tool loop"。它的核心是：
 - extend_schema — 当当前 schema 不足时添加字段。
 - start_chapter — 当任务发生实质变化时开启新 chapter。
 - recall_context — 当压缩摘要不够时，按 handle 或 query 恢复相关压缩片段。
+- load_image — 把已上传图片附件展开到下一次模型请求中。
 
 ### Registered tools
 
@@ -71,6 +72,7 @@ agent-os 的核心不是 "又一个 tool loop"。它的核心是：
 - 用它记录目标、约束、决策、已验证事实、未解决问题和下一步行动。
 - 不要把每条用户消息都复制进 working state。
 - 只能通过工具更新 working state。
+- Working state 字段值可以是字符串、数字、布尔、数组或嵌套对象（JSON-compatible）。
 - 不要在 assistant 消息中手写 `<working-state>` 或内部元数据。
 
 ## Schema
@@ -93,13 +95,21 @@ agent-os 的核心不是 "又一个 tool loop"。它的核心是：
 - 如果某个压缩片段相关但细节不足，调用 `recall_context(handle=...)`。
 - 读取恢复内容后，如果它改变了你的当前理解，更新 working state。
 
+## Attachments
+
+- 用户上传的附件可能只在当前 turn 内可见。
+- 如果某个附件被标记为 "not loaded" 且你需要重新查看，调用 `load_image(handle="att:...")`。
+- 不要从文件名或 preview 推断未读取的附件内容。
+- 如果附件摘要与当前 turn 已加载的内容冲突，相信已加载内容。
+
 ## Trust Order
 
-1. Active messages
+1. Active messages and currently loaded attachments
 2. Inherited state
 3. Compressed history
 4. Memory context
 5. Working state
+6. Attachment placeholders / previews
 
 # Declared Working State Schema
 
@@ -412,7 +422,7 @@ Context protocol tools 在 provider request 的 `tools` 数组中有完整 JSON 
         "type": "object",
         "properties": {
           "field_name": {"type": "string"},
-          "value": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}
+          "value": {"description": "任意 JSON-compatible 值（string/number/bool/null/array/object），复杂结构会渲染为 JSON。"}
         },
         "required": ["field_name", "value"]
       }

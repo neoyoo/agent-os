@@ -56,7 +56,7 @@ result = agent.run("Translate this to French: ...")
 ### 9. Async Agent
 **Modules**: `Agent.async_run()` / `async_stream()` + `AsyncProvider` Protocol
 **Typical use**: embedding in FastAPI / aiohttp / Starlette without blocking event loop
-**Key mechanism**: sync QueryLoop runs in executor thread, yields async events
+**Key mechanism**: `AsyncQueryLoop` 是 native async，原生 await provider 和 tool I/O；`Agent.async_stream` 自动选择 native async（如果 query_loop 提供 async `run_turn_stream`）或 sync-in-executor fallback。注册 async tool handler 时必须用 `AsyncQueryLoop`。
 
 ### 10. Observable Agent
 **Modules**: `ObservabilityConfig` + `OTel tracer` + `Langfuse` + `EventLog` + `Snapshots`

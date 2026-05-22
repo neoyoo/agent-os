@@ -57,7 +57,7 @@ src/agentos/
 ├── memory/           → MemoryRuntime, HotSessionStore, DurableSessionStore, Redis/Postgres
 ├── persistence/      → SessionSnapshot, SessionPersistence, SQLite/Postgres/FileSystem
 ├── observability/    → TraceContext, W3C propagation, EventRecord
-├── context_protocol.py → 5 built-in context tools (declare_schema, update_state, etc.)
+├── context_protocol.py → 6 built-in context tools (declare_schema, update_state, extend_schema, start_chapter, recall_context, load_image)
 └── builder.py        → AgentBuilder (recommended entry point)
 ```
 

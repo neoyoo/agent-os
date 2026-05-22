@@ -66,6 +66,13 @@ async def handle(request):
 # - Non-streaming: wraps in asyncio.to_thread()
 # - Streaming: uses async bridge with thread worker
 # Just use AsgiAgentApp, don't DIY the async wrapping.
+
+# BAD #2 — registering async tool handler with sync QueryLoop
+async def fetch_user(args): ...
+agent = AgentBuilder().tools([RegisteredTool("fetch_user", "...", fetch_user)]).build()
+agent.run("get user 42")  # RuntimeError: async handler requires AsyncQueryLoop
+
+# GOOD — wrap in AsyncQueryLoop (see Async Tool Handlers in quick-start)
 ```
 
 ## 5. Registering async hook handlers

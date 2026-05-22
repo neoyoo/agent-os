@@ -63,8 +63,8 @@ Manages the agent's structured cognitive state:
 ```
 ContextState
 ├── working_state_schema: WorkingStateSchema (field declarations)
-├── working_state: dict[str, str | list[str]]  (current values)
-├── inherited_state: dict[str, str | list[str]] (from previous chapter)
+├── working_state: dict[str, FrozenWorkingStateValue]  (current values; JSON-compatible: scalar/list/dict)
+├── inherited_state: tuple[str, ...]  (from previous chapter)
 ├── compressed_history: list[CompressedSegment]  (summaries)
 ├── memory_context: str  (injected cross-session memory)
 └── runtime_notices: tuple[str, ...]  (one-shot system messages)
@@ -109,6 +109,7 @@ Triggers when `len(active_messages) > budget.max_active_messages`:
 | Intercept before/after | `HookManager` + register at hook points |
 | Observe events | `EventBus` + typed event subscriptions |
 | Custom system prompt | `AgentBuilder.context_renderer(custom)` |
+| Progressive skill disclosure | `SkillRegistry` + `register_skill_loader_tools(...)` (loads `load_skill` + `load_skill_resource`) |
 | Custom compression | Implement `Compressor` protocol, pass to `.with_compression(compressor)` |
 | Custom provider | Implement `Provider` protocol (just `.complete()`) |
 | Custom state storage | Implement `HotSessionStore` / `DurableSessionStore` protocols |
