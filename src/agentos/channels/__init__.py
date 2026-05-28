@@ -28,6 +28,7 @@ from agentos.channels.session import (
     AgentSessionProvider,
     InMemoryAgentSessionProvider,
 )
+from agentos.channels.sse_buffer import InMemorySseEventBuffer, SseEventBuffer
 from agentos.channels.sse import SseAgentChannel
 from agentos.channels.types import (
     ChannelError,
@@ -53,9 +54,11 @@ __all__ = [
     "ChannelTurnResult",
     "HttpAgentChannel",
     "InMemoryAgentSessionProvider",
+    "InMemorySseEventBuffer",
     "RateLimitDecision",
     "RateLimiter",
     "SseAgentChannel",
+    "SseEventBuffer",
     "SlidingWindowRateLimiter",
     "UrllibA2ATransport",
 ]
