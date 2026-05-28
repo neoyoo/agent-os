@@ -253,11 +253,11 @@ Start only after Phase 1 is merged or green on this branch.
 
 Acceptance:
 
-- `TokenBudgetPolicy` triggers based on effective token window.
-- Tools schema overhead can be included through `static_overhead_tokens`.
-- Compressor exceptions do not remove active refs.
-- Consecutive failures emit `CompressionFailedEvent`.
-- Fallback compressor path succeeds and resets failure count.
+- [x] `TokenBudgetPolicy` triggers based on effective token window.
+- [x] Tools schema overhead can be included through `static_overhead_tokens`.
+- [x] Compressor exceptions do not remove active refs.
+- [x] Consecutive failures emit `CompressionFailedEvent`.
+- [x] Fallback compressor path succeeds and resets failure count.
 
 ---
 

@@ -8,7 +8,7 @@ from agentos.compression import CompressionRuntime, RuleBasedCompressor
 from agentos.context import ContextRenderer, ContextRuntime, RuntimeContract
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.messages import MessageRuntime
-from agentos.policies import BudgetPolicy
+from agentos.policies import BudgetPolicy, TokenBudgetPolicy
 from agentos.providers import FakeProvider
 from agentos.providers import ProviderResponse, ProviderToolCall
 from agentos.providers import provider_message_to_dict
@@ -214,6 +214,28 @@ def test_agent_builder_with_compression_creates_compression_runtime() -> None:
         agent.query_loop.compression_runtime.compressor,
         RuleBasedCompressor,
     )
+
+
+def test_agent_builder_with_compression_can_use_token_budget_policy() -> None:
+    agent = (
+        AgentBuilder()
+        .provider(FakeProvider(["ok"]))
+        .with_compression(
+            context_window=100,
+            reserve_output_tokens=10,
+            retain_latest_tokens=20,
+            static_overhead_tokens=5,
+        )
+        .build()
+    )
+
+    assert agent.query_loop.compression_runtime is not None
+    policy = agent.query_loop.compression_runtime.budget_policy
+    assert isinstance(policy, TokenBudgetPolicy)
+    assert policy.context_window == 100
+    assert policy.reserve_output_tokens == 10
+    assert policy.retain_latest_tokens == 20
+    assert policy.static_overhead_tokens == 5
 
 
 def test_agent_builder_uses_component_overrides() -> None:

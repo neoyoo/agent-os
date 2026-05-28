@@ -177,6 +177,15 @@ class CompressionCompletedEvent(AgentEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class CompressionFailedEvent(AgentEvent):
+    """压缩失败，active refs 已保留。"""
+
+    reason: str = ""
+    consecutive_failures: int = 0
+    degraded: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class RecallContextRequestedEvent(AgentEvent):
     """recall_context 已请求。"""
 

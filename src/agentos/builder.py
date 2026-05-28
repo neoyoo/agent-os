@@ -8,7 +8,7 @@ from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
 from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
 from agentos.events import EventBus
 from agentos.messages import MessageRuntime
-from agentos.policies import BudgetPolicy, ToolResultBudget
+from agentos.policies import BudgetPolicy, TokenBudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
 from agentos.recall import RecallRuntime
 from agentos.runtime import Agent, AsyncQueryLoop, ProviderRequestBuilder
@@ -38,6 +38,11 @@ class AgentBuilder:
     _token_counter: TokenCounter | None = None
     _compression_requested: bool = False
     _compressor: Compressor | None = None
+    _compression_context_window: int | None = None
+    _compression_reserve_output_tokens: int = 4096
+    _compression_retain_latest_tokens: int = 8000
+    _compression_static_overhead_tokens: int = 0
+    _compression_token_counter: TokenCounter | None = None
 
     def provider(self, provider: Provider) -> "AgentBuilder":
         """设置模型 provider。"""
@@ -141,6 +146,12 @@ class AgentBuilder:
     def with_compression(
         self,
         compressor: Compressor | None = None,
+        *,
+        context_window: int | None = None,
+        reserve_output_tokens: int = 4096,
+        retain_latest_tokens: int = 8000,
+        static_overhead_tokens: int = 0,
+        token_counter: TokenCounter | None = None,
     ) -> "AgentBuilder":
         """启用 compression runtime，默认使用 deterministic compressor。"""
 
@@ -155,6 +166,11 @@ class AgentBuilder:
             )
         self._compression_requested = True
         self._compressor = compressor
+        self._compression_context_window = context_window
+        self._compression_reserve_output_tokens = reserve_output_tokens
+        self._compression_retain_latest_tokens = retain_latest_tokens
+        self._compression_static_overhead_tokens = static_overhead_tokens
+        self._compression_token_counter = token_counter
         return self
 
     def build(self) -> Agent:
@@ -184,7 +200,7 @@ class AgentBuilder:
             compression_runtime = CompressionRuntime(
                 context_runtime=context,
                 message_runtime=messages,
-                budget_policy=DEFAULT_COMPRESSION_BUDGET,
+                budget_policy=self._compression_budget_policy(),
                 compressor=self._compressor,
                 event_bus=self._event_bus,
             )
@@ -251,6 +267,21 @@ class AgentBuilder:
         if self._event_bus is not None:
             kwargs["event_bus"] = self._event_bus
         return kwargs
+
+    def _compression_budget_policy(self) -> BudgetPolicy | TokenBudgetPolicy:
+        if self._compression_context_window is None:
+            return DEFAULT_COMPRESSION_BUDGET
+        return TokenBudgetPolicy(
+            token_counter=(
+                self._compression_token_counter
+                or self._token_counter
+                or HeuristicTokenCounter()
+            ),
+            context_window=self._compression_context_window,
+            reserve_output_tokens=self._compression_reserve_output_tokens,
+            retain_latest_tokens=self._compression_retain_latest_tokens,
+            static_overhead_tokens=self._compression_static_overhead_tokens,
+        )
 
     def _default_renderer(
         self,
