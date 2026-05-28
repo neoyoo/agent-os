@@ -91,6 +91,16 @@ class ToolResultAppendedEvent(AgentEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class ToolResultCappedEvent(AgentEvent):
+    """tool result 因超过预算被替换为 nudge。"""
+
+    tool_name: str = ""
+    tool_call_id: str = ""
+    actual_tokens: int = 0
+    cap: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCompletedEvent(AgentEvent):
     """turn 已完成。"""
 

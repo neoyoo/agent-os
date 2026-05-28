@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionRuntime
 from agentos.messages import MessageRuntime, ToolCall
+from agentos.policies import ToolResultBudget
 from agentos.providers import (
     Provider,
     ProviderContentDelta,
@@ -58,6 +59,7 @@ from agentos.runtime.stream_events import (
     TurnStreamStarted,
 )
 from agentos.runtime.turn import TurnState
+from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +82,8 @@ class AsyncQueryLoop:
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
     retry_policy: RetryPolicy | None = None
+    tool_result_budget: ToolResultBudget = field(default_factory=ToolResultBudget)
+    token_counter: TokenCounter = field(default_factory=HeuristicTokenCounter)
     max_tool_iterations: int = 8
     sync_loop: QueryLoop = field(init=False)
     _interrupted: bool = field(default=False, init=False, repr=False)
@@ -99,6 +103,8 @@ class AsyncQueryLoop:
             session_state=self.session_state,
             turn_notice_provider=self.turn_notice_provider,
             retry_policy=self.retry_policy,
+            tool_result_budget=self.tool_result_budget,
+            token_counter=self.token_counter,
             max_tool_iterations=self.max_tool_iterations,
         )
 
@@ -353,6 +359,7 @@ class AsyncQueryLoop:
                         **self.sync_loop._event_context(turn),
                     ),
                 )
+                result = self.sync_loop._cap_tool_result(tool_call, result, turn)
                 tool_result = self.message_runtime.append_tool_result(
                     tool_call_id=result.tool_call_id,
                     content=result.content,

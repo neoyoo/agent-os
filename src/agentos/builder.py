@@ -8,10 +8,11 @@ from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
 from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
 from agentos.events import EventBus
 from agentos.messages import MessageRuntime
-from agentos.policies import BudgetPolicy
+from agentos.policies import BudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
 from agentos.recall import RecallRuntime
 from agentos.runtime import Agent, AsyncQueryLoop, ProviderRequestBuilder
+from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
 DEFAULT_COMPRESSION_BUDGET = BudgetPolicy(
@@ -33,6 +34,8 @@ class AgentBuilder:
     _compression_runtime: CompressionRuntime | None = None
     _event_bus: EventBus | None = None
     _tool_call_router: ToolCallRouter | None = None
+    _tool_result_budget: ToolResultBudget | None = None
+    _token_counter: TokenCounter | None = None
     _compression_requested: bool = False
     _compressor: Compressor | None = None
 
@@ -113,6 +116,26 @@ class AgentBuilder:
                 "AgentBuilder.tool_call_router() called twice. Remove one call.",
             )
         self._tool_call_router = router
+        return self
+
+    def tool_result_budget(self, budget: ToolResultBudget) -> "AgentBuilder":
+        """覆盖默认 tool result token 预算。"""
+
+        if self._tool_result_budget is not None:
+            raise ValueError(
+                "AgentBuilder.tool_result_budget() called twice. Remove one call.",
+            )
+        self._tool_result_budget = budget
+        return self
+
+    def token_counter(self, counter: TokenCounter) -> "AgentBuilder":
+        """覆盖默认 token counter。"""
+
+        if self._token_counter is not None:
+            raise ValueError(
+                "AgentBuilder.token_counter() called twice. Remove one call.",
+            )
+        self._token_counter = counter
         return self
 
     def with_compression(
@@ -218,6 +241,8 @@ class AgentBuilder:
             "message_runtime": messages,
             "request_builder": request_builder,
             "provider": self._provider,
+            "tool_result_budget": self._tool_result_budget or ToolResultBudget(),
+            "token_counter": self._token_counter or HeuristicTokenCounter(),
         }
         if tool_router is not None:
             kwargs["tool_call_router"] = tool_router
