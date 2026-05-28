@@ -249,7 +249,7 @@ agent = (
 
 ### 5.1 ASGI App
 
-`AsgiAgentApp` 是无框架绑定的 ASGI HTTP app。它依赖 `AgentSessionProvider` 通过 `session_id` 取回 agent，并支持 auth policy、请求体大小限制、JSON turn、SSE turn、health/readiness、可注入 rate limiter、ASGI lifespan shutdown handlers 和可选 A2A server。
+`AsgiAgentApp` 是无框架绑定的 ASGI HTTP app。它依赖 `AgentSessionProvider` 通过 `session_id` 取回 agent，并支持 auth policy、请求体大小限制、JSON turn、SSE turn、显式 interrupt、SSE heartbeat、health/readiness、可注入 rate limiter、ASGI lifespan shutdown handlers 和可选 A2A server。
 
 ```python
 from agentos import AsgiAgentApp, InMemoryAgentSessionProvider
@@ -271,10 +271,11 @@ app = AsgiAgentApp(sessions=sessions)
 | `GET` | `/ready` / `/v1/ready` | 运行注入的 readiness checks，失败时返回 503 |
 | `POST` | `/v1/sessions/{session_id}/turns` | JSON turn，内部调用 `HttpAgentChannel.handle_turn()` |
 | `POST` | `/v1/sessions/{session_id}/turns/stream` | SSE turn，消费 `agent.async_stream()` 或 fallback 到同步 stream |
+| `POST` | `/v1/sessions/{session_id}/interrupt` | 请求中断当前 session 的运行中 turn |
 | `POST` | `/a2a/tasks` | 当配置 `a2a_server` 时处理 inbound A2A task |
 | `GET` | `/a2a/health` | 当配置 `a2a_server` 时返回 A2A health |
 
-请求体由 `parse_channel_turn_request()` 解析，要求 JSON object 中存在非空 `message`，并支持 `thinking`、`show_thinking` 和可选 `max_message_length` 校验。配置 `SlidingWindowRateLimiter` 后，turn endpoint 会按 `session_id` 限流，超限返回 429 和 `Retry-After` header。
+请求体由 `parse_channel_turn_request()` 解析，要求 JSON object 中存在非空 `message`，并支持 `thinking`、`show_thinking` 和可选 `max_message_length` 校验。SSE turn 默认每 15 秒发送一次 heartbeat comment，可通过 `sse_heartbeat_interval_seconds=None` 或非正数关闭。配置 `SlidingWindowRateLimiter` 后，turn endpoint 会按 `session_id` 限流，超限返回 429 和 `Retry-After` header。
 
 源码来源：[`src/agentos/channels/asgi.py`](../src/agentos/channels/asgi.py)，[`src/agentos/channels/rate_limit.py`](../src/agentos/channels/rate_limit.py)，[`src/agentos/channels/http.py`](../src/agentos/channels/http.py)，[`src/agentos/channels/sse.py`](../src/agentos/channels/sse.py)，[`src/agentos/channels/types.py`](../src/agentos/channels/types.py)，[`tests/channels/test_asgi_app.py`](../tests/channels/test_asgi_app.py)，[`tests/channels/test_health_endpoint.py`](../tests/channels/test_health_endpoint.py)，[`tests/channels/test_rate_limit.py`](../tests/channels/test_rate_limit.py)，[`tests/channels/test_turn_request_parser.py`](../tests/channels/test_turn_request_parser.py)
 

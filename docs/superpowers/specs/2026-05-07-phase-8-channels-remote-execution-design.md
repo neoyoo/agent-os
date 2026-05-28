@@ -19,7 +19,7 @@ It intentionally defers:
 
 - Eval runner and metrics.
 - Finetuning exporter and prompt optimization.
-- WebSocket and realtime duplex channels.
+- Realtime duplex channels.
 - OAuth, API key rotation, rate limiting, and multi-tenant auth.
 - Production sandbox isolation beyond existing tool policy boundaries.
 - Real network integration tests.
