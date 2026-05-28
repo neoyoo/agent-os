@@ -1,10 +1,9 @@
-import asyncio
-from dataclasses import dataclass
-import inspect
+from dataclasses import dataclass, field
 
+from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.tools import RegisteredTool
-from agentos.policies import SecurityPolicy
+from agentos.policies import ResourcePolicy, SecurityPolicy
 from agentos.providers import ProviderToolCall
 
 
@@ -26,6 +25,8 @@ class ToolExecutor:
 
     registry: ToolRegistry
     security_policy: SecurityPolicy
+    backend: ExecutionBackend = field(default_factory=InProcessExecutionBackend)
+    resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
 
     def execute(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
         """执行 provider tool call 对应的外部工具。"""
@@ -33,12 +34,11 @@ class ToolExecutor:
         self.security_policy.ensure_tool_allowed(tool_call.name)
         tool = self._tool_for_call(tool_call)
         self._validate_arguments(tool_call, tool.parameters)
-        content = tool.handler(dict(tool_call.arguments))
-        if inspect.isawaitable(content):
-            close = getattr(content, "close", None)
-            if callable(close):
-                close()
-            raise RuntimeError("async handler requires AsyncQueryLoop")
+        content = self.backend.run(
+            tool,
+            dict(tool_call.arguments),
+            resource_policy=self.resource_policy,
+        )
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
             content=content,
@@ -50,10 +50,12 @@ class ToolExecutor:
         self.security_policy.ensure_tool_allowed(tool_call.name)
         tool = self._tool_for_call(tool_call)
         self._validate_arguments(tool_call, tool.parameters)
-        if inspect.iscoroutinefunction(tool.handler):
-            content = await tool.handler(dict(tool_call.arguments))
-            return ToolExecutionResult(tool_call_id=tool_call.id, content=content)
-        return await asyncio.to_thread(self.execute, tool_call)
+        content = await self.backend.async_run(
+            tool,
+            dict(tool_call.arguments),
+            resource_policy=self.resource_policy,
+        )
+        return ToolExecutionResult(tool_call_id=tool_call.id, content=content)
 
     def _tool_for_call(self, tool_call: ProviderToolCall) -> RegisteredTool:
         try:

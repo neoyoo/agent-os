@@ -1,5 +1,6 @@
 """工具、context tools、MCP 和 skills 的能力层。"""
 
+from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.builtin import BuiltinToolError, read_file_tool
 from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
 from agentos.capabilities.mcp import (
@@ -31,7 +32,9 @@ __all__ = [
     "BuiltinSkillSource",
     "BuiltinToolError",
     "ChainedSkillSource",
+    "ExecutionBackend",
     "FileSystemSkillSource",
+    "InProcessExecutionBackend",
     "MCPClient",
     "MCPRegistry",
     "MCPServerRegistration",

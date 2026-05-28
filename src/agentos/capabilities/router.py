@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from agentos.attachments.types import AttachmentError
+from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.executor import ToolExecutionResult, ToolExecutor
 from agentos.capabilities.mcp import MCPToolAdapter
 from agentos.capabilities.registry import ToolRegistry
@@ -11,7 +12,7 @@ from agentos.context_protocol import (
     context_protocol_tool_specs,
 )
 from agentos.messages import Message
-from agentos.policies import SecurityPolicy
+from agentos.policies import ResourcePolicy, SecurityPolicy
 from agentos.providers import ProviderToolCall, ProviderToolSpec
 from agentos.recall import RecallRuntime
 
@@ -26,6 +27,8 @@ class ToolCallRouter:
     attachment_runtime: object | None = None
     mcp_adapter: MCPToolAdapter | None = None
     security_policy: SecurityPolicy = field(default_factory=SecurityPolicy)
+    backend: ExecutionBackend = field(default_factory=InProcessExecutionBackend)
+    resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
     _executor: ToolExecutor | None = None
 
     def tool_specs(self) -> list[ProviderToolSpec]:
@@ -73,6 +76,8 @@ class ToolCallRouter:
             self._executor = ToolExecutor(
                 registry=self.tool_registry,
                 security_policy=self.security_policy,
+                backend=self.backend,
+                resource_policy=self.resource_policy,
             )
         return self._executor
 
