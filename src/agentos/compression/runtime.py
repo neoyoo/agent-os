@@ -10,7 +10,7 @@ from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import Message
 from agentos.messages import MessageRuntime
-from agentos.policies import BudgetPolicy
+from agentos.policies import CompressionBudget
 
 if TYPE_CHECKING:
     from agentos.runtime.event_bus import EventBus
@@ -41,43 +41,57 @@ class CompressionRuntime:
 
     context_runtime: CompressionContextBoundary
     message_runtime: MessageRuntime
-    budget_policy: BudgetPolicy
+    budget_policy: CompressionBudget
     compressor: Compressor = field(default_factory=RuleBasedCompressor)
+    fallback_compressor: Compressor = field(default_factory=RuleBasedCompressor)
     index: CompressionIndex = field(default_factory=CompressionIndex)
     memory_sink: CompressionMemorySink | None = None
     evictor: Evictor | None = None
     event_bus: EventBus | None = None
     session_id: str | None = None
     turn_id: str | None = None
+    max_consecutive_failures: int = 3
     _next_segment_number: int = field(init=False)
+    _consecutive_failures: int = field(init=False)
 
     def __init__(
         self,
         context_runtime: CompressionContextBoundary,
         message_runtime: MessageRuntime,
-        budget_policy: BudgetPolicy,
+        budget_policy: CompressionBudget,
         compressor: Compressor | None = None,
+        fallback_compressor: Compressor | None = None,
         index: CompressionIndex | None = None,
         memory_sink: CompressionMemorySink | None = None,
         evictor: Evictor | None = None,
         event_bus: EventBus | None = None,
         session_id: str | None = None,
         turn_id: str | None = None,
+        max_consecutive_failures: int = 3,
         next_segment_number: int = 1,
     ) -> None:
         """创建 compression runtime，并允许从 snapshot 恢复 segment cursor。"""
 
+        if max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be at least 1")
         self.context_runtime = context_runtime
         self.message_runtime = message_runtime
         self.budget_policy = budget_policy
         self.compressor = compressor if compressor is not None else RuleBasedCompressor()
+        self.fallback_compressor = (
+            fallback_compressor
+            if fallback_compressor is not None
+            else RuleBasedCompressor()
+        )
         self.index = index if index is not None else CompressionIndex()
         self.memory_sink = memory_sink
         self.evictor = evictor if evictor is not None else Evictor(budget_policy)
         self.event_bus = event_bus
         self.session_id = session_id
         self.turn_id = turn_id
+        self.max_consecutive_failures = max_consecutive_failures
         self._next_segment_number = next_segment_number
+        self._consecutive_failures = 0
 
     def maybe_compress(self) -> CompressedSegment | None:
         """如果 active window 超过预算，就执行一次压缩。"""
@@ -99,7 +113,14 @@ class CompressionRuntime:
             self.message_runtime.store.get(message_id)
             for message_id in selected_message_ids
         ]
-        package = self._compress_package(source_messages)
+        degraded = self._consecutive_failures >= self.max_consecutive_failures
+        active_compressor = self.fallback_compressor if degraded else self.compressor
+        try:
+            package = self._compress_package(source_messages, active_compressor)
+        except Exception as error:
+            self._consecutive_failures += 1
+            self._emit_compression_failed(str(error), degraded=degraded)
+            return None
         segment = package.segment
 
         if self.memory_sink is not None:
@@ -111,6 +132,7 @@ class CompressionRuntime:
             selected_message_ids,
             self.message_runtime.store,
         )
+        self._consecutive_failures = 0
         self._next_segment_number += 1
         from agentos.runtime.event_bus import CompressionCompletedEvent
 
@@ -140,6 +162,20 @@ class CompressionRuntime:
             ),
         )
 
+    def _emit_compression_failed(self, reason: str, *, degraded: bool) -> None:
+        """发出 compression failed event。"""
+
+        from agentos.runtime.event_bus import CompressionFailedEvent
+
+        self._emit(
+            CompressionFailedEvent(
+                reason=reason,
+                consecutive_failures=self._consecutive_failures,
+                degraded=degraded,
+                **self._event_context(),
+            ),
+        )
+
     def _next_segment_id(self) -> str:
         """生成 LLM 可见的稳定 segment handle。"""
 
@@ -148,11 +184,12 @@ class CompressionRuntime:
     def _compress_package(
         self,
         source_messages: list[Message],
+        compressor: Compressor,
     ) -> CompressedSegmentPackage:
         """生成 compression package，并兼容旧 Compressor 协议。"""
 
         segment_id = self._next_segment_id()
-        compress_package = getattr(self.compressor, "compress_package", None)
+        compress_package = getattr(compressor, "compress_package", None)
         if callable(compress_package):
             return compress_package(
                 segment_id=segment_id,
@@ -160,7 +197,7 @@ class CompressionRuntime:
                 messages=source_messages,
             )
 
-        segment = self.compressor.compress(segment_id, source_messages)
+        segment = compressor.compress(segment_id, source_messages)
         return CompressedSegmentPackage(
             segment=segment,
             source_refs=tuple(message.id for message in source_messages),

@@ -91,6 +91,16 @@ class ToolResultAppendedEvent(AgentEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class ToolResultCappedEvent(AgentEvent):
+    """tool result 因超过预算被替换为 nudge。"""
+
+    tool_name: str = ""
+    tool_call_id: str = ""
+    actual_tokens: int = 0
+    cap: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCompletedEvent(AgentEvent):
     """turn 已完成。"""
 
@@ -164,6 +174,15 @@ class CompressionCompletedEvent(AgentEvent):
 
     segment_id: str = ""
     source_message_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CompressionFailedEvent(AgentEvent):
+    """压缩失败，active refs 已保留。"""
+
+    reason: str = ""
+    consecutive_failures: int = 0
+    degraded: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,8 +15,9 @@ from agentos.channels.auth import (
 from agentos.channels.http import HttpAgentChannel
 from agentos.channels.rate_limit import RateLimiter
 from agentos.channels.session import AgentSessionProvider
+from agentos.channels.sse_buffer import InMemorySseEventBuffer, SseEventBuffer
+from agentos.channels.sse_turns import SseTurnEntry
 from agentos.channels.types import ChannelTurnRequest, parse_channel_turn_request
-from agentos.runtime import Agent
 from agentos.runtime.stream_serializers import event_to_sse
 
 
@@ -43,6 +44,9 @@ class AsgiAgentApp:
         rate_limiter: RateLimiter | None = None,
         shutdown_handlers: list[Callable[[], object]] | None = None,
         sse_heartbeat_interval_seconds: float | None = 15.0,
+        sse_event_buffer: SseEventBuffer | None = None,
+        sse_resume_grace_seconds: float = 30.0,
+        sse_terminal_retention_seconds: float = 60.0,
     ) -> None:
         """创建 ASGI app。"""
 
@@ -56,6 +60,13 @@ class AsgiAgentApp:
         self._rate_limiter = rate_limiter
         self._shutdown_handlers = list(shutdown_handlers or [])
         self._sse_heartbeat_interval_seconds = sse_heartbeat_interval_seconds
+        self._sse_event_buffer = sse_event_buffer or InMemorySseEventBuffer()
+        self._sse_resume_grace_seconds = sse_resume_grace_seconds
+        self._sse_terminal_retention_seconds = sse_terminal_retention_seconds
+        self._sse_turns_by_session: dict[str, SseTurnEntry] = {}
+        self._sse_turns_by_id: dict[str, SseTurnEntry] = {}
+        self._sse_turn_lock = asyncio.Lock()
+        self._next_sse_turn_number = 1
 
     async def __call__(
         self,
@@ -131,7 +142,13 @@ class AsgiAgentApp:
             )
             return
         if is_stream:
-            await self._handle_sse_turn(session_id, body, receive, send)
+            await self._handle_sse_turn(
+                session_id,
+                body,
+                receive,
+                send,
+                headers=self._headers(scope),
+            )
             return
         result = await asyncio.to_thread(self._http.handle_turn, session_id, body)
         await self._send_json(
@@ -194,89 +211,140 @@ class AsgiAgentApp:
         body: bytes,
         receive: AsgiReceive,
         send: AsgiSend,
+        *,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"content-type", b"text/event-stream; charset=utf-8")],
-            },
-        )
-        disconnect_task = asyncio.create_task(receive())
-        agent: Agent | None = None
-        stream_task: asyncio.Task[None] | None = None
-        heartbeat_task: asyncio.Task[None] | None = None
-        send_lock = asyncio.Lock()
-        try:
-            try:
-                request = parse_channel_turn_request(body)
-            except ValueError as error:
-                await self._send_sse_chunk(send, self._error_sse_chunk(str(error)))
-                return
-
-            agent = self._sessions.get_agent(session_id)
-            stream_task = asyncio.create_task(
-                self._send_agent_sse_stream(agent, request, send, send_lock),
-            )
-            if (
-                self._sse_heartbeat_interval_seconds is not None
-                and self._sse_heartbeat_interval_seconds > 0
-            ):
-                heartbeat_task = asyncio.create_task(
-                    self._send_sse_heartbeats(send, send_lock),
+        last_event_id = (headers or {}).get("last-event-id")
+        if last_event_id:
+            parsed = self._parse_sse_event_id(last_event_id)
+            if parsed is None:
+                await self._send_json(
+                    send,
+                    400,
+                    {"status": "failed", "error": "invalid Last-Event-ID"},
                 )
-            done, _pending = await asyncio.wait(
-                {stream_task, disconnect_task},
-                return_when=asyncio.FIRST_COMPLETED,
+                return
+            turn_stream_id, last_sequence = parsed
+            await self._handle_sse_resume(
+                session_id,
+                turn_stream_id,
+                last_sequence,
+                receive,
+                send,
             )
-            if disconnect_task in done:
-                message = disconnect_task.result()
-                if message.get("type") == "http.disconnect":
-                    agent.interrupt()
-                    stream_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await stream_task
-            else:
-                if not disconnect_task.done():
-                    disconnect_task.cancel()
-                await stream_task
-        finally:
-            if stream_task is not None and not stream_task.done():
-                stream_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await stream_task
-            if heartbeat_task is not None and not heartbeat_task.done():
-                heartbeat_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await heartbeat_task
-            if not disconnect_task.done():
-                disconnect_task.cancel()
-            if agent is not None:
-                self._sessions.release_agent(session_id, agent)
+            return
+
+        try:
+            request = parse_channel_turn_request(body)
+        except ValueError as error:
+            await self._start_sse_response(send)
+            await self._send_sse_chunk(send, self._error_sse_chunk(str(error)))
             await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
 
-    async def _send_agent_sse_stream(
+        entry = await self._create_sse_turn_entry(session_id, request)
+        if entry is None:
+            await self._send_json(
+                send,
+                409,
+                {"status": "failed", "error": "session has active stream turn"},
+            )
+            return
+        await self._read_sse_entry(entry, 0, receive, send)
+
+    async def _handle_sse_resume(
         self,
-        agent: Agent,
-        request: ChannelTurnRequest,
+        session_id: str,
+        turn_stream_id: str,
+        last_sequence: int,
+        receive: AsgiReceive,
         send: AsgiSend,
-        send_lock: asyncio.Lock | None = None,
     ) -> None:
-        """消费 Agent.async_stream 并写出 SSE chunks。"""
+        async with self._sse_turn_lock:
+            entry = self._sse_turns_by_id.get(turn_stream_id)
+        if entry is not None:
+            if entry.session_id != session_id:
+                await self._send_json(
+                    send,
+                    404,
+                    {"status": "failed", "error": "stream turn not found"},
+                )
+                return
+            await self._read_sse_entry(entry, last_sequence, receive, send)
+            return
 
-        async_stream = getattr(agent, "async_stream", None)
+        stream_key = f"{session_id}:{turn_stream_id}"
+        await self._start_sse_response(send)
+        for _sequence, chunk in await self._sse_event_buffer.replay_since(
+            stream_key,
+            last_sequence,
+        ):
+            await self._send_sse_chunk(send, chunk)
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async def _create_sse_turn_entry(
+        self,
+        session_id: str,
+        request: ChannelTurnRequest,
+    ) -> SseTurnEntry | None:
+        async with self._sse_turn_lock:
+            existing = self._sse_turns_by_session.get(session_id)
+            if existing is not None and not existing.terminal:
+                return None
+            turn_stream_id = self._next_sse_turn_id()
+            agent = self._sessions.get_agent(session_id)
+            entry = SseTurnEntry(
+                session_id=session_id,
+                turn_stream_id=turn_stream_id,
+                stream_key=f"{session_id}:{turn_stream_id}",
+                agent=agent,
+                request=request,
+            )
+            self._sse_turns_by_session[session_id] = entry
+            self._sse_turns_by_id[turn_stream_id] = entry
+            entry.runner_task = asyncio.create_task(self._run_sse_turn(entry))
+            return entry
+
+    def _next_sse_turn_id(self) -> str:
+        turn_stream_id = f"turn_{self._next_sse_turn_number}"
+        self._next_sse_turn_number += 1
+        return turn_stream_id
+
+    async def _run_sse_turn(self, entry: SseTurnEntry) -> None:
+        try:
+            await self._append_agent_sse_stream(entry)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            await self._append_sse_chunk(entry, self._error_sse_chunk(str(error)))
+        finally:
+            async with entry.lock:
+                if entry.closed:
+                    return
+                entry.terminal = True
+            await self._sse_event_buffer.mark_terminal(entry.stream_key)
+            self._schedule_sse_gc(entry)
+
+    async def _append_agent_sse_stream(
+        self,
+        entry: SseTurnEntry,
+    ) -> None:
+        """消费 Agent stream 并写入 SSE buffer。"""
+
+        request = entry.request
+        async_stream = getattr(entry.agent, "async_stream", None)
         if callable(async_stream):
             async for event in async_stream(
                 request.message,
                 thinking=request.thinking,
                 show_thinking=request.show_thinking,
             ):
-                await self._send_sse_event(event, request, send, send_lock)
+                await self._append_sse_event(entry, event)
             return
 
         events = await asyncio.to_thread(
             lambda: list(
-                agent.stream(
+                entry.agent.stream(
                     request.message,
                     thinking=request.thinking,
                     show_thinking=request.show_thinking,
@@ -284,23 +352,199 @@ class AsgiAgentApp:
             ),
         )
         for event in events:
-            await self._send_sse_event(event, request, send, send_lock)
+            await self._append_sse_event(entry, event)
 
-    async def _send_sse_event(
+    async def _append_sse_event(
         self,
+        entry: SseTurnEntry,
         event: object,
-        request: ChannelTurnRequest,
-        send: AsgiSend,
-        send_lock: asyncio.Lock | None = None,
     ) -> None:
-        """把 typed stream event 写成一个 SSE chunk。"""
+        """把 typed stream event 写成 SSE chunk 并追加到 buffer。"""
 
         chunk = event_to_sse(
             event,
-            show_thinking=request.show_thinking,
+            show_thinking=entry.request.show_thinking,
         )
         if chunk is not None:
+            await self._append_sse_chunk(entry, chunk)
+
+    async def _append_sse_chunk(self, entry: SseTurnEntry, chunk: str) -> None:
+        sequence = entry.next_sequence
+        entry.next_sequence += 1
+        await self._sse_event_buffer.append(
+            entry.stream_key,
+            sequence,
+            f"id: {entry.turn_stream_id}:{sequence}\n{chunk}",
+        )
+
+    async def _read_sse_entry(
+        self,
+        entry: SseTurnEntry,
+        last_sequence: int,
+        receive: AsgiReceive,
+        send: AsgiSend,
+    ) -> None:
+        await self._open_sse_reader(entry)
+        await self._start_sse_response(send)
+        disconnect_task = asyncio.create_task(receive())
+        send_lock = asyncio.Lock()
+        reader_task = asyncio.create_task(
+            self._send_buffered_sse_events(entry, last_sequence, send, send_lock),
+        )
+        heartbeat_task: asyncio.Task[None] | None = None
+        if (
+            self._sse_heartbeat_interval_seconds is not None
+            and self._sse_heartbeat_interval_seconds > 0
+        ):
+            heartbeat_task = asyncio.create_task(
+                self._send_sse_heartbeats(send, send_lock),
+            )
+        try:
+            done, _pending = await asyncio.wait(
+                {reader_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in done:
+                message = disconnect_task.result()
+                if message.get("type") == "http.disconnect":
+                    reader_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await reader_task
+                else:
+                    await reader_task
+            else:
+                if not disconnect_task.done():
+                    disconnect_task.cancel()
+                await reader_task
+        finally:
+            if reader_task is not None and not reader_task.done():
+                reader_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await reader_task
+            if heartbeat_task is not None and not heartbeat_task.done():
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
+            if not disconnect_task.done():
+                disconnect_task.cancel()
+            await self._close_sse_reader(entry)
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async def _send_buffered_sse_events(
+        self,
+        entry: SseTurnEntry,
+        last_sequence: int,
+        send: AsgiSend,
+        send_lock: asyncio.Lock,
+    ) -> None:
+        for sequence, chunk in await self._sse_event_buffer.replay_since(
+            entry.stream_key,
+            last_sequence,
+        ):
+            last_sequence = sequence
             await self._send_sse_chunk(send, chunk, send_lock)
+        async for sequence, chunk in self._sse_event_buffer.follow(
+            entry.stream_key,
+            last_sequence,
+        ):
+            last_sequence = sequence
+            await self._send_sse_chunk(send, chunk, send_lock)
+
+    async def _open_sse_reader(self, entry: SseTurnEntry) -> None:
+        async with entry.lock:
+            entry.active_readers += 1
+            if entry.grace_task is not None and not entry.grace_task.done():
+                entry.grace_task.cancel()
+            entry.grace_task = None
+
+    async def _close_sse_reader(self, entry: SseTurnEntry) -> None:
+        should_start_grace = False
+        async with entry.lock:
+            entry.active_readers = max(0, entry.active_readers - 1)
+            should_start_grace = (
+                entry.active_readers == 0
+                and not entry.terminal
+                and not entry.closed
+            )
+        if should_start_grace:
+            self._schedule_sse_grace(entry)
+
+    def _schedule_sse_grace(self, entry: SseTurnEntry) -> None:
+        if entry.grace_task is not None and not entry.grace_task.done():
+            entry.grace_task.cancel()
+        entry.grace_task = asyncio.create_task(self._expire_sse_grace(entry))
+
+    async def _expire_sse_grace(self, entry: SseTurnEntry) -> None:
+        await asyncio.sleep(self._sse_resume_grace_seconds)
+        async with entry.lock:
+            if entry.active_readers > 0 or entry.terminal or entry.closed:
+                return
+            entry.closed = True
+        entry.agent.interrupt()
+        if entry.runner_task is not None and not entry.runner_task.done():
+            entry.runner_task.cancel()
+        await self._sse_event_buffer.drop(entry.stream_key)
+        await self._forget_sse_entry(entry)
+        self._release_sse_entry(entry)
+
+    def _schedule_sse_gc(self, entry: SseTurnEntry) -> None:
+        if entry.gc_handle is not None and not entry.gc_handle.cancelled():
+            entry.gc_handle.cancel()
+        if entry.gc_task is not None and not entry.gc_task.done():
+            entry.gc_task.cancel()
+        if self._sse_terminal_retention_seconds <= 0:
+            entry.gc_task = asyncio.create_task(self._gc_sse_entry(entry))
+            return
+        loop = asyncio.get_running_loop()
+        entry.gc_handle = loop.call_later(
+            self._sse_terminal_retention_seconds,
+            self._start_sse_gc,
+            entry,
+        )
+
+    def _start_sse_gc(self, entry: SseTurnEntry) -> None:
+        if entry.closed:
+            return
+        entry.gc_task = asyncio.create_task(self._gc_sse_entry(entry))
+
+    async def _gc_sse_entry(self, entry: SseTurnEntry) -> None:
+        await self._sse_event_buffer.drop(entry.stream_key)
+        await self._forget_sse_entry(entry)
+        self._release_sse_entry(entry)
+
+    async def _forget_sse_entry(self, entry: SseTurnEntry) -> None:
+        async with self._sse_turn_lock:
+            if self._sse_turns_by_session.get(entry.session_id) is entry:
+                del self._sse_turns_by_session[entry.session_id]
+            if self._sse_turns_by_id.get(entry.turn_stream_id) is entry:
+                del self._sse_turns_by_id[entry.turn_stream_id]
+
+    def _release_sse_entry(self, entry: SseTurnEntry) -> None:
+        if entry.released:
+            return
+        entry.released = True
+        self._sessions.release_agent(entry.session_id, entry.agent)
+
+    async def _start_sse_response(self, send: AsgiSend) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream; charset=utf-8")],
+            },
+        )
+
+    def _parse_sse_event_id(self, value: str) -> tuple[str, int] | None:
+        turn_stream_id, separator, sequence_text = value.rpartition(":")
+        if not separator or not turn_stream_id:
+            return None
+        try:
+            sequence = int(sequence_text)
+        except ValueError:
+            return None
+        if sequence < 0:
+            return None
+        return turn_stream_id, sequence
 
     async def _send_sse_heartbeats(
         self,

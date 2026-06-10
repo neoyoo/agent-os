@@ -8,10 +8,11 @@ from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
 from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
 from agentos.events import EventBus
 from agentos.messages import MessageRuntime
-from agentos.policies import BudgetPolicy
+from agentos.policies import BudgetPolicy, TokenBudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
 from agentos.recall import RecallRuntime
 from agentos.runtime import Agent, AsyncQueryLoop, ProviderRequestBuilder
+from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
 DEFAULT_COMPRESSION_BUDGET = BudgetPolicy(
@@ -33,8 +34,15 @@ class AgentBuilder:
     _compression_runtime: CompressionRuntime | None = None
     _event_bus: EventBus | None = None
     _tool_call_router: ToolCallRouter | None = None
+    _tool_result_budget: ToolResultBudget | None = None
+    _token_counter: TokenCounter | None = None
     _compression_requested: bool = False
     _compressor: Compressor | None = None
+    _compression_context_window: int | None = None
+    _compression_reserve_output_tokens: int = 4096
+    _compression_retain_latest_tokens: int = 8000
+    _compression_static_overhead_tokens: int = 0
+    _compression_token_counter: TokenCounter | None = None
 
     def provider(self, provider: Provider) -> "AgentBuilder":
         """设置模型 provider。"""
@@ -115,9 +123,35 @@ class AgentBuilder:
         self._tool_call_router = router
         return self
 
+    def tool_result_budget(self, budget: ToolResultBudget) -> "AgentBuilder":
+        """覆盖默认 tool result token 预算。"""
+
+        if self._tool_result_budget is not None:
+            raise ValueError(
+                "AgentBuilder.tool_result_budget() called twice. Remove one call.",
+            )
+        self._tool_result_budget = budget
+        return self
+
+    def token_counter(self, counter: TokenCounter) -> "AgentBuilder":
+        """覆盖默认 token counter。"""
+
+        if self._token_counter is not None:
+            raise ValueError(
+                "AgentBuilder.token_counter() called twice. Remove one call.",
+            )
+        self._token_counter = counter
+        return self
+
     def with_compression(
         self,
         compressor: Compressor | None = None,
+        *,
+        context_window: int | None = None,
+        reserve_output_tokens: int = 4096,
+        retain_latest_tokens: int = 8000,
+        static_overhead_tokens: int = 0,
+        token_counter: TokenCounter | None = None,
     ) -> "AgentBuilder":
         """启用 compression runtime，默认使用 deterministic compressor。"""
 
@@ -132,6 +166,11 @@ class AgentBuilder:
             )
         self._compression_requested = True
         self._compressor = compressor
+        self._compression_context_window = context_window
+        self._compression_reserve_output_tokens = reserve_output_tokens
+        self._compression_retain_latest_tokens = retain_latest_tokens
+        self._compression_static_overhead_tokens = static_overhead_tokens
+        self._compression_token_counter = token_counter
         return self
 
     def build(self) -> Agent:
@@ -161,7 +200,7 @@ class AgentBuilder:
             compression_runtime = CompressionRuntime(
                 context_runtime=context,
                 message_runtime=messages,
-                budget_policy=DEFAULT_COMPRESSION_BUDGET,
+                budget_policy=self._compression_budget_policy(),
                 compressor=self._compressor,
                 event_bus=self._event_bus,
             )
@@ -218,6 +257,8 @@ class AgentBuilder:
             "message_runtime": messages,
             "request_builder": request_builder,
             "provider": self._provider,
+            "tool_result_budget": self._tool_result_budget or ToolResultBudget(),
+            "token_counter": self._token_counter or HeuristicTokenCounter(),
         }
         if tool_router is not None:
             kwargs["tool_call_router"] = tool_router
@@ -226,6 +267,21 @@ class AgentBuilder:
         if self._event_bus is not None:
             kwargs["event_bus"] = self._event_bus
         return kwargs
+
+    def _compression_budget_policy(self) -> BudgetPolicy | TokenBudgetPolicy:
+        if self._compression_context_window is None:
+            return DEFAULT_COMPRESSION_BUDGET
+        return TokenBudgetPolicy(
+            token_counter=(
+                self._compression_token_counter
+                or self._token_counter
+                or HeuristicTokenCounter()
+            ),
+            context_window=self._compression_context_window,
+            reserve_output_tokens=self._compression_reserve_output_tokens,
+            retain_latest_tokens=self._compression_retain_latest_tokens,
+            static_overhead_tokens=self._compression_static_overhead_tokens,
+        )
 
     def _default_renderer(
         self,

@@ -2,14 +2,14 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from agentos.messages import Message
-from agentos.policies import BudgetPolicy
+from agentos.policies import CompressionBudget
 
 
 @dataclass(frozen=True, slots=True)
 class Evictor:
     """选择可压缩的 active message refs。"""
 
-    budget_policy: BudgetPolicy
+    budget_policy: CompressionBudget
 
     def select_message_ids(self, messages: Sequence[Message]) -> list[str]:
         """选择最旧的连续前缀，并扩展边界以保护 tool pair。"""

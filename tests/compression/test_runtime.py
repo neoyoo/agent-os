@@ -181,3 +181,64 @@ def test_budget_policy_rejects_invalid_limits() -> None:
 
     with pytest.raises(ValueError, match="retain_latest_messages"):
         BudgetPolicy(max_active_messages=3, retain_latest_messages=0)
+
+
+def test_compression_runtime_keeps_refs_and_emits_event_when_compressor_fails() -> None:
+    from agentos.events import EventBus
+    from agentos.events import CompressionFailedEvent
+
+    class FailingCompressor:
+        def compress(self, segment_id, messages):
+            raise RuntimeError("compress failed")
+
+    event_bus = EventBus()
+    context_runtime = ContextRuntime()
+    message_runtime = MessageRuntime()
+    old_user = message_runtime.append_user("Old detail")
+    current_user = message_runtime.append_user("Current detail")
+    runtime = CompressionRuntime(
+        context_runtime=context_runtime,
+        message_runtime=message_runtime,
+        budget_policy=BudgetPolicy(max_active_messages=1, retain_latest_messages=1),
+        compressor=FailingCompressor(),
+        event_bus=event_bus,
+    )
+
+    assert runtime.maybe_compress() is None
+    assert [message.id for message in message_runtime.materialize_active()] == [
+        old_user.id,
+        current_user.id,
+    ]
+    assert any(
+        isinstance(event, CompressionFailedEvent)
+        and event.reason == "compress failed"
+        and event.consecutive_failures == 1
+        for event in event_bus.events
+    )
+
+
+def test_compression_runtime_uses_fallback_after_consecutive_failures() -> None:
+    class FailingCompressor:
+        def compress(self, segment_id, messages):
+            raise RuntimeError("compress failed")
+
+    context_runtime = RecordingCompressionContext()
+    message_runtime = MessageRuntime()
+    old_user = message_runtime.append_user("Old detail")
+    current_user = message_runtime.append_user("Current detail")
+    runtime = CompressionRuntime(
+        context_runtime=context_runtime,
+        message_runtime=message_runtime,
+        budget_policy=BudgetPolicy(max_active_messages=1, retain_latest_messages=1),
+        compressor=FailingCompressor(),
+        max_consecutive_failures=1,
+    )
+
+    assert runtime.maybe_compress() is None
+    segment = runtime.maybe_compress()
+
+    assert segment is not None
+    assert runtime.index.source_refs(segment.id) == [old_user.id]
+    assert [message.id for message in message_runtime.materialize_active()] == [
+        current_user.id,
+    ]

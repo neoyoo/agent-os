@@ -45,6 +45,19 @@ class AsyncOnlyAgent:
         self.interrupt_calls += 1
 
 
+class BlockingAsyncOnlyAgent(AsyncOnlyAgent):
+    async def async_stream(
+        self,
+        user_message: str,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ):
+        self.async_stream_calls += 1
+        yield TurnStreamCompleted(content=self.content)
+        await asyncio.Event().wait()
+
+
 async def call_asgi(
     app: AsgiAgentApp,
     *,
@@ -93,18 +106,23 @@ def test_asgi_sse_uses_agent_async_stream() -> None:
     assert agent.stream_calls == 0
 
 
-def test_asgi_sse_interrupts_async_agent_on_disconnect() -> None:
-    agent = AsyncOnlyAgent("async sse done")
+def test_asgi_sse_interrupts_async_agent_after_disconnect_grace() -> None:
+    agent = BlockingAsyncOnlyAgent("async sse done")
     app = AsgiAgentApp(
         sessions=InMemoryAgentSessionProvider(lambda session_id: agent),  # type: ignore[arg-type]
+        sse_resume_grace_seconds=0.01,
     )
 
-    sent = asyncio.run(
-        call_asgi(
+    async def run() -> list[dict[str, Any]]:
+        sent = await call_asgi(
             app,
             receive_after_body=[{"type": "http.disconnect"}],
-        ),
-    )
+        )
+        assert agent.interrupt_calls == 0
+        await asyncio.sleep(0.03)
+        return sent
+
+    sent = asyncio.run(run())
 
     assert response_status(sent) == 200
     assert agent.interrupt_calls == 1

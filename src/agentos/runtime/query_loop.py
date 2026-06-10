@@ -9,6 +9,8 @@ from agentos.compression import CompressionRuntime
 from agentos.context import ContextState
 from agentos.hooks import HookManager, HookResult
 from agentos.messages import MessageRuntime, ToolCall
+from agentos.policies import ToolResultBudget
+from agentos.policies.tool_result_budget import cap_tool_result_content
 from agentos.providers import (
     Provider,
     ProviderContentDelta,
@@ -34,6 +36,7 @@ from agentos.runtime.event_bus import (
     ToolExecutionCompletedEvent,
     ToolExecutionStartedEvent,
     ToolResultAppendedEvent,
+    ToolResultCappedEvent,
     TurnCompletedEvent,
     TurnFailedEvent,
     TurnStartedEvent,
@@ -60,6 +63,7 @@ from agentos.runtime.stream_events import (
     TurnStreamStarted,
 )
 from agentos.runtime.turn import TurnState
+from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
 class ContextRuntimeBoundary(Protocol):
@@ -112,6 +116,8 @@ class QueryLoop:
     turn_notice_provider: TurnNoticeProvider | None = None
     retry_policy: RetryPolicy | None = None
     structured_logger: StructuredLoggerBoundary | None = None
+    tool_result_budget: ToolResultBudget = field(default_factory=ToolResultBudget)
+    token_counter: TokenCounter = field(default_factory=HeuristicTokenCounter)
     max_tool_iterations: int = 8
     _provider_stream_counter: int = field(default=0, init=False, repr=False)
     _interrupted: bool = field(default=False, init=False, repr=False)
@@ -427,6 +433,7 @@ class QueryLoop:
                         **self._event_context(turn),
                     ),
                 )
+                result = self._cap_tool_result(tool_call, result, turn)
                 tool_result = self.message_runtime.append_tool_result(
                     tool_call_id=result.tool_call_id,
                     content=result.content,
@@ -445,6 +452,34 @@ class QueryLoop:
                     tool_call_id=tool_call.id,
                     content=result.content,
                 )
+
+    def _cap_tool_result(
+        self,
+        tool_call: ProviderToolCall,
+        result: ToolExecutionResult,
+        turn: TurnState | None,
+    ) -> ToolExecutionResult:
+        capped = cap_tool_result_content(
+            tool_name=tool_call.name,
+            content=result.content,
+            budget=self.tool_result_budget,
+            token_counter=self.token_counter,
+        )
+        if not capped.capped:
+            return result
+        self._emit(
+            ToolResultCappedEvent(
+                tool_name=tool_call.name,
+                tool_call_id=tool_call.id,
+                actual_tokens=capped.actual_tokens,
+                cap=capped.cap,
+                **self._event_context(turn),
+            ),
+        )
+        return ToolExecutionResult(
+            tool_call_id=result.tool_call_id,
+            content=capped.content,
+        )
 
     def _duplicate_tool_call_result(
         self,

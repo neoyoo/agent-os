@@ -81,6 +81,7 @@ class InterruptRecordingAgent:
 class BlockingAsyncStreamAgent:
     def __init__(self) -> None:
         self.interrupt_calls = 0
+        self.started = asyncio.Event()
 
     async def async_stream(
         self,
@@ -90,6 +91,7 @@ class BlockingAsyncStreamAgent:
         show_thinking: bool = False,
     ):
         yield AssistantContentDelta(index=1, text="first")
+        self.started.set()
         await asyncio.Event().wait()
 
     def interrupt(self) -> None:
@@ -110,6 +112,27 @@ class NonCachingProvider:
 
     def release_agent(self, session_id: str, agent: Agent) -> None:
         self.released.append(cast(InterruptRecordingAgent, agent))
+
+
+class ResumableAsyncStreamAgent:
+    def __init__(self) -> None:
+        self.interrupt_calls = 0
+        self.continue_stream = asyncio.Event()
+
+    async def async_stream(
+        self,
+        user_message: str,
+        *,
+        thinking: bool = False,
+        show_thinking: bool = False,
+    ):
+        yield AssistantContentDelta(index=0, text="first")
+        await self.continue_stream.wait()
+        yield AssistantContentDelta(index=1, text="second")
+        yield TurnStreamCompleted(content="firstsecond")
+
+    def interrupt(self) -> None:
+        self.interrupt_calls += 1
 
 
 async def call_asgi(
@@ -335,25 +358,38 @@ def test_asgi_app_returns_401_for_auth_failure() -> None:
     assert json.loads(response_body(sent))["error"] == "denied"
 
 
-def test_asgi_app_interrupts_agent_on_sse_disconnect() -> None:
+def last_sse_id(sent: list[dict[str, Any]]) -> str:
+    for line in response_body(sent).decode("utf-8").splitlines():
+        if line.startswith("id: "):
+            return line.removeprefix("id: ")
+    raise AssertionError("missing SSE id")
+
+
+def test_asgi_app_keeps_sse_turn_alive_during_disconnect_grace() -> None:
     from agentos.channels.asgi import AsgiAgentApp
 
-    stream_agent = InterruptRecordingAgent()
-    provider = NonCachingProvider(stream_agent)
+    stream_agent = BlockingAsyncStreamAgent()
+    provider = NonCachingProvider(stream_agent)  # type: ignore[arg-type]
     app = AsgiAgentApp(
         sessions=provider,
         a2a_server=A2AServerAdapter(StaticRunner()),
+        sse_resume_grace_seconds=0.01,
     )
 
-    sent = asyncio.run(
-        call_asgi(
+    async def run() -> list[dict[str, Any]]:
+        sent = await call_asgi(
             app,
             method="POST",
             path="/v1/sessions/session_1/turns/stream",
             body=b'{"message":"hello"}',
             receive_after_body=[{"type": "http.disconnect"}],
-        ),
-    )
+        )
+        assert stream_agent.interrupt_calls == 0
+        assert provider.released == []
+        await asyncio.sleep(0.03)
+        return sent
+
+    sent = asyncio.run(run())
 
     assert response_status(sent) == 200
     assert provider.get_calls == 1
@@ -437,4 +473,122 @@ def test_asgi_app_sends_sse_heartbeat_for_long_running_turn() -> None:
     body = response_body(sent)
     assert b"event: content_delta" in body
     assert b": heartbeat\n\n" in body
-    assert stream_agent.interrupt_calls == 1
+    assert b"id: " in body
+    assert b"id: turn_1:2\n: heartbeat" not in body
+    assert stream_agent.interrupt_calls == 0
+
+
+def test_asgi_app_replays_missing_sse_events_after_disconnect() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    stream_agent = ResumableAsyncStreamAgent()
+    provider = NonCachingProvider(stream_agent)  # type: ignore[arg-type]
+    app = AsgiAgentApp(
+        sessions=provider,
+        a2a_server=A2AServerAdapter(StaticRunner()),
+        sse_resume_grace_seconds=0.5,
+        sse_heartbeat_interval_seconds=None,
+    )
+
+    async def run() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        first_sent = await call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"message":"hello"}',
+            receive_after_body=[{"type": "http.disconnect"}],
+        )
+        first_id = last_sse_id(first_sent)
+        assert stream_agent.interrupt_calls == 0
+        stream_agent.continue_stream.set()
+        resumed_sent = await call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"message":"hello"}',
+            headers=[(b"last-event-id", first_id.encode("ascii"))],
+        )
+        return first_sent, resumed_sent
+
+    first_sent, resumed_sent = asyncio.run(run())
+    first_id = last_sse_id(first_sent)
+
+    assert first_id.startswith("turn_")
+    assert first_id.endswith(":1")
+    resumed_body = response_body(resumed_sent)
+    assert b'"text":"first"' not in resumed_body
+    assert b'"text":"second"' in resumed_body
+    assert b"event: done" in resumed_body
+    assert provider.get_calls == 1
+
+
+def test_asgi_app_rejects_new_sse_turn_while_previous_turn_is_in_grace() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    stream_agent = BlockingAsyncStreamAgent()
+    provider = NonCachingProvider(stream_agent)  # type: ignore[arg-type]
+    app = AsgiAgentApp(
+        sessions=provider,
+        a2a_server=A2AServerAdapter(StaticRunner()),
+        sse_resume_grace_seconds=0.5,
+        sse_heartbeat_interval_seconds=None,
+    )
+
+    async def run() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        first_sent = await call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"message":"hello"}',
+            receive_after_body=[{"type": "http.disconnect"}],
+        )
+        second_sent = await call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"message":"new"}',
+        )
+        return first_sent, second_sent
+
+    first_sent, second_sent = asyncio.run(run())
+
+    assert response_status(first_sent) == 200
+    assert response_status(second_sent) == 409
+    assert json.loads(response_body(second_sent))["error"] == "session has active stream turn"
+
+
+def test_asgi_app_terminal_retention_does_not_block_next_sse_turn() -> None:
+    from agentos.channels.asgi import AsgiAgentApp
+
+    first_agent = InterruptRecordingAgent()
+    second_agent = InterruptRecordingAgent()
+    provider = NonCachingProvider(first_agent, second_agent)
+    app = AsgiAgentApp(
+        sessions=provider,
+        a2a_server=A2AServerAdapter(StaticRunner()),
+        sse_terminal_retention_seconds=0.05,
+        sse_heartbeat_interval_seconds=None,
+    )
+
+    async def run() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        first_sent = await call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"message":"first"}',
+        )
+        second_sent = await call_asgi(
+            app,
+            method="POST",
+            path="/v1/sessions/session_1/turns/stream",
+            body=b'{"message":"second"}',
+        )
+        await asyncio.sleep(0.06)
+        return first_sent, second_sent
+
+    first_sent, second_sent = asyncio.run(run())
+    first_id = last_sse_id(first_sent)
+    second_id = last_sse_id(second_sent)
+
+    assert response_status(second_sent) == 200
+    assert first_id.split(":", 1)[0] != second_id.split(":", 1)[0]
