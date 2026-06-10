@@ -18,17 +18,31 @@ This plan covers the three specs added on 2026-05-28:
 - `docs/superpowers/specs/2026-05-28-token-aware-compression-circuit-breaker-design.md`
 - `docs/superpowers/specs/2026-05-28-sse-resume-mid-turn-design.md`
 
-This branch starts with Phase 1 only:
+This branch completed the context-budget hardening path in five focused commits:
+
+- `feat: cap oversized tool results`
+- `feat: add token-aware compression budget`
+- `feat: add sse stream resume`
+- `feat: add redis sse event buffer`
+- `feat: add execution backend seam`
+
+Implemented in this branch:
 
 - Implement `TokenCounter` and `HeuristicTokenCounter`.
 - Implement `ToolResultBudget`.
 - Cap tool results in both `QueryLoop` and `AsyncQueryLoop`.
 - Emit typed `ToolResultCappedEvent`.
+- Make compression token-aware and resilient to compressor failures.
+- Add SSE mid-turn resume with in-memory and Redis event buffers.
+- Add the execution backend / resource policy seam for later sandbox hardening.
 
-Deferred to later commits:
+Deferred to later branches:
 
-- Phase 2 token-aware compression and `CompressionFailedEvent`.
-- Phase 3 SSE buffer / turn registry / mid-turn resume.
+- Phase A async runtime completion.
+- Phase B persistent session provider.
+- Phase C cross-machine A2A dispatch transport hardening.
+- Phase E production backpressure, concurrency limits, observability, and load baseline.
+- `RunEventStore`, `RuntimeProfile`, workspace/permission binding, AgentCard interoperability, and symbolic context map / evidence recall.
 
 Design rules in force:
 
@@ -238,7 +252,7 @@ Expected: all target tests pass.
 - [x] Run `uv run pytest -q`
 - [x] Run `uv run python -m compileall -q src tests`
 - [x] Run `git diff --check`
-- [ ] Commit Phase 1:
+- [x] Commit Phase 1:
 
 ```bash
 git add docs/superpowers/specs/2026-05-28-*.md docs/superpowers/plans/2026-05-28-context-budget-hardening.md src tests
@@ -267,16 +281,62 @@ Start only after a separate review checkpoint.
 
 Acceptance:
 
-- SSE event IDs use `<turn_stream_id>:<sequence>`.
-- POST streaming clients can replay with explicit `Last-Event-ID` header.
-- Disconnect enters grace instead of immediate interrupt.
-- Terminal retention does not collide with the next turn in the same session.
-- Existing heartbeat behavior remains id-free.
+- [x] SSE event IDs use `<turn_stream_id>:<sequence>`.
+- [x] POST streaming clients can replay with explicit `Last-Event-ID` header.
+- [x] Disconnect enters grace instead of immediate interrupt.
+- [x] Terminal retention does not collide with the next turn in the same session.
+- [x] Existing heartbeat behavior remains id-free.
+
+---
+
+## Phase D: Execution Backend Seam
+
+Implemented after the original three-phase budget plan to prepare sandbox and
+resource-policy work without changing tool behavior.
+
+Acceptance:
+
+- [x] `ExecutionBackend` protocol exists.
+- [x] `InProcessExecutionBackend` preserves current sync and async handler behavior.
+- [x] `ResourcePolicy` carries deadline, memory, and network allowlist declarations.
+- [x] `ToolExecutor` and `ToolCallRouter` accept the seam without changing public behavior.
+
+---
+
+## Deferred Roadmap Items
+
+These specs were added for the broader 2026-05-28 production hardening roadmap,
+but are outside this branch's implemented scope:
+
+- Phase A: `docs/superpowers/specs/2026-05-28-async-runtime-completion-design.md`
+- Phase B: `docs/superpowers/specs/2026-05-28-persistent-session-provider-design.md`
+- Phase C: `docs/superpowers/specs/2026-05-28-cross-machine-a2a-dispatch-design.md`
+- Phase E: `docs/superpowers/specs/2026-05-28-production-hardening-backpressure-design.md`
+
+Next iteration inputs are captured in
+`docs/plans/2026-06-10-kb-refresh-agentos-sdk-iteration.md`.
+
+---
+
+## Branch Completion Checklist
+
+| Requirement | Implementation file(s) | Test file(s) or verification command | Status |
+|---|---|---|---|
+| Tool-result token cap | `src/agentos/policies/tool_result_budget.py`, `src/agentos/runtime/query_loop.py`, `src/agentos/runtime/async_query_loop.py` | `tests/policies/test_tool_result_budget.py`, `tests/runtime/test_tool_result_budget.py` | complete |
+| Shared token counter | `src/agentos/tokens/counter.py` | `tests/tokens/test_counter.py` | complete |
+| Token-aware compression and circuit breaker | `src/agentos/policies/budget.py`, `src/agentos/compression/evictor.py`, `src/agentos/compression/runtime.py` | `tests/policies/test_token_budget_policy.py`, `tests/compression/test_runtime.py` | complete |
+| SSE mid-turn resume | `src/agentos/channels/asgi.py`, `src/agentos/channels/sse_turns.py` | `tests/channels/test_asgi_app.py`, `tests/channels/test_asgi_app_async.py` | complete |
+| In-memory and Redis SSE event buffers | `src/agentos/channels/sse_buffer.py` | `tests/channels/test_sse_buffer.py` | complete |
+| Execution backend seam | `src/agentos/capabilities/backend.py`, `src/agentos/policies/resource_policy.py`, `src/agentos/capabilities/executor.py`, `src/agentos/capabilities/router.py` | `tests/capabilities/test_execution_backend.py` | complete |
+| Async runtime completion | later Phase A spec | not implemented in this branch | deferred |
+| Persistent session provider | later Phase B spec | not implemented in this branch | deferred |
+| Cross-machine A2A transport hardening | later Phase C spec | not implemented in this branch | deferred |
+| Production backpressure and load baseline | later Phase E spec | not implemented in this branch | deferred |
 
 ---
 
 ## Self-Review
 
-- Spec coverage: Phase 1 fully covered; Phase 2 and Phase 3 intentionally deferred with acceptance criteria.
+- Spec coverage: Current branch scope is complete. The broader 2026-05-28 hardening roadmap is partially complete because Phase A/B/C/E remain deferred.
 - Placeholder scan: no TBD/TODO placeholders.
 - Type consistency: `TokenCounter` uses `object` messages/tools because it must estimate both internal `Message` and provider-facing structures.
