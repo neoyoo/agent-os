@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import fields, replace
 
 from agentos.observability.config import ObservabilityConfig
 from agentos.observability.instrumented import (
@@ -48,14 +48,22 @@ def instrument_query_loop(
             capture_policy=capture_policy,
         )
     )
+    structured_logger = configure_structured_logger(config)
+    changes: dict[str, object] = {
+        "provider": instrumented_provider,
+        "request_builder": instrumented_builder,
+        "tool_call_router": instrumented_router,
+        "compression_runtime": instrumented_compression,
+        "structured_logger": structured_logger,
+    }
+    init_fields = {field.name for field in fields(loop) if field.init}
     configured_loop = replace(
         loop,
-        provider=instrumented_provider,
-        request_builder=instrumented_builder,  # type: ignore[arg-type]
-        tool_call_router=instrumented_router,
-        compression_runtime=instrumented_compression,  # type: ignore[arg-type]
-        structured_logger=configure_structured_logger(config),
+        **{name: value for name, value in changes.items() if name in init_fields},
     )
+    sync_loop = getattr(configured_loop, "sync_loop", None)
+    if "structured_logger" not in init_fields and sync_loop is not None:
+        sync_loop.structured_logger = structured_logger
     return InstrumentedQueryLoop(
         configured_loop,
         tracer=tracer,

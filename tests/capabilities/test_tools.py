@@ -150,8 +150,9 @@ def test_tool_call_router_exposes_context_protocol_tool_specs() -> None:
         "extend_schema",
         "start_chapter",
         "recall_context",
-        "load_image",
+        "load_attachment",
     ]
+    assert "load_image" not in tool_names
 
 
 def test_start_chapter_schema_validates_optional_field_items() -> None:
@@ -288,7 +289,7 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     ]
 
 
-def test_tool_call_router_routes_load_image_namespace() -> None:
+def test_tool_call_router_routes_load_attachment_namespace() -> None:
     attachments = AttachmentRuntime()
     attachment = attachments.upload_bytes(
         b"image-bytes",
@@ -302,17 +303,18 @@ def test_tool_call_router_routes_load_image_namespace() -> None:
 
     result = runtime.execute_tool_call(
         ProviderToolCall(
-            id="call_load_image",
-            name="load_image",
+            id="call_load_attachment",
+            name="load_attachment",
             arguments={"handle": f"att:{attachment.handle}"},
         ),
     )
 
-    assert result.tool_call_id == "call_load_image"
-    assert "load_image applied" in result.content
+    assert result.tool_call_id == "call_load_attachment"
+    assert "load_attachment applied" in result.content
+    assert "rest of the current turn" in result.content
 
 
-def test_tool_call_router_returns_tool_result_for_unknown_image_handle() -> None:
+def test_tool_call_router_returns_tool_result_for_unknown_attachment_handle() -> None:
     runtime = ToolCallRouter(
         tool_registry=ToolRegistry(),
         attachment_runtime=AttachmentRuntime(),
@@ -320,14 +322,14 @@ def test_tool_call_router_returns_tool_result_for_unknown_image_handle() -> None
 
     result = runtime.execute_tool_call(
         ProviderToolCall(
-            id="call_load_image",
-            name="load_image",
+            id="call_load_attachment",
+            name="load_attachment",
             arguments={"handle": "att:missing"},
         ),
     )
 
-    assert result.tool_call_id == "call_load_image"
-    assert "load_image failed" in result.content
+    assert result.tool_call_id == "call_load_attachment"
+    assert "load_attachment failed" in result.content
     assert "unknown attachment" in result.content
 
 
@@ -430,3 +432,4 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
     assert '<recalled-context source="semantic_recall"' in result.content
     assert "pyproject.toml" in result.content
     assert messages.materialize_provider_messages() == []
+

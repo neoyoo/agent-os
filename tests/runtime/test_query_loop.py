@@ -96,7 +96,70 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
     assert "Attachment att_1" in second_user.content
 
 
-def test_query_loop_loads_image_through_load_image_tool() -> None:
+def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="noop",
+            description="No-op.",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: "ok",
+        ),
+    )
+    router = ToolCallRouter(
+        tool_registry=registry,
+        context_runtime=context,
+        attachment_runtime=attachments,
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(id="call_noop", name="noop", arguments={}),
+                ],
+            ),
+            ProviderResponse(content="inspected"),
+        ],
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+            attachment_runtime=attachments,
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("分析图片", attachments=[attachment])
+
+    assert result == "inspected"
+    assert provider.requests[0].messages[0] == UserMessage(
+        content=(
+            TextPart("分析图片"),
+            ImagePart(attachment),
+        ),
+    )
+    assert provider.requests[1].messages[-1] == UserMessage(
+        content=(
+            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+            ImagePart(attachment),
+        ),
+    )
+
+
+def test_query_loop_loads_image_through_load_attachment_tool() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
     attachments = AttachmentRuntime()
@@ -110,8 +173,8 @@ def test_query_loop_loads_image_through_load_image_tool() -> None:
             ProviderResponse(
                 tool_calls=[
                     ProviderToolCall(
-                        id="call_load_image",
-                        name="load_image",
+                        id="call_load_attachment",
+                        name="load_attachment",
                         arguments={"handle": f"att:{attachment.handle}"},
                     ),
                 ],
@@ -142,10 +205,87 @@ def test_query_loop_loads_image_through_load_image_tool() -> None:
     assert result == "inspected"
     assert provider.requests[1].messages[-1] == UserMessage(
         content=(
-            TextPart(f"Loaded image {attachment.handle} for inspection."),
+            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
             ImagePart(attachment),
         ),
     )
+
+
+def test_query_loop_allows_update_state_batched_with_load_attachment() -> None:
+    context = ContextRuntime()
+    context.declare_schema(
+        [
+            WorkingStateField(
+                name="drawing_info",
+                type="dict",
+                purpose="图纸事实",
+            ),
+        ],
+    )
+    messages = MessageRuntime()
+    attachments = AttachmentRuntime()
+    attachment = attachments.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                tool_calls=[
+                    ProviderToolCall(
+                        id="call_load_attachment",
+                        name="load_attachment",
+                        arguments={"handle": f"att:{attachment.handle}"},
+                    ),
+                    ProviderToolCall(
+                        id="call_update",
+                        name="update_state",
+                        arguments={
+                            "field_name": "drawing_info",
+                            "value": {"material": "C45"},
+                        },
+                    ),
+                ],
+            ),
+            ProviderResponse(content="inspected"),
+        ],
+    )
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        context_runtime=context,
+        attachment_runtime=attachments,
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=ContextRenderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+            attachment_runtime=attachments,
+        ),
+        provider=provider,
+        tool_call_router=router,
+    )
+
+    result = loop.run_turn("再看一下附件后更新状态")
+
+    assert result == "inspected"
+    assert context.snapshot().working_state == {"drawing_info": {"material": "C45"}}
+    assert provider.requests[1].messages[-1] == UserMessage(
+        content=(
+            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+            ImagePart(attachment),
+        ),
+    )
+    provider_messages = [
+        provider_message_to_dict(message) for message in provider.requests[1].messages
+    ]
+    assert provider_messages[-3]["tool_call_id"] == "call_load_attachment"
+    assert "rest of the current turn" in str(provider_messages[-3]["content"])
+    assert provider_messages[-2]["tool_call_id"] == "call_update"
+    assert provider_messages[-2]["content"] == "context tool update_state applied"
 
 
 def test_duplicate_tool_call_returns_suppression_result() -> None:
@@ -356,3 +496,4 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         "Current task",
         "Second answer.",
     ]
+

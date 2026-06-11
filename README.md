@@ -1,6 +1,6 @@
-# agent-os
+﻿# agent-os
 
-Production-grade agent runtime SDK. Provides the harness — you configure and extend it.
+Production-grade agent runtime SDK. Provides the harness 鈥?you configure and extend it.
 
 ## What This Is
 
@@ -41,21 +41,21 @@ pip install -e ".[postgres]"
 
 ```
 AgentBuilder
-    │
-    ├── Provider (Anthropic / OpenAI / custom)
-    ├── ToolCallRouter
-    │       ├── Context Protocol Tools (built-in: declare_schema, update_state, etc.)
-    │       ├── External Tools (your RegisteredTool handlers)
-    │       └── MCP Tools (optional)
-    ├── ContextRuntime → working state, chapters, inherited state
-    ├── MessageRuntime → active message window
-    ├── CompressionRuntime → long session context management
-    ├── HookManager → lifecycle interception
-    └── EventBus → typed observation events
+    鈹?
+    鈹溾攢鈹€ Provider (Anthropic / OpenAI / custom)
+    鈹溾攢鈹€ ToolCallRouter
+    鈹?      鈹溾攢鈹€ Context Protocol Tools (built-in: declare_schema, update_state, etc.)
+    鈹?      鈹溾攢鈹€ External Tools (your RegisteredTool handlers)
+    鈹?      鈹斺攢鈹€ MCP Tools (optional)
+    鈹溾攢鈹€ ContextRuntime 鈫?working state, chapters, inherited state
+    鈹溾攢鈹€ MessageRuntime 鈫?active message window
+    鈹溾攢鈹€ CompressionRuntime 鈫?long session context management
+    鈹溾攢鈹€ HookManager 鈫?lifecycle interception
+    鈹斺攢鈹€ EventBus 鈫?typed observation events
 
-Channels (ASGI / A2A) ← HTTP access
-Persistence (Redis + Postgres) ← multi-node session state
-Multi-agent (TaskStore + AgentMessageQueue + Coordinator / A2A) ← agent orchestration
+Channels (ASGI / A2A) 鈫?HTTP access
+Persistence (Redis + Postgres) 鈫?multi-node session state
+Multi-agent (TaskStore + AgentMessageQueue + Coordinator / A2A) 鈫?agent orchestration
 ```
 
 ## Modules
@@ -81,21 +81,21 @@ The full usage guide lives in `.claude/skills/agent-os/`:
 
 ```
 .claude/skills/agent-os/
-├── SKILL.md                     ← Entry point + module map
-├── flow/
-│   ├── 01-requirements.md       ← Requirements gathering (6 dimensions)
-│   ├── 02-spec-generation.md    ← Spec blueprint schema
-│   └── 03-implementation.md     ← Project scaffold + parallel dev
-└── modules/
-    ├── quick-start.md           ← Copy-paste code patterns (8 scenarios)
-    ├── architecture.md          ← Data flow + boundaries + extension points
-    ├── persistence.md           ← Redis/Postgres multi-node state
-    ├── multi-agent.md           ← Local spawn + A2A distributed
-    ├── testing.md               ← FakeProvider + testing patterns
-    └── anti-patterns.md         ← 10 common mistakes to avoid
+鈹溾攢鈹€ SKILL.md                     鈫?Entry point + module map
+鈹溾攢鈹€ flow/
+鈹?  鈹溾攢鈹€ 01-requirements.md       鈫?Requirements gathering (6 dimensions)
+鈹?  鈹溾攢鈹€ 02-spec-generation.md    鈫?Spec blueprint schema
+鈹?  鈹斺攢鈹€ 03-implementation.md     鈫?Project scaffold + parallel dev
+鈹斺攢鈹€ modules/
+    鈹溾攢鈹€ quick-start.md           鈫?Copy-paste code patterns (8 scenarios)
+    鈹溾攢鈹€ architecture.md          鈫?Data flow + boundaries + extension points
+    鈹溾攢鈹€ persistence.md           鈫?Redis/Postgres multi-node state
+    鈹溾攢鈹€ multi-agent.md           鈫?Local spawn + A2A distributed
+    鈹溾攢鈹€ testing.md               鈫?FakeProvider + testing patterns
+    鈹斺攢鈹€ anti-patterns.md         鈫?10 common mistakes to avoid
 ```
 
-This guide doubles as a **Claude Code / Codex skill** — when loaded into an AI coding assistant, it provides interactive guidance for building agents with this SDK.
+This guide doubles as a **Claude Code / Codex skill** 鈥?when loaded into an AI coding assistant, it provides interactive guidance for building agents with this SDK.
 
 ## Scenarios
 
@@ -112,7 +112,7 @@ This guide doubles as a **Claude Code / Codex skill** — when loaded into an AI
 
 ## Context Protocol
 
-Every agent built with agent-os has access to 5 built-in context tools that the model uses to manage its own cognitive state:
+Every agent built with agent-os has access to 7 built-in context tools that the model uses to manage its own cognitive state:
 
 | Tool | Purpose |
 |------|---------|
@@ -121,8 +121,9 @@ Every agent built with agent-os has access to 5 built-in context tools that the 
 | `extend_schema` | Add fields when current schema is insufficient |
 | `start_chapter` | Start new chapter when task changes substantially |
 | `recall_context` | Retrieve compressed history segments by handle or query |
+| `load_attachment` | Load an uploaded attachment into the rest of the current turn for inspection |
 
-These are automatically wired by `AgentBuilder` — you don't need to register them.
+These are automatically wired by `AgentBuilder` 鈥?you don't need to register them.
 
 ## Tests
 
@@ -133,3 +134,4 @@ uv run pytest -q
 ## License
 
 Private.
+

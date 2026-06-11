@@ -1,4 +1,4 @@
-# Ephemeral Attachment Lifecycle 设计
+﻿# Ephemeral Attachment Lifecycle 设计
 
 ## Scope Contract
 
@@ -45,9 +45,11 @@ ToolResultMessage(content: str, ...)
 
 这对普通对话足够，但对用户上传图片、PDF、视频、音频或大文件会出现三个问题：
 
-1. 如果把文件内容塞进 message content，会快速撑爆 context window。
-2. 如果把文件永久写入 active messages，后续每轮都会重复付 token / media 处理成本。
+1. 如果把文件内容作为普通文本塞进 message content，会快速撑爆 context window。
+2. 如果把结构化多模态输入永久写入 active messages，后续每轮都会重复付 image/file token 与 media 处理成本。
 3. 如果压缩器把文件内容摘要进 compressed history，LLM 可能把有损摘要当成完整证据。
+
+注：OpenAI-compatible 协议里，base64 data URL 放在 `image_url` / `input_image` / `input_file` 这类结构化字段时，不等价于把整段 base64 当普通文本 token 化；provider 会按多模态输入处理。但这类图片/PDF 仍计入输入 token、上下文预算和费用，不应在每次 provider request 中无条件重发。
 
 目标行为应该是：
 
@@ -55,11 +57,11 @@ ToolResultMessage(content: str, ...)
 用户上传大文件
   -> 本轮模型可看见完整附件
   -> 模型给出响应后，后续 context 只保留 handle / metadata / preview
-  -> 如果模型需要再次查看，调用 recall_context(handle="att:...")
+  -> 如果模型需要再次查看，调用 load_attachment(handle="att:...")
   -> runtime 再把附件一次性注入下一次 provider request
 ```
 
-这和现有 `recall_context` 的 temporary ref 语义一致：完整内容只在下一次 provider request 中短暂展开，用完即折叠。
+这和现有 temporary ref 语义一致：完整内容只在下一次 provider request 中短暂展开，用完即折叠。当前实现使用独立的 `load_attachment` context tool，而不是复用 `recall_context(att:...)`。
 
 ## Provider 协议事实
 
@@ -354,18 +356,18 @@ Attachment att_01
 - size: 2.4MB
 - status: not loaded in current context
 - preview: user uploaded image diagram.png
-- To inspect it again, call recall_context(handle="att:att_01").
+- To inspect it again, call load_attachment(handle="att:att_01").
 ```
 
 The original file remains in `AttachmentStore`, not in `MessageStore.content`.
 
-### Recall
+### Load Image
 
 LLM calls:
 
 ```json
 {
-  "name": "recall_context",
+  "name": "load_attachment",
   "arguments": {
     "handle": "att:att_01"
   }
@@ -399,7 +401,8 @@ The renderer should add a short rule only when attachments exist or attachment t
 ## Attachments
 
 - Uploaded attachments may be visible for only the current turn.
-- If an attachment is listed as not loaded and you need to inspect it again, call `recall_context(handle="att:...")`.
+- Raw multimodal attachment content is not re-sent on every provider request; stable facts should be written to working state.
+- If an attachment is listed as not loaded and you need to inspect it again, call `load_attachment(handle="att:...")`.
 - Do not infer unseen attachment details from filename or preview.
 - If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.
 ```
@@ -419,12 +422,12 @@ The extra rule must not expose internal file paths, temp directories, provider f
 
 ## Tool Design
 
-### Attachment recall via recall_context
+### Attachment recall via load_attachment
 
-V1 does not add a sixth default context protocol tool. Attachment recall reuses the existing `recall_context` tool with an `att:` handle namespace:
+Current implementation exposes a dedicated sixth default context protocol tool. Attachment recall uses `load_attachment` with an `att:` handle namespace:
 
 ```python
-recall_context(handle="att:att_01") -> str
+load_attachment(handle="att:att_01") -> str
 ```
 
 Behavior:
@@ -438,11 +441,11 @@ It does not return base64 or raw bytes in the tool result. Returning bytes throu
 Routing rule:
 
 ```text
-handle starts with "att:" -> AttachmentRuntime schedules one-shot expansion
-otherwise                 -> existing RecallRuntime handles compressed-history / memory recall
+load_attachment(handle="att:...") -> AttachmentRuntime schedules one-shot image expansion
+recall_context(...)          -> existing RecallRuntime handles compressed-history / memory recall
 ```
 
-This keeps the LLM-visible protocol surface small and preserves the current five default context protocol tool names.
+This makes the multimodal lifecycle explicit and keeps compressed-history recall separate from image re-inspection.
 
 ### list_attachments
 
@@ -615,7 +618,7 @@ Events are observation-only. They must not modify flow. Policy belongs to hooks 
 - `AttachmentRuntime.upload()` creates handle and metadata without appending raw bytes to MessageStore.
 - First provider request expands attachment exactly once.
 - Next provider request renders placeholder only.
-- `recall_context(handle="att:...")` schedules one-shot expansion.
+- `load_attachment(handle="att:...")` schedules one-shot expansion.
 - Expansion is consumed after request build.
 - Unknown handle returns deterministic tool error.
 - Placeholder does not contain local path, provider file ID, signed URL, or raw base64.
@@ -644,7 +647,7 @@ Events are observation-only. They must not modify flow. Policy belongs to hooks 
 - Internal source model can represent URL, base64, and provider file reference.
 - Large file content is never persisted into `Message.content`.
 - Attachment expansion is one-shot and automatically folds back to placeholder.
-- LLM has a clear `recall_context(handle="att:...")` path for re-inspection.
+- LLM has a clear `load_attachment(handle="att:...")` path for re-inspection.
 - Provider adapters reject unsupported file/media types explicitly.
 - No provider-specific file IDs leak into default LLM-visible context.
 - Tests cover first-turn expansion, second-turn placeholder, recall, unsupported provider mapping, and metadata privacy.
@@ -654,7 +657,7 @@ Events are observation-only. They must not modify flow. Policy belongs to hooks 
 1. Add attachment types and in-memory AttachmentStore.
 2. Extend ProviderMessage content type to support content parts.
 3. Add AttachmentRuntime one-shot expansion state.
-4. Extend `recall_context` routing for the `att:` handle namespace.
+4. Add `load_attachment` routing for the `att:` handle namespace.
 5. Add placeholder rendering and prompt rules.
 6. Implement provider projector support for existing adapters:
    - OpenAI Chat image-only subset.
@@ -703,3 +706,4 @@ That split keeps the user-facing API simple while avoiding a false lowest-common
   - https://docs.anthropic.com/en/docs/build-with-claude/files
 - ai-knowledge: `wiki/context-management.md`.
 - ai-knowledge pattern: `wiki/_patterns/tool-metadata-driven-context-lifecycle.md`.
+

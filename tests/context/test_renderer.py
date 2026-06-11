@@ -1,4 +1,4 @@
-import inspect
+﻿import inspect
 from pathlib import Path
 
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
@@ -57,7 +57,7 @@ def test_default_renderer_matches_golden_context_projection() -> None:
     )
     golden_path = Path(__file__).with_name("goldens") / "default_context.md"
 
-    assert ContextRenderer().render(state) == golden_path.read_text()
+    assert ContextRenderer().render(state) == golden_path.read_text(encoding="utf-8")
 
 
 def test_default_renderer_emits_context_sections_in_order() -> None:
@@ -111,13 +111,34 @@ def test_default_renderer_omits_empty_working_state_sections() -> None:
     assert "# Capability Plane" in rendered
 
 
+def test_context_renderer_presents_skills_as_available_not_loaded() -> None:
+    rendered = ContextRenderer(
+        capability_plane=CapabilityPlane(
+            skills=[
+                SkillDeclaration(
+                    name="haizol-process-reasoning-standard",
+                    when_to_use="报价工艺推理任务必须使用。",
+                ),
+            ],
+        ),
+    ).render(ContextState())
+
+    assert "## Available skills" in rendered
+    assert "## Skills loaded" not in rendered
+    assert "只是可用摘要，完整规范尚未进入上下文" in rendered
+    assert "必须先调用 `load_skill`" in rendered
+    assert "继续调用 `load_skill_resource`" in rendered
+
+
 def test_context_renderer_documents_image_attachment_rules() -> None:
     rendered = ContextRenderer().render(ContextState())
 
-    assert 'load_image(handle="att:...")' in rendered
+    assert 'load_attachment(handle="att:...")' in rendered
     assert 'recall_context(handle="att:' not in rendered
+    assert "remains available to subsequent provider requests" in rendered
     assert "currently loaded attachments" in rendered
     assert "Attachment placeholders / previews" in rendered
+    assert "load_image" not in rendered
 
 
 def test_default_renderer_renders_empty_working_state_when_schema_declared() -> None:
@@ -228,7 +249,7 @@ def test_default_renderer_lists_context_protocol_tools() -> None:
         "extend_schema",
         "start_chapter",
         "recall_context",
-        "load_image",
+        "load_attachment",
     ]:
         assert f"`{tool_name}`" in rendered
 
@@ -445,3 +466,4 @@ def test_default_renderer_orders_inherited_state_between_working_state_and_compr
     lines = rendered.splitlines()
     positions = [lines.index(section) for section in expected_sections]
     assert positions == sorted(positions)
+

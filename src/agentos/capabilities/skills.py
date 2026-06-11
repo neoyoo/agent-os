@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
@@ -196,24 +197,59 @@ class FileSystemSkillSource(SkillContentSource):
         return SkillLoadResult(name=skill.name, content=skill.content)
 
     async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
-        """filesystem source 当前只加载 Markdown skill 主体。"""
+        """列出 skill 目录下可按需加载的附加资源。"""
 
         skills = await self._skills_by_name()
-        if name not in skills:
-            raise KeyError(name)
-        return ()
+        try:
+            skill = skills[name]
+        except KeyError as error:
+            raise KeyError(name) from error
+        if skill.path is None or skill.path.name != "SKILL.md":
+            return ()
+        return await asyncio.to_thread(self._list_skill_resources, skill.path)
 
     async def load_resource(
         self,
         name: str,
         path: str,
     ) -> SkillResourceLoadResult:
-        """filesystem source 当前没有额外资源索引。"""
+        """加载 skill 目录下的附加资源，拒绝越界路径。"""
 
         skills = await self._skills_by_name()
-        if name not in skills:
+        try:
+            skill = skills[name]
+        except KeyError as error:
+            raise KeyError(name) from error
+        if skill.path is None or skill.path.name != "SKILL.md":
             raise KeyError(name)
-        raise KeyError(path)
+        root = skill.path.parent
+        resource_path = _safe_resource_path(root, path)
+        if resource_path is None or not resource_path.is_file():
+            raise KeyError(path)
+        content = await asyncio.to_thread(resource_path.read_text, encoding="utf-8")
+        return SkillResourceLoadResult(
+            skill_name=name,
+            path=Path(path).as_posix(),
+            content=content,
+            mime_type=_guess_mime_type(resource_path),
+        )
+
+    def _list_skill_resources(self, skill_path: Path) -> tuple[SkillResourceRef, ...]:
+        root = skill_path.parent
+        resources = []
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path == skill_path:
+                continue
+            relative_path = path.relative_to(root)
+            if any(part.startswith(".") for part in relative_path.parts):
+                continue
+            resources.append(
+                SkillResourceRef(
+                    path=relative_path.as_posix(),
+                    mime_type=_guess_mime_type(path),
+                ),
+            )
+        return tuple(resources)
 
     async def _skills_by_name(self) -> dict[str, SkillDefinition]:
         if self._skills is None:
@@ -595,6 +631,26 @@ def _discover_skill_files(skills_dir: Path) -> list[tuple[Path, SkillSource]]:
         if path.is_file() and path.parent.name != "learned"
     )
     return discovered
+
+
+def _safe_resource_path(root: Path, resource_path: str) -> Path | None:
+    normalized = Path(resource_path)
+    if normalized.is_absolute() or any(part == ".." for part in normalized.parts):
+        return None
+    root_resolved = root.resolve()
+    candidate = (root / normalized).resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _guess_mime_type(path: Path) -> str:
+    if path.suffix.lower() == ".md":
+        return "text/markdown"
+    guessed, _ = mimetypes.guess_type(path.name)
+    return guessed or "text/plain"
 
 
 def _validate_skill_name(name: str) -> None:

@@ -92,7 +92,7 @@ def test_provider_request_builder_does_not_render_tool_schema_into_system() -> N
     assert "secret" not in request.system
 
 
-def test_provider_request_builder_projects_pending_attachments_once() -> None:
+def test_provider_request_builder_projects_pending_attachments_for_rest_of_turn() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
     attachments = AttachmentRuntime()
@@ -120,4 +120,9 @@ def test_provider_request_builder_projects_pending_attachments_once() -> None:
             ),
         ),
     ]
-    assert second_request.messages == [UserMessage(content=content)]
+    assert second_request.messages[-1] == UserMessage(
+        content=(
+            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+            ImagePart(attachment),
+        ),
+    )

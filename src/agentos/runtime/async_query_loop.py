@@ -189,7 +189,7 @@ class AsyncQueryLoop:
             self.sync_loop._log("turn_end")
             yield TurnStreamCompleted(content=response_content)
         finally:
-            self.sync_loop._clear_turn_loaded_images()
+            self.sync_loop._clear_turn_loaded_attachments()
 
     async def run_continuation_stream(
         self,
@@ -233,7 +233,7 @@ class AsyncQueryLoop:
             yield TurnStreamCompleted(content=response_content)
         finally:
             self.sync_loop._clear_runtime_notices()
-            self.sync_loop._clear_turn_loaded_images()
+            self.sync_loop._clear_turn_loaded_attachments()
 
     async def _run_provider_loop_stream(
         self,

@@ -38,7 +38,7 @@ class AttachmentRuntime:
     _next_index: int = 1
     _pending_user_handles: list[str] = field(default_factory=list)
     _pending_user_text_by_handle: dict[str, str] = field(default_factory=dict)
-    _turn_loaded_image_handles: list[str] = field(default_factory=list)
+    _turn_loaded_attachment_handles: list[str] = field(default_factory=list)
 
     def upload(self, path: str | Path, mime_type: str) -> Attachment:
         """登记本地文件附件。"""
@@ -112,29 +112,26 @@ class AttachmentRuntime:
                 f"- filename: {filename}",
                 f"- mime_type: {attachment.mime_type}",
                 f"- size_bytes: {attachment.size_bytes}",
-                "- status: not loaded in current context",
+                "- status: not loaded in current turn",
                 f"- preview: {preview}",
-                (
-                    "- To inspect it again, call "
-                    f"load_image(handle=\"att:{attachment.handle}\")."
-                ),
+                f"- handle: att:{attachment.handle}",
             ],
         )
 
-    def load_image_handle(self, handle: str) -> Attachment:
-        """处理 load_image 的 att: handle，并在当前 turn 内持续展开。"""
+    def load_attachment_handle(self, handle: str) -> Attachment:
+        """处理 load_attachment 的 att: handle，并在当前 turn 内持续展开。"""
 
         attachment_handle = self._strip_attachment_namespace(handle)
         attachment = self.store.get(attachment_handle)
         self._ensure_image_attachment(attachment)
-        if attachment.handle not in self._turn_loaded_image_handles:
-            self._turn_loaded_image_handles.append(attachment.handle)
+        if attachment.handle not in self._turn_loaded_attachment_handles:
+            self._turn_loaded_attachment_handles.append(attachment.handle)
         return attachment
 
-    def clear_turn_loaded_images(self) -> None:
-        """清理当前 turn 通过 load_image 加载的图片状态。"""
+    def clear_turn_loaded_attachments(self) -> None:
+        """清理当前 turn 加载的附件状态。"""
 
-        self._turn_loaded_image_handles.clear()
+        self._turn_loaded_attachment_handles.clear()
 
     def project_provider_messages(
         self,
@@ -143,22 +140,26 @@ class AttachmentRuntime:
         """把待展开附件投影进 provider request。"""
 
         user_handles, user_text = self._consume_user_handles()
-        image_handles = list(dict.fromkeys(self._turn_loaded_image_handles))
+        attachment_handles = [
+            handle
+            for handle in dict.fromkeys(self._turn_loaded_attachment_handles)
+            if handle not in set(user_handles)
+        ]
         projected = list(messages)
         if user_handles:
             projected = self._project_user_handles(projected, user_handles, user_text)
-        if image_handles:
+        if attachment_handles:
             projected.append(
                 UserMessage(
                     content=(
                         TextPart(
-                            "Loaded image "
-                            + ", ".join(image_handles)
+                            "Loaded attachment "
+                            + ", ".join(attachment_handles)
                             + " for inspection.",
                         ),
                         *[
                             self._content_part_for_attachment(self.store.get(handle))
-                            for handle in image_handles
+                            for handle in attachment_handles
                         ],
                     ),
                 ),
@@ -200,6 +201,8 @@ class AttachmentRuntime:
             pending_text = self._pending_user_text_by_handle.pop(handle, None)
             if text is None and pending_text is not None:
                 text = pending_text
+            if handle not in self._turn_loaded_attachment_handles:
+                self._turn_loaded_attachment_handles.append(handle)
         self._pending_user_handles.clear()
         return handles, text
 

@@ -19,6 +19,7 @@ from agentos.runtime import (
     AsyncQueryLoop,
     ProviderRequestBuilder,
     QueryLoop,
+    RetryPolicy,
     TurnStreamCompleted,
 )
 
@@ -173,6 +174,53 @@ def test_async_provider_stream_is_awaited_without_executor_bridge() -> None:
 
     assert complete_called is False
     assert events[-1] == TurnStreamCompleted(content="async")
+
+
+def test_async_provider_stream_retries_failure_before_visible_delta() -> None:
+    class FlakyAsyncProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, request: ProviderRequest) -> ProviderResponse:
+            raise AssertionError("native async loop must not call sync complete")
+
+        async def async_stream(
+            self,
+            request: ProviderRequest,
+            options: ProviderStreamOptions,
+        ):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary connect failure")
+            yield ProviderStreamStarted(request_id="async_retry")
+            yield ProviderContentDelta(
+                request_id="async_retry",
+                index=1,
+                text="recovered",
+            )
+            yield ProviderStreamCompleted(
+                request_id="async_retry",
+                response=ProviderResponse(content="recovered"),
+            )
+
+    async def collect() -> tuple[list[object], int]:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        provider = FlakyAsyncProvider()
+        loop = AsyncQueryLoop(
+            context_runtime=context,
+            message_runtime=messages,
+            request_builder=_request_builder(messages),
+            provider=provider,  # type: ignore[arg-type]
+            retry_policy=RetryPolicy(max_retries=1, backoff_base=0, jitter=0),
+        )
+        events = [event async for event in loop.run_turn_stream("hello")]
+        return events, provider.calls
+
+    events, calls = asyncio.run(collect())
+
+    assert events[-1] == TurnStreamCompleted(content="recovered")
+    assert calls == 2
 
 
 def test_agent_async_stream_uses_native_async_query_loop() -> None:

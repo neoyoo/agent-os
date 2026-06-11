@@ -1,4 +1,4 @@
-import importlib
+﻿import importlib
 from pathlib import Path
 
 import pytest
@@ -62,7 +62,7 @@ def test_context_protocol_public_constants_remain_available() -> None:
         "extend_schema",
         "start_chapter",
         "recall_context",
-        "load_image",
+        "load_attachment",
     }
 
 
@@ -302,3 +302,4 @@ def test_qdrant_recall_collection_migration_script_exists() -> None:
     assert "agentos_recall" in text
     assert "AGENTOS_QDRANT_VECTOR_SIZE" in text
     assert "session_id" in text
+

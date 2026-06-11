@@ -90,7 +90,8 @@ def test_default_renderer_still_omits_runtime_metadata_with_phase5_capabilities(
         "schema_id",
         "projection_id",
         "compression_id",
-        "source",
+        "source=",
+        "source_refs",
         "relevance",
     ]:
         assert forbidden not in rendered

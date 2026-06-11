@@ -230,7 +230,7 @@ class QueryLoop:
             self._log("turn_end")
             yield TurnStreamCompleted(content=response_content)
         finally:
-            self._clear_turn_loaded_images()
+            self._clear_turn_loaded_attachments()
 
     def _prepare_user_message(
         self,
@@ -294,7 +294,7 @@ class QueryLoop:
             yield TurnStreamCompleted(content=response_content)
         finally:
             self._clear_runtime_notices()
-            self._clear_turn_loaded_images()
+            self._clear_turn_loaded_attachments()
 
     def _clear_runtime_notices(self) -> None:
         """清空 context runtime 中可能残留的一次性 runtime notice。"""
@@ -307,17 +307,17 @@ class QueryLoop:
         if callable(clear_runtime_notices):
             clear_runtime_notices()
 
-    def _clear_turn_loaded_images(self) -> None:
-        """清空 attachment runtime 中的 turn-scoped image state。"""
+    def _clear_turn_loaded_attachments(self) -> None:
+        """清空 attachment runtime 中的 turn-scoped attachment state。"""
 
         attachment_runtime = getattr(self.request_builder, "attachment_runtime", None)
-        clear_turn_loaded_images = getattr(
+        clear_turn_loaded_attachments = getattr(
             attachment_runtime,
-            "clear_turn_loaded_images",
+            "clear_turn_loaded_attachments",
             None,
         )
-        if callable(clear_turn_loaded_images):
-            clear_turn_loaded_images()
+        if callable(clear_turn_loaded_attachments):
+            clear_turn_loaded_attachments()
 
     def _run_provider_loop_stream(
         self,

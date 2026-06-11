@@ -106,7 +106,7 @@ class ContextRenderer:
             "",
             *self._mcp_server_lines(),
             "",
-            "## Skills loaded",
+            "## Available skills",
             "",
             *self._skill_lines(),
         ]
@@ -120,7 +120,7 @@ class ContextRenderer:
         extend_schema_tool = tool_names["extend_schema"]
         start_chapter_tool = tool_names["start_chapter"]
         recall_context_tool = tool_names["recall_context"]
-        load_image_tool = tool_names["load_image"]
+        load_attachment_tool = tool_names["load_attachment"]
         return "\n".join(
             [
                 "# Context Management Rules",
@@ -159,11 +159,13 @@ class ContextRenderer:
                 "",
                 "## Attachments",
                 "",
-                "- Uploaded attachments may be visible for only the current turn.",
+                "- Uploaded attachments may be visible only for the current user turn.",
+                "- Once loaded, an attachment remains available to subsequent provider requests in the same turn until you return the final result.",
                 (
                     "- If an attachment is listed as not loaded and you need to inspect "
-                    f"it again, call `{load_image_tool}(handle=\"att:...\")`."
+                    f"it, call `{load_attachment_tool}(handle=\"att:...\")`."
                 ),
+                "- Stable facts learned from loaded attachments should be written to working state.",
                 "- Do not infer unseen attachment details from filename or preview.",
                 "- If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.",
                 "",
@@ -191,7 +193,7 @@ class ContextRenderer:
             "extend_schema",
             "start_chapter",
             "recall_context",
-            "load_image",
+            "load_attachment",
         } - set(tool_names)
         if missing_names:
             missing = ", ".join(sorted(missing_names))
@@ -385,7 +387,11 @@ class ContextRenderer:
         if not skills:
             return ["None."]
 
-        lines = ["Skills 自动发现。通过 `Skill` tool 按 skill name 加载具体内容。"]
+        lines = [
+            "以下 skills 只是可用摘要，完整规范尚未进入上下文。"
+            "当任务匹配某个 skill 时，必须先调用 `load_skill` 按 skill name 加载；"
+            "需要阶段文件或参考资料时继续调用 `load_skill_resource`。"
+        ]
         for skill in skills:
             lines.append(self._skill_summary(skill))
         return lines

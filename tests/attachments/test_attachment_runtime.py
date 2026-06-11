@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 import pytest
 
@@ -25,53 +25,42 @@ def test_upload_bytes_creates_private_placeholder() -> None:
     assert attachment.handle.startswith("att_")
     assert "diagram.png" in placeholder
     assert "image/png" in placeholder
-    assert "load_image(handle=\"att:" in placeholder
+    assert f"handle: att:{attachment.handle}" in placeholder
+    assert "load_attachment(handle=" not in placeholder
     assert "image-bytes" not in placeholder
     assert "base64" not in placeholder.lower()
 
 
-def test_prepare_user_message_expands_attachment_once() -> None:
+def test_prepare_user_message_expands_attachment_for_rest_of_turn() -> None:
     runtime = AttachmentRuntime()
     attachment = runtime.upload_bytes(
         b"image-bytes",
         filename="diagram.png",
         mime_type="image/png",
     )
-    content = runtime.prepare_user_message("分析图片", [attachment])
+    content = runtime.prepare_user_message("鍒嗘瀽鍥剧墖", [attachment])
 
     first_request = runtime.project_provider_messages([UserMessage(content=content)])
     second_request = runtime.project_provider_messages([UserMessage(content=content)])
 
-    assert isinstance(first_request[0], UserMessage)
-    assert first_request[0].content == (
-        TextPart("分析图片"),
-        ImagePart(attachment),
-    )
-    assert second_request == [UserMessage(content=content)]
-
-
-def test_load_image_handle_persists_until_turn_clear() -> None:
-    runtime = AttachmentRuntime()
-    attachment = runtime.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
-    )
-
-    runtime.load_image_handle(f"att:{attachment.handle}")
-    first_request = runtime.project_provider_messages([UserMessage(content="next")])
-    second_request = runtime.project_provider_messages([UserMessage(content="next")])
-
-    assert first_request[-1] == UserMessage(
+    initial_loaded = UserMessage(
         content=(
-            TextPart(f"Loaded image {attachment.handle} for inspection."),
+            TextPart("鍒嗘瀽鍥剧墖"),
             ImagePart(attachment),
         ),
     )
-    assert second_request[-1] == first_request[-1]
+    turn_loaded = UserMessage(
+        content=(
+            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+            ImagePart(attachment),
+        ),
+    )
+    assert isinstance(first_request[0], UserMessage)
+    assert first_request == [initial_loaded]
+    assert second_request[-1] == turn_loaded
 
 
-def test_clear_turn_loaded_images_resets_loaded_image_state() -> None:
+def test_load_attachment_handle_projects_for_rest_of_turn() -> None:
     runtime = AttachmentRuntime()
     attachment = runtime.upload_bytes(
         b"image-bytes",
@@ -79,19 +68,41 @@ def test_clear_turn_loaded_images_resets_loaded_image_state() -> None:
         mime_type="image/png",
     )
 
-    runtime.load_image_handle(f"att:{attachment.handle}")
-    runtime.clear_turn_loaded_images()
+    runtime.load_attachment_handle(f"att:{attachment.handle}")
+    first_request = runtime.project_provider_messages([UserMessage(content="next")])
+    second_request = runtime.project_provider_messages([UserMessage(content="next")])
+
+    loaded = UserMessage(
+        content=(
+            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+            ImagePart(attachment),
+        ),
+    )
+    assert first_request[-1] == loaded
+    assert second_request[-1] == loaded
+
+
+def test_clear_turn_loaded_attachments_resets_loaded_attachment_state() -> None:
+    runtime = AttachmentRuntime()
+    attachment = runtime.upload_bytes(
+        b"image-bytes",
+        filename="diagram.png",
+        mime_type="image/png",
+    )
+
+    runtime.load_attachment_handle(f"att:{attachment.handle}")
+    runtime.clear_turn_loaded_attachments()
 
     assert runtime.project_provider_messages([UserMessage(content="next")]) == [
         UserMessage(content="next"),
     ]
 
 
-def test_load_image_unknown_attachment_handle_raises() -> None:
+def test_load_attachment_unknown_attachment_handle_raises() -> None:
     runtime = AttachmentRuntime()
 
     with pytest.raises(AttachmentError, match="unknown attachment"):
-        runtime.load_image_handle("att:missing")
+        runtime.load_attachment_handle("att:missing")
 
 
 def test_upload_rejects_non_image_attachment_mime() -> None:
@@ -128,3 +139,4 @@ def test_upload_path_freezes_file_bytes_at_upload_time(tmp_path: Path) -> None:
 
     assert attachment.size_bytes == 5
     assert attachment.source == BytesSource(b"first")
+

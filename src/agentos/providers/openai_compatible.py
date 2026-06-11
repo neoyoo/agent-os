@@ -1,9 +1,10 @@
+import asyncio
 import copy
 import json
 import socket
 import time
 import warnings
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 from urllib.error import HTTPError, URLError
@@ -332,6 +333,8 @@ class OpenAICompatibleProvider:
     async def async_complete(self, request: ProviderRequest) -> ProviderResponse:
         """异步调用 OpenAI-compatible `/chat/completions`。"""
 
+        if self.async_transport is None and self.transport is not None:
+            return await asyncio.to_thread(self.complete, request)
         transport = self.async_transport or HttpxAsyncJSONTransport()
         response = await transport.post_json(
             url=self._chat_completions_url(),
@@ -482,6 +485,12 @@ class OpenAICompatibleProvider:
     ) -> AsyncIterator[ProviderStreamEvent]:
         """异步调用 OpenAI-compatible streaming chat completions。"""
 
+        if self.async_transport is None and self.transport is not None:
+            async for event in _iterate_sync_stream(
+                lambda: self.stream(request, options),
+            ):
+                yield event
+            return
         stream_options = options or ProviderStreamOptions()
         transport = self.async_transport or HttpxAsyncJSONTransport()
         payload = self._payload(request)
@@ -842,3 +851,26 @@ class OpenAICompatibleProvider:
         if value is None:
             return None
         return int(value)
+
+
+_SYNC_STREAM_DONE = object()
+
+
+def _next_sync_stream_event(
+    iterator: Iterator[ProviderStreamEvent],
+) -> ProviderStreamEvent | object:
+    try:
+        return next(iterator)
+    except StopIteration:
+        return _SYNC_STREAM_DONE
+
+
+async def _iterate_sync_stream(
+    factory: Callable[[], Iterator[ProviderStreamEvent]],
+) -> AsyncIterator[ProviderStreamEvent]:
+    iterator = factory()
+    while True:
+        event = await asyncio.to_thread(_next_sync_stream_event, iterator)
+        if event is _SYNC_STREAM_DONE:
+            return
+        yield event

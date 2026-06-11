@@ -116,7 +116,7 @@ def test_agent_can_use_explicit_async_query_loop() -> None:
     assert result.content == "explicit async loop"
 
 
-def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
+def test_agent_async_stream_cancellation_requests_interrupt_without_waiting_for_worker() -> None:
     release_worker = threading.Event()
     worker_blocked = threading.Event()
 
@@ -147,16 +147,16 @@ def test_agent_async_stream_cancellation_waits_for_worker_to_finish() -> None:
                 await asyncio.sleep(0)
         pending_next.cancel()
         await asyncio.sleep(0.05)
-        was_done_before_interrupt = pending_next.done()
+        was_done_before_release = pending_next.done()
         release_worker.set()
 
         with pytest.raises(asyncio.CancelledError):
             await pending_next
-        return was_done_before_interrupt, loop.interrupted
+        return was_done_before_release, loop.interrupted
 
-    done_before_interrupt, interrupted = asyncio.run(cancel_after_first_event())
+    done_before_release, interrupted = asyncio.run(cancel_after_first_event())
 
-    assert done_before_interrupt is False
+    assert done_before_release is True
     assert interrupted is True
 
 

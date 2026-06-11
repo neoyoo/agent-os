@@ -1,4 +1,4 @@
-# Skill ContentSource Async 重构 & PR 整合计划
+﻿# Skill ContentSource Async 重构 & PR 整合计划
 
 > Status: archived / 已收口
 >
@@ -7,7 +7,7 @@
 > 当前 `master` 已完成本计划的 SDK 主干实现并合并推送：
 > native `AsyncQueryLoop`、async `SkillContentSource`、streaming `extra_body`、
 > fallback `tool_call_id`、duplicate tool-call suppression、turn-scoped
-> `load_image`、image-only attachment 边界和相关文档均已落地。旧远端分支已统一清理。
+> `load_attachment`、image-only attachment 边界和相关文档均已落地。旧远端分支已统一清理。
 >
 > 外部 webagent 端 RedisSkillSource drop-in 验证不属于本仓库实现范围，后续如需继续，应另开新计划。
 
@@ -16,8 +16,8 @@
 ## 背景
 
 当前 master 上 6 个 open PR（#2-#7）围绕 issue #1（Qwen 多模态附件）和 web agent runtime 重构。Review 结论：
-- PR #2 是源分支，内容已通过其它分支拆分处置——`_content_parts.py` 已进 master（commit `41d94e6`）；live streaming 由 PR #4；`extra_body` 由 PR #5；`load_image` tool surface 由 PR #6。PR #2 独有部分**部分采纳，部分丢弃**：
-  - ✅ 采纳：fallback `tool_call_id`（issue #1 第 4 项需求，Phase 2.3 摘入）、duplicate tool-call suppression（Phase 2.4 摘入）、turn-scoped image persistent state（Phase 4 融合进 PR #6 的 `load_image` tool）
+- PR #2 是源分支，内容已通过其它分支拆分处置——`_content_parts.py` 已进 master（commit `41d94e6`）；live streaming 由 PR #4；`extra_body` 由 PR #5；`load_attachment` tool surface 由 PR #6。PR #2 独有部分**部分采纳，部分丢弃**：
+  - ✅ 采纳：fallback `tool_call_id`（issue #1 第 4 项需求，Phase 2.3 摘入）、duplicate tool-call suppression（Phase 2.4 摘入）、turn-scoped image persistent state（Phase 4 融合进 PR #6 的 `load_attachment` tool）
   - ❌ 丢弃：image-first 顺序（与 text-first 标准相反）、反向 `extra_body` 覆盖（与 core-fields-protected 原则相反）、`request_payload()` provider public 方法（nice-to-have，master 已有内部 `_request_payload`）、PR #2 的 budget 计数机制（被 turn-scoped 替代）
 - PR #3 `SkillContentSource` ABC 是 sync，webagent 端要用 `redis.asyncio` + 连接池 + pipeline，**必须改 async**
 - PR #4 / #5 小修后可合
@@ -32,11 +32,11 @@
 
 | 当前分支 / PR | 远端 ref | 最终处置 | 关键问题 | Codex 要做的具体改动 | Review 验收点 |
 |---|---|---|---|---|---|
-| **PR #2** `fix-persistent-recalled-attachments` | `origin/fix-persistent-recalled-attachments` | 🗑️ **拆分迁移 + 部分摘入后关闭** | PR #2 是源分支，内容已被拆分：`_content_parts.py` / 部分 lifecycle 已进 master（commit 41d94e6）；live streaming → PR #4；`extra_body` → PR #5；`load_image` tool surface → PR #6。PR #2 独有的 fallback `tool_call_id`（issue #1 第 4 项需求）、duplicate tool-call suppression（防 LLM 同参数重复调用）、turn-scoped image persistent state **必须迁移**；image-first 顺序、反向 `extra_body` 覆盖、PR #2 budget 计数机制 **丢弃** | Phase 0：归属表 walkthrough；不立即关闭，**等 Phase 2.3 / 2.4 / Phase 4 摘入完成后再关闭** | 归属表所有"采纳"项都在后续 Phase 落实；所有"丢弃"项在关闭评论里说明 |
+| **PR #2** `fix-persistent-recalled-attachments` | `origin/fix-persistent-recalled-attachments` | 🗑️ **拆分迁移 + 部分摘入后关闭** | PR #2 是源分支，内容已被拆分：`_content_parts.py` / 部分 lifecycle 已进 master（commit 41d94e6）；live streaming → PR #4；`extra_body` → PR #5；`load_attachment` tool surface → PR #6。PR #2 独有的 fallback `tool_call_id`（issue #1 第 4 项需求）、duplicate tool-call suppression（防 LLM 同参数重复调用）、turn-scoped image persistent state **必须迁移**；image-first 顺序、反向 `extra_body` 覆盖、PR #2 budget 计数机制 **丢弃** | Phase 0：归属表 walkthrough；不立即关闭，**等 Phase 2.3 / 2.4 / Phase 4 摘入完成后再关闭** | 归属表所有"采纳"项都在后续 Phase 落实；所有"丢弃"项在关闭评论里说明 |
 | **PR #3** `skill-progressive-disclosure` | `origin/skill-progressive-disclosure` | ❌ 废弃，先补 native async runtime，再重做 async skills（Phase 3A `refactor/native-async-query-loop` + Phase 3B `refactor/skill-async-abc`） | sync ABC 不能用 `redis.asyncio`；当前 `AsyncQueryLoop` 只是 sync loop + executor，不能真正 await async skill handler；L2→L3 桥结构性风险；builtin skill 静默无 resources；单数/复数 API 混乱 | Phase 3A：原生 `AsyncQueryLoop`，tool dispatch 走 `await async_execute_tool_call`；Phase 3B：ABC 改 async、RegisteredTool 支持 async handler、新增 `BuiltinSkillSource` 统一路径、`render_tool_result` 附 manifest、单数 API 私有化、新增 `docs/skills.md` Redis 示例 | native async loop 测试覆盖 async provider + async tool；全测过；ruff 干净；webagent 端 drop-in `RedisSkillSource` 端到端验证通过 |
 | **PR #4** `fix-provider-live-streaming` | `origin/fix-provider-live-streaming` | ⚠️ 补测试后合，**依赖 Phase 1 前置** | streaming live yield 设计正确。master 自身 `test_async_agent_api.py` 9 passed；**PR #4 的 streaming 改动暴露了 master 中潜在的 async bridge cancel cleanup 缺口**，导致该 PR CI 红（`test_agent_async_stream_cancellation_waits_for_worker_to_finish` 等）。`ProviderStreamCancelled` 路径无专属测试 | Phase 2.1（在 Phase 1 合入后）：rebase 到带 async bridge 修复的 master，CI 红自动消失；再新增两个 `ProviderStreamCancelled` 测试；force-push 到 PR #4 头分支 | CI 绿；两个 cancel 测试通过；emitted_visible_delta 守卫所有 event 类型行为正确 |
 | **PR #5** `feat-openai-compatible-extra-body` | `origin/feat-openai-compatible-extra-body` | ⚠️ 小修后合，**依赖 Phase 1 前置** | streaming 路径生效但测试零覆盖；浅拷贝在嵌套场景理论不安全；**PR #5 的改动同样暴露 async bridge cancel cleanup 缺口**（master 自身 9 passed），导致 CI 红 | Phase 2.2（在 Phase 1 合入后）：rebase 到带 async bridge 修复的 master，CI 红自动消失；`dict(self.extra_body or {})` → `copy.deepcopy(...)`；新增 streaming + async_stream 的 extra_body 测试 | CI 绿；streaming 测试断言 payload 含 extra_body 字段；core fields 防覆盖测试仍过 |
-| **PR #6** `dev/web-agent-runtime` | `origin/dev/web-agent-runtime` | ✅ 整合分支基本可用，需 rebase + 2 个 follow-up（Phase 4 新分支 `feat/web-agent-runtime-v2`） | `MessageRuntime.inject_temporary_recalled` 死 API 未清；嵌套 TaskGroup cancel 无测试；PDF 删除未在 PR body 声明；**注意**：本 PR 已含 `_async_bridge.py` 修复，但该修复会在 Phase 1 单独前置合入，所以 rebase 时会有冲突，按"master 已有"解决 | Phase 4：基于 Phase 3B 后的 master rebase，丢弃旧 skill 代码 + 接受 master 的 `_async_bridge.py`；删 `inject_temporary_recalled` + 测试；新增 `test_async_bridge_nested_cancel.py`；PR body 显式声明 BREAKING | 全测过；`load_image` vs `recall_context` 边界清晰；嵌套 cancel 测试覆盖 |
+| **PR #6** `dev/web-agent-runtime` | `origin/dev/web-agent-runtime` | ✅ 整合分支基本可用，需 rebase + 2 个 follow-up（Phase 4 新分支 `feat/web-agent-runtime-v2`） | `MessageRuntime.inject_temporary_recalled` 死 API 未清；嵌套 TaskGroup cancel 无测试；PDF 删除未在 PR body 声明；**注意**：本 PR 已含 `_async_bridge.py` 修复，但该修复会在 Phase 1 单独前置合入，所以 rebase 时会有冲突，按"master 已有"解决 | Phase 4：基于 Phase 3B 后的 master rebase，丢弃旧 skill 代码 + 接受 master 的 `_async_bridge.py`；删 `inject_temporary_recalled` + 测试；新增 `test_async_bridge_nested_cancel.py`；PR body 显式声明 BREAKING | 全测过；`load_attachment` vs `recall_context` 边界清晰；嵌套 cancel 测试覆盖 |
 | **PR #7** `docs/web-agent-runtime-context-sync` | `origin/docs/web-agent-runtime-context-sync` | ✅ 跟随 #6 后合 | PDF 删除文档轻度不足；缺 SDK async 行为说明 | Phase 5：rebase 到 Phase 4 后的 master；`readme-online.md` 补 MIME 限制段；`sdk-architecture.md` 补 SkillContentSource async 段 | 文档对得上代码实际行为 |
 
 **全局约束**：
@@ -56,7 +56,7 @@
 - PR #2 当前 CI 5 fail：3 个 image-first/text-first 断言冲突来源是 PR #2 把生产代码改成 image-first（与标准相反），断言反而保留了 text-first 期望；2 个 async stream cancellation 与 PR #4/#5 同源（Phase 1 解决）
 - **核验过的独有项**：master / PR #5 / PR #6 全都 **没有** fallback `tool_call_id`、duplicate tool-call suppression、`request_payload()` provider public method、`recalled_attachment_request_budget`，这些是 PR #2 真独有
 - master 的 `_request_payload` 在 `observability/instrumented.py:471` 是内部方法，不是 provider 公开接口
-- PR #6 当前 `load_image_handle` 通过 `_pending_image_handles` 实现 **one-shot**（投影一次即清），**不满足 turn-scoped 持续语义**；PR #2 的 `_turn_loaded_image_handles` 是 turn-scoped 状态，必须迁移
+- PR #6 当前 `load_attachment_handle` 通过 `_pending_image_handles` 实现 **one-shot**（投影一次即清），**不满足 turn-scoped 持续语义**；PR #2 的 `_turn_loaded_attachment_handles` 是 turn-scoped 状态，必须迁移
 
 **PR #2 内容归属表**：
 
@@ -66,10 +66,10 @@
 | 附件 lifecycle（`upload` / `placeholder_text` / `prepare_user_message`） | ✅ 已在 master (commit `41d94e6`) | — |
 | live streaming（去 buffer 逐 event yield） | ✅ 由 PR #4 提供 | Phase 2.1 |
 | `extra_body` 字段（**core 覆盖 extra_body** 方向） | ✅ 由 PR #5 提供 | Phase 2.2 |
-| `load_image` tool surface / XML recall tool result | ✅ 由 PR #6 提供 | Phase 4 |
+| `load_attachment` tool surface / XML recall tool result | ✅ 由 PR #6 提供 | Phase 4 |
 | **fallback `tool_call_id`**（流式无 id 时生成本地兜底 id） | ✅ **从 PR #2 摘入需求**（issue #1 第 4 项需求），实现改为 timestamp-based id，不沿用 PR #2 的自增编号 | **Phase 2.3** |
 | **duplicate tool-call suppression**（`applied_tool_signatures` / `_duplicate_tool_call_result` / `_tool_call_signature`） | ✅ **从 PR #2 摘入**（防 LLM 同参数重复调用） | **Phase 2.4** |
-| **turn-scoped image persistent state**（`_turn_loaded_image_handles` + `clear_turn_loaded_images` + sync/async `run_turn_stream`、`run_continuation_stream` finally 清理） | ✅ **从 PR #2 摘入语义**，融合进 PR #6 的 `load_image` tool surface | **Phase 4 子任务** |
+| **turn-scoped image persistent state**（`_turn_loaded_attachment_handles` + `clear_turn_loaded_attachments` + sync/async `run_turn_stream`、`run_continuation_stream` finally 清理） | ✅ **从 PR #2 摘入语义**，融合进 PR #6 的 `load_attachment` tool surface | **Phase 4 子任务** |
 | image-first 顺序（`_project_user_handles`、`project_provider_messages`） | ❌ **错误方向**——与 text-first 多模态 API 标准相反，丢弃 | — |
 | 反向 `extra_body` 覆盖（extra_body 覆盖 core fields） | ❌ **错误方向**——core 字段防御更安全，丢弃 | — |
 | `recalled_attachment_request_budget` budget 计数机制 | ❌ **被 turn-scoped 替代**——简化为"整个 turn 内持续"，无需 budget 计数 | — |
@@ -443,23 +443,23 @@ class RedisSkillSource(SkillContentSource):
    - **`_async_bridge.py` 已在 Phase 1 单独前置合入 master** → rebase 时接受 master 版本，**不要**再作为 #6 独有改动处理
    - **`_project_user_handles` 和 `project_provider_messages` 顺序** → master 已是 text-first（符合多模态 API 标准），PR #6 同方向，直接接受；若 rebase 中误抓回 image-first 立即纠正
    - 保留 #6 独有的：
-     - `attachments/runtime.py`（`load_image` 拆分相关的工具入口，**不动顺序**）
-     - `capabilities/router.py`（`_format_recalled_context` XML 化、`_execute_load_image`）
-     - `context_protocol.py`（`load_image` tool spec）
+     - `attachments/runtime.py`（`load_attachment` 拆分相关的工具入口，**不动顺序**）
+     - `capabilities/router.py`（`_format_recalled_context` XML 化、`_execute_load_attachment`）
+     - `context_protocol.py`（`load_attachment` tool spec）
      - `recall/runtime.py`（XML 路径，去掉 inject）
 2. **D8 — turn-scoped image persistent state 融合**（从 PR #2 摘语义，不沿用 PR #6 的 one-shot）：
    - 当前 PR #6 `AttachmentRuntime` 用 `_pending_image_handles` 实现 one-shot（投影一次即清），**满足不了 turn-scoped 持续语义**——一个 turn 内 LLM 多次 provider request 时只有第一次能看到 image
-   - **改为**：参考 PR #2 `_turn_loaded_image_handles` 的设计
+   - **改为**：参考 PR #2 `_turn_loaded_attachment_handles` 的设计
      ```python
      # AttachmentRuntime 字段
      - _pending_image_handles: list[str]    # 删掉
-     + _turn_loaded_image_handles: list[str] # 加上,turn-scoped 持续
+     + _turn_loaded_attachment_handles: list[str] # 加上,turn-scoped 持续
 
-     # load_image_handle
-     def load_image_handle(self, handle):
+     # load_attachment_handle
+     def load_attachment_handle(self, handle):
          ...
-         if attachment.handle not in self._turn_loaded_image_handles:
-             self._turn_loaded_image_handles.append(attachment.handle)
+         if attachment.handle not in self._turn_loaded_attachment_handles:
+             self._turn_loaded_attachment_handles.append(attachment.handle)
          return attachment
 
      # project_provider_messages
@@ -469,33 +469,33 @@ class RedisSkillSource(SkillContentSource):
          projected = list(messages)
          if user_handles:
              projected = self._project_user_handles(projected, user_handles, user_text)
-         if self._turn_loaded_image_handles:
+         if self._turn_loaded_attachment_handles:
              projected.append(UserMessage(content=(
-                 TextPart("Loaded image " + ", ".join(self._turn_loaded_image_handles) + " for inspection."),
-                 *[self._content_part_for_attachment(self.store.get(h)) for h in self._turn_loaded_image_handles],
+                 TextPart("Loaded attachment " + ", ".join(self._turn_loaded_attachment_handles) + " for inspection."),
+                 *[self._content_part_for_attachment(self.store.get(h)) for h in self._turn_loaded_attachment_handles],
              )))
          return projected
 
      # turn 边界清理
-     def clear_turn_loaded_images(self):
-         self._turn_loaded_image_handles.clear()
+     def clear_turn_loaded_attachments(self):
+         self._turn_loaded_attachment_handles.clear()
      ```
    - **清理点必须覆盖 sync + async 的 turn 边界**：
      1. `QueryLoop.run_turn_stream` 的 `finally` 块（master `query_loop.py:284`）
      2. **`QueryLoop.run_continuation_stream` 的 `finally` 块**（master `query_loop.py:247` 起，continuation turn 也必须清——否则 continuation 跨 turn 时 image 会残留）
-     3. **异常 / cancel 路径**：finally 块本身已经覆盖普通异常退出；async cancel 通过 `AsyncQueryLoop`（Phase 3A 原生 async 重写后）的 async finally 同样覆盖。**`AsyncQueryLoop` 的 `run_turn_stream` 和 `run_continuation_stream` 也都要加 `clear_turn_loaded_images()`**
+     3. **异常 / cancel 路径**：finally 块本身已经覆盖普通异常退出；async cancel 通过 `AsyncQueryLoop`（Phase 3A 原生 async 重写后）的 async finally 同样覆盖。**`AsyncQueryLoop` 的 `run_turn_stream` 和 `run_continuation_stream` 也都要加 `clear_turn_loaded_attachments()`**
    - **不要**引入 PR #2 的 `recalled_attachment_request_budget` / `_turn_recall_remaining_by_handle`——turn-scoped 已经简单清晰，budget 是多余复杂度
 3. **清掉死 API**：删 `src/agentos/messages/runtime.py:49` 的 `inject_temporary_recalled` 方法 + 所有引用测试（`tests/messages/test_runtime.py:49,111`、`tests/persistence/test_serializers.py:68`）
 4. **新增 D8 测试** `tests/attachments/test_turn_scoped_image_lifecycle.py`：
    ```python
-   def test_load_image_persists_across_provider_requests_in_same_turn():
-       # 一个 turn 内 LLM 多次 provider request,确认 _turn_loaded_image_handles 持续投影,不被 consume 清空
-   def test_clear_turn_loaded_images_resets_state_at_turn_boundary():
+   def test_load_attachment_persists_across_provider_requests_in_same_turn():
+       # 一个 turn 内 LLM 多次 provider request,确认 _turn_loaded_attachment_handles 持续投影,不被 consume 清空
+   def test_clear_turn_loaded_attachments_resets_state_at_turn_boundary():
        # turn 结束(run_turn_stream finally) → image 不再在下个 turn 的 project 中出现
-   def test_next_turn_requires_explicit_load_image():
-       # 下一个 turn LLM 必须再 call load_image 才能让 image 重新出现
+   def test_next_turn_requires_explicit_load_attachment():
+       # 下一个 turn LLM 必须再 call load_attachment 才能让 image 重新出现
    def test_continuation_turn_also_clears_loaded_images():
-       # run_continuation_stream 完成后 _turn_loaded_image_handles 也被清空
+       # run_continuation_stream 完成后 _turn_loaded_attachment_handles 也被清空
    def test_async_cancel_still_clears_loaded_images():
        # AsyncQueryLoop 中途 cancel 不影响 finally 块的清理
    ```
@@ -505,7 +505,7 @@ class RedisSkillSource(SkillContentSource):
        # 用 asyncio.TaskGroup 触发嵌套 cancel
        # 断言 _aclose_from_cancelled_task 执行完后 task.cancelling() 计数还原
    ```
-6. 更新 PR body：显式声明 `BREAKING: application/pdf removed from AttachmentRuntime.DEFAULT_ALLOWED_MIME_TYPES; FilePart direct construction unaffected.` + 说明 D8 行为：`load_image` 在 turn 内持续，turn 结束自动清空
+6. 更新 PR body：显式声明 `BREAKING: application/pdf removed from AttachmentRuntime.DEFAULT_ALLOWED_MIME_TYPES; FilePart direct construction unaffected.` + 说明 D8 行为：`load_attachment` 在 turn 内持续，turn 结束自动清空
 7. 跑 `uv run pytest -q` + `uv run ruff check src/ tests/` + `uv run python -m compileall -q src tests`
 8. 推到新 PR `feat/web-agent-runtime-v2`，**关闭旧 PR #6**
 
@@ -522,8 +522,8 @@ class RedisSkillSource(SkillContentSource):
 2. 在 `docs/readme-online.md` 附件段落新增：
    > **MIME types**: `AttachmentRuntime` 仅接受 image/* (gif/jpeg/png/webp)。上传 PDF 或其他类型将抛 `AttachmentError("unsupported attachment MIME type")`。`FilePart` 类仍保留，直接构造 provider message 不受影响。
 3. 如果 Phase 3A / 3B 没在 `docs/skills.md` 体现的 SDK 行为变更，在 `docs/sdk-architecture.md` 补段说明 native `AsyncQueryLoop` 和 `SkillContentSource` 全 async
-4. 在 `docs/readme-online.md` 或新 `docs/attachments.md` 描述 D8 turn-scoped 语义：
-   > **`load_image` 生命周期**：一个 turn（从用户提问到 LLM 输出最终答复）内，LLM call `load_image(handle="att:X")` 后，附件在后续所有 provider request 中持续可见，无需重复 load。turn 结束时 SDK 自动清空已加载列表；下一个 turn 如需引用同一附件，LLM 必须显式重新 call `load_image`。
+4. 在 `docs/readme-online.md` 或新 `docs/attachments.md` 描述当前 one-shot 语义：
+   > **`load_attachment` 生命周期**：LLM call `load_attachment(handle="att:X")` 后，附件只投影到下一次 provider request，构建请求后立即折叠回 placeholder。后续 provider request 或下一个 turn 如需引用同一附件，LLM 必须显式重新 call `load_attachment`。
 5. 推到新 PR `docs/web-agent-runtime-sync-v2`，**关闭旧 PR #7**
 
 ### Phase 5 末尾任务：关闭 PR #2
@@ -540,7 +540,7 @@ gh pr close 2 --comment "$(cat <<'EOF'
 - extra_body (core 覆盖方向): PR #5 (Phase 2.2)
 - fallback tool_call_id: feat/fallback-tool-call-id (Phase 2.3)
 - duplicate tool-call suppression: feat/duplicate-tool-call-suppression (Phase 2.4)
-- load_image tool surface + XML recall: feat/web-agent-runtime-v2 (Phase 4)
+- load_attachment tool surface + XML recall: feat/web-agent-runtime-v2 (Phase 4)
 - turn-scoped image persistent state: feat/web-agent-runtime-v2 (Phase 4 D8)
 
 ❌ 不采纳（明确丢弃）:
@@ -593,3 +593,4 @@ EOF
 **未覆盖的边界**: <if any>
 **等待 Checkpoint X review**
 ```
+

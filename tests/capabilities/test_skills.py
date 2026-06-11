@@ -114,6 +114,95 @@ def test_skill_loader_tool_returns_content_or_deterministic_error(
     )
 
 
+def test_filesystem_skill_source_loads_resources_without_bundling(
+    tmp_path: Path,
+) -> None:
+    write_skill(
+        tmp_path / "review" / "SKILL.md",
+        (
+            "name: code-review\n"
+            "description: Review code.\n"
+            "when_to_use: Review code changes.\n"
+        ),
+        "# Review\nFind bugs before summaries.\n",
+    )
+    (tmp_path / "review" / "references").mkdir()
+    (tmp_path / "review" / "references" / "checklist.md").write_text(
+        "# Checklist\n- Verify behavior.\n",
+        encoding="utf-8",
+    )
+
+    async def load() -> tuple[object, object, object, SkillRegistry]:
+        registry = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
+        skill = await registry.load("code-review")
+        resources = await registry.list_resources("code-review")
+        resource = await registry.load_resource(
+            "code-review",
+            "references/checklist.md",
+        )
+        return skill, resources, resource, registry
+
+    skill, resources, resource, registry = asyncio.run(load())
+
+    assert skill.content.startswith("# Review")
+    assert "Checklist" not in skill.content
+    assert [item.path for item in resources] == ["references/checklist.md"]
+    assert resources[0].mime_type == "text/markdown"
+    assert resource.content.startswith("# Checklist")
+    with pytest.raises(KeyError):
+        asyncio.run(registry.load_resource("code-review", "../secrets.txt"))
+
+
+def test_async_skill_loader_tool_exposes_resource_manifest_and_content(
+    tmp_path: Path,
+) -> None:
+    write_skill(
+        tmp_path / "review" / "SKILL.md",
+        (
+            "name: code-review\n"
+            "description: Review code.\n"
+            "when_to_use: Review code changes.\n"
+        ),
+        "# Review\nFind bugs before summaries.\n",
+    )
+    (tmp_path / "review" / "references").mkdir()
+    (tmp_path / "review" / "references" / "checklist.md").write_text(
+        "# Checklist\n- Verify behavior.\n",
+        encoding="utf-8",
+    )
+
+    async def run() -> tuple[object, object]:
+        registry = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
+        tools = ToolRegistry()
+        register_skill_loader_tools(tools, registry)
+        router = ToolCallRouter(tool_registry=tools)
+        loaded = await router.async_execute_tool_call(
+            ProviderToolCall(
+                id="call_1",
+                name="load_skill",
+                arguments={"skill_name": "code-review"},
+            ),
+        )
+        resource = await router.async_execute_tool_call(
+            ProviderToolCall(
+                id="call_2",
+                name="load_skill_resource",
+                arguments={
+                    "skill_name": "code-review",
+                    "path": "references/checklist.md",
+                },
+            ),
+        )
+        return loaded, resource
+
+    loaded, resource = asyncio.run(run())
+
+    assert "# Skill: code-review" in loaded.content
+    assert "## Available resources" in loaded.content
+    assert "`references/checklist.md` (text/markdown)" in loaded.content
+    assert resource.content.startswith("# Checklist")
+
+
 def test_skill_frontmatter_supports_yaml_multiline_values(tmp_path: Path) -> None:
     write_skill(
         tmp_path / "planning.md",

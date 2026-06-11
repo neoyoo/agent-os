@@ -1,8 +1,8 @@
-# Ephemeral Attachment Lifecycle Implementation Plan
+﻿# Ephemeral Attachment Lifecycle Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add session-scoped attachment upload, one-shot provider expansion, placeholder folding, and `recall_context(handle="att:...")` re-expansion for OpenAI and Anthropic providers.
+**Goal:** Add session-scoped attachment upload, one-shot provider expansion, placeholder folding, and `load_attachment(handle="att:...")` re-expansion for OpenAI and Anthropic providers.
 
 **Architecture:** Attachments live in a new `agentos.attachments` subsystem. `MessageRuntime` remains the message truth source and stores placeholders, while `AttachmentRuntime` owns bytes/metadata and one-shot expansion state. Provider adapters map canonical content parts to OpenAI/Anthropic payloads and reject unsupported media deterministically.
 
@@ -49,15 +49,15 @@
 - [ ] Inject optional `AttachmentRuntime` into `ProviderRequestBuilder` and `QueryLoop.run_turn_stream(..., attachments=...)`.
 - [ ] Run targeted runtime tests and verify pass.
 
-### Task 4: `recall_context(att:...)` Routing
+### Task 4: `load_attachment(att:...)` Routing
 
 **Files:**
 - Modify: `src/agentos/capabilities/router.py`
 - Test: `tests/capabilities/test_tools.py`
 
-- [ ] Write failing test proving `recall_context(handle="att:att_1")` schedules one-shot attachment expansion and does not call compression recall.
+- [ ] Write failing test proving `load_attachment(handle="att:att_1")` schedules one-shot attachment expansion and does not call compression recall.
 - [ ] Run targeted tool router test and verify failure.
-- [ ] Add optional `AttachmentRuntime` to `ToolCallRouter` and route `att:` handles before existing recall runtime.
+- [ ] Add optional `AttachmentRuntime` to `ToolCallRouter` and route `load_attachment` handles separately from existing recall runtime.
 - [ ] Run targeted tool router test and verify pass.
 
 ### Task 5: OpenAI And Anthropic Mapping
@@ -95,3 +95,4 @@
 - [ ] Run compile check: `uv run python -m compileall -q src tests`.
 - [ ] Run whitespace check: `git diff --check`.
 - [ ] Run drift search for forbidden new tool name: `rg "view_attachment" src tests docs/superpowers/specs/2026-05-16-ephemeral-attachment-lifecycle-design.md -S`.
+

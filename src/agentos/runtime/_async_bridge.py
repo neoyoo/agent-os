@@ -43,7 +43,7 @@ class SyncIteratorAsyncBridge(Generic[T]):
         try:
             item = await self._queue.get()
         except asyncio.CancelledError:
-            await self._aclose_from_cancelled_task()
+            self._request_stop()
             raise
         if item is None:
             self._closed = True
@@ -58,13 +58,16 @@ class SyncIteratorAsyncBridge(Generic[T]):
     async def aclose(self) -> None:
         """请求 worker 在下一个安全点停止，并等待线程退出。"""
 
+        self._request_stop()
+        await self._wait_for_worker()
+
+    def _request_stop(self) -> None:
         if self._closed:
             return
         self._closed = True
         self._stop_requested.set()
         if self._on_cancel is not None:
             self._on_cancel()
-        await self._wait_for_worker()
 
     def _ensure_started(self) -> None:
         if self._future is not None:
