@@ -2458,8 +2458,14 @@ class PlannerRuntime:
                 assignment=assignment,
                 template=template,
             )
-        except PlanDispatchAlreadySubmittedError:
-            pass
+        except PlanDispatchAlreadySubmittedError as error:
+            self._mark_assignment_dispatch_failed(
+                updated,
+                updated_step,
+                assignment,
+                error=str(error) or error.__class__.__name__,
+            )
+            raise
         except Exception as error:
             self._mark_assignment_dispatch_failed(
                 updated,

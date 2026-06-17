@@ -11,7 +11,13 @@ from typing import Callable, Sequence, TypeVar, cast
 
 from agentos.multi.serializers import task_record_from_dict, task_record_to_dict
 from agentos.multi.task_store import TaskClaim
-from agentos.multi.types import TaskHandle, TaskRecord, TaskResult, TaskStatus
+from agentos.multi.types import (
+    TaskAlreadySubmittedError,
+    TaskHandle,
+    TaskRecord,
+    TaskResult,
+    TaskStatus,
+)
 from agentos.persistence.postgres import BackendUnavailableError
 from agentos.persistence.protocols import PostgresConnection, PostgresCursor
 
@@ -85,30 +91,36 @@ class PostgresTaskStore:
     def create(self, record: TaskRecord) -> TaskHandle:
         """创建 task record。"""
 
-        self._execute(
-            """
-            INSERT INTO agentos_multi_agent_tasks (
-              task_id, parent_agent_id, target_agent_id, status, worker_id,
-              lease_expires_at, deadline_at, version, payload,
-              consumed_at, result_notified_at, updated_at
+        try:
+            self._execute(
+                """
+                INSERT INTO agentos_multi_agent_tasks (
+                  task_id, parent_agent_id, target_agent_id, status, worker_id,
+                  lease_expires_at, deadline_at, version, payload,
+                  consumed_at, result_notified_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                """,
+                (
+                    record.task_id,
+                    record.parent_agent_id,
+                    record.target_agent_id,
+                    record.status,
+                    record.worker_id,
+                    record.lease_expires_at,
+                    record.deadline_at,
+                    record.version,
+                    self._json_dump(task_record_to_dict(record)),
+                    record.consumed_at,
+                    record.result_notified_at,
+                    record.updated_at or record.created_at,
+                ),
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
-            """,
-            (
-                record.task_id,
-                record.parent_agent_id,
-                record.target_agent_id,
-                record.status,
-                record.worker_id,
-                record.lease_expires_at,
-                record.deadline_at,
-                record.version,
-                self._json_dump(task_record_to_dict(record)),
-                record.consumed_at,
-                record.result_notified_at,
-                record.updated_at or record.created_at,
-            ),
-        )
+        except BackendUnavailableError as error:
+            if self._is_duplicate_task_error(error):
+                self._rollback()
+                raise TaskAlreadySubmittedError(record.task_id) from error
+            raise
         self._commit()
         return self._handle(record)
 
@@ -752,6 +764,27 @@ class PostgresTaskStore:
         except Exception as error:
             raise BackendUnavailableError("Postgres backend unavailable") from error
 
+    def _is_duplicate_task_error(self, error: BaseException) -> bool:
+        checked: set[int] = set()
+        current: BaseException | None = error
+        while current is not None and id(current) not in checked:
+            checked.add(id(current))
+            sqlstate = getattr(current, "sqlstate", None) or getattr(
+                current,
+                "pgcode",
+                None,
+            )
+            if sqlstate == "23505":
+                return True
+            class_name = current.__class__.__name__.lower()
+            if "uniqueviolation" in class_name:
+                return True
+            message = str(current).lower()
+            if "duplicate key" in message or "unique constraint" in message:
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
     def _commit(self) -> None:
         connection = self._active_connection.get()
         if connection is None:
@@ -759,6 +792,14 @@ class PostgresTaskStore:
         commit = getattr(connection, "commit", None)
         if commit is not None:
             commit()
+
+    def _rollback(self) -> None:
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        rollback = getattr(connection, "rollback", None)
+        if rollback is not None:
+            rollback()
 
     def close(self) -> None:
         """关闭或归还当前 Postgres connection。"""

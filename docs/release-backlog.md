@@ -46,6 +46,15 @@ pending-dispatch recovery, duplicate-task recovery, coordinator failure
 handling, submitted-marker conflict retry, and claim-guarded scheduler paths,
 and no known P1 behavior bug remains in planner dispatch.
 
+The duplicate-task signal is intentionally scoped: fresh assignment submission
+does not treat a duplicate `task_id` as success because it may be an unrelated
+id collision. Only pending-dispatch recovery can use
+`TaskAlreadySubmittedError` as submitted evidence for the previously persisted
+assignment. `PostgresTaskStore` normalizes `agentos_multi_agent_tasks.task_id`
+primary-key duplicate violations into `TaskAlreadySubmittedError` so the
+coordinator boundary sees the same contract from local and Postgres task
+stores.
+
 ## A2A public operation rate limiting
 
 Status: production guidance strengthened, distributed quota backlog.

@@ -4,7 +4,14 @@ from dataclasses import replace
 
 import pytest
 
-from agentos.multi import TaskHandle
+from agentos.multi import (
+    AgentCard,
+    AgentCoordinator,
+    AgentInbox,
+    InMemoryRegistry,
+    SpawnExecutor,
+    TaskHandle,
+)
 from agentos.multi.planner import (
     EvidenceHandle,
     InMemoryPlanClaimStore,
@@ -31,6 +38,10 @@ from agentos.multi.planner import (
     PlanStepSpec,
     SubAgentTemplate,
 )
+from agentos.multi.postgres_tasks import PostgresTaskStore
+from tests.multi.helpers import build_agent_with_response
+from tests.multi.test_coordinator_spawn import StaticSubagentFactory
+from tests.multi.test_postgres_task_store import FakeConnection
 
 
 class ManualClock:
@@ -1521,6 +1532,44 @@ def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> N
     assert store.conflict_next_submitted_save is False
 
 
+def test_planner_runtime_fresh_assignment_duplicate_task_is_not_submitted() -> None:
+    class DuplicateTaskCoordinator(FakeCoordinator):
+        def spawn(self, **kwargs: object) -> TaskHandle:
+            self.spawn_calls.append(kwargs)
+            raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
+
+    store = InMemoryPlanStore()
+    coordinator = DuplicateTaskCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="reviewer",
+                name="Reviewer",
+                role="Review code.",
+                capabilities=("review",),
+            ),
+        ),
+        clock=lambda: 20.0,
+        id_factory=lambda prefix: f"{prefix}_1",
+    )
+    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    runtime.add_step(
+        plan.plan_id,
+        instruction="Review planner module.",
+        template_id="reviewer",
+    )
+
+    with pytest.raises(PlanDispatchAlreadySubmittedError, match="task_1"):
+        runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
+
+    persisted = runtime.get_plan(plan.plan_id)
+    assert persisted.steps[0].status == "failed"
+    assert persisted.assignments[0].dispatch_status == "failed"
+    assert persisted.assignments[0].dispatch_error == "task_1"
+
+
 def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
@@ -1917,6 +1966,172 @@ def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
     assert persisted.steps[0].error is None
     assert persisted.assignments[0].dispatch_status == "submitted"
     assert persisted.assignments[0].dispatch_error is None
+
+
+def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> None:
+    class DuplicateSpawnCoordinator(FakeCoordinator):
+        def spawn(self, **kwargs: object) -> TaskHandle:
+            self.spawn_calls.append(kwargs)
+            raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
+
+    store = InMemoryPlanStore()
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Recover a spawned task accepted before restart.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Recover duplicate spawned task.",
+                    status="assigned",
+                    template_id="reviewer",
+                    task_id="task_existing",
+                    assigned_agent_id="subagent_existing",
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_1",
+                    step_id="step_1",
+                    template_id="reviewer",
+                    task_id="task_existing",
+                    target_agent_id="subagent_existing",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+        ),
+    )
+    coordinator = DuplicateSpawnCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="reviewer",
+                name="Reviewer",
+                role="Review architecture.",
+            ),
+        ),
+        clock=lambda: 20.0,
+    )
+
+    report = runtime.recover_pending_dispatches("plan_1")
+
+    persisted = runtime.get_plan("plan_1")
+    assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
+    assert report.skipped == ()
+    assert coordinator.spawn_calls[0]["task_id"] == "task_existing"
+    assert coordinator.spawn_calls[0]["child_agent_id"] == "subagent_existing"
+    assert persisted.steps[0].status == "assigned"
+    assert persisted.steps[0].error is None
+    assert persisted.assignments[0].dispatch_status == "submitted"
+    assert persisted.assignments[0].dispatch_error is None
+
+
+def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() -> None:
+    connection = FakeConnection()
+    task_store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=AgentInbox(),
+        task_store=task_store,
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="leader",
+            name="Leader",
+            description="Plan owner.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("leader"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert_reviewer",
+            name="Expert Reviewer",
+            description="Architecture reviewer.",
+            capabilities=("architecture-review",),
+            max_concurrent_tasks=2,
+        ),
+        build_agent_with_response("expert"),
+    )
+    accepted = coordinator.dispatch(
+        instruction="Previously submitted task.",
+        required_capabilities=("architecture-review",),
+        parent_agent_id="leader",
+        target_agent_id="expert_reviewer",
+        task_id="task_existing",
+    )
+    assert accepted.task_id == "task_existing"
+    store = InMemoryPlanStore()
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Recover duplicate task from durable store.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Recover duplicate task.",
+                    status="assigned",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    assigned_agent_id="expert_reviewer",
+                    required_capabilities=("architecture-review",),
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_1",
+                    step_id="step_1",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    target_agent_id="expert_reviewer",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+        ),
+    )
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="expert-reviewer",
+                name="Expert Reviewer",
+                role="Review architecture.",
+                capabilities=("architecture-review",),
+                target_agent_id="expert_reviewer",
+            ),
+        ),
+        clock=lambda: 20.0,
+    )
+
+    try:
+        report = runtime.recover_pending_dispatches("plan_1")
+    finally:
+        coordinator.spawn_executor.shutdown()
+
+    persisted = runtime.get_plan("plan_1")
+    assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
+    assert report.skipped == ()
+    assert persisted.steps[0].status == "assigned"
+    assert persisted.steps[0].error is None
+    assert persisted.assignments[0].dispatch_status == "submitted"
+    assert persisted.assignments[0].dispatch_error is None
+    existing = task_store.get("task_existing")
+    assert existing is not None
+    assert existing.parent_agent_id == "leader"
+    assert existing.target_agent_id == "expert_reviewer"
+    assert len(coordinator.inbox.collect("expert_reviewer")) == 1
+    assert connection.rollbacks == 1
 
 
 def test_planner_runtime_dispatch_ready_steps_recovers_before_new_assignments() -> None:

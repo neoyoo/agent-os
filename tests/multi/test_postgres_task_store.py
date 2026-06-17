@@ -2,7 +2,14 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from agentos.multi import TaskRecord, TaskRequest, TaskResult
+import pytest
+
+from agentos.multi import (
+    TaskAlreadySubmittedError,
+    TaskRecord,
+    TaskRequest,
+    TaskResult,
+)
 from agentos.multi.postgres_tasks import PostgresTaskStore
 from agentos.multi.serializers import task_record_from_dict, task_record_to_dict
 
@@ -23,6 +30,8 @@ class FakeConnection:
         self.records: dict[str, dict[str, object]] = {}
         self.outbox: list[dict[str, object]] = []
         self.commits = 0
+        self.rollbacks = 0
+        self.aborted = False
         self.sql: list[str] = []
 
     def execute(
@@ -31,7 +40,12 @@ class FakeConnection:
         params: tuple[object, ...] = (),
     ) -> FakeCursor:
         self.sql.append(sql)
+        if self.aborted:
+            raise RuntimeError("current transaction is aborted")
         if "INSERT INTO agentos_multi_agent_tasks" in sql:
+            if str(params[0]) in self.records:
+                self.aborted = True
+                raise RuntimeError("duplicate key value violates unique constraint")
             self.records[str(params[0])] = {
                 "parent_agent_id": params[1],
                 "target_agent_id": params[2],
@@ -60,6 +74,16 @@ class FakeConnection:
                 ):
                     rows.append((row["payload"],))
             return FakeCursor(rows)
+        if "SELECT COUNT(*) FROM agentos_multi_agent_tasks" in sql:
+            agent_id = str(params[0])
+            count = 0
+            for row in self.records.values():
+                if row["target_agent_id"] == agent_id and row["status"] in (
+                    "queued",
+                    "running",
+                ):
+                    count += 1
+            return FakeCursor([(count,)])
         if "WITH candidates AS" in sql and "FOR UPDATE SKIP LOCKED" in sql:
             return self._claim(params)
         if "UPDATE agentos_multi_agent_tasks" in sql and "RETURNING payload" in sql:
@@ -78,6 +102,10 @@ class FakeConnection:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        self.aborted = False
 
     def _claim(self, params: tuple[object, ...]) -> FakeCursor:
         capabilities = {str(capability) for capability in params[2]}
@@ -184,6 +212,34 @@ def test_postgres_task_store_saves_and_loads_record() -> None:
 
     assert store.get("task_1") == record()
     assert connection.commits == 1
+
+
+def test_postgres_task_store_reports_duplicate_task_id_as_already_submitted() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    store.create(record())
+
+    with pytest.raises(TaskAlreadySubmittedError, match="task_1"):
+        store.create(record())
+
+    assert store.get("task_1") == record()
+    assert connection.commits == 1
+    assert connection.rollbacks == 1
+
+
+def test_postgres_task_store_rolls_back_after_duplicate_task_id() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    store.create(record())
+
+    with pytest.raises(TaskAlreadySubmittedError):
+        store.create(record())
+
+    store.create(record("task_2"))
+
+    assert store.get("task_2") == record("task_2")
+    assert connection.commits == 2
+    assert connection.rollbacks == 1
 
 
 def test_postgres_task_store_from_pool_borrows_per_operation() -> None:

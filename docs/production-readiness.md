@@ -945,8 +945,12 @@ Production notes:
   `task_id` as an idempotency key: return the existing task or raise
   `PlanDispatchAlreadySubmittedError` / `TaskAlreadySubmittedError` for
   duplicate submissions so planner recovery can mark the assignment submitted
-  instead of failed. This is at-least-once recovery evidence, not a distributed
-  exactly-once execution guarantee.
+  instead of failed. Fresh assignment submission still treats duplicate
+  `task_id` as a dispatch failure; only recovery has persisted assignment
+  evidence tying that id to the original step. `PostgresTaskStore` normalizes
+  primary-key duplicate task inserts into `TaskAlreadySubmittedError` for the
+  same coordinator contract. This is at-least-once recovery evidence, not a
+  distributed exactly-once execution guarantee.
 - Use `PlannerRuntime.schedulable_plans(...)` or `plan_schedulable_plans` when
   a deployment-owned scheduler wants an owner-scoped, status-filtered,
   JSON-safe list of plans that currently have ready pending steps, due

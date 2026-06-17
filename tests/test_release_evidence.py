@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -17,6 +18,18 @@ ROOT = Path(__file__).resolve().parents[1]
 RELEASE_EVIDENCE = ROOT / "docs" / "release-evidence.json"
 RELEASE_EVIDENCE_EXAMPLE = ROOT / "docs" / "release-evidence.example.json"
 RELEASE_EVIDENCE_GENERATOR = ROOT / "scripts" / "generate_release_evidence.py"
+
+
+def release_evidence_generator_env(
+    base: dict[str, str] | None = None,
+) -> dict[str, str]:
+    env = dict(os.environ if base is None else base)
+    source_path = str(ROOT / "src")
+    pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        source_path if not pythonpath else os.pathsep.join((source_path, pythonpath))
+    )
+    return env
 
 
 def passing_gate(name: str) -> dict[str, object]:
@@ -364,6 +377,7 @@ def test_release_evidence_generator_entrypoint_is_committed_and_reproducible(
             "full_test_suite=0",
         ],
         cwd=ROOT,
+        env=release_evidence_generator_env(),
         check=False,
         capture_output=True,
         text=True,
@@ -409,6 +423,7 @@ def test_release_evidence_generator_entrypoint_is_committed_and_reproducible(
             "full_test_suite=0",
         ],
         cwd=ROOT,
+        env=release_evidence_generator_env(),
         check=False,
         capture_output=True,
         text=True,
@@ -418,6 +433,45 @@ def test_release_evidence_generator_entrypoint_is_committed_and_reproducible(
     assert output.read_text(encoding="utf-8") == (
         tmp_path / "release-evidence-rerun.json"
     ).read_text(encoding="utf-8")
+
+
+def test_release_evidence_generator_subprocess_has_source_pythonpath(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "release-evidence.json"
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_EVIDENCE_GENERATOR),
+            "--output",
+            str(output),
+            "--branch",
+            "review/agentos-sdk-architecture-20260611",
+            "--commit",
+            "abc123",
+            "--version",
+            agentos.__version__,
+            "--generated-at",
+            "2026-06-17T01:00:00+08:00",
+            "--independent-review-status",
+            "pending",
+            "--gate-result",
+            "full_test_suite=0",
+        ],
+        cwd=ROOT,
+        env=release_evidence_generator_env(env),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output.read_text(encoding="utf-8"))["schema"] == (
+        "agentos.release_evidence"
+    )
 
 
 def test_release_evidence_generator_treats_empty_runtime_boundary_scan_as_passed(
@@ -446,6 +500,7 @@ def test_release_evidence_generator_treats_empty_runtime_boundary_scan_as_passed
             "runtime_boundary_scan=1",
         ],
         cwd=ROOT,
+        env=release_evidence_generator_env(),
         check=False,
         capture_output=True,
         text=True,
@@ -470,6 +525,7 @@ def test_release_evidence_generator_treats_empty_runtime_boundary_scan_as_passed
             "runtime_boundary_scan=0",
         ],
         cwd=ROOT,
+        env=release_evidence_generator_env(),
         check=False,
         capture_output=True,
         text=True,
@@ -513,6 +569,7 @@ def test_release_evidence_generator_treats_runtime_boundary_scan_errors_as_faile
             "runtime_boundary_scan=2",
         ],
         cwd=ROOT,
+        env=release_evidence_generator_env(),
         check=False,
         capture_output=True,
         text=True,
