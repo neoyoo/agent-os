@@ -76,14 +76,17 @@ def test_mcp_tool_adapter_executes_prefixed_provider_call() -> None:
         ),
     )
     adapter = MCPToolAdapter(registry)
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        mcp_adapter=adapter,
+    )
 
-    result = adapter.execute(
+    result = router.execute_tool_call(
         ProviderToolCall(
             id="call_1",
             name="mcp__github__create_issue",
             arguments={"title": "Bug"},
-        ),
-        prevalidated=True,
+        )
     )
 
     assert result.tool_call_id == "call_1"
@@ -110,6 +113,31 @@ def test_mcp_tool_adapter_direct_execute_requires_prevalidation_marker() -> None
                 name="mcp__github__create_issue",
                 arguments={"title": "Bug"},
             ),
+        )
+
+    assert client.calls == []
+
+
+def test_mcp_tool_adapter_rejects_forged_public_prevalidation_flag() -> None:
+    client = FakeMCPClient()
+    registry = MCPRegistry()
+    registry.register(
+        MCPServerRegistration(
+            name="github",
+            description="Manage GitHub issues.",
+            client=client,
+        ),
+    )
+    adapter = MCPToolAdapter(registry)
+
+    with pytest.raises(ToolExecutionError, match="ToolCallRouter"):
+        adapter.execute(
+            ProviderToolCall(
+                id="call_1",
+                name="mcp__github__create_issue",
+                arguments={"title": "Bug"},
+            ),
+            prevalidated=True,
         )
 
     assert client.calls == []
@@ -168,14 +196,17 @@ def test_mcp_registry_refreshes_automatically_after_register() -> None:
         ),
     )
     adapter = MCPToolAdapter(registry)
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        mcp_adapter=adapter,
+    )
 
-    result = adapter.execute(
+    result = router.execute_tool_call(
         ProviderToolCall(
             id="call_1",
             name="mcp__github__create_issue",
             arguments={"title": "Bug"},
-        ),
-        prevalidated=True,
+        )
     )
 
     assert result.content == "create_issue:Bug"

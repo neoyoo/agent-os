@@ -177,15 +177,20 @@ class MCPToolAdapter:
         self,
         tool_call: ProviderToolCall,
         *,
-        prevalidated: bool = False,
+        prevalidated: object | None = None,
     ) -> ToolExecutionResult:
-        """Execute a prevalidated MCP provider tool call."""
+        """Reject direct MCP execution; route calls through ToolCallRouter."""
 
-        if not prevalidated:
-            raise ToolExecutionError(
-                "MCPToolAdapter.execute() requires prevalidated=True; "
-                "route production MCP tool calls through ToolCallRouter",
-            )
+        raise ToolExecutionError(
+            "MCPToolAdapter.execute() requires ToolCallRouter validation; "
+            "route production MCP tool calls through ToolCallRouter",
+        )
+
+    def _execute_prevalidated(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ToolExecutionResult:
+        """Execute an MCP tool call after ToolCallRouter validation."""
 
         server, local_tool_name = self.registry.resolve_provider_tool(tool_call.name)
         content = server.client.call_tool(local_tool_name, dict(tool_call.arguments))

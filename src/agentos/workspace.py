@@ -8,7 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, Protocol
 
-from agentos._redaction import redact_command_argv
+from agentos._redaction import (
+    is_secret_like_key,
+    redact_command_argv,
+    redact_secret_patterns,
+)
 
 
 WorkspaceScope = Literal["process", "agent", "user", "session", "team", "task"]
@@ -30,15 +34,6 @@ WORKSPACE_EXECUTION_ISOLATION_REQUIRED_COMPONENTS: tuple[str, ...] = (
     "resource_limits",
     "network_policy",
     "audit_logging",
-)
-_SECRET_LIKE_KEY_PARTS = (
-    "secret",
-    "token",
-    "password",
-    "credential",
-    "api_key",
-    "apikey",
-    "authorization",
 )
 _WINDOWS_RESERVED_PATH_SEGMENTS = frozenset(
     {
@@ -612,20 +607,17 @@ def _json_safe_mapping(values: Mapping[str, object]) -> dict[str, object]:
 
 
 def _json_safe_value(value: object, *, key_hint: str = "") -> object:
-    if _is_secret_like_key(key_hint):
+    if is_secret_like_key(key_hint):
         return "<redacted>"
-    if value is None or isinstance(value, str | int | float | bool):
+    if isinstance(value, str):
+        return redact_secret_patterns(value)
+    if value is None or isinstance(value, int | float | bool):
         return value
     if isinstance(value, tuple | list):
         return tuple(_json_safe_value(item) for item in value)
     if isinstance(value, Mapping):
         return _json_safe_mapping(value)
-    return repr(value)
-
-
-def _is_secret_like_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return any(part in normalized for part in _SECRET_LIKE_KEY_PARTS)
+    return redact_secret_patterns(repr(value))
 
 
 __all__ = [

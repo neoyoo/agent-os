@@ -60,7 +60,7 @@ class ToolCallRouter:
             if self.mcp_adapter is None:
                 raise RuntimeError("mcp adapter is required for MCP tool calls")
             prepared_call = self._prepare_mcp_tool_call(tool_call)
-            return self.mcp_adapter.execute(prepared_call, prevalidated=True)
+            return self.mcp_adapter._execute_prevalidated(prepared_call)
         return self._tool_executor().execute(tool_call)
 
     async def async_execute_tool_call(

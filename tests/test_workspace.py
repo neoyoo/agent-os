@@ -469,6 +469,45 @@ def test_workspace_execution_result_redacts_secret_like_metadata_in_evidence(
     assert "super-secret" not in str(evidence)
 
 
+def test_workspace_execution_result_redacts_secret_patterns_in_metadata_values(
+    tmp_path: Path,
+) -> None:
+    from agentos.workspace import (
+        LocalWorkspaceExecutionBackend,
+        WorkspaceExecutionRequest,
+    )
+
+    workspace = WorkspaceHandle(
+        workspace_id="task:one",
+        scope="task",
+        root=str(tmp_path),
+    )
+    backend = LocalWorkspaceExecutionBackend()
+
+    result = backend.run(
+        WorkspaceExecutionRequest(
+            workspace=workspace,
+            command=("python", "-c", "print('ok')"),
+            capability="process.exec",
+            metadata={
+                "note": "Authorization: Bearer raw-token",
+                "database": "postgres://user:raw-password@db/app",
+                "nested": ["api_key=sk-live-secret", {"safe": "visible"}],
+            },
+        ),
+    )
+
+    evidence = result.to_evidence()
+
+    assert evidence["metadata"]["note"] == "Authorization: Bearer <redacted>"
+    assert evidence["metadata"]["database"] == "postgres://<redacted>@db/app"
+    assert evidence["metadata"]["nested"][0] == "api_key=<redacted>"
+    assert evidence["metadata"]["nested"][1]["safe"] == "visible"
+    assert "raw-token" not in str(evidence)
+    assert "raw-password" not in str(evidence)
+    assert "sk-live-secret" not in str(evidence)
+
+
 def test_local_workspace_execution_backend_does_not_inherit_host_environment_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
