@@ -9,6 +9,10 @@
     "commit": "<git-sha>",
     "version": "<pep440-release-candidate-version>"
   },
+  "generator": {
+    "source_path": "scripts/generate_release_evidence.py",
+    "review_policy": "does_not_mark_independent_review_passed"
+  },
   "deployment_owned": [
     "CI/CD execution",
     "artifact signing",

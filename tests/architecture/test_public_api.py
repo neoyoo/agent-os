@@ -970,6 +970,7 @@ def test_release_evidence_public_api_exports() -> None:
         "RELEASE_EVIDENCE_REQUIRED_GATES",
         "ReleaseEvidenceGateStatus",
         "ReleaseEvidenceValidationReport",
+        "validate_release_candidate_evidence_manifest",
         "validate_release_evidence_manifest",
     ]:
         assert hasattr(release, name)

@@ -323,6 +323,7 @@ from agentos.release import (
     RELEASE_EVIDENCE_REQUIRED_GATES,
     ReleaseEvidenceGateStatus,
     ReleaseEvidenceValidationReport,
+    validate_release_candidate_evidence_manifest,
     validate_release_evidence_manifest,
 )
 from agentos.probes import (
@@ -776,6 +777,7 @@ __all__ = [
     "get_agent_form_readiness",
     "list_agent_form_readiness",
     "nacos_instance_to_agent_card",
+    "validate_release_candidate_evidence_manifest",
     "validate_release_evidence_manifest",
 ]
 

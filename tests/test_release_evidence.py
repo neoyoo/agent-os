@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from agentos.release import (
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_EVIDENCE = ROOT / "docs" / "release-evidence.json"
 RELEASE_EVIDENCE_EXAMPLE = ROOT / "docs" / "release-evidence.example.json"
+RELEASE_EVIDENCE_GENERATOR = ROOT / "scripts" / "generate_release_evidence.py"
 
 
 def passing_gate(name: str) -> dict[str, object]:
@@ -336,6 +339,128 @@ def test_generated_release_evidence_artifact_is_validated_when_present() -> None
         assert report.secret_findings == ()
 
 
+def test_release_evidence_generator_entrypoint_is_committed_and_reproducible(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "release-evidence.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_EVIDENCE_GENERATOR),
+            "--output",
+            str(output),
+            "--branch",
+            "review/agentos-sdk-architecture-20260611",
+            "--commit",
+            "abc123",
+            "--version",
+            agentos.__version__,
+            "--generated-at",
+            "2026-06-17T01:00:00+08:00",
+            "--independent-review-status",
+            "pending",
+            "--gate-result",
+            "full_test_suite=0",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+
+    assert manifest["schema"] == "agentos.release_evidence"
+    assert manifest["schema_version"] == 1
+    assert manifest["release_candidate"] == {
+        "branch": "review/agentos-sdk-architecture-20260611",
+        "generated_at": "2026-06-17T01:00:00+08:00",
+        "commit": "abc123",
+        "version": agentos.__version__,
+    }
+    assert manifest["generator"] == {
+        "source_path": "scripts/generate_release_evidence.py",
+        "review_policy": "does_not_mark_independent_review_passed",
+    }
+    assert set(RELEASE_EVIDENCE_REQUIRED_GATES) <= set(manifest["gates"])
+    assert manifest["gates"]["full_test_suite"]["result"] == {"exit_code": 0}
+    assert manifest["independent_review"]["status"] == "pending"
+    assert manifest["independent_review"]["ready_for_release_candidate"] is False
+
+    rerun = subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_EVIDENCE_GENERATOR),
+            "--output",
+            str(tmp_path / "release-evidence-rerun.json"),
+            "--branch",
+            "review/agentos-sdk-architecture-20260611",
+            "--commit",
+            "abc123",
+            "--version",
+            agentos.__version__,
+            "--generated-at",
+            "2026-06-17T01:00:00+08:00",
+            "--independent-review-status",
+            "pending",
+            "--gate-result",
+            "full_test_suite=0",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert rerun.returncode == 0, rerun.stderr
+    assert output.read_text(encoding="utf-8") == (
+        tmp_path / "release-evidence-rerun.json"
+    ).read_text(encoding="utf-8")
+
+
+def test_release_candidate_evidence_gate_requires_expected_identity() -> None:
+    from agentos.release import validate_release_candidate_evidence_manifest
+
+    manifest = release_manifest()
+
+    report = validate_release_candidate_evidence_manifest(
+        manifest,
+        expected_branch="",
+        expected_commit="",
+        expected_version="",
+    )
+
+    assert report.accepted is False
+    assert (
+        "release candidate validation requires expected branch"
+        in report.gate_evidence_findings
+    )
+    assert (
+        "release candidate validation requires expected commit"
+        in report.gate_evidence_findings
+    )
+    assert (
+        "release candidate validation requires expected version"
+        in report.gate_evidence_findings
+    )
+
+
+def test_release_candidate_evidence_gate_accepts_matching_identity() -> None:
+    from agentos.release import validate_release_candidate_evidence_manifest
+
+    report = validate_release_candidate_evidence_manifest(
+        release_manifest(),
+        expected_branch="review/agentos-sdk-architecture-20260611",
+        expected_commit="abc123",
+        expected_version="0.1.0rc1",
+    )
+
+    assert report.accepted is True
+    assert report.gate_evidence_findings == ()
+
+
 def test_release_evidence_templates_cover_validator_required_gate_set() -> None:
     for manifest_path in (RELEASE_EVIDENCE_EXAMPLE,):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -352,3 +477,13 @@ def test_release_evidence_templates_include_top_level_independent_review() -> No
         assert review["status"] in {"unknown", "pending", "passed", "failed"}
         assert isinstance(review["evidence_ref"], str)
         assert isinstance(review["ready_for_release_candidate"], bool)
+
+
+def test_release_evidence_templates_include_committed_generator_metadata() -> None:
+    for manifest_path in (RELEASE_EVIDENCE_EXAMPLE,):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        assert manifest["generator"] == {
+            "source_path": "scripts/generate_release_evidence.py",
+            "review_policy": "does_not_mark_independent_review_passed",
+        }

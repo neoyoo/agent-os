@@ -37,7 +37,9 @@ deprecation and migration notes before incompatible change:
   `ReadinessEvidenceStatus`, and `agentos.readiness` form records
 - release evidence validation surfaces: `RELEASE_EVIDENCE_REQUIRED_GATES`,
   `ReleaseEvidenceValidationReport`, `ReleaseEvidenceGateStatus`, and
-  `validate_release_evidence_manifest`
+  `validate_release_evidence_manifest`. The release-candidate validation path
+  `validate_release_candidate_evidence_manifest` is also stable and requires
+  expected branch, commit, and version identity for actual release gates.
 - workspace protocol boundaries such as `WorkspaceExecutionBackend`,
   `SandboxBackend`, `WorkspaceExecutionRequest`, `WorkspaceExecutionResult`,
   `WorkspaceExecutionPolicy`, and `LocalWorkspaceExecutionBackend`

@@ -196,6 +196,56 @@ def validate_release_evidence_manifest(
     )
 
 
+def validate_release_candidate_evidence_manifest(
+    manifest: Mapping[str, object],
+    *,
+    expected_branch: str,
+    expected_commit: str,
+    expected_version: str,
+    required_gates: tuple[str, ...] = RELEASE_EVIDENCE_REQUIRED_GATES,
+    expected_gate_results: Mapping[str, Mapping[str, object]] | None = None,
+) -> ReleaseEvidenceValidationReport:
+    """Validate release-candidate evidence with mandatory source identity."""
+
+    identity_findings: list[str] = []
+    branch = expected_branch if _is_non_placeholder_string(expected_branch) else None
+    commit = expected_commit if _is_non_placeholder_string(expected_commit) else None
+    version = expected_version if _is_non_placeholder_string(expected_version) else None
+    if branch is None:
+        identity_findings.append(
+            "release candidate validation requires expected branch",
+        )
+    if commit is None:
+        identity_findings.append(
+            "release candidate validation requires expected commit",
+        )
+    if version is None:
+        identity_findings.append(
+            "release candidate validation requires expected version",
+        )
+
+    report = validate_release_evidence_manifest(
+        manifest,
+        required_gates=required_gates,
+        expected_branch=branch,
+        expected_commit=commit,
+        expected_version=version,
+        expected_gate_results=expected_gate_results,
+    )
+    if not identity_findings:
+        return report
+    return ReleaseEvidenceValidationReport(
+        accepted=False,
+        missing_gates=report.missing_gates,
+        blocking_gates=report.blocking_gates,
+        gate_evidence_findings=tuple(identity_findings)
+        + report.gate_evidence_findings,
+        secret_findings=report.secret_findings,
+        gate_statuses=report.gate_statuses,
+        redacted_manifest=report.redacted_manifest,
+    )
+
+
 def _manifest_identity_findings(manifest: Mapping[str, object]) -> tuple[str, ...]:
     findings: list[str] = []
     if manifest.get("schema") != "agentos.release_evidence":
@@ -469,5 +519,6 @@ __all__ = [
     "RELEASE_EVIDENCE_REQUIRED_GATES",
     "ReleaseEvidenceGateStatus",
     "ReleaseEvidenceValidationReport",
+    "validate_release_candidate_evidence_manifest",
     "validate_release_evidence_manifest",
 ]

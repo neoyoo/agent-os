@@ -71,8 +71,11 @@ def test_phase_100_release_hardening_gate_docs_exist_and_name_release_evidence()
         "SDK-owned release evidence",
         "release evidence validator",
         "validate_release_evidence_manifest",
+        "validate_release_candidate_evidence_manifest",
         "ReleaseEvidenceValidationReport",
         "RELEASE_EVIDENCE_REQUIRED_GATES",
+        "scripts/generate_release_evidence.py",
+        "requires expected branch, commit, and version identity",
         "pending or failed independent review blocks release-candidate promotion",
         "secret-like value redaction",
         "does not run CI/CD, signing, publishing, deployment approval",
@@ -230,6 +233,8 @@ def test_release_evidence_manifest_records_current_candidate_without_placeholder
     assert "docs/release-evidence.json" in release_hardening
     assert "actual release candidate evidence" in release_hardening
     assert "validate_release_evidence_manifest" in release_hardening
+    assert "validate_release_candidate_evidence_manifest" in release_hardening
+    assert "scripts/generate_release_evidence.py" in release_hardening
 
 
 def test_public_api_inventory_manifest_is_machine_readable_release_evidence() -> None:

@@ -1670,6 +1670,10 @@
           "signature": "(plan: 'PlanState', *, max_next_steps: 'int' = 5, max_recent_evidence: 'int' = 5) -> 'dict[str, object]'",
           "stability": "experimental"
         },
+        "validate_release_candidate_evidence_manifest": {
+          "signature": "(manifest: 'Mapping[str, object]', *, expected_branch: 'str', expected_commit: 'str', expected_version: 'str', required_gates: 'tuple[str, ...]' = ('public_api_audit', 'full_test_suite', 'compileall', 'diff_hygiene', 'runtime_boundary_scan', 'docs_alignment', 'migration_index', 'api_stability_inventory', 'production_reference_honesty', 'planner_plan_store_concurrency', 'workspace_security_policy', 'independent_review'), expected_gate_results: 'Mapping[str, Mapping[str, object]] | None' = None) -> 'ReleaseEvidenceValidationReport'",
+          "stability": "stable"
+        },
         "validate_release_evidence_manifest": {
           "signature": "(manifest: 'Mapping[str, object]', *, required_gates: 'tuple[str, ...]' = ('public_api_audit', 'full_test_suite', 'compileall', 'diff_hygiene', 'runtime_boundary_scan', 'docs_alignment', 'migration_index', 'api_stability_inventory', 'production_reference_honesty', 'planner_plan_store_concurrency', 'workspace_security_policy', 'independent_review'), expected_branch: 'str | None' = None, expected_commit: 'str | None' = None, expected_version: 'str | None' = None, expected_gate_results: 'Mapping[str, Mapping[str, object]] | None' = None) -> 'ReleaseEvidenceValidationReport'",
           "stability": "stable"
@@ -3628,6 +3632,10 @@
         },
         "ReleaseEvidenceValidationReport": {
           "signature": "(accepted: 'bool', missing_gates: 'tuple[str, ...]', blocking_gates: 'tuple[str, ...]', gate_evidence_findings: 'tuple[str, ...]', secret_findings: 'tuple[str, ...]', gate_statuses: 'Mapping[str, str]', redacted_manifest: 'Mapping[str, object]', schema: 'str' = 'agentos.release_evidence.validation', schema_version: 'int' = 1) -> None",
+          "stability": "stable"
+        },
+        "validate_release_candidate_evidence_manifest": {
+          "signature": "(manifest: 'Mapping[str, object]', *, expected_branch: 'str', expected_commit: 'str', expected_version: 'str', required_gates: 'tuple[str, ...]' = ('public_api_audit', 'full_test_suite', 'compileall', 'diff_hygiene', 'runtime_boundary_scan', 'docs_alignment', 'migration_index', 'api_stability_inventory', 'production_reference_honesty', 'planner_plan_store_concurrency', 'workspace_security_policy', 'independent_review'), expected_gate_results: 'Mapping[str, Mapping[str, object]] | None' = None) -> 'ReleaseEvidenceValidationReport'",
           "stability": "stable"
         },
         "validate_release_evidence_manifest": {
