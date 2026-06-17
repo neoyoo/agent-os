@@ -137,7 +137,7 @@ def _build_gate(
     generated_at: str,
     exit_code: int | None,
 ) -> dict[str, object]:
-    status: GateStatus = "passed" if exit_code == 0 else "unknown"
+    status = _gate_status_from_exit_code(name, exit_code)
     gate: dict[str, object] = {
         "status": status,
         "command": DEFAULT_GATE_COMMANDS[name],
@@ -150,7 +150,20 @@ def _build_gate(
     }
     if exit_code is not None:
         gate["result"] = {"exit_code": exit_code}
+        if name == "runtime_boundary_scan" and exit_code == 1:
+            gate["result"]["matches"] = 0
     return gate
+
+
+def _gate_status_from_exit_code(name: str, exit_code: int | None) -> GateStatus:
+    if exit_code is None:
+        return "unknown"
+    if name == "runtime_boundary_scan":
+        if exit_code == 1:
+            return "passed"
+        if exit_code == 0:
+            return "failed"
+    return "passed" if exit_code == 0 else "unknown"
 
 
 def _parse_gate_result(value: str) -> tuple[str, int]:

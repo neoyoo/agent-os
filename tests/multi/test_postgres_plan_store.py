@@ -217,6 +217,9 @@ def plan(plan_id: str = "plan_1", *, owner_agent_id: str = "leader") -> PlanStat
                 task_id="task_1",
                 target_agent_id="worker",
                 created_at=3.0,
+                dispatch_status="submitted",
+                submitted_at=3.5,
+                dispatch_error=None,
             ),
         ),
         created_at=1.0,
@@ -238,6 +241,24 @@ def test_plan_state_serializer_round_trips_workspace_and_nested_records() -> Non
     assert plan_state_to_dict(original)["steps"][0]["depends_on"] == ["step_0"]
     assert plan_state_to_dict(original)["steps"][0]["attempts"] == 2
     assert plan_state_to_dict(original)["steps"][0]["retry_status"] == "scheduled"
+    assert plan_state_to_dict(original)["assignments"][0]["dispatch_status"] == (
+        "submitted"
+    )
+    assert plan_state_to_dict(original)["assignments"][0]["submitted_at"] == 3.5
+
+
+def test_plan_state_serializer_reads_legacy_assignment_without_dispatch_fields() -> None:
+    payload = plan_state_to_dict(plan())
+    legacy_assignment = payload["assignments"][0]
+    del legacy_assignment["dispatch_status"]
+    del legacy_assignment["submitted_at"]
+    del legacy_assignment["dispatch_error"]
+
+    restored = plan_state_from_dict(payload)
+
+    assert restored.assignments[0].dispatch_status == "pending"
+    assert restored.assignments[0].submitted_at is None
+    assert restored.assignments[0].dispatch_error is None
 
 
 def test_postgres_plan_store_round_trips_plans() -> None:

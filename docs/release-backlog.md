@@ -6,30 +6,37 @@ not waived permanently; they are explicit follow-up work.
 
 ## Planner dispatch crash window
 
-Status: backlog, non-blocking for RC.
+Status: mitigated for RC; residual distributed idempotency remains follow-up.
 
 This entry tracks the planner dispatch crash window.
 
-Risk: `PlannerRuntime.assign_step(...)` saves a step assignment before calling
-the external coordinator. If the process crashes between plan mutation and
-coordinator spawn, the step can remain `assigned` without a worker process or
-task submission evidence. Existing exception handling records coordinator
+Original risk: `PlannerRuntime.assign_step(...)` saves a step assignment before
+calling the external coordinator. If the process crashes between plan mutation
+and coordinator spawn, the step can remain `assigned` without a worker process
+or task submission evidence. Existing exception handling records coordinator
 failures, but a process crash in that gap cannot be caught by normal Python
 error handling.
 
-Required follow-up: add a dispatch outbox or pending-dispatch marker before the
-external coordinator boundary, then add a compensation scanner that can either
-submit the pending assignment idempotently or mark it failed with recovery
-evidence. The scanner should run under deployment-owned process supervision and
-use the `PlanStore` truth source.
+RC mitigation now implemented: `PlanAssignment` is a lightweight dispatch
+outbox record with a pending-dispatch marker through
+`dispatch_status="pending" | "submitted" | "failed"`, `submitted_at`, and
+`dispatch_error`. `PlannerRuntime.assign_step(...)` persists the pending marker
+before the external coordinator boundary, then records submitted evidence after
+successful coordinator submission or failed evidence on coordinator errors.
+`PlannerRuntime.recover_pending_dispatches(...)` and
+`PlannerRuntime.dispatch_ready_steps(...)` act as the compensation scanner: they
+can submit the pending assignment idempotently using the original `task_id` or
+mark it failed with recovery evidence.
 
-Mitigation for this RC: use `PlannerRuntime.claimed_scheduler_tick(...)` with a
-`PlanClaimStore`, run planner workers under a supervisor, and monitor
-`PlannerWorkerDispatchSupervisionProfile` plus stale claim sweep evidence. This
-is non-blocking for RC because the current release has PlanStore public boundary
-tests, focused planner behavior tests for save-before-dispatch and coordinator
-failure handling, and no known P1 behavior bug in normal coordinator failure or
-claim-guarded scheduler paths.
+Residual follow-up: production coordinators and task backends should document
+and test `task_id` as an idempotency key across process restarts. Deployment
+code should still run planner workers under a supervisor, use
+`PlannerRuntime.claimed_scheduler_tick(...)` with a `PlanClaimStore`, and
+monitor `PlannerWorkerDispatchSupervisionProfile` plus stale claim sweep
+evidence. This is non-blocking for RC because the current release has PlanStore
+public boundary tests, focused planner behavior tests for save-before-dispatch,
+pending-dispatch recovery, coordinator failure handling, and claim-guarded
+scheduler paths, and no known P1 behavior bug remains in planner dispatch.
 
 ## A2A public operation rate limiting
 

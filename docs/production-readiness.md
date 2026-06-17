@@ -937,11 +937,17 @@ Production notes:
 - Use `plan_dispatch_ready_steps` when an app-owned scheduler wants the SDK to
   submit one bounded batch of dependency-ready steps through the existing
   coordinator assignment boundary and receive an auditable dispatch report.
+  Assignment records carry `dispatch_status`, `submitted_at`, and
+  `dispatch_error` as lightweight dispatch outbox evidence. The dispatch path
+  first recovers any pending assignment with the original `task_id`; operators
+  can also call `PlannerRuntime.recover_pending_dispatches(...)` directly during
+  service startup or repair runs.
 - Use `PlannerRuntime.schedulable_plans(...)` or `plan_schedulable_plans` when
   a deployment-owned scheduler wants an owner-scoped, status-filtered,
-  JSON-safe list of plans that currently have ready pending steps or due
-  retryable failed steps. The result is a tuple of `PlannerSchedulablePlan`
-  summaries with ready step ids, retryable step ids, reasons, and `updated_at`.
+  JSON-safe list of plans that currently have ready pending steps, due
+  retryable failed steps, or pending-dispatch assignment recovery work. The
+  result is a tuple of `PlannerSchedulablePlan` summaries with ready step ids,
+  retryable step ids, reasons such as `pending-dispatch`, and `updated_at`.
   This is schedulable plan selection only.
 - Use `PlanClaimStore`, `InMemoryPlanClaimStore`, `PostgresPlanClaimStore`,
   `PlannerRuntime.claim_schedulable_plans(...)`, or

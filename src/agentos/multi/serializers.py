@@ -18,6 +18,7 @@ from agentos.multi.planner import (
     EvidenceHandle,
     EvidenceKind,
     PlanAssignment,
+    PlanAssignmentDispatchStatus,
     PlanState,
     PlanStatus,
     PlanStep,
@@ -80,6 +81,9 @@ _PLAN_STEP_STATUSES: frozenset[str] = frozenset(
 )
 _PLAN_STEP_RETRY_STATUSES: frozenset[str] = frozenset(
     {"scheduled", "exhausted"},
+)
+_PLAN_ASSIGNMENT_DISPATCH_STATUSES: frozenset[str] = frozenset(
+    {"pending", "submitted", "failed"},
 )
 _EVIDENCE_KINDS: frozenset[str] = frozenset(
     {"text", "artifact", "task_result", "team_message", "external"},
@@ -532,6 +536,9 @@ def plan_assignment_to_dict(assignment: PlanAssignment) -> JsonDict:
         "task_id": assignment.task_id,
         "target_agent_id": assignment.target_agent_id,
         "created_at": assignment.created_at,
+        "dispatch_status": assignment.dispatch_status,
+        "submitted_at": assignment.submitted_at,
+        "dispatch_error": assignment.dispatch_error,
     }
 
 
@@ -545,6 +552,19 @@ def plan_assignment_from_dict(data: JsonDict) -> PlanAssignment:
         task_id=str(data["task_id"]),
         target_agent_id=str(data["target_agent_id"]),
         created_at=float(data["created_at"]),
+        dispatch_status=_plan_assignment_dispatch_status(
+            data.get("dispatch_status", "pending"),
+        ),
+        submitted_at=(
+            None
+            if data.get("submitted_at") is None
+            else float(data["submitted_at"])
+        ),
+        dispatch_error=(
+            None
+            if data.get("dispatch_error") is None
+            else str(data["dispatch_error"])
+        ),
     )
 
 
@@ -738,6 +758,15 @@ def _plan_step_retry_status(value: object) -> PlanStepRetryStatus:
     if status not in _PLAN_STEP_RETRY_STATUSES:
         raise ValueError(f"invalid plan step retry status: {status}")
     return cast(PlanStepRetryStatus, status)
+
+
+def _plan_assignment_dispatch_status(
+    value: object,
+) -> PlanAssignmentDispatchStatus:
+    status = str(value)
+    if status not in _PLAN_ASSIGNMENT_DISPATCH_STATUSES:
+        raise ValueError(f"invalid plan assignment dispatch status: {status}")
+    return cast(PlanAssignmentDispatchStatus, status)
 
 
 def _evidence_kind(value: object) -> EvidenceKind:

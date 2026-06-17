@@ -990,9 +990,12 @@ Conclusion:
 ```text
 Planner/intent-router agents now have a bounded ready-step dispatch boundary
 that reuses AgentCoordinator assignments and reports assigned/skipped steps
-without creating a scheduler loop. The form remains primitives-ready because
-automatic LLM decomposition, production DAG scheduling loops, worker lifecycle
-management, and compensation semantics are still application/profile work.
+without creating a scheduler loop. Assignments now also carry dispatch outbox
+evidence (`pending` / `submitted` / `failed`) so scheduler ticks can recover a
+saved assignment with the original `task_id` after a process restart. The form
+remains primitives-ready because automatic LLM decomposition, production DAG
+scheduling loops, worker lifecycle management, and complex compensation
+semantics are still application/profile work.
 ```
 
 ### Phase 40: A2A JWKS Trust Boundary

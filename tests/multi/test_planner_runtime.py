@@ -20,6 +20,7 @@ from agentos.multi.planner import (
     PlanClaimSweepSkip,
     PlanClaimedSchedulerTickReport,
     PlanClaimedSchedulerTickSkip,
+    PlanAssignment,
     PlanSchedulerTickReport,
     PlannerStaleClaimSweepProfile,
     PlannerWorkerDispatchSupervisionProfile,
@@ -1448,6 +1449,9 @@ def test_planner_runtime_assigns_step_to_spawn_template() -> None:
     assert assigned.steps[0].task_id == "task_1"
     assert assigned.steps[0].assigned_agent_id == "subagent_1"
     assert assigned.assignments[0].task_id == "task_1"
+    assert assigned.assignments[0].dispatch_status == "submitted"
+    assert assigned.assignments[0].submitted_at == 10.0
+    assert assigned.assignments[0].dispatch_error is None
     assert coordinator.spawn_calls[0]["task_id"] == "task_1"
     assert coordinator.spawn_calls[0]["allowed_tool_names"] == ("read_file",)
     assert coordinator.spawn_calls[0]["timeout_seconds"] == 30
@@ -1714,6 +1718,218 @@ def test_planner_runtime_dispatch_ready_steps_reports_coordinator_failure() -> N
     assert persisted.steps[0].status == "failed"
     assert persisted.steps[0].task_id is not None
     assert persisted.steps[0].error == "expert unavailable"
+    assert persisted.assignments[0].dispatch_status == "failed"
+    assert persisted.assignments[0].dispatch_error == "expert unavailable"
+
+
+def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
+    store = InMemoryPlanStore()
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Recover a saved but unsubmitted planner assignment.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Dispatch after restart.",
+                    status="assigned",
+                    template_id="expert-reviewer",
+                    task_id="task_1",
+                    assigned_agent_id="expert_reviewer",
+                    required_capabilities=("architecture-review",),
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_1",
+                    step_id="step_1",
+                    template_id="expert-reviewer",
+                    task_id="task_1",
+                    target_agent_id="expert_reviewer",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+        ),
+    )
+    coordinator = FakeCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="expert-reviewer",
+                name="Expert Reviewer",
+                role="Review architecture.",
+                capabilities=("architecture-review",),
+                target_agent_id="expert_reviewer",
+            ),
+        ),
+        clock=lambda: 20.0,
+    )
+
+    report = runtime.recover_pending_dispatches("plan_1")
+
+    persisted = runtime.get_plan("plan_1")
+    assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
+    assert report.skipped == ()
+    assert coordinator.dispatch_calls == [
+        {
+            "instruction": "Dispatch after restart.",
+            "required_capabilities": ("architecture-review",),
+            "parent_agent_id": "leader",
+            "target_agent_id": "expert_reviewer",
+            "allowed_tool_names": (),
+            "timeout_seconds": 300,
+            "task_id": "task_1",
+        },
+    ]
+    assert persisted.steps[0].status == "assigned"
+    assert persisted.assignments[0].dispatch_status == "submitted"
+    assert persisted.assignments[0].submitted_at == 20.0
+    assert persisted.assignments[0].dispatch_error is None
+
+
+def test_planner_runtime_dispatch_ready_steps_recovers_before_new_assignments() -> None:
+    store = InMemoryPlanStore()
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Recover existing assignment before creating more work.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Recover first.",
+                    status="assigned",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    assigned_agent_id="expert_reviewer",
+                ),
+                PlanStep(
+                    step_id="step_2",
+                    instruction="Dispatch second.",
+                    status="pending",
+                    template_id="expert-reviewer",
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_1",
+                    step_id="step_1",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    target_agent_id="expert_reviewer",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+        ),
+    )
+    coordinator = FakeCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="expert-reviewer",
+                name="Expert Reviewer",
+                role="Review architecture.",
+                target_agent_id="expert_reviewer",
+            ),
+        ),
+        clock=lambda: 20.0,
+        id_factory=lambda prefix: f"{prefix}_new",
+    )
+
+    report = runtime.dispatch_ready_steps("plan_1")
+
+    persisted = runtime.get_plan("plan_1")
+    assert [assignment.step_id for assignment in report.assigned] == [
+        "step_1",
+        "step_2",
+    ]
+    assert [assignment.task_id for assignment in report.assigned] == [
+        "task_existing",
+        "task_new",
+    ]
+    assert [
+        assignment.dispatch_status for assignment in persisted.assignments
+    ] == ["submitted", "submitted"]
+    assert [call["task_id"] for call in coordinator.dispatch_calls] == [
+        "task_existing",
+        "task_new",
+    ]
+
+
+def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() -> None:
+    store = InMemoryPlanStore()
+    claim_store = InMemoryPlanClaimStore()
+    coordinator = FakeCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="expert-reviewer",
+                name="Expert Reviewer",
+                role="Review architecture.",
+                target_agent_id="expert_reviewer",
+            ),
+        ),
+        claim_store=claim_store,
+        clock=lambda: 20.0,
+    )
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Recover pending assignment through claimed scheduler.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Recover through scheduler.",
+                    status="assigned",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    assigned_agent_id="expert_reviewer",
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_1",
+                    step_id="step_1",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    target_agent_id="expert_reviewer",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+        ),
+    )
+
+    summaries = runtime.schedulable_plans(owner_agent_id="leader")
+    report = runtime.claimed_scheduler_tick(
+        owner_agent_id="leader",
+        worker_id="scheduler_a",
+        lease_seconds=30.0,
+    )
+
+    persisted = runtime.get_plan("plan_1")
+    assert [summary.plan_id for summary in summaries] == ["plan_1"]
+    assert summaries[0].reasons == ("pending-dispatch",)
+    assert summaries[0].ready_step_ids == ()
+    assert [tick.plan_id for tick in report.tick_reports] == ["plan_1"]
+    assert [assignment.step_id for assignment in report.tick_reports[0].dispatch.assigned] == [
+        "step_1",
+    ]
+    assert coordinator.dispatch_calls[0]["task_id"] == "task_existing"
+    assert persisted.assignments[0].dispatch_status == "submitted"
 
 
 def test_planner_runtime_dispatch_failure_does_not_overwrite_concurrent_step_completion() -> None:

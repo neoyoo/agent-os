@@ -1391,7 +1391,11 @@
           "stability": "experimental"
         },
         "PlanAssignment": {
-          "signature": "(plan_id: 'str', step_id: 'str', template_id: 'str', task_id: 'str', target_agent_id: 'str', created_at: 'float') -> None",
+          "signature": "(plan_id: 'str', step_id: 'str', template_id: 'str', task_id: 'str', target_agent_id: 'str', created_at: 'float', dispatch_status: 'PlanAssignmentDispatchStatus' = 'pending', submitted_at: 'float | None' = None, dispatch_error: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanAssignmentDispatchStatus": {
+          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "PlanClaimRecord": {

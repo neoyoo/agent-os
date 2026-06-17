@@ -31,6 +31,7 @@ PlanStepStatus = Literal[
     "cancelled",
 ]
 PlanStepRetryStatus = Literal["scheduled", "exhausted"]
+PlanAssignmentDispatchStatus = Literal["pending", "submitted", "failed"]
 PlannerSchedulerDaemonStatus = Literal["idle", "running", "stopping", "stopped"]
 PlannerClaimedSchedulerDaemonStatus = Literal[
     "idle",
@@ -38,7 +39,11 @@ PlannerClaimedSchedulerDaemonStatus = Literal[
     "stopping",
     "stopped",
 ]
-PlannerSchedulablePlanReason = Literal["ready-steps", "due-retries"]
+PlannerSchedulablePlanReason = Literal[
+    "ready-steps",
+    "due-retries",
+    "pending-dispatch",
+]
 PlanClaimStatus = Literal["claimed", "busy"]
 PlanClaimedSchedulerTickSkipReason = Literal["busy", "tick-failed", "claim-lost"]
 PlanClaimSweepSkipReason = Literal["release-race"]
@@ -1289,6 +1294,9 @@ class PlanAssignment:
     task_id: str
     target_agent_id: str
     created_at: float
+    dispatch_status: PlanAssignmentDispatchStatus = "pending"
+    submitted_at: float | None = None
+    dispatch_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2214,6 +2222,24 @@ class PlannerRuntime:
             and set(step.depends_on).issubset(completed)
         )
 
+    def _pending_dispatch_step_ids(self, plan: PlanState) -> tuple[str, ...]:
+        step_by_id = {step.step_id: step for step in plan.steps}
+        pending_step_ids: list[str] = []
+        for assignment in plan.assignments:
+            if assignment.dispatch_status != "pending":
+                continue
+            step = step_by_id.get(assignment.step_id)
+            if step is None:
+                continue
+            if (
+                step.status != "assigned"
+                or step.task_id != assignment.task_id
+                or step.assigned_agent_id != assignment.target_agent_id
+            ):
+                continue
+            pending_step_ids.append(assignment.step_id)
+        return tuple(dict.fromkeys(pending_step_ids))
+
     def get_plan(
         self,
         plan_id: str,
@@ -2258,11 +2284,14 @@ class PlannerRuntime:
             retryable_step_ids = tuple(
                 step.step_id for step in self.retryable_steps(plan.plan_id)
             )
+            pending_dispatch_step_ids = self._pending_dispatch_step_ids(plan)
             reasons: list[PlannerSchedulablePlanReason] = []
             if ready_step_ids:
                 reasons.append("ready-steps")
             if retryable_step_ids:
                 reasons.append("due-retries")
+            if pending_dispatch_step_ids:
+                reasons.append("pending-dispatch")
             if not reasons:
                 continue
             summaries.append(
@@ -2392,7 +2421,6 @@ class PlannerRuntime:
         plan = record.plan
         template = self._require_template(template_id)
         step = self._require_step(plan, step_id)
-        instruction = self._instruction_for_template(step, template)
         task_id = str(self._id_factory("task"))
         target_agent_id = (
             str(self._id_factory("subagent"))
@@ -2421,35 +2449,24 @@ class PlannerRuntime:
         )
         self._save_plan(updated, expected_revision=record.revision)
         try:
-            if template.target_agent_id is None:
-                self.coordinator.spawn(
-                    instruction=instruction,
-                    allowed_tool_names=template.allowed_tool_names,
-                    parent_agent_id=plan.owner_agent_id,
-                    timeout_seconds=template.timeout_seconds,
-                    task_id=task_id,
-                    child_agent_id=target_agent_id,
-                )
-            else:
-                self.coordinator.dispatch(
-                    instruction=instruction,
-                    required_capabilities=(
-                        step.required_capabilities or template.capabilities
-                    ),
-                    parent_agent_id=plan.owner_agent_id,
-                    target_agent_id=template.target_agent_id,
-                    allowed_tool_names=template.allowed_tool_names,
-                    timeout_seconds=template.timeout_seconds,
-                    task_id=task_id,
-                )
+            self._submit_assignment_to_coordinator(
+                plan=updated,
+                step=updated_step,
+                assignment=assignment,
+                template=template,
+            )
         except Exception as error:
             self._mark_assignment_dispatch_failed(
                 updated,
                 updated_step,
+                assignment,
                 error=str(error) or error.__class__.__name__,
             )
             raise
-        return updated
+        return self._mark_assignment_dispatch_submitted(
+            plan_id,
+            assignment,
+        )
 
     def dispatch_ready_steps(
         self,
@@ -2464,6 +2481,9 @@ class PlannerRuntime:
             raise ValueError("limit must be >= 1")
         assigned: list[PlanAssignment] = []
         skipped: list[PlanDispatchSkip] = []
+        recovered = self.recover_pending_dispatches(plan_id, limit=limit)
+        assigned.extend(recovered.assigned)
+        skipped.extend(recovered.skipped)
         for step in self.ready_steps(plan_id):
             if limit is not None and len(assigned) >= limit:
                 break
@@ -2507,6 +2527,88 @@ class PlannerRuntime:
                 )
                 continue
             assigned.append(self._latest_assignment(updated, step.step_id))
+        return PlanDispatchReport(
+            plan_id=plan_id,
+            assigned=tuple(assigned),
+            skipped=tuple(skipped),
+        )
+
+    def recover_pending_dispatches(
+        self,
+        plan_id: str,
+        *,
+        limit: int | None = None,
+    ) -> PlanDispatchReport:
+        """Replay saved assignments that were not yet submitted to a coordinator."""
+
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be >= 1")
+        plan = self._require_plan(plan_id)
+        assigned: list[PlanAssignment] = []
+        skipped: list[PlanDispatchSkip] = []
+        for assignment in plan.assignments:
+            if limit is not None and len(assigned) >= limit:
+                break
+            if assignment.dispatch_status != "pending":
+                continue
+            if self.coordinator is None:
+                raise RuntimeError("coordinator is required to recover plan dispatches")
+            try:
+                template = self._require_template(assignment.template_id)
+            except KeyError:
+                skipped.append(
+                    PlanDispatchSkip(
+                        plan_id=plan_id,
+                        step_id=assignment.step_id,
+                        reason="unknown-template",
+                        detail=assignment.template_id,
+                    ),
+                )
+                continue
+            current_plan = self._require_plan(plan_id)
+            step = self._require_step(current_plan, assignment.step_id)
+            if (
+                step.status != "assigned"
+                or step.task_id != assignment.task_id
+                or step.assigned_agent_id != assignment.target_agent_id
+            ):
+                skipped.append(
+                    PlanDispatchSkip(
+                        plan_id=plan_id,
+                        step_id=assignment.step_id,
+                        reason="dispatch-failed",
+                        detail="assignment no longer matches assigned step",
+                    ),
+                )
+                continue
+            try:
+                self._submit_assignment_to_coordinator(
+                    plan=current_plan,
+                    step=step,
+                    assignment=assignment,
+                    template=template,
+                )
+            except Exception as error:
+                self._mark_assignment_dispatch_failed(
+                    current_plan,
+                    step,
+                    assignment,
+                    error=str(error) or error.__class__.__name__,
+                )
+                skipped.append(
+                    PlanDispatchSkip(
+                        plan_id=plan_id,
+                        step_id=assignment.step_id,
+                        reason="dispatch-failed",
+                        detail=str(error) or error.__class__.__name__,
+                    ),
+                )
+                continue
+            updated = self._mark_assignment_dispatch_submitted(
+                plan_id,
+                assignment,
+            )
+            assigned.append(self._latest_assignment(updated, assignment.step_id))
         return PlanDispatchReport(
             plan_id=plan_id,
             assigned=tuple(assigned),
@@ -3141,16 +3243,94 @@ class PlannerRuntime:
                 return assignment
         raise PlanStepNotFoundError(step_id)
 
+    def _submit_assignment_to_coordinator(
+        self,
+        *,
+        plan: PlanState,
+        step: PlanStep,
+        assignment: PlanAssignment,
+        template: SubAgentTemplate,
+    ) -> None:
+        if self.coordinator is None:
+            raise RuntimeError("coordinator is required to assign plan steps")
+        instruction = self._instruction_for_template(step, template)
+        if template.target_agent_id is None:
+            self.coordinator.spawn(
+                instruction=instruction,
+                allowed_tool_names=template.allowed_tool_names,
+                parent_agent_id=plan.owner_agent_id,
+                timeout_seconds=template.timeout_seconds,
+                task_id=assignment.task_id,
+                child_agent_id=assignment.target_agent_id,
+            )
+            return
+        self.coordinator.dispatch(
+            instruction=instruction,
+            required_capabilities=(
+                step.required_capabilities or template.capabilities
+            ),
+            parent_agent_id=plan.owner_agent_id,
+            target_agent_id=template.target_agent_id,
+            allowed_tool_names=template.allowed_tool_names,
+            timeout_seconds=template.timeout_seconds,
+            task_id=assignment.task_id,
+        )
+
+    def _replace_assignment(
+        self,
+        plan: PlanState,
+        old_assignment: PlanAssignment,
+        new_assignment: PlanAssignment,
+    ) -> PlanState:
+        return replace(
+            plan,
+            assignments=tuple(
+                new_assignment if current == old_assignment else current
+                for current in plan.assignments
+            ),
+            updated_at=float(self._clock()),
+        )
+
+    def _mark_assignment_dispatch_submitted(
+        self,
+        plan_id: str,
+        assignment: PlanAssignment,
+    ) -> PlanState:
+        record = self._require_plan_record(plan_id)
+        try:
+            current_step = self._require_step(record.plan, assignment.step_id)
+        except PlanStepNotFoundError:
+            return record.plan
+        if (
+            current_step.status != "assigned"
+            or current_step.task_id != assignment.task_id
+            or current_step.assigned_agent_id != assignment.target_agent_id
+        ):
+            return record.plan
+        if assignment not in record.plan.assignments:
+            return record.plan
+        submitted = replace(
+            assignment,
+            dispatch_status="submitted",
+            submitted_at=float(self._clock()),
+            dispatch_error=None,
+        )
+        updated = self._replace_assignment(record.plan, assignment, submitted)
+        try:
+            self._save_plan(updated, expected_revision=record.revision)
+        except (PlanConflictError, PlanClaimLostError):
+            return record.plan
+        return updated
+
     def _mark_assignment_dispatch_failed(
         self,
         plan: PlanState,
         step: PlanStep,
+        assignment: PlanAssignment,
         *,
         error: str,
     ) -> None:
-        record = self.store.get_plan_record(plan.plan_id)
-        if record is None:
-            raise PlanNotFoundError(plan.plan_id)
+        record = self._require_plan_record(plan.plan_id)
         current_step = self._require_step(record.plan, step.step_id)
         if (
             current_step.status != step.status
@@ -3158,13 +3338,35 @@ class PlannerRuntime:
             or current_step.assigned_agent_id != step.assigned_agent_id
         ):
             return
+        current_assignment = next(
+            (
+                current
+                for current in record.plan.assignments
+                if current == assignment
+            ),
+            None,
+        )
+        if current_assignment is None:
+            return
         failed_step = replace(
             current_step,
             status="failed",
             error=error,
             last_failed_at=float(self._clock()),
         )
-        failed_plan = self._replace_step(record.plan, failed_step)
+        failed_assignment = replace(
+            current_assignment,
+            dispatch_status="failed",
+            dispatch_error=error,
+        )
+        failed_plan = self._replace_step(
+            record.plan,
+            failed_step,
+            assignments=tuple(
+                failed_assignment if current == current_assignment else current
+                for current in record.plan.assignments
+            ),
+        )
         self._save_plan(failed_plan, expected_revision=record.revision)
 
     def _instruction_for_template(
@@ -4273,6 +4475,9 @@ class PlannerTools:
             "task_id": assignment.task_id,
             "target_agent_id": assignment.target_agent_id,
             "created_at": assignment.created_at,
+            "dispatch_status": assignment.dispatch_status,
+            "submitted_at": assignment.submitted_at,
+            "dispatch_error": assignment.dispatch_error,
         }
 
     def _plan_create_parameters(self) -> dict[str, object]:
