@@ -174,6 +174,7 @@ from agentos.channels.auth import (
 from agentos.channels.durable_session import (
     DurableAgentSessionProvider,
     InMemorySessionLeaseStore,
+    LeaseFencedSessionPersistence,
     RedisSessionLeaseStore,
     SessionLease,
     SessionLeaseError,
@@ -333,6 +334,7 @@ __all__ = [
     "InMemoryA2APushNotificationDeliveryStore",
     "InMemoryAgentSessionProvider",
     "InMemorySessionLeaseStore",
+    "LeaseFencedSessionPersistence",
     "InMemorySseEventBuffer",
     "InMemorySseTurnControlStore",
     "OperationAllowListA2AInboundAuthPolicy",

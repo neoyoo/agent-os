@@ -198,11 +198,12 @@ def test_agent_service_reference_builds_asgi_app_and_readiness_endpoint() -> Non
     assert response_status(sent) == 503
     assert json.loads(response_body(sent)) == {
         "status": "not_ready",
-        "checks": {
-            "agent_service_reference": "failed",
-            "distributed_web_session_operations": "failed",
-            "production_state_plane": "failed",
-            "workspace_execution_isolation": "failed",
+            "checks": {
+                "agent_service_reference": "failed",
+                "distributed_stream_resume": "failed",
+                "distributed_web_session_operations": "failed",
+                "production_state_plane": "failed",
+                "workspace_execution_isolation": "failed",
         },
     }
 
@@ -252,11 +253,12 @@ def test_agent_service_reference_preserves_distributed_channel_settings() -> Non
     assert response_status(sent) == 503
     assert json.loads(response_body(sent)) == {
         "status": "not_ready",
-        "checks": {
-            "agent_service_reference": "failed",
-            "custom": "ok",
-        },
-    }
+            "checks": {
+                "agent_service_reference": "failed",
+                "distributed_stream_resume": "ok",
+                "custom": "ok",
+            },
+        }
 
 
 def test_agent_service_reference_injects_auth_and_rate_limit_hooks() -> None:

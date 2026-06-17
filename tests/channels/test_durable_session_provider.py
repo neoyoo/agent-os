@@ -281,6 +281,77 @@ class CasMemoryPersistence(MemoryPersistence):
         )
 
 
+class FencedMemoryPersistence(CasMemoryPersistence):
+    def __init__(self, lease_store: InMemorySessionLeaseStore) -> None:
+        super().__init__()
+        self.lease_store = lease_store
+        self.fenced_save_calls: list[tuple[str, str, int]] = []
+        self.expire_before_save = False
+
+    def save_if_lease_owned(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+        lease,
+        lease_store,
+    ) -> SessionSnapshotRecord:
+        assert lease_store is self.lease_store
+        if self.expire_before_save:
+            self.lease_store.release(lease)
+        self.lease_store.ensure_owned(lease)
+        self.fenced_save_calls.append(
+            (snapshot.session_state.id, lease.token, expected_revision),
+        )
+        return self.save_if_unchanged(
+            snapshot,
+            expected_revision=expected_revision,
+        )
+
+
+def test_durable_session_provider_uses_atomic_fenced_snapshot_save_when_supported() -> None:
+    lease_store = InMemorySessionLeaseStore()
+    persistence = FencedMemoryPersistence(lease_store)
+    provider = DurableAgentSessionProvider(
+        agent_factory=SnapshotTestFactory(responses={"s1": ["ok"]}),
+        persistence=persistence,
+        lease_store=lease_store,
+        owner_id="node-a",
+    )
+
+    agent = provider.get_agent("s1")
+    agent.run("hello")
+    provider.release_agent("s1", agent)
+
+    assert len(persistence.fenced_save_calls) == 1
+    session_id, token, expected_revision = persistence.fenced_save_calls[0]
+    assert session_id == "s1"
+    assert token
+    assert expected_revision == 0
+
+
+def test_durable_session_provider_rejects_snapshot_save_when_lease_expires_during_fenced_save() -> None:
+    lease_store = InMemorySessionLeaseStore()
+    persistence = FencedMemoryPersistence(lease_store)
+    persistence.expire_before_save = True
+    provider = DurableAgentSessionProvider(
+        agent_factory=SnapshotTestFactory(responses={"s1": ["ok"]}),
+        persistence=persistence,
+        lease_store=lease_store,
+        owner_id="node-a",
+    )
+
+    agent = provider.get_agent("s1")
+    agent.run("hello")
+
+    with pytest.raises(SessionLeaseError, match="session lease is not owned"):
+        provider.release_agent("s1", agent)
+
+    assert persistence.fenced_save_calls == []
+    with pytest.raises(KeyError):
+        persistence.load("s1")
+
+
 def test_durable_session_provider_uses_snapshot_cas_when_supported() -> None:
     persistence = CasMemoryPersistence()
     lease_store = InMemorySessionLeaseStore()

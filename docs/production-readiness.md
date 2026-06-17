@@ -470,7 +470,8 @@ Production notes:
   `DurableAgentSessionProvider`, `SnapshotAgentFactory`, `SessionLeaseStore`,
   `RedisSessionLeaseStore`, `SessionSnapshot`, `SessionPersistence`,
   `PostgresSessionSnapshotPersistence`, acquire/hydrate/save/release lifecycle,
-  and async session provider offload. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
+  lease-fenced snapshot writes, `lease_fence` monotonic fencing evidence, and
+  async session provider offload. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
 - Use `WorkspaceExecutionIsolationProfile` alongside
   `DistributedWebRuntimeProfile` when multi-node turns need an explicit
   workspace isolation readiness surface.

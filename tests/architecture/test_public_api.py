@@ -697,6 +697,7 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
         "RejectAllChannelAuthPolicy",
         "RejectAllTeamUiAuthPolicy",
         "RedisSessionLeaseStore",
+        "LeaseFencedSessionPersistence",
         "RedisSseEventBuffer",
         "RedisSseTurnControlStore",
         "ResourceAllowListA2AInboundAuthPolicy",
@@ -836,6 +837,7 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
         "InMemoryA2APushNotificationDeliveryStore",
         "InMemoryAgentSessionProvider",
         "InMemorySessionLeaseStore",
+        "LeaseFencedSessionPersistence",
         "JwksA2ACardTrustStore",
         "JwksA2AJwtVerifier",
         "NacosAgentCardResolver",
@@ -995,9 +997,24 @@ def test_distributed_session_adapter_public_api_exports() -> None:
     persistence = importlib.import_module("agentos.persistence")
 
     assert hasattr(channels, "RedisSessionLeaseStore")
+    assert hasattr(channels, "LeaseFencedSessionPersistence")
     assert hasattr(persistence, "PostgresSessionSnapshotPersistence")
     assert hasattr(agentos, "RedisSessionLeaseStore")
+    assert hasattr(agentos, "LeaseFencedSessionPersistence")
     assert hasattr(agentos, "PostgresSessionSnapshotPersistence")
+
+
+def test_distributed_session_public_api_exposes_snapshot_fencing_fields() -> None:
+    inventory = _load_public_api_inventory()
+
+    channel_exports = inventory["modules"]["agentos.channels"]["exports"]
+    persistence_exports = inventory["modules"]["agentos.persistence"]["exports"]
+
+    assert "fence: 'int' = 0" in channel_exports["SessionLease"]["signature"]
+    assert (
+        "lease_fence: int = 0"
+        in persistence_exports["SessionSnapshotRecord"]["signature"]
+    )
 
 
 def test_distributed_web_runtime_profile_public_api_exports() -> None:

@@ -15,6 +15,7 @@ from agentos.persistence import (
 )
 from agentos.persistence.serializers import session_snapshot_to_dict
 from agentos.runtime import SessionState
+from agentos.channels import SessionLease, SessionLeaseError
 
 
 class FakeCursor:
@@ -34,6 +35,9 @@ class FakeConnection:
         self.sql: list[str] = []
         self.commits = 0
 
+    def _lease_fence(self, value: object) -> int:
+        return 0 if value is None else int(value)
+
     def execute(
         self,
         sql: str,
@@ -51,9 +55,12 @@ class FakeConnection:
             self.snapshots[session_id] = {
                 "version": params[1],
                 "revision": 1,
+                "lease_fence": (
+                    self._lease_fence(params[3]) if len(params) > 3 else 0
+                ),
                 "payload": payload,
             }
-            return FakeCursor([(1,)])
+            return FakeCursor([(1, self.snapshots[session_id]["lease_fence"])])
         if (
             "INSERT INTO agentos_session_snapshots" in sql
             and "DO UPDATE SET" in sql
@@ -61,29 +68,38 @@ class FakeConnection:
             session_id = str(params[0])
             payload = json.loads(str(params[2]))
             revision = self.snapshots.get(session_id, {}).get("revision", 0) + 1
+            current_fence = int(self.snapshots.get(session_id, {}).get("lease_fence", 0))
+            lease_fence = self._lease_fence(params[3]) if len(params) > 3 else 0
             self.snapshots[session_id] = {
                 "version": params[1],
                 "revision": revision,
+                "lease_fence": max(current_fence, lease_fence),
                 "payload": payload,
             }
-            return FakeCursor([(revision,)])
+            return FakeCursor([(revision, self.snapshots[session_id]["lease_fence"])])
         if "UPDATE agentos_session_snapshots" in sql:
-            session_id = str(params[2])
-            expected_revision = int(params[3])
+            lease_fence = self._lease_fence(params[2])
+            session_id = str(params[3])
+            expected_revision = int(params[4])
             row = self.snapshots.get(session_id)
             if row is None or int(row["revision"]) != expected_revision:
+                return FakeCursor()
+            if lease_fence < int(row.get("lease_fence", 0)):
                 return FakeCursor()
             payload = json.loads(str(params[1]))
             revision = expected_revision + 1
             self.snapshots[session_id] = {
                 "version": params[0],
                 "revision": revision,
+                "lease_fence": lease_fence,
                 "payload": payload,
             }
-            return FakeCursor([(revision,)])
-        if "SELECT revision, payload FROM agentos_session_snapshots" in sql:
+            return FakeCursor([(revision, lease_fence)])
+        if "SELECT revision, payload, lease_fence FROM agentos_session_snapshots" in sql:
             row = self.snapshots.get(str(params[0]))
-            return FakeCursor([(row["revision"], row["payload"])] if row else [])
+            return FakeCursor(
+                [(row["revision"], row["payload"], row["lease_fence"])] if row else [],
+            )
         if "SELECT payload FROM agentos_session_snapshots" in sql:
             row = self.snapshots.get(str(params[0]))
             return FakeCursor([(row["payload"],)] if row else [])
@@ -236,6 +252,128 @@ def test_postgres_session_snapshot_persistence_rejects_stale_revision() -> None:
     assert second.revision == 2
 
 
+class RecordingLeaseStore:
+    def __init__(self, *, owned: bool = True) -> None:
+        self.owned = owned
+        self.ensure_calls: list[SessionLease] = []
+
+    def ensure_owned(self, lease: SessionLease) -> None:
+        self.ensure_calls.append(lease)
+        if not self.owned:
+            raise SessionLeaseError(f"session lease is not owned: {lease.session_id}")
+
+
+def test_postgres_session_snapshot_persistence_save_if_lease_owned_fences_write() -> None:
+    connection = FakeConnection()
+    store = PostgresSessionSnapshotPersistence(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    lease_store = RecordingLeaseStore()
+    lease = SessionLease(
+        session_id="session_1",
+        owner_id="node-a",
+        token="lease-token",
+        fence=7,
+    )
+
+    record = store.save_if_lease_owned(
+        make_snapshot(),
+        expected_revision=0,
+        lease=lease,
+        lease_store=lease_store,
+    )
+
+    assert record.revision == 1
+    assert lease_store.ensure_calls == [lease]
+    assert connection.commits == 1
+    assert connection.snapshots["session_1"]["lease_fence"] == 7
+
+
+def test_postgres_session_snapshot_persistence_save_if_lease_owned_rejects_stale_lease() -> None:
+    connection = FakeConnection()
+    store = PostgresSessionSnapshotPersistence(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    lease_store = RecordingLeaseStore(owned=False)
+
+    with pytest.raises(SessionLeaseError, match="session lease is not owned"):
+        store.save_if_lease_owned(
+            make_snapshot(),
+            expected_revision=0,
+            lease=SessionLease(
+                session_id="session_1",
+                owner_id="node-a",
+                token="stale-token",
+            ),
+            lease_store=lease_store,
+        )
+
+    assert connection.snapshots == {}
+    assert connection.commits == 0
+
+
+def test_postgres_session_snapshot_persistence_save_if_lease_owned_rejects_wrong_session_lease() -> None:
+    connection = FakeConnection()
+    store = PostgresSessionSnapshotPersistence(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    lease_store = RecordingLeaseStore()
+
+    with pytest.raises(SessionLeaseError, match="session lease mismatch"):
+        store.save_if_lease_owned(
+            make_snapshot("session_1"),
+            expected_revision=0,
+            lease=SessionLease(
+                session_id="session_2",
+                owner_id="node-a",
+                token="lease-token",
+            ),
+            lease_store=lease_store,
+        )
+
+    assert lease_store.ensure_calls == []
+    assert connection.snapshots == {}
+    assert connection.commits == 0
+
+
+def test_postgres_session_snapshot_persistence_save_if_lease_owned_rejects_older_fence() -> None:
+    connection = FakeConnection()
+    store = PostgresSessionSnapshotPersistence(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    lease_store = RecordingLeaseStore()
+    first = store.save_if_lease_owned(
+        make_snapshot("session_1"),
+        expected_revision=0,
+        lease=SessionLease(
+            session_id="session_1",
+            owner_id="node-b",
+            token="new-token",
+            fence=4,
+        ),
+        lease_store=lease_store,
+    )
+
+    with pytest.raises(SnapshotConflictError, match="snapshot revision conflict"):
+        store.save_if_lease_owned(
+            make_snapshot("session_1"),
+            expected_revision=first.revision,
+            lease=SessionLease(
+                session_id="session_1",
+                owner_id="node-a",
+                token="old-token",
+                fence=3,
+            ),
+            lease_store=lease_store,
+        )
+
+    assert connection.snapshots["session_1"]["lease_fence"] == 4
+
+
 def test_postgres_session_snapshot_persistence_lists_and_deletes() -> None:
     connection = FakeConnection()
     store = PostgresSessionSnapshotPersistence(
@@ -275,4 +413,5 @@ def test_postgres_session_snapshot_migration_defines_jsonb_table() -> None:
     assert "CREATE TABLE IF NOT EXISTS agentos_session_snapshots" in migration
     assert "payload JSONB NOT NULL" in migration
     assert "revision BIGINT NOT NULL" in migration
+    assert "lease_fence BIGINT NOT NULL" in migration
     assert "session_id TEXT PRIMARY KEY" in migration

@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Literal, Protocol
 
-from agentos._redaction import redact_command_argv
+from agentos._redaction import redact_command_argv, redact_secret_patterns
 
 
 BackendVerificationStatus = Literal["passed", "failed", "skipped", "unknown"]
@@ -562,9 +562,9 @@ class DeploymentLiveBackendVerificationRunResult:
         if self.artifact_uri is not None:
             payload["artifact_uri"] = self.artifact_uri
         if self.stdout_summary:
-            payload["stdout_summary"] = self.stdout_summary
+            payload["stdout_summary"] = redact_secret_patterns(self.stdout_summary)
         if self.stderr_summary:
-            payload["stderr_summary"] = self.stderr_summary
+            payload["stderr_summary"] = redact_secret_patterns(self.stderr_summary)
         if self.metadata:
             payload["metadata"] = _json_safe_mapping(self.metadata)
         return payload
@@ -722,9 +722,9 @@ class BackendVerificationCliRunner:
         return {str(key): str(value) for key, value in self.env.items()}
 
     def _redact_env_values(self, value: str) -> str:
+        redacted = redact_secret_patterns(value)
         if self.env is None:
-            return value
-        redacted = value
+            return redacted
         for secret in self.env.values():
             if secret:
                 redacted = redacted.replace(str(secret), "[redacted]")
@@ -1314,7 +1314,9 @@ def _reject_restricted_metadata_keys(
 
 
 def _json_safe_value(value: object) -> object:
-    if value is None or isinstance(value, str | int | float | bool):
+    if isinstance(value, str):
+        return redact_secret_patterns(value)
+    if value is None or isinstance(value, int | float | bool):
         return value
     if isinstance(value, tuple | list):
         return tuple(_json_safe_value(item) for item in value)

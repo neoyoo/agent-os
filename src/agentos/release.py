@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Literal
 import re
 
+from agentos._redaction import redact_secret_patterns
+
 
 ReleaseEvidenceGateStatus = Literal["unknown", "pending", "passed", "failed"]
 
@@ -56,6 +58,21 @@ _LIVE_BACKEND_REQUIRED_BACKENDS = (
     "plan_store",
     "worker_process_supervisor",
     "session_snapshot_persistence",
+)
+_ALLOWED_CERTIFICATION_CLAIMS = frozenset(
+    {
+        "sdk-release-candidate-evidence",
+        "non-certifying-sdk-evidence",
+    },
+)
+_REQUIRED_DEPLOYMENT_BOUNDARIES = frozenset(
+    {
+        "CI/CD execution",
+        "artifact signing",
+        "publishing",
+        "deployment approval",
+        "rollout and rollback",
+    },
 )
 
 
@@ -130,6 +147,9 @@ def validate_release_evidence_manifest(
     gate_statuses: dict[str, str] = {}
     blocking_gates: list[str] = []
     gate_evidence_findings: list[str] = list(
+        _manifest_identity_findings(manifest),
+    )
+    gate_evidence_findings.extend(
         _release_candidate_findings(
             manifest,
             expected_branch=expected_branch,
@@ -174,6 +194,28 @@ def validate_release_evidence_manifest(
         gate_statuses=gate_statuses,
         redacted_manifest=redacted_manifest,
     )
+
+
+def _manifest_identity_findings(manifest: Mapping[str, object]) -> tuple[str, ...]:
+    findings: list[str] = []
+    if manifest.get("schema") != "agentos.release_evidence":
+        findings.append("schema must be agentos.release_evidence")
+    if manifest.get("schema_version") != 1:
+        findings.append("schema_version must be 1")
+    if manifest.get("certification_claim") not in _ALLOWED_CERTIFICATION_CLAIMS:
+        findings.append(
+            "certification_claim must be sdk-release-candidate-evidence or non-certifying-sdk-evidence",
+        )
+    if manifest.get("sdk_owned") is not True:
+        findings.append("sdk_owned must be true")
+    deployment_owned = manifest.get("deployment_owned")
+    if not isinstance(deployment_owned, tuple | list) or not (
+        _REQUIRED_DEPLOYMENT_BOUNDARIES <= {str(item) for item in deployment_owned}
+    ):
+        findings.append(
+            "deployment_owned must declare SDK/deployment boundary responsibilities",
+        )
+    return tuple(findings)
 
 
 def _release_candidate_findings(
@@ -352,7 +394,12 @@ def _redact_with_findings(
         return "<redacted>", (
             [f"secret-like value at {path}"] if _has_unredacted_value(value) else []
         )
-    if value is None or isinstance(value, str | int | float | bool):
+    if isinstance(value, str):
+        redacted = redact_secret_patterns(value)
+        return redacted, (
+            [f"secret-like value at {path}"] if redacted != value else []
+        )
+    if value is None or isinstance(value, int | float | bool):
         return value, []
     if isinstance(value, Path):
         return str(value), []

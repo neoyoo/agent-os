@@ -42,6 +42,7 @@ class SessionSnapshotRecord:
 
     snapshot: SessionSnapshot
     revision: int
+    lease_fence: int = 0
 
 
 class SessionPersistence(Protocol):

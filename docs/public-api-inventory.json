@@ -37,10 +37,10 @@
           "stability": "experimental"
         },
         "A2AAuthProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "headers_for_card": "(self, card: 'A2AAgentCard') -> 'Mapping[str, str]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ABearerCredential": {
@@ -56,10 +56,10 @@
           "stability": "experimental"
         },
         "A2ACardSigner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "sign": "(self, card: 'A2AAgentCard') -> 'A2AAgentCard'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ACardTrustError": {
@@ -67,17 +67,17 @@
           "stability": "experimental"
         },
         "A2ACardTrustStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "secret_for_key_id": "(self, key_id: 'str') -> 'bytes | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ACardVerifier": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "verify": "(self, card: 'A2AAgentCard') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AConformanceCheck": {
@@ -105,10 +105,10 @@
           "stability": "experimental"
         },
         "A2AEgressUrlPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "validate_url": "(self, url: 'str') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AExtensionNegotiationError": {
@@ -156,10 +156,10 @@
           "stability": "experimental"
         },
         "A2AExternalConformanceRunner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "run": "(self, plan: 'A2AExternalConformanceInvocationPlan') -> 'A2AExternalConformanceExecutionRecord'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AInboundAuthError": {
@@ -167,10 +167,10 @@
           "stability": "experimental"
         },
         "A2AInboundAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize": "(self, headers: 'Mapping[str, str]') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AJwtClaims": {
@@ -178,10 +178,10 @@
           "stability": "experimental"
         },
         "A2AJwtVerifier": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "verify": "(self, token: 'str') -> 'A2AJwtClaims'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AMessage": {
@@ -209,17 +209,17 @@
           "stability": "experimental"
         },
         "A2AOperationInboundAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_operation": "(self, headers: 'Mapping[str, str]', *, operation: 'str') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AOperationRateLimitPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "check_operation": "(self, headers: 'Mapping[str, str]', *, operation: 'str', task_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AOperationRequest": {
@@ -235,10 +235,10 @@
           "stability": "experimental"
         },
         "A2APeerIdResolver": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "peer_id_for_headers": "(self, headers: 'Mapping[str, str]') -> 'str | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AProtocolVersionPolicy": {
@@ -258,13 +258,13 @@
           "stability": "experimental"
         },
         "A2APushNotificationConfigStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "create": "(self, task_id: 'str', config: 'A2APushNotificationConfig') -> 'A2APushNotificationConfig'",
             "delete": "(self, task_id: 'str', config_id: 'str') -> 'bool'",
             "get": "(self, task_id: 'str', config_id: 'str') -> 'A2APushNotificationConfig | None'",
             "list": "(self, task_id: 'str') -> 'tuple[A2APushNotificationConfig, ...]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2APushNotificationDaemon": {
@@ -296,6 +296,7 @@
           "stability": "experimental"
         },
         "A2APushNotificationDeliveryStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "claim_due": "(self, *, now: 'float', worker_id: 'str', lease_seconds: 'float', limit: 'int') -> 'tuple[A2APushNotificationDeliveryRecord, ...]'",
             "enqueue": "(self, record: 'A2APushNotificationDeliveryRecord') -> 'A2APushNotificationDeliveryRecord'",
@@ -304,7 +305,6 @@
             "mark_delivered": "(self, delivery_id: 'str', *, delivery: 'A2APushNotificationDelivery', now: 'float') -> 'A2APushNotificationDeliveryRecord | None'",
             "record_failure": "(self, delivery_id: 'str', *, delivery: 'A2APushNotificationDelivery', now: 'float', retry_policy: 'A2APushNotificationRetryPolicy') -> 'A2APushNotificationDeliveryRecord | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2APushNotificationDeliveryWorker": {
@@ -336,10 +336,10 @@
           "stability": "experimental"
         },
         "A2APushNotificationUrlPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "validate": "(self, config: 'A2APushNotificationConfig') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ARateLimitError": {
@@ -347,10 +347,10 @@
           "stability": "experimental"
         },
         "A2AResourceInboundAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_resource": "(self, headers: 'Mapping[str, str]', *, operation: 'str', task_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AServerAdapter": {
@@ -382,10 +382,10 @@
           "stability": "experimental"
         },
         "AbandonableAgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "abandon_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "Agent": {
@@ -417,12 +417,12 @@
           "stability": "experimental"
         },
         "AgentResolver": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "discover": "(self, capabilities: 'Sequence[str]', *, session_id: 'str | None' = None) -> 'list[AgentCard]'",
             "resolve": "(self, agent_id: 'str', *, session_id: 'str | None' = None) -> 'AgentCard | None'",
             "select": "(self, capabilities: 'Sequence[str]', *, session_id: 'str | None' = None) -> 'AgentCard | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AgentResult": {
@@ -466,18 +466,18 @@
           "stability": "experimental"
         },
         "AsyncAbandonableAgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "async_abandon_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AsyncAgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "async_get_agent": "(self, session_id: 'str') -> 'Agent'",
             "async_release_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AsyncQueryLoop": {
@@ -505,10 +505,10 @@
           "stability": "experimental"
         },
         "BackendVerificationRunner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "run": "(self, plan: 'BackendVerificationInvocationPlan') -> 'DeploymentLiveBackendVerificationRunResult'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "BackendVerificationStatus": {
@@ -524,18 +524,18 @@
           "stability": "experimental"
         },
         "ChannelAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize": "(self, headers: 'Mapping[str, str]') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "ChannelRuntimeProfile": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "build_agent": "(self, session_id: 'str | None' = None) -> 'Agent'",
             "build_channel_app": "(self) -> 'object'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "ClaimsTenantRbacA2AInboundAuthPolicy": {
@@ -543,11 +543,11 @@
           "stability": "experimental"
         },
         "CompareAndSavePlanStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "get_plan_record": "(self, plan_id: 'str') -> 'PlanStoreRecord | None'",
             "save_plan_if_unchanged": "(self, plan: 'PlanState', *, expected_revision: 'int') -> 'bool'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "CompressedSegmentPackage": {
@@ -579,12 +579,12 @@
           "stability": "experimental"
         },
         "DistributedRuntimeProfile": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "build_agent": "(self, session_id: 'str | None' = None) -> 'Agent'",
             "build_channel_app": "(self) -> 'object'",
             "readiness_checks": "(self) -> 'dict[str, object]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "DistributedTeamRuntimeProfile": {
@@ -695,6 +695,18 @@
           "signature": "non-callable",
           "stability": "experimental"
         },
+        "LeaseFencedSessionPersistence": {
+          "signature": "(*args, **kwargs)",
+          "methods": {
+            "delete": "(self, session_id: str) -> None",
+            "list_ids": "(self) -> list[str]",
+            "load": "(self, session_id: str) -> agentos.persistence.base.SessionSnapshot",
+            "load_record": "(self, session_id: 'str') -> 'SessionSnapshotRecord'",
+            "save": "(self, snapshot: agentos.persistence.base.SessionSnapshot) -> None",
+            "save_if_lease_owned": "(self, snapshot: 'SessionSnapshot', *, expected_revision: 'int', lease: 'SessionLease', lease_store: 'SessionLeaseStore') -> 'SessionSnapshotRecord'"
+          },
+          "stability": "stable"
+        },
         "LocalRuntimeProfile": {
           "signature": "(agent_builder: 'AgentBuilderLike', loop_mode: \"Literal['sync', 'async']\" = 'sync', workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'local') -> None",
           "stability": "stable"
@@ -724,12 +736,12 @@
           "stability": "experimental"
         },
         "NacosRegistryClient": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "deregister_instance": "(self, *, service_name: 'str', group_name: 'str', cluster_name: 'str', namespace_id: 'str | None' = None, ip: 'str', port: 'int', ephemeral: 'bool') -> 'None'",
             "list_instances": "(self, *, service_name: 'str', group_name: 'str', cluster_name: 'str | None' = None, namespace_id: 'str | None' = None, healthy_only: 'bool' = True) -> 'Sequence[object]'",
             "register_instance": "(self, *, service_name: 'str', group_name: 'str', cluster_name: 'str', namespace_id: 'str | None' = None, ip: 'str', port: 'int', metadata: 'Mapping[str, str]', healthy: 'bool', ephemeral: 'bool') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "NacosRegistryConfig": {
@@ -789,12 +801,12 @@
           "stability": "experimental"
         },
         "PlanClaimStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "claim_plan": "(self, *, plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', lease_seconds: 'float', now: 'float') -> 'PlanClaimResult'",
             "get_claim": "(self, plan_id: 'str') -> 'PlanClaimRecord | None'",
             "release_plan": "(self, *, plan_id: 'str', worker_id: 'str') -> 'bool'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "PlanClaimSweepReport": {
@@ -806,11 +818,11 @@
           "stability": "experimental"
         },
         "PlanClaimSweepStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "expired_claims": "(self, *, now: 'float', owner_agent_id: 'str | None' = None, limit: 'int | None' = None) -> 'tuple[PlanClaimRecord, ...]'",
             "release_expired_claim": "(self, claim: 'PlanClaimRecord', *, now: 'float') -> 'bool'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "PlanClaimedSchedulerTickReport": {
@@ -954,10 +966,10 @@
           "stability": "experimental"
         },
         "PlannerToolAuthorizationPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_planner_tool": "(self, *, tool_name: 'str', owner_agent_id: 'str', plan_id: 'str | None') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "PlannerTools": {
@@ -1021,10 +1033,10 @@
           "stability": "experimental"
         },
         "Provider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "complete": "(self, request: 'ProviderRequest') -> 'ProviderResponse'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "ProviderFunctionSpec": {
@@ -1148,10 +1160,10 @@
           "stability": "experimental"
         },
         "ResourceAwareChannelAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_channel": "(self, headers: 'Mapping[str, str]', *, context: 'ChannelAuthContext') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "RetryPolicy": {
@@ -1187,18 +1199,18 @@
           "stability": "experimental"
         },
         "RuntimeProfile": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "build_agent": "(self, session_id: 'str | None' = None) -> 'Agent'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "SandboxBackend": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "async_run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'",
             "run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "SegmentRecallDocument": {
@@ -1210,7 +1222,7 @@
           "stability": "experimental"
         },
         "SessionLease": {
-          "signature": "(session_id: 'str', owner_id: 'str', token: 'str', expires_at: 'float | None' = None) -> None",
+          "signature": "(session_id: 'str', owner_id: 'str', token: 'str', expires_at: 'float | None' = None, fence: 'int' = 0) -> None",
           "stability": "experimental"
         },
         "SessionLeaseError": {
@@ -1218,13 +1230,13 @@
           "stability": "experimental"
         },
         "SessionLeaseStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "acquire": "(self, session_id: 'str', *, owner_id: 'str', ttl_seconds: 'float', wait_timeout_seconds: 'float | None' = None) -> 'SessionLease'",
             "ensure_owned": "(self, lease: 'SessionLease') -> 'None'",
             "refresh": "(self, lease: 'SessionLease') -> 'SessionLease'",
             "release": "(self, lease: 'SessionLease') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "SkillReleaseDriftReport": {
@@ -1244,11 +1256,11 @@
           "stability": "experimental"
         },
         "SnapshotAgentFactory": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "create_agent": "(self, *, session_id: 'str', snapshot: 'SessionSnapshot | None') -> 'Agent'",
             "create_snapshot": "(self, *, session_id: 'str', agent: 'Agent') -> 'SessionSnapshot'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "SseAgentChannel": {
@@ -1308,10 +1320,10 @@
           "stability": "experimental"
         },
         "TeamToolAuthorizationPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_team_tool": "(self, *, tool_name: 'str', owner_agent_id: 'str', team_id: 'str | None') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "TeamTools": {
@@ -1327,18 +1339,18 @@
           "stability": "experimental"
         },
         "TeamUiStreamStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "append": "(self, *, team_id: 'str', kind: 'TeamUiEventKind', payload: 'Mapping[str, object]', created_at: 'float') -> 'TeamUiEvent'",
             "list_events": "(self, team_id: 'str', *, after_event_id: 'int | None' = None) -> 'tuple[TeamUiEvent, ...]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "TeamWorkerAgentProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "get_worker_agent": "(self, session: 'TeamWorkerSession') -> 'object'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "TeamWorkerCancellationRecord": {
@@ -1350,6 +1362,7 @@
           "stability": "experimental"
         },
         "TeamWorkerCancellationStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "acknowledge": "(self, record: 'TeamWorkerCancellationRecord', *, now: 'float') -> 'TeamWorkerCancellationRecord'",
             "clear": "(self, record: 'TeamWorkerCancellationRecord', *, now: 'float') -> 'TeamWorkerCancellationRecord'",
@@ -1357,7 +1370,6 @@
             "match": "(self, *, team_id: 'str', agent_id: 'str', session_id: 'str', delivery_id: 'str | None' = None, message_id: 'str | None' = None) -> 'TeamWorkerCancellationRecord | None'",
             "request_cancel": "(self, record: 'TeamWorkerCancellationRecord') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "TeamWorkerDaemon": {
@@ -1393,13 +1405,13 @@
           "stability": "experimental"
         },
         "TeamWorkerRetryStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "clear": "(self, agent_id: 'str', delivery_id: 'str') -> 'None'",
             "get": "(self, agent_id: 'str', delivery_id: 'str') -> 'TeamWorkerRetryRecord | None'",
             "list_records": "(self, team_id: 'str | None' = None) -> 'tuple[TeamWorkerRetryRecord, ...]'",
             "record_failure": "(self, record: 'TeamWorkerRetryRecord') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "TeamWorkerRunError": {
@@ -1419,12 +1431,12 @@
           "stability": "experimental"
         },
         "TeamWorkerSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "close_worker_sessions": "(self, team_id: 'str', *, now: 'float') -> 'None'",
             "create_worker_session": "(self, request: 'TeamWorkerSessionRequest') -> 'TeamWorkerSession'",
             "list_sessions": "(self, team_id: 'str | None' = None) -> 'list[TeamWorkerSession]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "TeamWorkerSessionRequest": {
@@ -1448,10 +1460,10 @@
           "stability": "experimental"
         },
         "ToolSandboxPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "ensure_tool_call_allowed": "(self, tool: 'RegisteredTool', arguments: 'Mapping[str, object]') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "UserMessage": {
@@ -1475,6 +1487,7 @@
           "stability": "experimental"
         },
         "WorkerProcessSupervisor": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "evidence": "(self, worker_id: 'str') -> 'dict[str, object]'",
             "is_running": "(self, worker_id: 'str') -> 'bool'",
@@ -1483,15 +1496,14 @@
             "stop": "(self, worker_id: 'str', *, timeout_seconds: 'float | None' = None) -> 'WorkerProcessState'",
             "wait": "(self, worker_id: 'str', *, timeout_seconds: 'float | None' = None) -> 'WorkerProcessState'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "WorkspaceExecutionBackend": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "async_run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'",
             "run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "WorkspaceExecutionError": {
@@ -1527,11 +1539,11 @@
           "stability": "experimental"
         },
         "WorkspaceProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "narrow_workspace": "(self, parent: 'WorkspaceHandle', *, child_id: 'str', scope: 'WorkspaceScope' = 'task') -> 'WorkspaceHandle'",
             "resolve_workspace": "(self, request: 'WorkspaceRequest') -> 'WorkspaceHandle'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "WorkspaceRequest": {
@@ -1699,10 +1711,10 @@
           "stability": "experimental"
         },
         "A2AAuthProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "headers_for_card": "(self, card: 'A2AAgentCard') -> 'Mapping[str, str]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ABearerCredential": {
@@ -1718,10 +1730,10 @@
           "stability": "experimental"
         },
         "A2ACardSigner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "sign": "(self, card: 'A2AAgentCard') -> 'A2AAgentCard'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ACardTrustError": {
@@ -1729,17 +1741,17 @@
           "stability": "experimental"
         },
         "A2ACardTrustStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "secret_for_key_id": "(self, key_id: 'str') -> 'bytes | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ACardVerifier": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "verify": "(self, card: 'A2AAgentCard') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AConformanceCheck": {
@@ -1767,10 +1779,10 @@
           "stability": "experimental"
         },
         "A2AEgressUrlPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "validate_url": "(self, url: 'str') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AExtensionNegotiationError": {
@@ -1818,10 +1830,10 @@
           "stability": "experimental"
         },
         "A2AExternalConformanceRunner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "run": "(self, plan: 'A2AExternalConformanceInvocationPlan') -> 'A2AExternalConformanceExecutionRecord'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AInboundAuthError": {
@@ -1829,10 +1841,10 @@
           "stability": "experimental"
         },
         "A2AInboundAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize": "(self, headers: 'Mapping[str, str]') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AJwtClaims": {
@@ -1840,10 +1852,10 @@
           "stability": "experimental"
         },
         "A2AJwtVerifier": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "verify": "(self, token: 'str') -> 'A2AJwtClaims'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AMessage": {
@@ -1871,17 +1883,17 @@
           "stability": "experimental"
         },
         "A2AOperationInboundAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_operation": "(self, headers: 'Mapping[str, str]', *, operation: 'str') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AOperationRateLimitPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "check_operation": "(self, headers: 'Mapping[str, str]', *, operation: 'str', task_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AOperationRequest": {
@@ -1893,10 +1905,10 @@
           "stability": "experimental"
         },
         "A2AOperationRunner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "send_message": "(self, message: 'A2AMessage') -> 'A2ATask'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AOperationServer": {
@@ -1904,10 +1916,10 @@
           "stability": "experimental"
         },
         "A2APeerIdResolver": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "peer_id_for_headers": "(self, headers: 'Mapping[str, str]') -> 'str | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AProtocolVersionPolicy": {
@@ -1927,13 +1939,13 @@
           "stability": "experimental"
         },
         "A2APushNotificationConfigStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "create": "(self, task_id: 'str', config: 'A2APushNotificationConfig') -> 'A2APushNotificationConfig'",
             "delete": "(self, task_id: 'str', config_id: 'str') -> 'bool'",
             "get": "(self, task_id: 'str', config_id: 'str') -> 'A2APushNotificationConfig | None'",
             "list": "(self, task_id: 'str') -> 'tuple[A2APushNotificationConfig, ...]'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2APushNotificationDaemon": {
@@ -1965,6 +1977,7 @@
           "stability": "experimental"
         },
         "A2APushNotificationDeliveryStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "claim_due": "(self, *, now: 'float', worker_id: 'str', lease_seconds: 'float', limit: 'int') -> 'tuple[A2APushNotificationDeliveryRecord, ...]'",
             "enqueue": "(self, record: 'A2APushNotificationDeliveryRecord') -> 'A2APushNotificationDeliveryRecord'",
@@ -1973,7 +1986,6 @@
             "mark_delivered": "(self, delivery_id: 'str', *, delivery: 'A2APushNotificationDelivery', now: 'float') -> 'A2APushNotificationDeliveryRecord | None'",
             "record_failure": "(self, delivery_id: 'str', *, delivery: 'A2APushNotificationDelivery', now: 'float', retry_policy: 'A2APushNotificationRetryPolicy') -> 'A2APushNotificationDeliveryRecord | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2APushNotificationDeliveryWorker": {
@@ -2005,10 +2017,10 @@
           "stability": "experimental"
         },
         "A2APushNotificationUrlPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "validate": "(self, config: 'A2APushNotificationConfig') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ARateLimitError": {
@@ -2016,10 +2028,10 @@
           "stability": "experimental"
         },
         "A2AResourceInboundAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_resource": "(self, headers: 'Mapping[str, str]', *, operation: 'str', task_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2AServerAdapter": {
@@ -2039,19 +2051,19 @@
           "stability": "experimental"
         },
         "A2ATaskLifecycleRunner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "cancel_task": "(self, task_id: 'str') -> 'A2ATask | None'",
             "get_task": "(self, task_id: 'str') -> 'A2ATask | None'",
             "next_task_update": "(self, task_id: 'str', *, after_version: 'int | None' = None) -> 'A2ATaskSubscriptionEvent | None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ATaskRunner": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "run_task": "(self, request: 'TaskRequest') -> 'TaskResult'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "A2ATaskSubscriptionEvent": {
@@ -2063,20 +2075,20 @@
           "stability": "experimental"
         },
         "A2ATransport": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "delete_json": "(self, url: 'str', timeout_seconds: 'float', *, headers: 'dict[str, str] | None' = None) -> 'dict[str, object]'",
             "get_json": "(self, url: 'str', timeout_seconds: 'float', *, headers: 'dict[str, str] | None' = None) -> 'dict[str, object]'",
             "post_json": "(self, url: 'str', payload: 'dict[str, object]', timeout_seconds: 'float', *, headers: 'dict[str, str] | None' = None) -> 'dict[str, object]'",
             "post_sse": "(self, url: 'str', payload: 'dict[str, object]', timeout_seconds: 'float', *, headers: 'dict[str, str] | None' = None) -> 'object'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AbandonableAgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "abandon_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AgentA2AOperationRunner": {
@@ -2096,11 +2108,11 @@
           "stability": "experimental"
         },
         "AgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "get_agent": "(self, session_id: 'str') -> 'Agent'",
             "release_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AllowAllA2AInboundAuthPolicy": {
@@ -2120,18 +2132,18 @@
           "stability": "stable"
         },
         "AsyncAbandonableAgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "async_abandon_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "AsyncAgentSessionProvider": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "async_get_agent": "(self, session_id: 'str') -> 'Agent'",
             "async_release_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "ChannelAuthContext": {
@@ -2143,10 +2155,10 @@
           "stability": "experimental"
         },
         "ChannelAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize": "(self, headers: 'Mapping[str, str]') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "ChannelError": {
@@ -2225,6 +2237,18 @@
           "signature": "(*, jwks_urls: 'Sequence[str]' = (), discovery_provider: 'object | None' = None, allowed_key_ids: 'Sequence[str]' = (), transport: 'object | None' = None, timeout_seconds: 'float' = 5, cache_ttl_seconds: 'float' = 300, clock: 'object | None' = None, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
           "stability": "experimental"
         },
+        "LeaseFencedSessionPersistence": {
+          "signature": "(*args, **kwargs)",
+          "methods": {
+            "delete": "(self, session_id: str) -> None",
+            "list_ids": "(self) -> list[str]",
+            "load": "(self, session_id: str) -> agentos.persistence.base.SessionSnapshot",
+            "load_record": "(self, session_id: 'str') -> 'SessionSnapshotRecord'",
+            "save": "(self, snapshot: agentos.persistence.base.SessionSnapshot) -> None",
+            "save_if_lease_owned": "(self, snapshot: 'SessionSnapshot', *, expected_revision: 'int', lease: 'SessionLease', lease_store: 'SessionLeaseStore') -> 'SessionSnapshotRecord'"
+          },
+          "stability": "stable"
+        },
         "OidcClaimsA2AInboundAuthPolicy": {
           "signature": "(verifier: 'A2AJwtVerifier', issuer: 'str', audience: 'str', allowed_peer_ids: 'tuple[str, ...]' = (), clock: 'object | None' = None, leeway_seconds: 'float' = 60.0) -> None",
           "stability": "experimental"
@@ -2270,10 +2294,10 @@
           "stability": "experimental"
         },
         "RateLimiter": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "check": "(self, key: 'str') -> 'RateLimitDecision'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "RedisSessionLeaseStore": {
@@ -2305,10 +2329,10 @@
           "stability": "experimental"
         },
         "ResourceAwareChannelAuthPolicy": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_channel": "(self, headers: 'Mapping[str, str]', *, context: 'ChannelAuthContext') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "RotatingA2ACardTrustKey": {
@@ -2336,7 +2360,7 @@
           "stability": "experimental"
         },
         "SessionLease": {
-          "signature": "(session_id: 'str', owner_id: 'str', token: 'str', expires_at: 'float | None' = None) -> None",
+          "signature": "(session_id: 'str', owner_id: 'str', token: 'str', expires_at: 'float | None' = None, fence: 'int' = 0) -> None",
           "stability": "experimental"
         },
         "SessionLeaseError": {
@@ -2344,13 +2368,13 @@
           "stability": "experimental"
         },
         "SessionLeaseStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "acquire": "(self, session_id: 'str', *, owner_id: 'str', ttl_seconds: 'float', wait_timeout_seconds: 'float | None' = None) -> 'SessionLease'",
             "ensure_owned": "(self, lease: 'SessionLease') -> 'None'",
             "refresh": "(self, lease: 'SessionLease') -> 'SessionLease'",
             "release": "(self, lease: 'SessionLease') -> 'None'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "SlidingWindowRateLimiter": {
@@ -2358,11 +2382,11 @@
           "stability": "experimental"
         },
         "SnapshotAgentFactory": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "create_agent": "(self, *, session_id: 'str', snapshot: 'SessionSnapshot | None') -> 'Agent'",
             "create_snapshot": "(self, *, session_id: 'str', agent: 'Agent') -> 'SessionSnapshot'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "SseAgentChannel": {
@@ -2370,6 +2394,7 @@
           "stability": "experimental"
         },
         "SseEventBuffer": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "append": "(self, stream_key: 'str', sequence: 'int', chunk: 'str') -> 'None'",
             "drop": "(self, stream_key: 'str') -> 'None'",
@@ -2378,7 +2403,6 @@
             "replay_since": "(self, stream_key: 'str', last_sequence: 'int') -> 'list[tuple[int, str]]'",
             "replay_window": "(self, stream_key: 'str') -> 'SseReplayWindow'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "SseReplayWindow": {
@@ -2394,6 +2418,7 @@
           "stability": "stable"
         },
         "SseTurnControlStore": {
+          "signature": "(*args, **kwargs)",
           "methods": {
             "claim_turn": "(self, session_id: 'str', *, turn_stream_id: 'str', owner_id: 'str', ttl_seconds: 'float') -> 'SseTurnControlState'",
             "get_turn": "(self, session_id: 'str') -> 'SseTurnControlState | None'",
@@ -2401,7 +2426,6 @@
             "release_turn": "(self, session_id: 'str', turn_stream_id: 'str') -> 'None'",
             "request_interrupt": "(self, session_id: 'str') -> 'bool'"
           },
-          "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
         "StaticA2ACardTrustStore": {
@@ -3372,6 +3396,83 @@
         },
         "plan_to_working_state_summary": {
           "signature": "(plan: 'PlanState', *, max_next_steps: 'int' = 5, max_recent_evidence: 'int' = 5) -> 'dict[str, object]'",
+          "stability": "experimental"
+        }
+      }
+    },
+    "agentos.persistence": {
+      "exports": {
+        "BackendUnavailableError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "FileSystemPersistence": {
+          "signature": "(base_dir: pathlib.Path) -> None",
+          "stability": "stable"
+        },
+        "MemoryPersistence": {
+          "signature": "() -> None",
+          "stability": "stable"
+        },
+        "PostgresConnection": {
+          "signature": "(*args, **kwargs)",
+          "methods": {
+            "execute": "(self, sql: 'str', params: 'tuple[object, ...]' = ()) -> 'PostgresCursor'"
+          },
+          "stability": "stable"
+        },
+        "PostgresCursor": {
+          "signature": "(*args, **kwargs)",
+          "methods": {
+            "fetchall": "(self) -> 'list[tuple[object, ...]]'",
+            "fetchone": "(self) -> 'tuple[object, ...] | None'"
+          },
+          "stability": "stable"
+        },
+        "PostgresDurableSessionStore": {
+          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
+          "stability": "stable"
+        },
+        "PostgresSessionSnapshotPersistence": {
+          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
+          "stability": "stable"
+        },
+        "SNAPSHOT_VERSION": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "SQLitePersistence": {
+          "signature": "(path: pathlib.Path) -> None",
+          "stability": "stable"
+        },
+        "SessionPersistence": {
+          "signature": "(*args, **kwargs)",
+          "methods": {
+            "delete": "(self, session_id: str) -> None",
+            "list_ids": "(self) -> list[str]",
+            "load": "(self, session_id: str) -> agentos.persistence.base.SessionSnapshot",
+            "save": "(self, snapshot: agentos.persistence.base.SessionSnapshot) -> None"
+          },
+          "stability": "stable"
+        },
+        "SessionSnapshot": {
+          "signature": "(session_state: agentos.runtime.session.SessionState, context_state: agentos.context.state.ContextState, message_runtime: agentos.messages.runtime.MessageRuntime, compression_index: agentos.compression.index.CompressionIndex, next_segment_number: int = 1, event_records: tuple[agentos.observability.events.EventRecord, ...] = <factory>, version: int = 1) -> None",
+          "stability": "stable"
+        },
+        "SessionSnapshotRecord": {
+          "signature": "(snapshot: agentos.persistence.base.SessionSnapshot, revision: int, lease_fence: int = 0) -> None",
+          "stability": "stable"
+        },
+        "SnapshotConflictError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "SnapshotLoadError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "SnapshotVersionError": {
+          "signature": "unavailable",
           "stability": "experimental"
         }
       }

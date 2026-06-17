@@ -242,6 +242,60 @@ def test_release_evidence_validator_rejects_secret_like_values() -> None:
     assert "<redacted>" in json.dumps(payload)
 
 
+def test_release_evidence_validator_rejects_overclaiming_manifest_identity() -> None:
+    manifest = release_manifest(
+        certification_claim="production-certified",
+        sdk_owned=False,
+        deployment_owned=[],
+    )
+
+    report = validate_release_evidence_manifest(manifest)
+
+    assert report.accepted is False
+    assert (
+        "certification_claim must be sdk-release-candidate-evidence or non-certifying-sdk-evidence"
+        in report.gate_evidence_findings
+    )
+    assert "sdk_owned must be true" in report.gate_evidence_findings
+    assert (
+        "deployment_owned must declare SDK/deployment boundary responsibilities"
+        in report.gate_evidence_findings
+    )
+
+
+def test_release_evidence_validator_redacts_secret_patterns_in_neutral_fields() -> None:
+    manifest = release_manifest(
+        gates={
+            **{
+                name: passing_gate(name)
+                for name in RELEASE_EVIDENCE_REQUIRED_GATES
+            },
+            "full_test_suite": {
+                **passing_gate("full_test_suite"),
+                "command": "curl -H 'Authorization: Bearer raw-token' https://ci",
+                "evidence_ref": "https://ci.example/logs?api_key=sk-live-secret",
+            },
+        },
+        notes=["probe printed postgres://user:secret@db/agentos"],
+    )
+
+    report = validate_release_evidence_manifest(manifest)
+    payload_text = json.dumps(report.as_dict())
+
+    assert report.accepted is False
+    assert "secret-like value at gates.full_test_suite.command" in (
+        report.secret_findings
+    )
+    assert "secret-like value at gates.full_test_suite.evidence_ref" in (
+        report.secret_findings
+    )
+    assert "secret-like value at notes[0]" in report.secret_findings
+    assert "raw-token" not in payload_text
+    assert "sk-live-secret" not in payload_text
+    assert "user:secret" not in payload_text
+    assert "<redacted>" in payload_text
+
+
 def test_release_evidence_validator_accepts_complete_manifest() -> None:
     report = validate_release_evidence_manifest(release_manifest())
 

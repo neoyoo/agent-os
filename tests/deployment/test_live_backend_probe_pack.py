@@ -251,6 +251,31 @@ def test_reference_probe_pack_builds_readiness_bundle_from_run_results() -> None
     json.dumps(payload)
 
 
+def test_backend_verification_run_result_redacts_secret_patterns_in_output() -> None:
+    from agentos.deployment import DeploymentLiveBackendVerificationRunResult
+
+    result = DeploymentLiveBackendVerificationRunResult(
+        command=("python", "-m", "checks.live_backend", "--api-key", "sk-command"),
+        exit_code=1,
+        required_backends=("agent_registry",),
+        stdout_summary=(
+            "Authorization: Bearer raw-bearer\n"
+            "dsn=postgres://user:secret@db/agentos\n"
+        ),
+        stderr_summary="failed with sk-live-secret",
+        metadata={"log": "token=raw-token"},
+    )
+
+    payload_text = json.dumps(result.as_dict())
+
+    assert "raw-bearer" not in payload_text
+    assert "user:secret" not in payload_text
+    assert "sk-live-secret" not in payload_text
+    assert "raw-token" not in payload_text
+    assert "sk-command" not in payload_text
+    assert "<redacted>" in payload_text
+
+
 def test_reference_probe_pack_readiness_bundle_blocks_missing_backend_result() -> None:
     from agentos.probes import ReferenceLiveBackendProbePack
 

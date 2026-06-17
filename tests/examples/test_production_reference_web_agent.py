@@ -362,6 +362,47 @@ def test_production_reference_web_agent_requires_deployment_owned_runtime_backen
     )["demo_runtime"] is False
 
 
+def test_reference_snapshot_agent_factory_restores_full_dynamic_session_state() -> None:
+    from agentos.compression import CompressionIndex
+    from agentos.context import ContextState
+    from agentos.examples.production_reference_web_agent import (
+        ReferenceSnapshotAgentFactory,
+    )
+    from agentos.messages import MessageRuntime
+    from agentos.persistence import SessionSnapshot
+    from agentos.runtime import SessionState
+
+    messages = MessageRuntime()
+    messages.append_user("persisted input")
+    compression = CompressionIndex()
+    compression.record("segment_1", ["msg_1"])
+    snapshot = SessionSnapshot(
+        session_state=SessionState.from_snapshot(
+            id="s1",
+            status="active",
+            next_turn_number=7,
+        ),
+        context_state=ContextState(working_state={"goal": "restore"}),
+        message_runtime=messages,
+        compression_index=compression,
+        next_segment_number=3,
+    )
+    factory = ReferenceSnapshotAgentFactory()
+
+    agent = factory.create_agent(session_id="s1", snapshot=snapshot)
+    restored = factory.create_snapshot(session_id="s1", agent=agent)
+
+    assert agent.query_loop.session_state is not None
+    assert agent.query_loop.session_state.next_turn_number() == 7
+    assert agent.query_loop.context_runtime.snapshot().working_state == {
+        "goal": "restore",
+    }
+    assert restored.session_state.next_turn_number() == 7
+    assert restored.context_state.working_state == {"goal": "restore"}
+    assert restored.compression_index.snapshot() == {"segment_1": ("msg_1",)}
+    assert restored.next_segment_number == 3
+
+
 def test_production_reference_web_agent_readiness_endpoint_blocks_without_live_backend_evidence() -> None:
     from agentos.examples.production_reference_web_agent import (
         build_reference_app,
@@ -383,6 +424,7 @@ def test_production_reference_web_agent_readiness_endpoint_blocks_without_live_b
         "status": "not_ready",
         "checks": {
             "agent_service_reference": "failed",
+            "distributed_stream_resume": "ok",
             "distributed_web_session_operations": "ok",
             "production_state_plane": "ok",
             "workspace_execution_isolation": "failed",
@@ -427,6 +469,7 @@ def test_production_reference_web_agent_readiness_endpoint_blocks_local_workspac
         "status": "not_ready",
         "checks": {
             "agent_service_reference": "failed",
+            "distributed_stream_resume": "ok",
             "distributed_web_session_operations": "ok",
             "production_state_plane": "ok",
             "workspace_execution_isolation": "failed",
@@ -472,6 +515,7 @@ def test_production_reference_web_agent_readiness_endpoint_is_ready_with_deploym
         "status": "ready",
         "checks": {
             "agent_service_reference": "ok",
+            "distributed_stream_resume": "ok",
             "distributed_web_session_operations": "ok",
             "production_state_plane": "ok",
             "workspace_execution_isolation": "ok",

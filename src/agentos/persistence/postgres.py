@@ -249,7 +249,7 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
         with self._connection_scope():
             row = self._execute(
                 """
-                SELECT revision, payload FROM agentos_session_snapshots
+                SELECT revision, payload, lease_fence FROM agentos_session_snapshots
                 WHERE session_id = %s
                 """,
                 (session_id,),
@@ -260,6 +260,7 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
                 return SessionSnapshotRecord(
                     snapshot=session_snapshot_from_dict(self._json_value(row[1])),
                     revision=int(row[0]),
+                    lease_fence=int(row[2]),
                 )
             except SnapshotVersionError:
                 raise
@@ -280,6 +281,37 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
             raise ValueError("expected_revision must be non-negative")
         with self._connection_scope():
             return self._save(snapshot, expected_revision=expected_revision)
+
+    def save_if_lease_owned(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+        lease: object,
+        lease_store: object,
+    ) -> SessionSnapshotRecord:
+        """Save snapshot only if revision and session lease ownership still match."""
+
+        session_id = snapshot.session_state.id
+        lease_session_id = getattr(lease, "session_id", None)
+        if lease_session_id != session_id:
+            from agentos.channels.durable_session import SessionLeaseError
+
+            raise SessionLeaseError(
+                f"session lease mismatch: {lease_session_id!r} != {session_id!r}",
+            )
+        if expected_revision < 0:
+            raise ValueError("expected_revision must be non-negative")
+        ensure_owned = getattr(lease_store, "ensure_owned", None)
+        if not callable(ensure_owned):
+            raise BackendUnavailableError("session lease store cannot verify ownership")
+        with self._connection_scope():
+            ensure_owned(lease)
+            return self._save(
+                snapshot,
+                expected_revision=expected_revision,
+                lease_fence=int(getattr(lease, "fence", 0)),
+            )
 
     def list_ids(self) -> list[str]:
         """List saved session ids."""
@@ -311,40 +343,47 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
         snapshot: SessionSnapshot,
         *,
         expected_revision: int | None = None,
+        lease_fence: int | None = None,
     ) -> SessionSnapshotRecord:
         payload = session_snapshot_to_dict(snapshot)
         if expected_revision is None:
             row = self._execute(
                 """
                 INSERT INTO agentos_session_snapshots
-                    (session_id, version, revision, payload)
-                VALUES (%s, %s, 1, %s::jsonb)
+                    (session_id, version, revision, payload, lease_fence)
+                VALUES (%s, %s, 1, %s::jsonb, COALESCE(%s, 0))
                 ON CONFLICT (session_id) DO UPDATE SET
                     version = EXCLUDED.version,
                     revision = agentos_session_snapshots.revision + 1,
                     payload = EXCLUDED.payload,
+                    lease_fence = GREATEST(
+                        agentos_session_snapshots.lease_fence,
+                        EXCLUDED.lease_fence
+                    ),
                     updated_at = now()
-                RETURNING revision
+                RETURNING revision, lease_fence
                 """,
                 (
                     snapshot.session_state.id,
                     snapshot.version,
                     json.dumps(payload, ensure_ascii=False),
+                    lease_fence,
                 ),
             ).fetchone()
         elif expected_revision == 0:
             row = self._execute(
                 """
                 INSERT INTO agentos_session_snapshots
-                    (session_id, version, revision, payload)
-                VALUES (%s, %s, 1, %s::jsonb)
+                    (session_id, version, revision, payload, lease_fence)
+                VALUES (%s, %s, 1, %s::jsonb, COALESCE(%s, 0))
                 ON CONFLICT (session_id) DO NOTHING
-                RETURNING revision
+                RETURNING revision, lease_fence
                 """,
                 (
                     snapshot.session_state.id,
                     snapshot.version,
                     json.dumps(payload, ensure_ascii=False),
+                    lease_fence,
                 ),
             ).fetchone()
         else:
@@ -355,15 +394,20 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
                     version = %s,
                     revision = revision + 1,
                     payload = %s::jsonb,
+                    lease_fence = GREATEST(lease_fence, COALESCE(%s, lease_fence)),
                     updated_at = now()
-                WHERE session_id = %s AND revision = %s
-                RETURNING revision
+                WHERE session_id = %s
+                  AND revision = %s
+                  AND COALESCE(%s, lease_fence) >= lease_fence
+                RETURNING revision, lease_fence
                 """,
                 (
                     snapshot.version,
                     json.dumps(payload, ensure_ascii=False),
+                    lease_fence,
                     snapshot.session_state.id,
                     expected_revision,
+                    lease_fence,
                 ),
             ).fetchone()
         if row is None:
@@ -371,7 +415,11 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
                 f"snapshot revision conflict: {snapshot.session_state.id}",
             )
         self._commit()
-        return SessionSnapshotRecord(snapshot=snapshot, revision=int(row[0]))
+        return SessionSnapshotRecord(
+            snapshot=snapshot,
+            revision=int(row[0]),
+            lease_fence=int(row[1]) if len(row) > 1 else 0,
+        )
 
     def _json_value(self, value: object) -> dict[str, object]:
         if isinstance(value, str):

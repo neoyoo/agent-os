@@ -14,7 +14,7 @@ from agentos.channels import (
     RedisSseEventBuffer,
     RedisSseTurnControlStore,
 )
-from agentos.compression import CompressionIndex
+from agentos.compression import CompressionIndex, CompressionRuntime
 from agentos.context import ContextRuntime
 from agentos.deployment import (
     BackendVerificationRecord,
@@ -33,6 +33,7 @@ from agentos.multi import (
 )
 from agentos.persistence import MemoryPersistence, PostgresSessionSnapshotPersistence
 from agentos.persistence.base import SessionSnapshot
+from agentos.policies import BudgetPolicy
 from agentos.probes import ReferenceLiveBackendProbePack
 from agentos.providers import FakeProvider
 from agentos.readiness import ProductionReadinessEvidenceBundle
@@ -364,20 +365,55 @@ class ReferenceSnapshotAgentFactory:
         session_id: str,
         snapshot: SessionSnapshot | None,
     ):
+        context = ContextRuntime(session_id=session_id)
         message_runtime = None
+        session_state = SessionState(id=session_id)
+        compression_index = CompressionIndex()
+        next_segment_number = 1
         if snapshot is not None:
+            context = ContextRuntime(
+                state=snapshot.context_state,
+                session_id=session_id,
+            )
             message_runtime = snapshot.message_runtime
-        builder = AgentBuilder().provider(FakeProvider([f"ok:{session_id}"]))
+            session_state = snapshot.session_state
+            compression_index = snapshot.compression_index
+            next_segment_number = snapshot.next_segment_number
+        builder = (
+            AgentBuilder()
+            .provider(FakeProvider([f"ok:{session_id}"]))
+            .context_runtime(context)
+        )
         if message_runtime is not None:
             builder = builder.message_runtime(message_runtime)
-        return builder.build()
+        agent = builder.build()
+        agent.query_loop.session_state = session_state
+        agent.query_loop.compression_runtime = CompressionRuntime(
+            context_runtime=context,
+            message_runtime=agent.query_loop.message_runtime,
+            budget_policy=BudgetPolicy(max_active_messages=1000),
+            index=compression_index,
+            session_id=session_id,
+            next_segment_number=next_segment_number,
+        )
+        return agent
 
     def create_snapshot(self, *, session_id: str, agent) -> SessionSnapshot:
+        compression_runtime = agent.query_loop.compression_runtime
         return SessionSnapshot(
-            session_state=SessionState(id=session_id),
-            context_state=ContextRuntime().state,
+            session_state=agent.query_loop.session_state or SessionState(id=session_id),
+            context_state=agent.query_loop.context_runtime.snapshot(),
             message_runtime=agent.query_loop.message_runtime,
-            compression_index=CompressionIndex(),
+            compression_index=(
+                compression_runtime.index
+                if compression_runtime is not None
+                else CompressionIndex()
+            ),
+            next_segment_number=(
+                compression_runtime.next_segment_number()
+                if compression_runtime is not None
+                else 1
+            ),
         )
 
 

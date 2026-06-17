@@ -666,6 +666,59 @@ def test_distributed_web_runtime_profile_readiness_metadata_names_adapters() -> 
     assert "live backend verification" in metadata["production_gaps"]
 
 
+def test_distributed_web_runtime_profile_reports_stream_resume_readiness_gaps() -> None:
+    profile = DistributedWebRuntimeProfile(
+        agent_factory=SnapshotFactory(),
+        lease_store=InMemorySessionLeaseStore(),
+        snapshot_persistence=MemoryPersistence(),
+        owner_id="node-a",
+    )
+
+    metadata = profile.readiness_metadata()
+    assert profile.readiness_checks is not None
+    check = profile.readiness_checks["distributed_stream_resume"]()
+
+    assert metadata["distributed_stream_resume_ready"] is False
+    assert metadata["stream_resume_gaps"] == [
+        "shared_sse_event_buffer",
+        "sse_turn_control",
+        "session_lease_heartbeat",
+    ]
+    assert check["status"] == "failed"
+    assert check["ok"] is False
+    assert check["missing_components"] == [
+        "shared_sse_event_buffer",
+        "sse_turn_control",
+        "session_lease_heartbeat",
+    ]
+
+
+def test_distributed_web_runtime_profile_marks_stream_resume_ready_when_shared_components_configured() -> None:
+    profile = DistributedWebRuntimeProfile(
+        agent_factory=SnapshotFactory(),
+        lease_store=InMemorySessionLeaseStore(),
+        snapshot_persistence=MemoryPersistence(),
+        owner_id="node-a",
+        sse_event_buffer=InMemorySseEventBuffer(),
+        sse_turn_control=InMemorySseTurnControlStore(),
+        session_lease_heartbeat_interval_seconds=2.0,
+    )
+
+    metadata = profile.readiness_metadata()
+    assert profile.readiness_checks is not None
+    check = profile.readiness_checks["distributed_stream_resume"]()
+
+    assert metadata["distributed_stream_resume_ready"] is True
+    assert metadata["stream_resume_gaps"] == []
+    assert check["status"] == "ok"
+    assert check["ok"] is True
+    assert check["configured_components"] == [
+        "shared_sse_event_buffer",
+        "sse_turn_control",
+        "session_lease_heartbeat",
+    ]
+
+
 def test_distributed_web_session_operations_profile_reports_missing_components() -> None:
     profile = DistributedWebSessionOperationsProfile(
         configured_components=(

@@ -427,7 +427,12 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
             session_provider=session_provider,
             auth_policy=auth_policy,
             rate_limiter=rate_limiter,
-            readiness_checks=readiness_checks,
+            readiness_checks={
+                **dict(readiness_checks or {}),
+                "distributed_stream_resume": (
+                    self._stream_resume_readiness_check
+                ),
+            },
             health_checks=health_checks,
             a2a_server=a2a_server,
             session_lifecycle="durable-session",
@@ -451,7 +456,6 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
         self.owner_id = owner_id
         self.lease_ttl_seconds = lease_ttl_seconds
         self.acquire_timeout_seconds = acquire_timeout_seconds
-
     def build_channel_app(self) -> object:
         """Build an ASGI app with distributed stream resume settings."""
 
@@ -485,6 +489,7 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
         """Return production-readiness metadata for the preset."""
 
         metadata = WebRuntimeProfile.readiness_metadata(self)
+        stream_resume_gaps = self._stream_resume_gaps()
         metadata.update(
             {
                 "session_provider": self.session_provider.__class__.__name__,
@@ -507,6 +512,8 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
                 "session_lease_heartbeat_interval_seconds": (
                     self.session_lease_heartbeat_interval_seconds
                 ),
+                "distributed_stream_resume_ready": not stream_resume_gaps,
+                "stream_resume_gaps": list(stream_resume_gaps),
                 "owner_id": self.owner_id,
                 "lease_ttl_seconds": self.lease_ttl_seconds,
                 "acquire_timeout_seconds": self.acquire_timeout_seconds,
@@ -520,6 +527,47 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
             },
         )
         return metadata
+
+    def _stream_resume_readiness_check(self) -> dict[str, object]:
+        gaps = self._stream_resume_gaps()
+        configured = [
+            component
+            for component in (
+                "shared_sse_event_buffer",
+                "sse_turn_control",
+                "session_lease_heartbeat",
+            )
+            if component not in gaps
+        ]
+        ok = not gaps
+        return {
+            "profile": self.__class__.__name__,
+            "check_name": "distributed_stream_resume",
+            "status": "ok" if ok else "failed",
+            "ok": ok,
+            "configured_components": configured,
+            "missing_components": list(gaps),
+            "sdk_owned": (
+                "SseEventBuffer wiring",
+                "SseTurnControlStore wiring",
+                "session lease heartbeat wiring",
+            ),
+            "deployment_owned": (
+                "shared stream backend deployment",
+                "turn-control backend deployment",
+                "heartbeat interval policy",
+            ),
+        }
+
+    def _stream_resume_gaps(self) -> tuple[str, ...]:
+        gaps: list[str] = []
+        if self.sse_event_buffer is None:
+            gaps.append("shared_sse_event_buffer")
+        if self.sse_turn_control is None:
+            gaps.append("sse_turn_control")
+        if self.session_lease_heartbeat_interval_seconds is None:
+            gaps.append("session_lease_heartbeat")
+        return tuple(gaps)
 
 
 @dataclass(slots=True)

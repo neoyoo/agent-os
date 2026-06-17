@@ -25,6 +25,7 @@ class SessionLease:
     owner_id: str
     token: str
     expires_at: float | None = None
+    fence: int = 0
 
 
 class SessionLeaseStore(Protocol):
@@ -58,6 +59,7 @@ class InMemorySessionLeaseStore:
 
         self._leases: dict[str, SessionLease] = {}
         self._lease_ttls: dict[str, float] = {}
+        self._lease_fences: dict[str, int] = {}
         self._lock = RLock()
 
     def acquire(
@@ -79,11 +81,14 @@ class InMemorySessionLeaseStore:
             with self._lock:
                 self._drop_expired_locked(session_id)
                 if session_id not in self._leases:
+                    fence = self._lease_fences.get(session_id, 0) + 1
+                    self._lease_fences[session_id] = fence
                     lease = SessionLease(
                         session_id=session_id,
                         owner_id=owner_id,
                         token=uuid4().hex,
                         expires_at=time.monotonic() + ttl_seconds,
+                        fence=fence,
                     )
                     self._leases[session_id] = lease
                     self._lease_ttls[session_id] = ttl_seconds
@@ -124,6 +129,7 @@ class InMemorySessionLeaseStore:
                 owner_id=current.owner_id,
                 token=current.token,
                 expires_at=time.monotonic() + ttl_seconds,
+                fence=current.fence,
             )
             self._leases[lease.session_id] = refreshed
             return refreshed
@@ -223,11 +229,13 @@ return 1
         )
         while True:
             token = uuid4().hex
+            fence = self._redis_incr(self._fence_key(session_id))
             expires_at = time.monotonic() + ttl_seconds
             payload = self._payload(
                 owner_id=owner_id,
                 token=token,
                 expires_at=expires_at,
+                fence=fence,
             )
             if self._redis_set(
                 self._key(session_id),
@@ -241,6 +249,7 @@ return 1
                     owner_id=owner_id,
                     token=token,
                     expires_at=expires_at,
+                    fence=fence,
                 )
             if wait_timeout_seconds == 0:
                 raise SessionLeaseError(f"session is locked: {session_id}")
@@ -276,6 +285,7 @@ return 1
             owner_id=lease.owner_id,
             token=lease.token,
             expires_at=expires_at,
+            fence=lease.fence,
         )
         if not self._redis_eval(
             self._REFRESH_IF_TOKEN_SCRIPT,
@@ -293,6 +303,7 @@ return 1
             owner_id=lease.owner_id,
             token=lease.token,
             expires_at=expires_at,
+            fence=lease.fence,
         )
 
     def ensure_owned(self, lease: SessionLease) -> None:
@@ -307,12 +318,23 @@ return 1
     def _key(self, session_id: str) -> str:
         return f"{self._key_prefix}:session:lease:{session_id}"
 
-    def _payload(self, *, owner_id: str, token: str, expires_at: float) -> str:
+    def _fence_key(self, session_id: str) -> str:
+        return f"{self._key_prefix}:session:lease:fence:{session_id}"
+
+    def _payload(
+        self,
+        *,
+        owner_id: str,
+        token: str,
+        expires_at: float,
+        fence: int,
+    ) -> str:
         return json.dumps(
             {
                 "owner_id": owner_id,
                 "token": token,
                 "expires_at": expires_at,
+                "fence": fence,
             },
             ensure_ascii=False,
             allow_nan=False,
@@ -363,6 +385,15 @@ return 1
         except Exception as error:
             raise BackendUnavailableError("Redis backend unavailable") from error
 
+    def _redis_incr(self, key: str) -> int:
+        incr_method = getattr(self._client, "incr", None)
+        if not callable(incr_method):
+            raise BackendUnavailableError("Redis backend unavailable")
+        try:
+            return int(incr_method(key))
+        except Exception as error:
+            raise BackendUnavailableError("Redis backend unavailable") from error
+
     def _redis_eval(
         self,
         script: str,
@@ -406,6 +437,23 @@ class CompareAndSaveSessionPersistence(SessionPersistence, Protocol):
         expected_revision: int,
     ) -> SessionSnapshotRecord:
         """Save snapshot only when backend revision is unchanged."""
+
+
+class LeaseFencedSessionPersistence(SessionPersistence, Protocol):
+    """Optional persistence capability for lease-fenced snapshot writes."""
+
+    def load_record(self, session_id: str) -> SessionSnapshotRecord:
+        """Load a snapshot and its backend mutation revision."""
+
+    def save_if_lease_owned(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+        lease: SessionLease,
+        lease_store: SessionLeaseStore,
+    ) -> SessionSnapshotRecord:
+        """Atomically save only while the supplied lease still owns the session."""
 
 
 class DurableAgentSessionProvider:
@@ -478,8 +526,7 @@ class DurableAgentSessionProvider:
                 session_id=session_id,
                 agent=agent,
             )
-            self._ensure_lease_owned(lease)
-            self._save_snapshot(snapshot, expected_revision=revision)
+            self._save_snapshot(snapshot, expected_revision=revision, lease=lease)
         finally:
             self._lease_store.release(lease)
 
@@ -555,7 +602,18 @@ class DurableAgentSessionProvider:
         snapshot: SessionSnapshot,
         *,
         expected_revision: int,
+        lease: SessionLease,
     ) -> None:
+        save_if_lease_owned = getattr(self._persistence, "save_if_lease_owned", None)
+        if callable(save_if_lease_owned):
+            save_if_lease_owned(
+                snapshot,
+                expected_revision=expected_revision,
+                lease=lease,
+                lease_store=self._lease_store,
+            )
+            return
+        self._ensure_lease_owned(lease)
         save_if_unchanged = getattr(self._persistence, "save_if_unchanged", None)
         if callable(save_if_unchanged):
             save_if_unchanged(snapshot, expected_revision=expected_revision)
