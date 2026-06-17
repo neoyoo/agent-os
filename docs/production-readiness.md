@@ -670,8 +670,11 @@ Production notes:
   limits by peer id, operation, task id, and resource context. Denied calls
   return the SDK-owned A2A `-32029` `rate limit exceeded` error via
   `A2ARateLimitError` without exposing bearer tokens, headers, or internal
-  limiter keys. Distributed/global quota storage, gateway enforcement,
-  billing tiers, and commercial entitlement policy remain deployment-owned.
+  limiter keys. For public exposure, production A2A reference services should pass
+  `A2AOperationServer(rate_limit_policy=PeerKeyA2AOperationRateLimitPolicy(...))`
+  when they expose public operations. Distributed/global quota storage, gateway enforcement,
+  billing tiers, and commercial entitlement policy remain
+  deployment-owned.
 - Use the A2A Agent Card and `A2AConformanceHarness` as local compatibility
   surfaces, and use `A2AExternalConformanceReportImporter` when CI has already
   run an external conformance suite and needs to attach the result to
@@ -753,6 +756,11 @@ Production notes:
   `team_read_messages`, and `team_delete` as LLM-callable operations.
 - `TeamWorkerSessionProvider` lets `agent_create` register an independent
   worker session before storing the team member.
+- In production profiles, agent_create must be paired with an explicit worker
+  capability allow-list such as
+  `TeamWorkerPermissionPolicy(allowed_capabilities=frozenset({"research"}))`
+  and worker tool routers should attach `WorkspaceToolSandboxPolicy` before
+  external handlers run.
 - `TeamWorkerRunner` can process queued team-message deliveries and run worker
   continuation turns through an app-provided worker agent resolver. It can also
   use `TeamWorkerRetryPolicy` and a `TeamWorkerRetryStore` to avoid hot-looping
@@ -788,7 +796,9 @@ Production notes:
   cancellation intent must survive restarts or be visible across nodes.
 - Use `TeamWorkerPermissionPolicy` with `InMemoryTeamWorkerSessionProvider` to
   reject worker workspaces that broaden scope, escape the team workspace root,
-  or request capabilities outside a configured allow-list.
+  or request capabilities outside a configured allow-list. Production worker
+  session providers should use `TeamWorkerPermissionPolicy(allowed_capabilities=...)`
+  rather than accepting arbitrary capabilities from `agent_create`.
 - Use `WorkspaceToolSandboxPolicy` with `ToolPathSandboxRule` in the worker
   `ToolCallRouter` to reject workspace path escapes and unauthorized tool
   capabilities before external handlers run. OS/container sandboxing remains

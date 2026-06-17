@@ -14,6 +14,8 @@ from agentos.multi.team import (
     TeamMembershipError,
     TeamRuntime,
     TeamTools,
+    TeamWorkerPermissionError,
+    TeamWorkerPermissionPolicy,
 )
 
 
@@ -159,6 +161,41 @@ def test_team_tools_agent_create_returns_generated_worker_session_id() -> None:
     )
 
     assert member["session_id"] == "session_for_worker"
+
+
+def test_team_tools_agent_create_honors_worker_capability_allowlist() -> None:
+    session_provider = InMemoryTeamWorkerSessionProvider(
+        permission_policy=TeamWorkerPermissionPolicy(
+            allowed_capabilities=frozenset({"research"}),
+        ),
+    )
+    runtime = TeamRuntime(
+        store=InMemoryTeamStore(),
+        message_queue=AgentInbox(),
+        worker_session_provider=session_provider,
+        clock=lambda: 10.0,
+        id_factory=lambda prefix: f"{prefix}_1",
+    )
+    leader_tools = register_tools(runtime, "leader")
+    leader_tools.get("team_create").handler(
+        {
+            "team_id": "team_1",
+            "name": "Research Team",
+            "description": "Finds evidence.",
+        },
+    )
+
+    with pytest.raises(TeamWorkerPermissionError, match="capabilities not allowed"):
+        leader_tools.get("agent_create").handler(
+            {
+                "team_id": "team_1",
+                "agent_id": "worker",
+                "capabilities": ["research", "admin"],
+            },
+        )
+
+    assert runtime.store.get_member("team_1", "worker") is None
+    assert session_provider.get_session("team_1", "worker") is None
 
 
 def test_team_tools_say_ignores_spoofed_sender() -> None:

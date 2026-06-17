@@ -169,21 +169,21 @@ The agent-os SDK lives at the project root. Key paths:
 
 ```text
 src/agentos/
-├── runtime/          -> Agent, QueryLoop, AsyncQueryLoop, ProviderRequestBuilder, RuntimeProfile
-├── providers/        -> Provider protocol, Anthropic/OpenAI adapters, typed messages
-├── context/          -> ContextRuntime, ContextRenderer, WorkingState, Chapters
-├── messages/         -> MessageRuntime, Message, MessageRef
-├── capabilities/     -> ToolCallRouter, ToolRegistry, RegisteredTool, WorkspaceToolSandboxPolicy, MCP adapters
-├── compression/      -> CompressionRuntime, RuleBasedCompressor, LlmCompressor
-├── hooks/            -> HookManager, HookRegistry, lifecycle hook points
-├── channels/         -> AsgiAgentApp, HttpAgentChannel, durable sessions, internal A2A bridge
-├── multi/            -> AgentCoordinator, TeamRuntime, PlannerRuntime, PlannerTools, task stores, queues
-├── memory/           -> MemoryRuntime, HotSessionStore, DurableSessionStore, Redis/Postgres
-├── persistence/      -> SessionSnapshot, SessionPersistence, SQLite/FileSystem/Memory
-├── observability/    -> TraceContext, W3C propagation, EventRecord
-├── workspace.py      -> WorkspaceHandle, WorkspacePolicy, WorkspaceProvider
-├── context_protocol.py -> built-in context tools
-└── builder.py        -> AgentBuilder (recommended entry point)
++-- runtime/          -> Agent, QueryLoop, AsyncQueryLoop, ProviderRequestBuilder, RuntimeProfile
++-- providers/        -> Provider protocol, Anthropic/OpenAI adapters, typed messages
++-- context/          -> ContextRuntime, ContextRenderer, WorkingState, Chapters
++-- messages/         -> MessageRuntime, Message, MessageRef
++-- capabilities/     -> ToolCallRouter, ToolRegistry, RegisteredTool, WorkspaceToolSandboxPolicy, MCP adapters
++-- compression/      -> CompressionRuntime, RuleBasedCompressor, LlmCompressor
++-- hooks/            -> HookManager, HookRegistry, lifecycle hook points
++-- channels/         -> AsgiAgentApp, HttpAgentChannel, durable sessions, internal A2A bridge
++-- multi/            -> AgentCoordinator, TeamRuntime, PlannerRuntime, PlannerTools, task stores, queues
++-- memory/           -> MemoryRuntime, HotSessionStore, DurableSessionStore, Redis/Postgres
++-- persistence/      -> SessionSnapshot, SessionPersistence, SQLite/FileSystem/Memory
++-- observability/    -> TraceContext, W3C propagation, EventRecord
++-- workspace.py      -> WorkspaceHandle, WorkspacePolicy, WorkspaceProvider
++-- context_protocol.py -> built-in context tools
++-- builder.py        -> AgentBuilder (recommended entry point)
 ```
 
 ## Module Dependency Graph
@@ -226,7 +226,7 @@ Use `AgentCoordinator` for orchestration. Inject protocol boundaries when a depl
 | `ReferenceStatePlaneStack` | `ReferenceStatePlaneStackProfile`, `REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS`, reference state plane, readiness source aggregation, component identity evidence, `ProductionReadinessEvidenceBundle`, and JSON-safe audit evidence over `NacosAgentRegistryAdapter`, `RedisAgentMessageQueue`, `PostgresTaskStore`, `PostgresPlanStore`, `WorkerProcessSupervisor`, `LocalSubprocessWorkerSupervisor`, `SessionSnapshotPersistence`, `PostgresSessionSnapshotPersistence`, `AgentServiceReference`, and `DistributedWebRuntimeProfile`; does not create backend clients | credentials, migrations, CI matrix execution, alert routing and runbooks remain deployment-owned |
 | `TeamWorkerRetryStore` | `InMemoryTeamWorkerRetryStore` | `PostgresTeamWorkerRetryStore` |
 | `TeamWorkerCancellationStore` | `InMemoryTeamWorkerCancellationStore` | `PostgresTeamWorkerCancellationStore` |
-| `TeamWorkerPermissionPolicy` | workspace/capability downgrade checks | app/profile worker policy |
+| `TeamWorkerPermissionPolicy(allowed_capabilities=...)` | workspace/capability downgrade checks | app/profile worker policy |
 | `WorkspaceToolSandboxPolicy` | path/capability pre-execution checks | app/profile OS/container sandbox |
 | `TeamUiStreamStore` | `InMemoryTeamUiStreamStore` | `PostgresTeamUiStreamStore` |
 | `PlanStore` | `InMemoryPlanStore` | `PostgresPlanStore` |
