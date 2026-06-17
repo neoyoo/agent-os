@@ -17,6 +17,21 @@ is not a replacement for this policy document: this document explains
 compatibility rules, while the JSON file gives review tooling a concrete
 signature baseline.
 
+## Governed Stable Namespaces
+
+Every namespace listed here must be represented in
+`docs/public-api-inventory.json`:
+
+- `agentos`
+- `agentos.channels`
+- `agentos.multi`
+- `agentos.runtime`
+- `agentos.workspace`
+- `agentos.registry`
+- `agentos.deployment`
+- `agentos.readiness`
+- `agentos.release`
+
 ## Stable API
 
 Stable API should be safe for production specs to depend on with normal

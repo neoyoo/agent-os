@@ -1,6 +1,7 @@
 ﻿import importlib
 import inspect
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -68,9 +69,14 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
     assert agentos_exports["CompareAndSavePlanStore"]["stability"] == "stable"
     assert agentos_exports["PlanStoreRecord"]["stability"] == "stable"
     assert agentos_exports["PlanConflictError"]["stability"] == "stable"
-    assert agentos_exports["A2AOperationServer"]["stability"] == "experimental"
-    assert agentos_exports["NacosAgentRegistryAdapter"]["stability"] == "experimental"
-    assert agentos_exports["ReferenceStatePlaneStack"]["stability"] == "experimental"
+    assert modules["agentos.channels"]["exports"]["A2AOperationServer"][
+        "stability"
+    ] == "experimental"
+    assert modules["agentos.registry"]["exports"]["NacosAgentRegistryAdapter"][
+        "stability"
+    ] == "experimental"
+    state_plane = importlib.import_module("agentos.state_plane")
+    assert hasattr(state_plane, "ReferenceStatePlaneStack")
 
     for module_name, module_payload in modules.items():
         module = importlib.import_module(module_name)
@@ -91,6 +97,33 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
                 )
             else:
                 assert export_payload["signature"] == "non-callable"
+
+
+def test_root_public_api_inventory_only_contains_stable_exports() -> None:
+    inventory = _load_public_api_inventory()
+    root_exports = inventory["modules"]["agentos"]["exports"]
+
+    experimental_root_exports = sorted(
+        name
+        for name, payload in root_exports.items()
+        if payload["stability"] == "experimental"
+    )
+
+    assert experimental_root_exports == []
+
+
+def test_documented_stable_namespaces_are_governed() -> None:
+    api_stability = (PROJECT_ROOT / "docs" / "api-stability.md").read_text(
+        encoding="utf-8",
+    )
+    inventory = _load_public_api_inventory()
+
+    documented_namespaces = set(
+        re.findall(r"- `(agentos(?:\.[a-z_]+)*)`", api_stability),
+    )
+
+    assert documented_namespaces
+    assert documented_namespaces <= set(inventory["modules"])
 
 
 def test_public_api_inventory_records_protocol_method_contracts() -> None:
@@ -137,6 +170,7 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert hasattr(runtime, "TurnNoticeProvider")
     for name in [
         "RuntimeProfile",
+        "RuntimeCompositionProfile",
         "ChannelRuntimeProfile",
         "DistributedRuntimeProfile",
         "DistributedWebSessionOperationsProfile",
@@ -1032,6 +1066,23 @@ def test_distributed_web_runtime_profile_public_api_exports() -> None:
     assert hasattr(agentos, "ProductionStatePlaneDeploymentProfile")
     assert hasattr(runtime, "WorkerProcessLifecycleDeploymentProfile")
     assert hasattr(agentos, "WorkerProcessLifecycleDeploymentProfile")
+
+
+def test_runtime_composition_profiles_do_not_advertise_agent_builder_contract() -> None:
+    agentos = importlib.import_module("agentos")
+    runtime = importlib.import_module("agentos.runtime")
+    inventory = _load_public_api_inventory()
+    runtime_exports = inventory["modules"]["agentos.runtime"]["exports"]
+
+    assert hasattr(runtime, "RuntimeCompositionProfile")
+    assert hasattr(agentos, "RuntimeCompositionProfile")
+    assert "build_agent" not in runtime_exports["RuntimeCompositionProfile"][
+        "methods"
+    ]
+    for name in ["DistributedAgentProfile", "DistributedTeamRuntimeProfile"]:
+        assert "methods" not in runtime_exports[name] or (
+            "build_agent" not in runtime_exports[name]["methods"]
+        )
 
 
 def test_agent_service_reference_public_api_exports() -> None:

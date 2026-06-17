@@ -4,524 +4,29 @@
   "modules": {
     "agentos": {
       "exports": {
-        "A2AAdapter": {
-          "signature": "(transport: 'A2ATransport | None' = None, *, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AAgentCapabilities": {
-          "signature": "(streaming: 'bool' = False, push_notifications: 'bool' = False, state_transition_history: 'bool' = False, extensions: 'tuple[A2AAgentExtension, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2AAgentCard": {
-          "signature": "(name: 'str', description: 'str', url: 'str' = '', version: 'str' = '', protocol_version: 'str' = '1.0', provider: 'A2AAgentProvider | None' = None, capabilities: 'A2AAgentCapabilities' = <factory>, skills: 'tuple[A2AAgentSkill, ...]' = (), preferred_transport: 'str | None' = None, supported_interfaces: 'tuple[A2AAgentInterface, ...]' = (), default_input_modes: 'tuple[str, ...]' = ('text/plain',), default_output_modes: 'tuple[str, ...]' = ('text/plain',), security_schemes: 'Mapping[str, Mapping[str, object]]' = <factory>, security: 'tuple[Mapping[str, tuple[str, ...]], ...]' = (), signatures: 'tuple[A2ACardSignature, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2AAgentExtension": {
-          "signature": "(uri: 'str', description: 'str | None' = None, required: 'bool' = False, params: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AAgentInterface": {
-          "signature": "(*, protocol_binding: 'str | None' = None, url: 'str', protocol_version: 'str' = '1.0', tenant: 'str | None' = None, transport: 'str | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AAgentProvider": {
-          "signature": "(organization: 'str', url: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2AAgentSkill": {
-          "signature": "(id: 'str', name: 'str', description: 'str', tags: 'tuple[str, ...]' = (), examples: 'tuple[str, ...]' = (), input_modes: 'tuple[str, ...]' = (), output_modes: 'tuple[str, ...]' = (), security: 'tuple[Mapping[str, tuple[str, ...]], ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2AArtifact": {
-          "signature": "(artifact_id: 'str', parts: 'tuple[A2AMessagePart, ...]', name: 'str | None' = None, description: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AAuthProvider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "headers_for_card": "(self, card: 'A2AAgentCard') -> 'Mapping[str, str]'"
-          },
-          "stability": "experimental"
-        },
-        "A2ABearerCredential": {
-          "signature": "(key_id: 'str', peer_id: 'str', token: 'str', not_before: 'float | None' = None, not_after: 'float | None' = None, revoked: 'bool' = False) -> None",
-          "stability": "experimental"
-        },
-        "A2ACardResolver": {
-          "signature": "(*, cards: 'Sequence[A2AAgentCard]' = (), well_known_urls: 'Mapping[str, str] | None' = None, transport: 'A2ATransport | None' = None, card_verifier: 'A2ACardVerifier | None' = None, timeout_seconds: 'float' = 5, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2ACardSignature": {
-          "signature": "(protected: 'str', signature: 'str', header: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2ACardSigner": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "sign": "(self, card: 'A2AAgentCard') -> 'A2AAgentCard'"
-          },
-          "stability": "experimental"
-        },
-        "A2ACardTrustError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2ACardTrustStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "secret_for_key_id": "(self, key_id: 'str') -> 'bytes | None'"
-          },
-          "stability": "experimental"
-        },
-        "A2ACardVerifier": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "verify": "(self, card: 'A2AAgentCard') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AConformanceCheck": {
-          "signature": "(check_id: 'str', title: 'str', description: 'str' = '') -> None",
-          "stability": "experimental"
-        },
-        "A2AConformanceFinding": {
-          "signature": "(check_id: 'str', title: 'str', passed: 'bool', detail: 'str' = '', evidence: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AConformanceHarness": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "A2AConformanceReport": {
-          "signature": "(findings: 'tuple[A2AConformanceFinding, ...]', suite: 'str' = 'agentos-a2a-self-conformance', source: 'str' = 'sdk-self', version: 'str | None' = None, run_id: 'str | None' = None, target: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2ACredentialRotationError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2AEgressPolicyError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2AEgressUrlPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "validate_url": "(self, url: 'str') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AExtensionNegotiationError": {
-          "signature": "(missing_extensions: 'tuple[str, ...]', *, supported_extensions: 'tuple[str, ...]' = (), requested_extensions: 'tuple[str, ...]' = ()) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AExtensionNegotiationPolicy": {
-          "signature": "(*, local_extensions: 'tuple[A2AAgentExtension, ...]' = (), supported_extensions: 'tuple[str, ...]' = ()) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AExtensionNegotiationResult": {
-          "signature": "(requested_extensions: 'tuple[str, ...]', supported_extensions: 'tuple[str, ...]', accepted_extensions: 'tuple[str, ...]', unsupported_extensions: 'tuple[str, ...]', missing_required_extensions: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceCliRunner": {
-          "signature": "(timeout_seconds: 'float | None' = None, report_path: 'Path | str | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_limit: 'int' = 4000, stderr_limit: 'int' = 4000, env: 'Mapping[str, str] | None' = None, report_importer: 'A2AExternalConformanceReportImporter' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceExecutionProfile": {
-          "signature": "(report: 'A2AConformanceReport | None' = None, configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('external_suite_runner', 'target_endpoint', 'credential_policy', 'network_egress_policy', 'version_matrix', 'ci_artifact_retention', 'failure_alerting'), required_check_ids: 'tuple[str, ...]' = ('agent-card', 'message-send', 'message-stream', 'tasks-resubscribe', 'push-notification-config'), probe_name: 'str' = 'a2a_external_conformance_execution') -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceExecutionRecord": {
-          "signature": "(suite: 'str', target: 'str', command: 'tuple[str, ...]', exit_code: 'int', started_at: 'float | None' = None, ended_at: 'float | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_summary: 'str' = '', stderr_summary: 'str' = '', report: 'A2AConformanceReport | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceGateReport": {
-          "signature": "(record: 'A2AExternalConformanceExecutionRecord', required_check_ids: 'tuple[str, ...]' = ('agent-card', 'message-send', 'message-stream', 'tasks-resubscribe', 'push-notification-config'), required_components: 'tuple[str, ...]' = ('external_suite_runner', 'target_endpoint', 'credential_policy', 'network_egress_policy', 'version_matrix', 'ci_artifact_retention', 'failure_alerting'), configured_components: 'tuple[str, ...]' = (), missing_required_checks: 'tuple[str, ...]' = (), failed_required_checks: 'tuple[str, ...]' = (), missing_components: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceImportError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceInvocationGateReport": {
-          "signature": "(plan: 'A2AExternalConformanceInvocationPlan', required_components: 'tuple[str, ...]' = ('external_suite_runner', 'target_endpoint', 'credential_policy', 'network_egress_policy', 'version_matrix', 'ci_artifact_retention', 'failure_alerting'), configured_components: 'tuple[str, ...]' = (), missing_components: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceInvocationPlan": {
-          "signature": "(suite_id: 'str', target: 'str', command: 'tuple[str, ...]', suite_version: 'str | None' = None, credential_policy_ref: 'str | None' = None, network_egress_policy_ref: 'str | None' = None, version_matrix_ref: 'str | None' = None, artifact_retention_ref: 'str | None' = None, failure_alerting_ref: 'str | None' = None, required_check_ids: 'tuple[str, ...]' = ('agent-card', 'message-send', 'message-stream', 'tasks-resubscribe', 'push-notification-config'), required_components: 'tuple[str, ...]' = ('external_suite_runner', 'target_endpoint', 'credential_policy', 'network_egress_policy', 'version_matrix', 'ci_artifact_retention', 'failure_alerting'), metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceReportImporter": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "A2AExternalConformanceRunner": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "run": "(self, plan: 'A2AExternalConformanceInvocationPlan') -> 'A2AExternalConformanceExecutionRecord'"
-          },
-          "stability": "experimental"
-        },
-        "A2AInboundAuthError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2AInboundAuthPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "authorize": "(self, headers: 'Mapping[str, str]') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AJwtClaims": {
-          "signature": "(issuer: 'str', subject: 'str', audience: 'tuple[str, ...]', expires_at: 'float | None' = None, not_before: 'float | None' = None, issued_at: 'float | None' = None, authorized_party: 'str | None' = None, raw: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AJwtVerifier": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "verify": "(self, token: 'str') -> 'A2AJwtClaims'"
-          },
-          "stability": "experimental"
-        },
-        "A2AMessage": {
-          "signature": "(role: 'A2AMessageRole', parts: 'tuple[A2AMessagePart, ...]', message_id: 'str | None' = None, context_id: 'str | None' = None, task_id: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2AMessagePart": {
-          "signature": "(kind: 'A2AMessagePartKind', text: 'str | None' = None, raw: 'str | None' = None, url: 'str | None' = None, filename: 'str | None' = None, media_type: 'str | None' = None, data: 'Mapping[str, object] | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2AMessageStreamEvent": {
-          "signature": "(event: 'str | None', raw: 'Mapping[str, object]', task: 'A2ATask | None' = None, message: 'A2AMessage | None' = None, task_event: 'A2ATaskSubscriptionEvent | None' = None, artifact_event: 'A2ATaskArtifactUpdateEvent | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2AOidcDiscoveryError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2AOperationClient": {
-          "signature": "(transport: 'A2ATransport | None' = None, *, auth_provider: 'A2AAuthProvider | None' = None, protocol_version_policy: 'A2AProtocolVersionPolicy | None' = None, extension_negotiation_policy: 'A2AExtensionNegotiationPolicy | None' = None, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AOperationError": {
-          "signature": "(code: 'int', message: 'str', data: 'Mapping[str, object] | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2AOperationInboundAuthPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "authorize_operation": "(self, headers: 'Mapping[str, str]', *, operation: 'str') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AOperationRateLimitPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "check_operation": "(self, headers: 'Mapping[str, str]', *, operation: 'str', task_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AOperationRequest": {
-          "signature": "(method: 'str', params: 'Mapping[str, object]', request_id: 'str | int | None' = None, jsonrpc: 'str' = '2.0') -> None",
-          "stability": "experimental"
-        },
-        "A2AOperationResponse": {
-          "signature": "(request_id: 'str | int | None', task: 'A2ATask | None' = None, task_event: 'A2ATaskSubscriptionEvent | None' = None, error: 'A2AOperationError | None' = None, jsonrpc: 'str' = '2.0') -> None",
-          "stability": "experimental"
-        },
-        "A2AOperationServer": {
-          "signature": "(runner: 'A2AOperationRunner', *, task_lifecycle: 'A2ATaskLifecycleRunner | None' = None, push_notification_configs: 'A2APushNotificationConfigStore | None' = None, inbound_auth_policy: 'A2AInboundAuthPolicy | None' = None, rate_limit_policy: 'A2AOperationRateLimitPolicy | None' = None, supported_protocol_versions: 'tuple[str, ...]' = ('0.3', '1.0'), protocol_version_policy: 'A2AProtocolVersionPolicy | None' = None, extension_negotiation_policy: 'A2AExtensionNegotiationPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2APeerIdResolver": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "peer_id_for_headers": "(self, headers: 'Mapping[str, str]') -> 'str | None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AProtocolVersionPolicy": {
-          "signature": "(*, supported_versions: 'tuple[str, ...]' = ('0.3', '1.0'), default_client_version: 'str' = '1.0') -> 'None'",
-          "stability": "experimental"
-        },
-        "A2APushNotificationAuthentication": {
-          "signature": "(schemes: 'tuple[str, ...]', credentials: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationConfig": {
-          "signature": "(url: 'str', authentication: 'A2APushNotificationAuthentication | None' = None, config_id: 'str | None' = None, token: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationConfigError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "A2APushNotificationConfigStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "create": "(self, task_id: 'str', config: 'A2APushNotificationConfig') -> 'A2APushNotificationConfig'",
-            "delete": "(self, task_id: 'str', config_id: 'str') -> 'bool'",
-            "get": "(self, task_id: 'str', config_id: 'str') -> 'A2APushNotificationConfig | None'",
-            "list": "(self, task_id: 'str') -> 'tuple[A2APushNotificationConfig, ...]'"
-          },
-          "stability": "experimental"
-        },
-        "A2APushNotificationDaemon": {
-          "signature": "(*, worker: 'A2APushNotificationDeliveryWorker', worker_id: 'str' = 'a2a-push-worker', poll_interval_seconds: 'float' = 0.5, batch_limit: 'int' = 10, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDaemonError": {
-          "signature": "(worker_id: 'str', error: 'str', raised_at: 'float') -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDaemonState": {
-          "signature": "(status: 'A2APushNotificationDaemonStatus', worker_id: 'str', poll_interval_seconds: 'float', batch_limit: 'int', iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_results: 'tuple[A2APushNotificationDeliveryRecord, ...]' = (), errors: 'tuple[A2APushNotificationDaemonError, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDaemonStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDelivery": {
-          "signature": "(config_id: 'str | None', url: 'str', status: 'A2APushNotificationDeliveryStatus', response: 'Mapping[str, object] | None' = None, error: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDeliveryRecord": {
-          "signature": "(delivery_id: 'str', task_id: 'str', config: 'A2APushNotificationConfig', event: 'A2ATaskSubscriptionEvent', created_at: 'float', next_run_at: 'float', status: 'A2APushNotificationDeliveryRecordStatus' = 'queued', attempts: 'int' = 0, last_error: 'str | None' = None, response: 'Mapping[str, object] | None' = None, worker_id: 'str | None' = None, lease_expires_at: 'float | None' = None, delivered_at: 'float | None' = None, dead_lettered_at: 'float | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDeliveryRecordStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDeliveryStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "claim_due": "(self, *, now: 'float', worker_id: 'str', lease_seconds: 'float', limit: 'int') -> 'tuple[A2APushNotificationDeliveryRecord, ...]'",
-            "enqueue": "(self, record: 'A2APushNotificationDeliveryRecord') -> 'A2APushNotificationDeliveryRecord'",
-            "get": "(self, delivery_id: 'str') -> 'A2APushNotificationDeliveryRecord | None'",
-            "list_records": "(self, *, status: 'A2APushNotificationDeliveryRecordStatus | None' = None) -> 'tuple[A2APushNotificationDeliveryRecord, ...]'",
-            "mark_delivered": "(self, delivery_id: 'str', *, delivery: 'A2APushNotificationDelivery', now: 'float') -> 'A2APushNotificationDeliveryRecord | None'",
-            "record_failure": "(self, delivery_id: 'str', *, delivery: 'A2APushNotificationDelivery', now: 'float', retry_policy: 'A2APushNotificationRetryPolicy') -> 'A2APushNotificationDeliveryRecord | None'"
-          },
-          "stability": "experimental"
-        },
-        "A2APushNotificationDeliveryWorker": {
-          "signature": "(store: 'A2APushNotificationDeliveryStore', dispatcher: 'A2APushNotificationDispatcher', *, retry_policy: 'A2APushNotificationRetryPolicy | None' = None, lease_seconds: 'float' = 30.0) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDeploymentProfile": {
-          "signature": "(daemon: 'object', policy: 'A2APushNotificationHealthPolicy' = <factory>, probe_name: 'str' = 'a2a_push_worker', ready_statuses: 'tuple[A2APushNotificationHealthStatus, ...]' = ('healthy',)) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationDispatcher": {
-          "signature": "(transport: 'A2ATransport | None' = None, *, timeout_seconds: 'float' = 10, url_policy: 'A2APushNotificationUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2APushNotificationHealthPolicy": {
-          "signature": "(max_stale_seconds: 'float' = 60.0, error_window_seconds: 'float' = 300.0, degraded_error_threshold: 'int' = 1, unhealthy_error_threshold: 'int' = 3) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationHealthReport": {
-          "signature": "(status: 'A2APushNotificationHealthStatus', reason: 'str', worker_id: 'str', daemon_status: 'A2APushNotificationDaemonStatus', iterations: 'int', last_run_at: 'float | None' = None, seconds_since_last_run: 'float | None' = None, recent_error_count: 'int' = 0, last_error: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationHealthStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "A2APushNotificationRetryPolicy": {
-          "signature": "(max_attempts: 'int' = 1, backoff_seconds: 'float' = 0.0, backoff_multiplier: 'float' = 1.0) -> None",
-          "stability": "experimental"
-        },
-        "A2APushNotificationUrlPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "validate": "(self, config: 'A2APushNotificationConfig') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2ARateLimitError": {
-          "signature": "(retry_after_seconds: 'int' = 0) -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AResourceInboundAuthPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "authorize_resource": "(self, headers: 'Mapping[str, str]', *, operation: 'str', task_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "A2AServerAdapter": {
-          "signature": "(runner: 'A2ATaskRunner') -> 'None'",
-          "stability": "experimental"
-        },
-        "A2AStreamLifecycleDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('reconnect_policy', 'durable_cursor_store', 'fanout_broker', 'backpressure_policy', 'stream_supervision'), probe_name: 'str' = 'a2a_stream_lifecycle') -> None",
-          "stability": "experimental"
-        },
-        "A2ATask": {
-          "signature": "(task_id: 'str', context_id: 'str | None', state: 'A2ATaskState', messages: 'tuple[A2AMessage, ...]' = (), artifacts: 'tuple[A2AArtifact, ...]' = (), metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2ATaskArtifactUpdateEvent": {
-          "signature": "(event_id: 'str', task_id: 'str', artifact: 'A2AArtifact', context_id: 'str | None' = None, append: 'bool' = False, last_chunk: 'bool' = False, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "A2ATaskSubscriptionEvent": {
-          "signature": "(event_id: 'str', task: 'A2ATask', final: 'bool' = False) -> None",
-          "stability": "experimental"
-        },
-        "A2ATenantRbacRule": {
-          "signature": "(tenant_id: 'str', operations: 'tuple[str, ...]', roles: 'tuple[str, ...]' = (), scopes: 'tuple[str, ...]' = (), resources: 'tuple[tuple[str, str], ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "AGENT_SERVICE_REFERENCE_REQUIRED_COMPONENTS": {
-          "signature": "non-callable",
-          "stability": "experimental"
-        },
-        "AbandonableAgentSessionProvider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "abandon_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
-          },
-          "stability": "experimental"
-        },
         "Agent": {
           "signature": "(query_loop: 'QueryLoop | None' = None, query_loop_kwargs: 'dict[str, object] | None' = None) -> 'None'",
           "stability": "stable"
-        },
-        "AgentA2AOperationRunner": {
-          "signature": "(agent: 'Agent') -> 'None'",
-          "stability": "experimental"
         },
         "AgentBuilder": {
           "signature": "(_provider: 'Provider | None' = None, _tools: 'list[RegisteredTool] | None' = None, _context_runtime: 'ContextRuntime | None' = None, _message_runtime: 'MessageRuntime | None' = None, _context_renderer: 'ContextRenderer | None' = None, _compression_runtime: 'CompressionRuntime | None' = None, _event_bus: 'EventBus | None' = None, _tool_call_router: 'ToolCallRouter | None' = None, _tool_result_budget: 'ToolResultBudget | None' = None, _token_counter: 'TokenCounter | None' = None, _compression_requested: 'bool' = False, _compressor: 'Compressor | None' = None, _compression_context_window: 'int | None' = None, _compression_reserve_output_tokens: 'int' = 4096, _compression_retain_latest_tokens: 'int' = 8000, _compression_static_overhead_tokens: 'int' = 0, _compression_token_counter: 'TokenCounter | None' = None) -> None",
           "stability": "stable"
         },
-        "AgentCard": {
-          "signature": "(agent_id: 'str', name: 'str', description: 'str', capabilities: 'tuple[str, ...]', version: 'str' = '0.1.0', endpoint: 'str | None' = None, status: 'AgentStatus' = 'idle', lifecycle: 'AgentLifecycle' = 'persistent', max_concurrent_tasks: 'int' = 1) -> None",
-          "stability": "experimental"
-        },
-        "AgentCoordinator": {
-          "signature": "(*, registry: 'AgentRegistry', inbox: 'AgentMessageQueue | None' = None, task_table: 'TaskStore | None' = None, message_queue: 'AgentMessageQueue | None' = None, task_store: 'TaskStore | None' = None, spawn_executor: 'SpawnExecutor', subagent_factory: 'SubagentFactory', event_bus: 'EventBus | None' = None, continuation_trigger: 'ContinuationTrigger | None' = None, remote_task_executor: 'RemoteTaskSubmitter | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "AgentFormReadiness": {
-          "signature": "(form_id: 'str', name: 'str', overall_level: 'ReadinessLevel', summary: 'str', dimensions: 'Mapping[str, ReadinessDimension]', recommended_profile: 'str', required_app_glue: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "AgentInbox": {
-          "signature": "(max_pending_envelopes: 'int' = 100, event_bus: 'EventBus | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "AgentResolver": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "discover": "(self, capabilities: 'Sequence[str]', *, session_id: 'str | None' = None) -> 'list[AgentCard]'",
-            "resolve": "(self, agent_id: 'str', *, session_id: 'str | None' = None) -> 'AgentCard | None'",
-            "select": "(self, capabilities: 'Sequence[str]', *, session_id: 'str | None' = None) -> 'AgentCard | None'"
-          },
-          "stability": "experimental"
-        },
-        "AgentResult": {
-          "signature": "(content: 'str') -> None",
-          "stability": "experimental"
-        },
-        "AgentServiceReference": {
-          "signature": "(runtime_profile: 'ServiceRuntimeProfile', service_profile: 'AgentServiceReferenceProfile' = <factory>, distributed_session_profile: 'object | None' = None, state_plane_profile: 'object | None' = None, workspace_isolation_profile: 'object | None' = None, workspace_execution_backend: 'object | None' = None, auth_policy: 'object | None' = None, rate_limiter: 'object | None' = None, readiness_checks: 'Mapping[str, Callable[[], object]]' = <factory>, health_checks: 'Mapping[str, Callable[[], object]]' = <factory>, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "AgentServiceReferenceProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('asgi_agent_app', 'runtime_profile', 'session_provider', 'snapshot_persistence', 'workspace_execution_backend', 'auth_policy', 'rate_limiter', 'readiness_endpoint', 'health_endpoint', 'state_plane_profile', 'distributed_session_profile', 'workspace_isolation_profile', 'live_backend_verification'), probe_name: 'str' = 'agent_service_reference') -> None",
-          "stability": "experimental"
-        },
-        "AllowAllA2AInboundAuthPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
         "AllowAllChannelAuthPolicy": {
           "signature": "()",
           "stability": "stable"
-        },
-        "AllowAllPlannerToolAuthorizationPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "AllowAllTeamToolAuthorizationPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "AllowAllTeamUiAuthPolicy": {
-          "signature": "()",
-          "stability": "experimental"
         },
         "AsgiAgentApp": {
           "signature": "(*, sessions: 'AgentSessionProvider', auth_policy: 'ChannelAuthPolicy | None' = None, a2a_auth_policy: 'A2AInboundAuthPolicy | None' = None, a2a_server: 'A2AServerAdapter | None' = None, a2a_operations: 'A2AOperationServer | None' = None, max_body_bytes: 'int' = 1048576, readiness_checks: 'Mapping[str, Callable[[], object]] | None' = None, health_checks: 'Mapping[str, Callable[[], object]] | None' = None, rate_limiter: 'RateLimiter | None' = None, shutdown_handlers: 'list[Callable[[], object]] | None' = None, a2a_agent_card: 'A2AAgentCard | None' = None, sse_heartbeat_interval_seconds: 'float | None' = 15.0, sse_event_buffer: 'SseEventBuffer | None' = None, sse_resume_grace_seconds: 'float' = 30.0, sse_terminal_retention_seconds: 'float' = 60.0, sse_turn_control: 'SseTurnControlStore | None' = None, sse_turn_control_owner_id: 'str | None' = None, sse_turn_control_ttl_seconds: 'float' = 60.0, sse_turn_control_poll_interval_seconds: 'float | None' = None, session_lease_heartbeat_interval_seconds: 'float | None' = None, team_ui_stream: 'TeamUiStreamStore | None' = None, team_ui_auth_policy: 'TeamUiAuthPolicy | None' = None, team_ui_event_default_limit: 'int' = 256, team_ui_stream_poll_interval_seconds: 'float' = 1.0, team_ui_stream_idle_timeout_seconds: 'float | None' = 60.0, a2a_task_stream_poll_interval_seconds: 'float' = 1.0, a2a_task_stream_idle_timeout_seconds: 'float | None' = 60.0, expose_internal_errors: 'bool' = False) -> 'None'",
           "stability": "stable"
         },
-        "AssistantMessage": {
-          "signature": "(content: 'str' = '', tool_calls: 'tuple[ProviderToolCall, ...]' = (), thinking_content: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "AsyncAbandonableAgentSessionProvider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "async_abandon_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "AsyncAgentSessionProvider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "async_get_agent": "(self, session_id: 'str') -> 'Agent'",
-            "async_release_agent": "(self, session_id: 'str', agent: 'Agent') -> 'None'"
-          },
-          "stability": "experimental"
-        },
         "AsyncQueryLoop": {
           "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'object | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, retry_policy: 'RetryPolicy | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8) -> None",
           "stability": "stable"
         },
-        "BackendVerificationCliRunner": {
-          "signature": "(timeout_seconds: 'float | None' = None, report_path: 'Path | str | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_limit: 'int' = 4000, stderr_limit: 'int' = 4000, env: 'Mapping[str, str] | None' = None, report_importer: 'BackendVerificationReportImporter' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "BackendVerificationInvocationPlan": {
-          "signature": "(command: 'tuple[str, ...]', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "BackendVerificationRecord": {
-          "signature": "(backend_name: 'str', backend_kind: 'str', status: 'BackendVerificationStatus', checked_at: 'float', evidence_ref: 'str', target_ref: 'str | None' = None, error: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "BackendVerificationReportImportError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "BackendVerificationReportImporter": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "BackendVerificationRunner": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "run": "(self, plan: 'BackendVerificationInvocationPlan') -> 'DeploymentLiveBackendVerificationRunResult'"
-          },
-          "stability": "experimental"
-        },
-        "BackendVerificationStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
         "ChannelAuthContext": {
           "signature": "(operation: 'str', method: 'str', path: 'str', session_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> None",
           "stability": "stable"
-        },
-        "ChannelAuthError": {
-          "signature": "unavailable",
-          "stability": "experimental"
         },
         "ChannelAuthPolicy": {
           "signature": "(*args, **kwargs)",
@@ -530,18 +35,6 @@
           },
           "stability": "stable"
         },
-        "ChannelRuntimeProfile": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "build_agent": "(self, session_id: 'str | None' = None) -> 'Agent'",
-            "build_channel_app": "(self) -> 'object'"
-          },
-          "stability": "experimental"
-        },
-        "ClaimsTenantRbacA2AInboundAuthPolicy": {
-          "signature": "(claims_policy: 'object', rules: 'tuple[A2ATenantRbacRule, ...]', tenant_claim_names: 'tuple[str, ...]' = ('tenant_id', 'tenant', 'tenants'), role_claim_names: 'tuple[str, ...]' = ('roles', 'role'), scope_claim_names: 'tuple[str, ...]' = ('scope', 'scp', 'scopes')) -> None",
-          "stability": "experimental"
-        },
         "CompareAndSavePlanStore": {
           "signature": "(*args, **kwargs)",
           "methods": {
@@ -549,47 +42,6 @@
             "save_plan_if_unchanged": "(self, plan: 'PlanState', *, expected_revision: 'int') -> 'bool'"
           },
           "stability": "stable"
-        },
-        "CompressedSegmentPackage": {
-          "signature": "(segment: 'CompressedSegment', source_refs: 'Sequence[str]', recall_document: 'SegmentRecallDocument') -> 'None'",
-          "stability": "experimental"
-        },
-        "DefaultPlannerToolAuthorizationPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "DefaultTeamToolAuthorizationPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "DeploymentLiveBackendVerificationGateReport": {
-          "signature": "(required_backends: 'tuple[str, ...]', records: 'tuple[BackendVerificationRecord, ...]', missing_backends: 'tuple[str, ...]', failed_backends: 'tuple[str, ...]', skipped_backends: 'tuple[str, ...]', unknown_backends: 'tuple[str, ...]', accepted: 'bool', block_production_readiness: 'bool') -> None",
-          "stability": "experimental"
-        },
-        "DeploymentLiveBackendVerificationProfile": {
-          "signature": "(records: 'tuple[BackendVerificationRecord, ...]' = (), required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), probe_name: 'str' = 'deployment_live_backend_verification') -> None",
-          "stability": "experimental"
-        },
-        "DeploymentLiveBackendVerificationRunResult": {
-          "signature": "(command: 'tuple[str, ...]', exit_code: 'int', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), records: 'tuple[BackendVerificationRecord, ...]' = (), started_at: 'float | None' = None, ended_at: 'float | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_summary: 'str' = '', stderr_summary: 'str' = '', metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "DistributedAgentProfile": {
-          "signature": "(coordinator: 'object', resolver: 'object | None' = None, registry: 'object | None' = None, remote_task_executor: 'object | None' = None, readiness: 'Mapping[str, object]' = <factory>, name: 'str' = 'distributed-agent') -> None",
-          "stability": "experimental"
-        },
-        "DistributedRuntimeProfile": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "build_agent": "(self, session_id: 'str | None' = None) -> 'Agent'",
-            "build_channel_app": "(self) -> 'object'",
-            "readiness_checks": "(self) -> 'dict[str, object]'"
-          },
-          "stability": "experimental"
-        },
-        "DistributedTeamRuntimeProfile": {
-          "signature": "(store: 'object', message_queue: 'object', worker_session_provider: 'object', worker_agent_provider: 'object | None' = None, retry_policy: 'object | None' = None, retry_store: 'object | None' = None, cancellation_store: 'object | None' = None, ui_stream: 'object | None' = None, notice_store: 'object | None' = None, wakeup_trigger: 'object | None' = None, daemon_team_id: 'str | None' = None, daemon_poll_interval_seconds: 'float' = 0.5, clock: 'object | None' = None, id_factory: 'object | None' = None, readiness: 'Mapping[str, object]' = <factory>, name: 'str' = 'distributed-team') -> None",
-          "stability": "experimental"
         },
         "DistributedWebRuntimeProfile": {
           "signature": "(*, agent_factory: 'object', lease_store: 'object', snapshot_persistence: 'object', owner_id: 'str' = 'agentos-web-node', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0, auth_policy: 'object | None' = None, rate_limiter: 'object | None' = None, readiness_checks: 'Mapping[str, Callable[[], object]] | None' = None, health_checks: 'Mapping[str, Callable[[], object]] | None' = None, a2a_server: 'object | None' = None, sse_event_buffer: 'object | None' = None, sse_turn_control: 'object | None' = None, sse_turn_control_owner_id: 'str | None' = None, sse_turn_control_ttl_seconds: 'float' = 60.0, sse_turn_control_poll_interval_seconds: 'float | None' = None, session_lease_heartbeat_interval_seconds: 'float | None' = None, workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'distributed-web') -> 'None'",
@@ -603,97 +55,9 @@
           "signature": "(*, agent_factory: 'SnapshotAgentFactory', persistence: 'SessionPersistence', lease_store: 'SessionLeaseStore', owner_id: 'str', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0) -> 'None'",
           "stability": "stable"
         },
-        "EvidenceHandle": {
-          "signature": "(evidence_id: 'str', kind: 'EvidenceKind', summary: 'str', uri: 'str | None' = None, producer_agent_id: 'str | None' = None, metadata: 'Mapping[str, str]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "HmacA2ACardSigner": {
-          "signature": "(*, key_id: 'str', secret: 'bytes | str') -> 'None'",
-          "stability": "experimental"
-        },
-        "HmacA2ACardVerifier": {
-          "signature": "(trust_store: 'A2ACardTrustStore') -> 'None'",
-          "stability": "experimental"
-        },
-        "HmacA2AJwtVerifier": {
-          "signature": "(secret: 'bytes | str') -> None",
-          "stability": "experimental"
-        },
-        "HookManager": {
-          "signature": "(registry: agentos.hooks.registry.HookRegistry, failures: list[agentos.hooks.base.HookExecutionFailure] = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "HostAllowListA2AEgressUrlPolicy": {
-          "signature": "(*, allowed_hosts: 'Sequence[str]' = (), allowed_domain_suffixes: 'Sequence[str]' = (), base_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "HostAllowListA2APushNotificationUrlPolicy": {
-          "signature": "(*, allowed_hosts: 'tuple[str, ...]' = (), allowed_domain_suffixes: 'tuple[str, ...]' = (), base_policy: 'A2APushNotificationUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "HttpAgentChannel": {
-          "signature": "(sessions: 'AgentSessionProvider', *, expose_internal_errors: 'bool' = False) -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryA2APushNotificationConfigStore": {
-          "signature": "(*, url_policy: 'A2APushNotificationUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryA2APushNotificationDeliveryStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryAgentSessionProvider": {
-          "signature": "(agent_factory: 'Callable[[str], Agent]') -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryPlanClaimStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
         "InMemoryPlanStore": {
           "signature": "() -> 'None'",
           "stability": "stable"
-        },
-        "InMemoryRegistry": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemorySessionLeaseStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryTeamStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryTeamUiStreamStore": {
-          "signature": "(max_events_per_team: 'int' = 512) -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryTeamWorkerCancellationStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryTeamWorkerRetryStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryTeamWorkerSessionProvider": {
-          "signature": "(id_factory: 'object | None' = None, permission_policy: 'TeamWorkerPermissionPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "JwksA2ACardTrustStore": {
-          "signature": "(*, jwks_urls: 'Sequence[str]', allowed_key_ids: 'Sequence[str]' = (), transport: 'object | None' = None, timeout_seconds: 'float' = 5, cache_ttl_seconds: 'float' = 300, clock: 'object | None' = None, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "JwksA2AJwtVerifier": {
-          "signature": "(*, jwks_urls: 'Sequence[str]' = (), discovery_provider: 'object | None' = None, allowed_key_ids: 'Sequence[str]' = (), transport: 'object | None' = None, timeout_seconds: 'float' = 5, cache_ttl_seconds: 'float' = 300, clock: 'object | None' = None, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS": {
-          "signature": "non-callable",
-          "stability": "experimental"
         },
         "LeaseFencedSessionPersistence": {
           "signature": "(*args, **kwargs)",
@@ -711,10 +75,6 @@
           "signature": "(agent_builder: 'AgentBuilderLike', loop_mode: \"Literal['sync', 'async']\" = 'sync', workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'local') -> None",
           "stability": "stable"
         },
-        "LocalSubprocessWorkerSupervisor": {
-          "signature": "(*, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
         "LocalWorkspaceExecutionBackend": {
           "signature": "(policy: 'WorkspaceExecutionPolicy' = <factory>, clock: 'object | None' = None, inherit_environment: 'bool' = False) -> None",
           "stability": "stable"
@@ -723,369 +83,41 @@
           "signature": "(base_dir: 'Path | str | None' = None, create: 'bool' = False) -> None",
           "stability": "stable"
         },
-        "MemoryRuntime": {
-          "signature": "(hot_store: agentos.memory.store.HotSessionStore, durable_store: agentos.memory.store.DurableSessionStore, recall_index: agentos.memory.recall_index.RecallIndex) -> None",
-          "stability": "experimental"
-        },
-        "NacosAgentCardResolver": {
-          "signature": "(*, client: 'NacosRegistryClient', config: 'NacosRegistryConfig | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "NacosAgentRegistryAdapter": {
-          "signature": "(*, client: 'NacosRegistryClient', config: 'NacosRegistryConfig | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "NacosRegistryClient": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "deregister_instance": "(self, *, service_name: 'str', group_name: 'str', cluster_name: 'str', namespace_id: 'str | None' = None, ip: 'str', port: 'int', ephemeral: 'bool') -> 'None'",
-            "list_instances": "(self, *, service_name: 'str', group_name: 'str', cluster_name: 'str | None' = None, namespace_id: 'str | None' = None, healthy_only: 'bool' = True) -> 'Sequence[object]'",
-            "register_instance": "(self, *, service_name: 'str', group_name: 'str', cluster_name: 'str', namespace_id: 'str | None' = None, ip: 'str', port: 'int', metadata: 'Mapping[str, str]', healthy: 'bool', ephemeral: 'bool') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "NacosRegistryConfig": {
-          "signature": "(service_name_prefix: 'str' = 'agentos', service_name: 'str | None' = None, group_name: 'str' = 'DEFAULT_GROUP', cluster_name: 'str' = 'DEFAULT', namespace_id: 'str | None' = None, ephemeral: 'bool' = True, healthy_only: 'bool' = True) -> None",
-          "stability": "experimental"
-        },
-        "NacosRegistryError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "NacosRegistryEvidence": {
-          "signature": "(operation: 'NacosRegistryOperation', service_name: 'str', group_name: 'str', cluster_name: 'str', namespace_id: 'str | None' = None, agent_id: 'str | None' = None, ip: 'str | None' = None, port: 'int | None' = None, healthy: 'bool | None' = None, ephemeral: 'bool | None' = None, metadata_keys: 'tuple[str, ...]' = (), instance_count: 'int | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "OidcClaimsA2AInboundAuthPolicy": {
-          "signature": "(verifier: 'A2AJwtVerifier', issuer: 'str', audience: 'str', allowed_peer_ids: 'tuple[str, ...]' = (), clock: 'object | None' = None, leeway_seconds: 'float' = 60.0) -> None",
-          "stability": "experimental"
-        },
-        "OidcDiscoveryMetadata": {
-          "signature": "(issuer: 'str', jwks_uri: 'str', raw: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "OidcDiscoveryMetadataProvider": {
-          "signature": "(*, issuer: 'str', transport: 'object | None' = None, timeout_seconds: 'float' = 5, cache_ttl_seconds: 'float' = 300, clock: 'object | None' = None, egress_url_policy: 'A2AEgressUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "OperationAllowListA2AInboundAuthPolicy": {
-          "signature": "(peer_tokens: 'Mapping[str, str]', allowed_operations: 'Mapping[str, tuple[str, ...]]') -> None",
-          "stability": "experimental"
-        },
-        "OutboxReconciler": {
-          "signature": "(task_store: 'OutboxTaskStore', message_queue: 'AgentMessageQueue', batch_size: 'int' = 100) -> None",
-          "stability": "experimental"
-        },
-        "PeerAllowListA2AInboundAuthPolicy": {
-          "signature": "(peer_tokens: 'Mapping[str, str]', allowed_peer_ids: 'tuple[str, ...]') -> None",
-          "stability": "experimental"
-        },
-        "PeerKeyA2AOperationRateLimitPolicy": {
-          "signature": "(peer_id_resolver: 'A2APeerIdResolver', rate_limiter: 'RateLimiter', key_prefix: 'str' = 'a2a') -> None",
-          "stability": "experimental"
-        },
         "PersistentAgentRegistry": {
           "signature": "(store: 'AgentRegistryStore', *, heartbeat_ttl_seconds: 'float' = 30, session_affinity_ttl_seconds: 'float' = 300, clock: 'Clock | None' = None) -> 'None'",
           "stability": "stable"
-        },
-        "PlanClaimRecord": {
-          "signature": "(plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', claimed_at: 'float', lease_expires_at: 'float', generation: 'int') -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimResult": {
-          "signature": "(status: 'PlanClaimStatus', claim: 'PlanClaimRecord | None' = None, existing_claim: 'PlanClaimRecord | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanClaimStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "claim_plan": "(self, *, plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', lease_seconds: 'float', now: 'float') -> 'PlanClaimResult'",
-            "get_claim": "(self, plan_id: 'str') -> 'PlanClaimRecord | None'",
-            "release_plan": "(self, *, plan_id: 'str', worker_id: 'str') -> 'bool'"
-          },
-          "stability": "experimental"
-        },
-        "PlanClaimSweepReport": {
-          "signature": "(checked_claims: 'tuple[PlanClaimRecord, ...]' = (), released_claims: 'tuple[PlanClaimRecord, ...]' = (), skipped_claims: 'tuple[PlanClaimSweepSkip, ...]' = (), dry_run: 'bool' = False, now: 'float' = 0, owner_agent_id: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimSweepSkip": {
-          "signature": "(plan_id: 'str', reason: 'PlanClaimSweepSkipReason', detail: 'str' = '') -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimSweepStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "expired_claims": "(self, *, now: 'float', owner_agent_id: 'str | None' = None, limit: 'int | None' = None) -> 'tuple[PlanClaimRecord, ...]'",
-            "release_expired_claim": "(self, claim: 'PlanClaimRecord', *, now: 'float') -> 'bool'"
-          },
-          "stability": "experimental"
-        },
-        "PlanClaimedSchedulerTickReport": {
-          "signature": "(worker_id: 'str', claims: 'tuple[PlanClaimResult, ...]' = (), tick_reports: 'tuple[PlanSchedulerTickReport, ...]' = (), skipped: 'tuple[PlanClaimedSchedulerTickSkip, ...]' = (), released_plan_ids: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimedSchedulerTickSkip": {
-          "signature": "(plan_id: 'str', reason: 'PlanClaimedSchedulerTickSkipReason', detail: 'str' = '', claim_result: 'PlanClaimResult | None' = None) -> None",
-          "stability": "experimental"
         },
         "PlanConflictError": {
           "signature": "unavailable",
           "stability": "stable"
         },
-        "PlanDecomposition": {
-          "signature": "(objective: 'str', steps: 'tuple[PlanStepSpec, ...]') -> None",
-          "stability": "experimental"
-        },
-        "PlanDecompositionGatePolicy": {
-          "signature": "(max_steps: 'int | None' = None, require_template: 'bool' = False, require_approval: 'bool' = False, approved: 'bool' = False, allowed_template_ids: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanDecompositionGateReport": {
-          "signature": "(accepted: 'bool', requires_approval: 'bool' = False, errors: 'tuple[str, ...]' = (), validation: 'PlanDecompositionValidationReport | None' = None, step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = (), missing_templates: 'tuple[str, ...]' = (), disallowed_templates: 'tuple[str, ...]' = (), normalized_decomposition: 'PlanDecomposition | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlanDecompositionValidationReport": {
-          "signature": "(ok: 'bool', errors: 'tuple[str, ...]' = (), step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanDispatchReport": {
-          "signature": "(plan_id: 'str', assigned: 'tuple[PlanAssignment, ...]' = (), skipped: 'tuple[PlanDispatchSkip, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanDispatchSkip": {
-          "signature": "(plan_id: 'str', step_id: 'str', reason: 'PlanDispatchSkipReason', detail: 'str' = '') -> None",
-          "stability": "experimental"
-        },
-        "PlanRetryPolicy": {
-          "signature": "(max_attempts: 'int' = 1, backoff_seconds: 'float' = 0.0, backoff_multiplier: 'float' = 1.0) -> None",
-          "stability": "experimental"
-        },
-        "PlanSchedulerRetryReset": {
-          "signature": "(plan_id: 'str', step_id: 'str', attempts: 'int') -> None",
-          "stability": "experimental"
-        },
-        "PlanSchedulerTickReport": {
-          "signature": "(plan_id: 'str', retry_resets: 'tuple[PlanSchedulerRetryReset, ...]' = (), dispatch: 'PlanDispatchReport' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlanState": {
-          "signature": "(plan_id: 'str', objective: 'str', owner_agent_id: 'str', status: 'PlanStatus' = 'draft', steps: 'tuple[PlanStep, ...]' = (), evidence: 'tuple[EvidenceHandle, ...]' = (), assignments: 'tuple[PlanAssignment, ...]' = (), created_at: 'float' = 0, updated_at: 'float' = 0, workspace: 'WorkspaceHandle | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanStep": {
-          "signature": "(step_id: 'str', instruction: 'str', status: 'PlanStepStatus' = 'pending', required_capabilities: 'tuple[str, ...]' = (), assigned_agent_id: 'str | None' = None, template_id: 'str | None' = None, task_id: 'str | None' = None, depends_on: 'tuple[str, ...]' = (), evidence_ids: 'tuple[str, ...]' = (), error: 'str | None' = None, attempts: 'int' = 0, last_failed_at: 'float | None' = None, next_retry_at: 'float | None' = None, retry_status: 'PlanStepRetryStatus | None' = None, retry_exhausted_at: 'float | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanStepSpec": {
-          "signature": "(instruction: 'str', step_id: 'str | None' = None, required_capabilities: 'tuple[str, ...]' = (), template_id: 'str | None' = None, depends_on: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
         "PlanStoreRecord": {
           "signature": "(plan: 'PlanState', revision: 'int') -> None",
           "stability": "stable"
-        },
-        "PlannerClaimedSchedulerDaemon": {
-          "signature": "(*, runtime: 'PlannerRuntime', worker_id: 'str', lease_seconds: 'float', owner_agent_id: 'str | None' = None, statuses: 'tuple[PlanStatus, ...]' = ('draft', 'running'), limit: 'int | None' = None, default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, release_after_tick: 'bool' = False, poll_interval_seconds: 'float' = 1.0, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerClaimedSchedulerDaemonError": {
-          "signature": "(error: 'str') -> None",
-          "stability": "experimental"
-        },
-        "PlannerClaimedSchedulerDaemonState": {
-          "signature": "(status: 'PlannerClaimedSchedulerDaemonStatus', worker_id: 'str', lease_seconds: 'float', owner_agent_id: 'str | None' = None, statuses: 'tuple[PlanStatus, ...]' = ('draft', 'running'), limit: 'int | None' = None, default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, release_after_tick: 'bool' = False, poll_interval_seconds: 'float' = 1.0, iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_report: 'PlanClaimedSchedulerTickReport | None' = None, errors: 'tuple[PlannerClaimedSchedulerDaemonError, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlannerClaimedSchedulerDaemonStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerDecompositionPolicyDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('prompt_policy', 'output_schema', 'validation_gate', 'template_mapping_policy', 'approval_policy', 'model_routing_policy', 'evaluation_policy', 'trace_logging', 'rollback_policy'), probe_name: 'str' = 'planner_decomposition_policy') -> None",
-          "stability": "experimental"
-        },
-        "PlannerLlmDecompositionGovernanceProfile": {
-          "signature": "(component_refs: 'Mapping[str, str]' = <factory>, evidence_refs: 'Mapping[str, tuple[str, ...]]' = <factory>, metadata: 'Mapping[str, object]' = <factory>, required_components: 'tuple[str, ...]' = ('prompt_policy', 'model_routing_policy', 'approval_policy', 'evaluation_policy', 'trace_logging', 'rollback_policy', 'output_schema', 'validation_gate', 'template_mapping_policy', 'budget_policy', 'live_backend_verification'), probe_name: 'str' = 'planner_llm_decomposition_governance') -> None",
-          "stability": "experimental"
-        },
-        "PlannerLlmGovernanceEvidenceGateReport": {
-          "signature": "(accepted: 'bool', block_plan_creation: 'bool', errors: 'tuple[str, ...]' = (), missing_evidence: 'tuple[str, ...]' = (), failed_evidence: 'tuple[str, ...]' = (), record: 'PlannerLlmGovernanceEvidenceRecord | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlannerLlmGovernanceEvidenceRecord": {
-          "signature": "(proposal_id: 'str', objective: 'str', prompt_ref: 'str | None' = None, prompt_hash: 'str | None' = None, model_ref: 'str | None' = None, model_version: 'str | None' = None, approval_ref: 'str | None' = None, approved: 'bool | None' = None, evaluation_ref: 'str | None' = None, evaluation_passed: 'bool | None' = None, validation_ref: 'str | None' = None, validation_passed: 'bool | None' = None, output_schema_ref: 'str | None' = None, trace_ref: 'str | None' = None, budget_ref: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlannerOrchestrationDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('decomposition_policy', 'dag_scheduler', 'worker_dispatch_loop', 'compensation_policy', 'plan_store', 'worker_supervision'), probe_name: 'str' = 'planner_orchestration') -> None",
-          "stability": "experimental"
-        },
-        "PlannerRuntime": {
-          "signature": "(*, store: 'PlanStore', templates: 'tuple[SubAgentTemplate, ...]' = (), coordinator: 'PlanCoordinator | None' = None, retry_policy: 'PlanRetryPolicy | None' = None, claim_store: 'PlanClaimStore | None' = None, clock: 'object | None' = None, id_factory: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerSchedulablePlan": {
-          "signature": "(plan_id: 'str', owner_agent_id: 'str', status: 'PlanStatus', ready_step_ids: 'tuple[str, ...]' = (), retryable_step_ids: 'tuple[str, ...]' = (), reasons: 'tuple[PlannerSchedulablePlanReason, ...]' = (), updated_at: 'float' = 0) -> None",
-          "stability": "experimental"
-        },
-        "PlannerSchedulablePlanReason": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemon": {
-          "signature": "(*, runtime: 'PlannerRuntime', plan_ids: 'tuple[str, ...]', default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, poll_interval_seconds: 'float' = 1.0, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemonError": {
-          "signature": "(plan_id: 'str', error: 'str') -> None",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemonState": {
-          "signature": "(status: 'PlannerSchedulerDaemonStatus', plan_ids: 'tuple[str, ...]', poll_interval_seconds: 'float', default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_reports: 'tuple[PlanSchedulerTickReport, ...]' = (), errors: 'tuple[PlannerSchedulerDaemonError, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemonStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerGovernanceDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('plan_discovery_policy', 'tenant_routing_policy', 'global_fairness_policy', 'scheduler_lock_policy', 'leader_election_policy', 'stale_lease_recovery_policy', 'worker_dispatch_supervision', 'live_backend_verification'), probe_name: 'str' = 'planner_scheduler_governance') -> None",
-          "stability": "experimental"
-        },
-        "PlannerStaleClaimSweepProfile": {
-          "signature": "(reports: 'tuple[PlanClaimSweepReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('stale_claim_sweep_schedule', 'plan_claim_store', 'scheduler_lock_policy', 'sweep_safety_window', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_stale_claim_sweep') -> None",
-          "stability": "experimental"
-        },
-        "PlannerToolAuthorizationError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "PlannerToolAuthorizationPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "authorize_planner_tool": "(self, *, tool_name: 'str', owner_agent_id: 'str', plan_id: 'str | None') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "PlannerTools": {
-          "signature": "(*, runtime: 'PlannerRuntime', owner_agent_id: 'str', authorization_policy: 'PlannerToolAuthorizationPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerWorkerDispatchSupervisionProfile": {
-          "signature": "(reports: 'tuple[PlanClaimedSchedulerTickReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('claimed_scheduler_tick_loop', 'worker_process_lifecycle', 'plan_claim_store', 'scheduler_lock_policy', 'stale_lease_recovery', 'compensation_policy', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_worker_dispatch_supervision', max_consecutive_failed_batches: 'int' = 1) -> None",
-          "stability": "experimental"
-        },
-        "PostgresA2APushNotificationConfigStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None, *, url_policy: 'A2APushNotificationUrlPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresA2APushNotificationDeliveryStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
         },
         "PostgresAgentRegistryStore": {
           "signature": "(dsn: 'str', connection: 'object | None' = None) -> 'None'",
           "stability": "stable"
         },
-        "PostgresDurableSessionStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresPlanClaimStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
         "PostgresPlanStore": {
           "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
           "stability": "stable"
-        },
-        "PostgresSessionSnapshotPersistence": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresTeamStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresTeamUiStreamStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresTeamWorkerCancellationStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresTeamWorkerRetryStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
         },
         "ProductionReadinessEvidenceBundle": {
           "signature": "(checks: 'tuple[ReadinessEvidenceCheck, ...]', required_checks: 'tuple[str, ...]', bundle_name: 'str' = 'production_readiness', metadata: 'Mapping[str, object] | None' = None) -> None",
           "stability": "stable"
         },
-        "ProductionStatePlaneDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence', 'state_plane_boundary_policy', 'live_backend_verification'), probe_name: 'str' = 'production_state_plane') -> None",
-          "stability": "experimental"
-        },
-        "Provider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "complete": "(self, request: 'ProviderRequest') -> 'ProviderResponse'"
-          },
-          "stability": "experimental"
-        },
-        "ProviderFunctionSpec": {
-          "signature": "(name: 'str', description: 'str', parameters: 'dict[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
         "ProviderRequestBuilder": {
           "signature": "(context_renderer: agentos.context.renderer.ContextRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.messages.ProviderToolSpec] = <factory>, attachment_runtime: object | None = None) -> None",
           "stability": "stable"
-        },
-        "ProviderToolSpec": {
-          "signature": "(function: 'ProviderFunctionSpec', type: \"Literal['function']\" = 'function') -> None",
-          "stability": "experimental"
-        },
-        "PublicHttpsA2AEgressUrlPolicy": {
-          "signature": "() -> None",
-          "stability": "experimental"
-        },
-        "PublicHttpsA2APushNotificationUrlPolicy": {
-          "signature": "() -> None",
-          "stability": "experimental"
-        },
-        "QdrantRecallIndex": {
-          "signature": "(url: 'str', collection_name: 'str', embedding_provider: 'TextEmbeddingProvider', client: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
         },
         "QueryLoop": {
           "signature": "(context_runtime: agentos.runtime.query_loop.ContextRuntimeBoundary, message_runtime: agentos.messages.runtime.MessageRuntime, request_builder: agentos.runtime.provider_request_builder.ProviderRequestBuilder, provider: agentos.providers.base.Provider, compression_runtime: agentos.compression.runtime.CompressionRuntime | None = None, tool_call_router: agentos.runtime.query_loop.ToolCallRouterBoundary | None = None, event_bus: agentos.events.bus.EventBus | None = None, hook_manager: agentos.hooks.manager.HookManager | None = None, session_state: agentos.runtime.session.SessionState | None = None, turn_notice_provider: agentos.runtime.query_loop.TurnNoticeProvider | None = None, retry_policy: agentos.runtime.retry.RetryPolicy | None = None, structured_logger: agentos.runtime.query_loop.StructuredLoggerBoundary | None = None, tool_result_budget: agentos.policies.tool_result_budget.ToolResultBudget = <factory>, token_counter: agentos.tokens.counter.TokenCounter = <factory>, max_tool_iterations: int = 8) -> None",
           "stability": "stable"
         },
-        "REFERENCE_LIVE_BACKEND_PROBE_PACK_NAME": {
-          "signature": "non-callable",
-          "stability": "experimental"
-        },
-        "REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS": {
-          "signature": "non-callable",
-          "stability": "experimental"
-        },
         "RELEASE_EVIDENCE_REQUIRED_GATES": {
           "signature": "non-callable",
           "stability": "stable"
-        },
-        "REQUIRED_READINESS_DIMENSIONS": {
-          "signature": "non-callable",
-          "stability": "experimental"
-        },
-        "ReadinessDimension": {
-          "signature": "(name: 'str', level: 'ReadinessLevel', evidence: 'tuple[str, ...]', gap: 'str' = '') -> None",
-          "stability": "experimental"
         },
         "ReadinessEvidenceCheck": {
           "signature": "(check_name: 'str', status: 'ReadinessEvidenceStatus', evidence: 'Mapping[str, object]', required: 'bool' = True, source: 'str' = 'readiness', blocking_reason: 'str' = '', metadata: 'Mapping[str, object] | None' = None) -> None",
@@ -1095,53 +127,13 @@
           "signature": "(*args, **kwargs)",
           "stability": "stable"
         },
-        "ReadinessLevel": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "RedisAgentMessageQueueConsumerScopeError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "RedisContinuationTrigger": {
-          "signature": "(redis_client: 'RedisPublisher | None', notice_store: 'AgentTaskNoticeStore', task_store: 'ResultPollingStore | None' = None, key_prefix: 'str' = 'agentos') -> None",
-          "stability": "experimental"
-        },
-        "RedisHotSessionStore": {
-          "signature": "(url: 'str', client: 'object | None' = None, *, key_prefix: 'str' = 'agentos', ttl_seconds: 'int | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
         "RedisSessionLeaseStore": {
           "signature": "(url: 'str', client: 'object | None' = None, *, key_prefix: 'str' = 'agentos') -> 'None'",
           "stability": "stable"
         },
-        "ReferenceLiveBackendProbePack": {
-          "signature": "(probe_specs: 'tuple[ReferenceLiveBackendProbeSpec, ...]' = <factory>, command_prefix: 'tuple[str, ...]' = ('python', '-m', 'agentos.examples.live_backend_probe'), pack_name: 'str' = 'reference_live_backend_probe_pack', environment: 'str | None' = None, artifact_uri_prefix: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "ReferenceLiveBackendProbeSpec": {
-          "signature": "(backend_name: 'str', backend_kind: 'str', adapter_hint: 'str', probe_name: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "ReferenceStatePlaneStack": {
-          "signature": "(agent_registry: 'object | None' = None, agent_card_resolver: 'object | None' = None, message_queue: 'object | None' = None, task_store: 'object | None' = None, plan_store: 'object | None' = None, worker_process_supervisor: 'object | None' = None, session_snapshot_persistence: 'object | None' = None, runtime_profile: 'object | None' = None, service_reference: 'object | None' = None, state_plane_profile: 'object | None' = None, distributed_session_profile: 'object | None' = None, live_backend_verification: 'object | None' = None, readiness_bundle: 'ProductionReadinessEvidenceBundle | None' = None, stack_profile: 'ReferenceStatePlaneStackProfile | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "ReferenceStatePlaneStackProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence', 'distributed_web_runtime_profile', 'agent_service_reference', 'production_state_plane_profile', 'live_backend_verification', 'production_readiness_evidence_bundle'), probe_name: 'str' = 'reference_state_plane_stack') -> None",
-          "stability": "experimental"
-        },
-        "RejectAllA2AInboundAuthPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
         "RejectAllChannelAuthPolicy": {
           "signature": "(reason: 'str' = 'channel auth policy required') -> 'None'",
           "stability": "stable"
-        },
-        "RejectAllTeamUiAuthPolicy": {
-          "signature": "(reason: 'str' = 'team ui authorization policy required') -> 'None'",
-          "stability": "experimental"
         },
         "ReleaseEvidenceGateStatus": {
           "signature": "(*args, **kwargs)",
@@ -1151,52 +143,12 @@
           "signature": "(accepted: 'bool', missing_gates: 'tuple[str, ...]', blocking_gates: 'tuple[str, ...]', gate_evidence_findings: 'tuple[str, ...]', secret_findings: 'tuple[str, ...]', gate_statuses: 'Mapping[str, str]', redacted_manifest: 'Mapping[str, object]', schema: 'str' = 'agentos.release_evidence.validation', schema_version: 'int' = 1) -> None",
           "stability": "stable"
         },
-        "RemoteTaskExecutor": {
-          "signature": "(*, a2a_adapter: 'RemoteTaskAdapter | None' = None, max_workers: 'int' = 3) -> 'None'",
-          "stability": "experimental"
-        },
-        "ResourceAllowListA2AInboundAuthPolicy": {
-          "signature": "(peer_tokens: 'Mapping[str, str]', allowed_operations: 'Mapping[str, tuple[str, ...]]', allowed_task_ids: 'Mapping[str, tuple[str, ...]]' = <factory>, allowed_resources: 'Mapping[str, tuple[tuple[str, str], ...]]' = <factory>) -> None",
-          "stability": "experimental"
-        },
         "ResourceAwareChannelAuthPolicy": {
           "signature": "(*args, **kwargs)",
           "methods": {
             "authorize_channel": "(self, headers: 'Mapping[str, str]', *, context: 'ChannelAuthContext') -> 'None'"
           },
           "stability": "stable"
-        },
-        "RetryPolicy": {
-          "signature": "(max_retries: 'int' = 0, retry_on: 'tuple[type[BaseException], ...]' = (<class 'RuntimeError'>,), backoff_base: 'float' = 0.25, jitter: 'float' = 0.1, circuit_failure_threshold: 'int' = 0, circuit_open_seconds: 'float' = 30.0, sleep: 'Callable[[float], None]' = <built-in function sleep>, now: 'Callable[[], float]' = <built-in function monotonic>) -> None",
-          "stability": "experimental"
-        },
-        "RotatingA2ACardTrustKey": {
-          "signature": "(key_id: 'str', secret: 'bytes | str', not_before: 'float | None' = None, not_after: 'float | None' = None, revoked: 'bool' = False) -> None",
-          "stability": "experimental"
-        },
-        "RotatingA2ACardTrustStore": {
-          "signature": "(*, keys: 'Sequence[RotatingA2ACardTrustKey]', current_key_id: 'str', clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "RotatingBearerA2AAuthProvider": {
-          "signature": "(credential_store: 'RotatingBearerA2ACredentialStore') -> 'None'",
-          "stability": "experimental"
-        },
-        "RotatingBearerA2ACredentialStore": {
-          "signature": "(*, credentials: 'Sequence[A2ABearerCredential]', current_key_id: 'str', clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "RotatingBearerA2AInboundAuthPolicy": {
-          "signature": "(credential_store: 'RotatingBearerA2ACredentialStore', allowed_peer_ids: 'tuple[str, ...]' = (), allowed_operations: 'Mapping[str, tuple[str, ...]]' = <factory>, allowed_task_ids: 'Mapping[str, tuple[str, ...]]' = <factory>, allowed_resources: 'Mapping[str, tuple[tuple[str, str], ...]]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "RotatingHmacA2ACardSigner": {
-          "signature": "(trust_store: 'RotatingA2ACardTrustStore') -> 'None'",
-          "stability": "experimental"
-        },
-        "RunOptions": {
-          "signature": "(thinking: 'bool' = False, show_thinking: 'bool' = False) -> None",
-          "stability": "experimental"
         },
         "RuntimeProfile": {
           "signature": "(*args, **kwargs)",
@@ -1213,22 +165,6 @@
           },
           "stability": "stable"
         },
-        "SegmentRecallDocument": {
-          "signature": "(session_id: 'str', segment_id: 'str', topic: 'str', summary: 'str', keywords: 'Sequence[str] | None' = None, tool_hints: 'Sequence[str] | None' = None, searchable_text: 'str' = '') -> 'None'",
-          "stability": "experimental"
-        },
-        "ServiceResolver": {
-          "signature": "(registry: 'PersistentAgentRegistry') -> 'None'",
-          "stability": "experimental"
-        },
-        "SessionLease": {
-          "signature": "(session_id: 'str', owner_id: 'str', token: 'str', expires_at: 'float | None' = None, fence: 'int' = 0) -> None",
-          "stability": "experimental"
-        },
-        "SessionLeaseError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
         "SessionLeaseStore": {
           "signature": "(*args, **kwargs)",
           "methods": {
@@ -1239,264 +175,9 @@
           },
           "stability": "stable"
         },
-        "SkillReleaseDriftReport": {
-          "signature": "(expected_version: 'str', actual_version: 'str', version_match: 'bool', missing_files: 'tuple[str, ...]', extra_files: 'tuple[str, ...]', changed_files: 'tuple[str, ...]') -> None",
-          "stability": "experimental"
-        },
-        "SkillReleaseFile": {
-          "signature": "(path: 'str', sha256: 'str', size_bytes: 'int') -> None",
-          "stability": "experimental"
-        },
-        "SkillReleaseManifest": {
-          "signature": "(skill_name: 'str', version: 'str', source: 'str', files: 'tuple[SkillReleaseFile, ...]', manifest_hash: 'str') -> None",
-          "stability": "experimental"
-        },
-        "SlidingWindowRateLimiter": {
-          "signature": "(*, max_requests: 'int' = 60, window_seconds: 'float' = 60, now: 'Callable[[], float]' = <built-in function time>) -> 'None'",
-          "stability": "experimental"
-        },
-        "SnapshotAgentFactory": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "create_agent": "(self, *, session_id: 'str', snapshot: 'SessionSnapshot | None') -> 'Agent'",
-            "create_snapshot": "(self, *, session_id: 'str', agent: 'Agent') -> 'SessionSnapshot'"
-          },
-          "stability": "experimental"
-        },
-        "SseAgentChannel": {
-          "signature": "(sessions: 'AgentSessionProvider') -> 'None'",
-          "stability": "experimental"
-        },
-        "StaticA2ACardTrustStore": {
-          "signature": "(secrets: 'Mapping[str, bytes | str]') -> 'None'",
-          "stability": "experimental"
-        },
-        "StaticBearerA2AAuthProvider": {
-          "signature": "(token: 'str') -> None",
-          "stability": "experimental"
-        },
-        "StaticBearerA2AInboundAuthPolicy": {
-          "signature": "(token: 'str') -> None",
-          "stability": "experimental"
-        },
-        "StaticResolver": {
-          "signature": "(cards: 'Sequence[AgentCard]') -> 'None'",
-          "stability": "experimental"
-        },
-        "SubAgentTemplate": {
-          "signature": "(template_id: 'str', name: 'str', role: 'str', capabilities: 'tuple[str, ...]' = (), allowed_tool_names: 'tuple[str, ...]' = (), context_seed: 'tuple[str, ...]' = (), workspace_scope: 'WorkspaceScope' = 'task', target_agent_id: 'str | None' = None, timeout_seconds: 'float' = 300) -> None",
-          "stability": "experimental"
-        },
-        "TaskStoreA2ATaskLifecycleRunner": {
-          "signature": "(task_store: 'TaskStore', *, clock: 'callable | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "TaskTable": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "TeamMemberRecord": {
-          "signature": "(team_id: 'str', agent_id: 'str', role: 'TeamMemberRole', session_id: 'str | None' = None, capabilities: 'tuple[str, ...]' = (), workspace: 'WorkspaceHandle | None' = None, status: 'TeamMemberStatus' = 'active', created_at: 'float' = 0) -> None",
-          "stability": "experimental"
-        },
-        "TeamMessage": {
-          "signature": "(message_id: 'str', team_id: 'str', from_agent_id: 'str', content: 'str', created_at: 'float', to_agent_id: 'str | None' = None, kind: 'TeamMessageKind' = 'observation', correlation_id: 'str | None' = None, artifact_handles: 'tuple[str, ...]' = (), metadata: 'Mapping[str, str]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "TeamNoticeStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "TeamRecord": {
-          "signature": "(team_id: 'str', name: 'str', description: 'str', leader_agent_id: 'str', created_at: 'float', status: 'TeamStatus' = 'active', workspace: 'WorkspaceHandle | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "TeamRuntime": {
-          "signature": "(*, store: 'TeamStore', message_queue: 'AgentMessageQueue', notice_store: 'TeamNoticeStore | None' = None, wakeup_trigger: 'TeamWakeupTrigger | None' = None, worker_session_provider: 'TeamWorkerSessionProvider | None' = None, ui_stream: 'TeamUiStreamStore | None' = None, clock: 'object | None' = None, id_factory: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "TeamToolAuthorizationError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "TeamToolAuthorizationPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "authorize_team_tool": "(self, *, tool_name: 'str', owner_agent_id: 'str', team_id: 'str | None') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "TeamTools": {
-          "signature": "(*, runtime: 'TeamRuntime', owner_agent_id: 'str', authorization_policy: 'TeamToolAuthorizationPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "TeamUiEvent": {
-          "signature": "(event_id: 'int', team_id: 'str', kind: 'TeamUiEventKind', payload: 'Mapping[str, object]', created_at: 'float') -> None",
-          "stability": "experimental"
-        },
-        "TeamUiEventKind": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "TeamUiStreamStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "append": "(self, *, team_id: 'str', kind: 'TeamUiEventKind', payload: 'Mapping[str, object]', created_at: 'float') -> 'TeamUiEvent'",
-            "list_events": "(self, team_id: 'str', *, after_event_id: 'int | None' = None) -> 'tuple[TeamUiEvent, ...]'"
-          },
-          "stability": "experimental"
-        },
-        "TeamWorkerAgentProvider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "get_worker_agent": "(self, session: 'TeamWorkerSession') -> 'object'"
-          },
-          "stability": "experimental"
-        },
-        "TeamWorkerCancellationRecord": {
-          "signature": "(team_id: 'str', agent_id: 'str', session_id: 'str', reason: 'str', requested_at: 'float', status: 'TeamWorkerCancellationStatus' = 'requested', delivery_id: 'str | None' = None, message_id: 'str | None' = None, acknowledged_at: 'float | None' = None, cleared_at: 'float | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerCancellationStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "TeamWorkerCancellationStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "acknowledge": "(self, record: 'TeamWorkerCancellationRecord', *, now: 'float') -> 'TeamWorkerCancellationRecord'",
-            "clear": "(self, record: 'TeamWorkerCancellationRecord', *, now: 'float') -> 'TeamWorkerCancellationRecord'",
-            "list_records": "(self, team_id: 'str | None' = None) -> 'tuple[TeamWorkerCancellationRecord, ...]'",
-            "match": "(self, *, team_id: 'str', agent_id: 'str', session_id: 'str', delivery_id: 'str | None' = None, message_id: 'str | None' = None) -> 'TeamWorkerCancellationRecord | None'",
-            "request_cancel": "(self, record: 'TeamWorkerCancellationRecord') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "TeamWorkerDaemon": {
-          "signature": "(*, runner: 'TeamWorkerRunner', team_id: 'str | None' = None, poll_interval_seconds: 'float' = 0.5, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "TeamWorkerDaemonState": {
-          "signature": "(status: 'TeamWorkerDaemonStatus', team_id: 'str | None', poll_interval_seconds: 'float', iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_results: 'tuple[TeamWorkerRunResult, ...]' = (), errors: 'tuple[TeamWorkerRunError, ...]' = (), retry_records: 'tuple[TeamWorkerRetryRecord, ...]' = (), cancellation_records: 'tuple[TeamWorkerCancellationRecord, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerDaemonStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "TeamWorkerPermissionError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "TeamWorkerPermissionPolicy": {
-          "signature": "(workspace_policy: 'WorkspacePolicy' = <factory>, allowed_capabilities: 'frozenset[str] | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerRetryPolicy": {
-          "signature": "(max_attempts: 'int' = 1, backoff_seconds: 'float' = 0.0, backoff_multiplier: 'float' = 1.0, ack_exhausted: 'bool' = False) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerRetryRecord": {
-          "signature": "(team_id: 'str', agent_id: 'str', session_id: 'str', delivery_id: 'str', message_id: 'str | None', attempts: 'int', status: 'TeamWorkerRetryStatus', next_run_at: 'float', last_error: 'str', delivery: 'QueueDelivery | None' = None, exhausted_at: 'float | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerRetryStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "TeamWorkerRetryStore": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "clear": "(self, agent_id: 'str', delivery_id: 'str') -> 'None'",
-            "get": "(self, agent_id: 'str', delivery_id: 'str') -> 'TeamWorkerRetryRecord | None'",
-            "list_records": "(self, team_id: 'str | None' = None) -> 'tuple[TeamWorkerRetryRecord, ...]'",
-            "record_failure": "(self, record: 'TeamWorkerRetryRecord') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "TeamWorkerRunError": {
-          "signature": "(team_id: 'str', agent_id: 'str', session_id: 'str', delivery_id: 'str', error: 'str') -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerRunResult": {
-          "signature": "(team_id: 'str', agent_id: 'str', session_id: 'str', delivery_id: 'str', status: 'TeamWorkerResultStatus', message_id: 'str | None' = None, error: 'str | None' = None, retry_status: \"Literal['scheduled', 'exhausted', 'cleared'] | None\" = None, attempt: 'int | None' = None, next_run_at: 'float | None' = None, cancellation_status: 'TeamWorkerCancellationStatus | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerRunner": {
-          "signature": "(*, session_provider: 'TeamWorkerSessionProvider', agent_provider: 'TeamWorkerAgentProvider', message_queue: 'AgentMessageQueue', retry_policy: 'TeamWorkerRetryPolicy | None' = None, retry_store: 'TeamWorkerRetryStore | None' = None, cancellation_store: 'TeamWorkerCancellationStore | None' = None, ui_stream: 'TeamUiStreamStore | None' = None, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "TeamWorkerSession": {
-          "signature": "(team_id: 'str', agent_id: 'str', session_id: 'str', status: 'TeamWorkerSessionStatus' = 'created', workspace: 'WorkspaceHandle | None' = None, capabilities: 'tuple[str, ...]' = (), created_at: 'float' = 0, closed_at: 'float | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "TeamWorkerSessionProvider": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "close_worker_sessions": "(self, team_id: 'str', *, now: 'float') -> 'None'",
-            "create_worker_session": "(self, request: 'TeamWorkerSessionRequest') -> 'TeamWorkerSession'",
-            "list_sessions": "(self, team_id: 'str | None' = None) -> 'list[TeamWorkerSession]'"
-          },
-          "stability": "experimental"
-        },
-        "TeamWorkerSessionRequest": {
-          "signature": "(team_id: 'str', agent_id: 'str', role: 'TeamMemberRole', capabilities: 'tuple[str, ...]', requested_session_id: 'str | None' = None, team_workspace: 'WorkspaceHandle | None' = None, requested_workspace: 'WorkspaceHandle | None' = None, created_by_agent_id: 'str | None' = None, created_at: 'float' = 0) -> None",
-          "stability": "experimental"
-        },
-        "ToolCallRouter": {
-          "signature": "(tool_registry: agentos.capabilities.registry.ToolRegistry, context_runtime: agentos.context.runtime.ContextRuntime | None = None, recall_runtime: agentos.recall.runtime.RecallRuntime | None = None, attachment_runtime: object | None = None, mcp_adapter: agentos.capabilities.mcp.MCPToolAdapter | None = None, security_policy: agentos.policies.security.SecurityPolicy = <factory>, backend: agentos.capabilities.backend.ExecutionBackend = <factory>, resource_policy: agentos.policies.resource_policy.ResourcePolicy = <factory>, sandbox_policy: agentos.capabilities.sandbox.ToolSandboxPolicy | None = None, _executor: agentos.capabilities.executor.ToolExecutor | None = None) -> None",
-          "stability": "experimental"
-        },
-        "ToolPathSandboxRule": {
-          "signature": "(argument_name: 'str') -> None",
-          "stability": "experimental"
-        },
-        "ToolResultMessage": {
-          "signature": "(tool_call_id: 'str', content: 'str') -> None",
-          "stability": "experimental"
-        },
-        "ToolSandboxError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "ToolSandboxPolicy": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "ensure_tool_call_allowed": "(self, tool: 'RegisteredTool', arguments: 'Mapping[str, object]') -> 'None'"
-          },
-          "stability": "experimental"
-        },
-        "UserMessage": {
-          "signature": "(content: 'ProviderMessageContent') -> None",
-          "stability": "experimental"
-        },
         "WebRuntimeProfile": {
           "signature": "(session_provider: 'AgentSessionProviderLike', auth_policy: 'object | None' = None, rate_limiter: 'object | None' = None, readiness_checks: 'Mapping[str, Callable[[], object]] | None' = None, health_checks: 'Mapping[str, Callable[[], object]] | None' = None, a2a_server: 'object | None' = None, session_lifecycle: \"Literal['single-process', 'durable-session']\" = 'single-process', workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'web') -> None",
           "stability": "stable"
-        },
-        "WorkerProcessLifecycleDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('process_supervisor', 'restart_policy', 'graceful_shutdown', 'health_probe', 'readiness_probe', 'scaling_policy', 'credential_policy', 'migration_policy', 'alerting', 'live_backend_verification'), probe_name: 'str' = 'worker_process_lifecycle') -> None",
-          "stability": "experimental"
-        },
-        "WorkerProcessSpec": {
-          "signature": "(worker_id: 'str', command: 'tuple[str, ...]', worker_kind: 'WorkerProcessKind' = 'worker', cwd: 'str | None' = None, env: 'Mapping[str, str]' = <factory>, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "WorkerProcessState": {
-          "signature": "(worker_id: 'str', worker_kind: 'WorkerProcessKind', command: 'tuple[str, ...]', status: 'WorkerProcessStatus', cwd: 'str | None' = None, env_keys: 'tuple[str, ...]' = (), metadata: 'Mapping[str, object]' = <factory>, pid: 'int | None' = None, started_at: 'float | None' = None, stop_requested_at: 'float | None' = None, stopped_at: 'float | None' = None, exit_code: 'int | None' = None, error: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "WorkerProcessSupervisor": {
-          "signature": "(*args, **kwargs)",
-          "methods": {
-            "evidence": "(self, worker_id: 'str') -> 'dict[str, object]'",
-            "is_running": "(self, worker_id: 'str') -> 'bool'",
-            "start": "(self, spec: 'WorkerProcessSpec') -> 'WorkerProcessState'",
-            "state": "(self, worker_id: 'str') -> 'WorkerProcessState'",
-            "stop": "(self, worker_id: 'str', *, timeout_seconds: 'float | None' = None) -> 'WorkerProcessState'",
-            "wait": "(self, worker_id: 'str', *, timeout_seconds: 'float | None' = None) -> 'WorkerProcessState'"
-          },
-          "stability": "experimental"
         },
         "WorkspaceExecutionBackend": {
           "signature": "(*args, **kwargs)",
@@ -1505,14 +186,6 @@
             "run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'"
           },
           "stability": "stable"
-        },
-        "WorkspaceExecutionError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "WorkspaceExecutionIsolationProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('workspace_policy', 'tool_path_sandbox', 'capability_allowlist', 'execution_backend', 'process_isolation', 'resource_limits', 'network_policy', 'audit_logging'), probe_name: 'str' = 'workspace_execution_isolation') -> None",
-          "stability": "experimental"
         },
         "WorkspaceExecutionPolicy": {
           "signature": "(allowed_capabilities: 'frozenset[str] | None' = None) -> None",
@@ -1534,10 +207,6 @@
           "signature": "(allow_parent_access: 'bool' = False, allowed_scopes: 'frozenset[WorkspaceScope]' = frozenset({'session', 'task'}), require_explicit_web_workspace: 'bool' = True) -> None",
           "stability": "stable"
         },
-        "WorkspacePolicyError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
         "WorkspaceProvider": {
           "signature": "(*args, **kwargs)",
           "methods": {
@@ -1550,125 +219,9 @@
           "signature": "(agent_id: 'str | None' = None, user_id: 'str | None' = None, session_id: 'str | None' = None, team_id: 'str | None' = None, task_id: 'str | None' = None, requested_scope: 'WorkspaceScope' = 'session') -> None",
           "stability": "stable"
         },
-        "WorkspaceScope": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "WorkspaceToolSandboxPolicy": {
-          "signature": "(workspace: 'WorkspaceHandle | None', path_rules: 'Mapping[str, Sequence[PathSandboxRuleInput]]' = <factory>, allowed_capabilities: 'frozenset[str] | None' = None, tool_capabilities: 'Mapping[str, str | Sequence[str]]' = <factory>) -> None",
-          "stability": "experimental"
-        },
         "__version__": {
           "signature": "non-callable",
-          "stability": "experimental"
-        },
-        "a2a_artifact_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2AArtifact'",
-          "stability": "experimental"
-        },
-        "a2a_artifact_to_dict": {
-          "signature": "(artifact: 'A2AArtifact') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_card_from_agent_card": {
-          "signature": "(card: 'AgentCard', *, url: 'str | None' = None) -> 'A2AAgentCard'",
-          "stability": "experimental"
-        },
-        "a2a_card_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2AAgentCard'",
-          "stability": "experimental"
-        },
-        "a2a_card_signature_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2ACardSignature'",
-          "stability": "experimental"
-        },
-        "a2a_card_signature_to_dict": {
-          "signature": "(signature: 'A2ACardSignature') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_card_to_dict": {
-          "signature": "(card: 'A2AAgentCard', *, include_signatures: 'bool' = True) -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_message_stream_event_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]', *, event: 'str | None' = None) -> 'A2AMessageStreamEvent'",
-          "stability": "experimental"
-        },
-        "a2a_push_notification_config_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2APushNotificationConfig'",
-          "stability": "experimental"
-        },
-        "a2a_push_notification_config_to_dict": {
-          "signature": "(config: 'A2APushNotificationConfig') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_push_notification_delivery_record_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2APushNotificationDeliveryRecord'",
-          "stability": "experimental"
-        },
-        "a2a_push_notification_delivery_record_to_dict": {
-          "signature": "(record: 'A2APushNotificationDeliveryRecord') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_push_notification_payload_to_dict": {
-          "signature": "(event: 'A2ATaskSubscriptionEvent') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_state_from_task_status": {
-          "signature": "(status: 'TaskStatus') -> 'A2ATaskState'",
-          "stability": "experimental"
-        },
-        "a2a_task_artifact_update_event_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2ATaskArtifactUpdateEvent'",
-          "stability": "experimental"
-        },
-        "a2a_task_artifact_update_event_to_dict": {
-          "signature": "(event: 'A2ATaskArtifactUpdateEvent') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "a2a_task_from_task_record": {
-          "signature": "(record: 'TaskRecord') -> 'A2ATask'",
-          "stability": "experimental"
-        },
-        "a2a_task_subscription_event_from_dict": {
-          "signature": "(payload: 'Mapping[str, object]') -> 'A2ATaskSubscriptionEvent'",
-          "stability": "experimental"
-        },
-        "a2a_task_subscription_event_to_dict": {
-          "signature": "(event: 'A2ATaskSubscriptionEvent') -> 'dict[str, object]'",
-          "stability": "experimental"
-        },
-        "agent_card_to_nacos_metadata": {
-          "signature": "(card: 'AgentCard', *, a2a_card_url: 'str | None' = None, worker_service: 'str | None' = None, health: 'Mapping[str, object] | None' = None, metadata: 'Mapping[str, object] | None' = None) -> 'dict[str, str]'",
-          "stability": "experimental"
-        },
-        "build_skill_release_manifest": {
-          "signature": "(skill_dir: 'str | Path', *, version: 'str', source: 'str', skill_name: 'str' = 'agent-os') -> 'SkillReleaseManifest'",
-          "stability": "experimental"
-        },
-        "compare_skill_release_manifests": {
-          "signature": "(expected: 'SkillReleaseManifest', actual: 'SkillReleaseManifest') -> 'SkillReleaseDriftReport'",
-          "stability": "experimental"
-        },
-        "get_agent_form_readiness": {
-          "signature": "(form_id: 'str') -> 'AgentFormReadiness'",
-          "stability": "experimental"
-        },
-        "list_agent_form_readiness": {
-          "signature": "() -> 'tuple[AgentFormReadiness, ...]'",
-          "stability": "experimental"
-        },
-        "nacos_instance_to_agent_card": {
-          "signature": "(instance: 'object') -> 'AgentCard'",
-          "stability": "experimental"
-        },
-        "parse_a2a_sse_events": {
-          "signature": "(chunks: 'object') -> 'tuple[A2AMessageStreamEvent, ...]'",
-          "stability": "experimental"
-        },
-        "plan_to_working_state_summary": {
-          "signature": "(plan: 'PlanState', *, max_next_steps: 'int' = 5, max_recent_evidence: 'int' = 5) -> 'dict[str, object]'",
-          "stability": "experimental"
+          "stability": "stable"
         },
         "validate_release_candidate_evidence_manifest": {
           "signature": "(manifest: 'Mapping[str, object]', *, expected_branch: 'str', expected_commit: 'str', expected_version: 'str', required_gates: 'tuple[str, ...]' = ('public_api_audit', 'full_test_suite', 'compileall', 'diff_hygiene', 'runtime_boundary_scan', 'docs_alignment', 'migration_index', 'api_stability_inventory', 'production_reference_honesty', 'planner_plan_store_concurrency', 'workspace_security_policy', 'independent_review'), expected_gate_results: 'Mapping[str, Mapping[str, object]] | None' = None) -> 'ReleaseEvidenceValidationReport'",
@@ -3826,6 +2379,13 @@
         "RunOptions": {
           "signature": "(thinking: 'bool' = False, show_thinking: 'bool' = False) -> None",
           "stability": "experimental"
+        },
+        "RuntimeCompositionProfile": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental",
+          "methods": {
+            "readiness_checks": "(self) -> 'dict[str, object]'"
+          }
         },
         "RuntimeProfile": {
           "methods": {

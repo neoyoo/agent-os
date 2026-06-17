@@ -292,8 +292,7 @@ def test_distributed_agent_profile_holds_coordination_primitives() -> None:
     assert profile.name == "distributed-agent"
     assert profile.coordinator is coordinator
     assert profile.readiness_checks() == {"task_store": "ready"}
-    with pytest.raises(NotImplementedError, match="coordination"):
-        profile.build_agent()
+    assert not hasattr(profile, "build_agent")
 
 
 def test_distributed_team_runtime_profile_assembles_team_boundaries() -> None:
@@ -332,8 +331,7 @@ def test_distributed_team_runtime_profile_assembles_team_boundaries() -> None:
     assert runtime.message_queue is message_queue
     assert runtime.worker_session_provider is worker_session_provider
     assert runtime.ui_stream is ui_stream
-    with pytest.raises(NotImplementedError, match="team coordination"):
-        profile.build_agent()
+    assert not hasattr(profile, "build_agent")
 
 
 def test_distributed_team_runtime_profile_processes_worker_message_batch() -> None:

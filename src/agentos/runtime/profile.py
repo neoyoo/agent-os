@@ -35,6 +35,15 @@ class DistributedRuntimeProfile(ChannelRuntimeProfile, Protocol):
         """返回可接入 readiness endpoint 的检查项。"""
 
 
+class RuntimeCompositionProfile(Protocol):
+    """Profile that assembles runtime boundaries without building one Agent."""
+
+    name: str
+
+    def readiness_checks(self) -> dict[str, object]:
+        """Return profile-level readiness checks."""
+
+
 DISTRIBUTED_WEB_SESSION_OPERATIONS_REQUIRED_COMPONENTS: tuple[str, ...] = (
     "durable_session_provider",
     "lease_store",
@@ -674,14 +683,6 @@ class DistributedTeamRuntimeProfile:
             clock=self.clock,
         )
 
-    def build_agent(self, session_id: str | None = None) -> Agent:
-        """Team profiles assemble coordination boundaries, not one Agent."""
-
-        raise NotImplementedError(
-            "DistributedTeamRuntimeProfile assembles team coordination, "
-            "not a single agent",
-        )
-
     def build_team_runtime(self) -> object:
         """Return the assembled TeamRuntime."""
 
@@ -788,13 +789,6 @@ class DistributedAgentProfile:
     remote_task_executor: object | None = None
     readiness: Mapping[str, object] = field(default_factory=dict)
     name: str = "distributed-agent"
-
-    def build_agent(self, session_id: str | None = None) -> Agent:
-        """分布式协调 profile 不直接构建单个 Agent。"""
-
-        raise NotImplementedError(
-            "DistributedAgentProfile assembles coordination, not a single agent",
-        )
 
     def readiness_checks(self) -> dict[str, object]:
         """返回配置的 readiness checks。"""
