@@ -21,6 +21,7 @@ from agentos.multi.planner import (
     PlanClaimedSchedulerTickReport,
     PlanClaimedSchedulerTickSkip,
     PlanAssignment,
+    PlanDispatchAlreadySubmittedError,
     PlanSchedulerTickReport,
     PlannerStaleClaimSweepProfile,
     PlannerWorkerDispatchSupervisionProfile,
@@ -1418,6 +1419,35 @@ class RejectingPlanStore(InMemoryPlanStore):
         return False
 
 
+class ConflictOncePlanStore(InMemoryPlanStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conflict_next_submitted_save = True
+
+    def save_plan_if_unchanged(
+        self,
+        plan: PlanState,
+        *,
+        expected_revision: int,
+    ) -> bool:
+        if (
+            self.conflict_next_submitted_save
+            and any(
+                assignment.dispatch_status == "submitted"
+                for assignment in plan.assignments
+            )
+        ):
+            self.conflict_next_submitted_save = False
+            current = self.get_plan(plan.plan_id)
+            assert current is not None
+            super().save_plan(replace(current, updated_at=10.5))
+            return False
+        return super().save_plan_if_unchanged(
+            plan,
+            expected_revision=expected_revision,
+        )
+
+
 def test_planner_runtime_assigns_step_to_spawn_template() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
@@ -1455,6 +1485,40 @@ def test_planner_runtime_assigns_step_to_spawn_template() -> None:
     assert coordinator.spawn_calls[0]["task_id"] == "task_1"
     assert coordinator.spawn_calls[0]["allowed_tool_names"] == ("read_file",)
     assert coordinator.spawn_calls[0]["timeout_seconds"] == 30
+
+
+def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> None:
+    store = ConflictOncePlanStore()
+    coordinator = FakeCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="reviewer",
+                name="Reviewer",
+                role="Review code.",
+                capabilities=("review",),
+            ),
+        ),
+        clock=lambda: 20.0,
+        id_factory=lambda prefix: f"{prefix}_1",
+    )
+    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    runtime.add_step(
+        plan.plan_id,
+        instruction="Review planner module.",
+        template_id="reviewer",
+    )
+
+    assigned = runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
+
+    persisted = runtime.get_plan(plan.plan_id)
+    assert len(coordinator.spawn_calls) == 1
+    assert assigned.assignments[0].dispatch_status == "submitted"
+    assert persisted.assignments[0].dispatch_status == "submitted"
+    assert persisted.assignments[0].submitted_at == 20.0
+    assert store.conflict_next_submitted_save is False
 
 
 def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
@@ -1789,6 +1853,69 @@ def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
     assert persisted.steps[0].status == "assigned"
     assert persisted.assignments[0].dispatch_status == "submitted"
     assert persisted.assignments[0].submitted_at == 20.0
+    assert persisted.assignments[0].dispatch_error is None
+
+
+def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
+    class DuplicateTaskCoordinator(FakeCoordinator):
+        def dispatch(self, **kwargs: object) -> TaskHandle:
+            self.dispatch_calls.append(kwargs)
+            raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
+
+    store = InMemoryPlanStore()
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Recover a task that the coordinator already accepted.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Recover duplicate task.",
+                    status="assigned",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    assigned_agent_id="expert_reviewer",
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_1",
+                    step_id="step_1",
+                    template_id="expert-reviewer",
+                    task_id="task_existing",
+                    target_agent_id="expert_reviewer",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+        ),
+    )
+    coordinator = DuplicateTaskCoordinator()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="expert-reviewer",
+                name="Expert Reviewer",
+                role="Review architecture.",
+                target_agent_id="expert_reviewer",
+            ),
+        ),
+        clock=lambda: 20.0,
+    )
+
+    report = runtime.recover_pending_dispatches("plan_1")
+
+    persisted = runtime.get_plan("plan_1")
+    assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
+    assert report.skipped == ()
+    assert coordinator.dispatch_calls[0]["task_id"] == "task_existing"
+    assert persisted.steps[0].status == "assigned"
+    assert persisted.steps[0].error is None
+    assert persisted.assignments[0].dispatch_status == "submitted"
     assert persisted.assignments[0].dispatch_error is None
 
 
@@ -3152,10 +3279,11 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
 
     plan = runtime.get_plan("plan_1")
     assert [claim.status for claim in report.claims] == ["claimed"]
-    assert len(report.tick_reports) == 1
-    assert report.skipped == ()
+    assert report.tick_reports == ()
+    assert [skip.reason for skip in report.skipped] == ["claim-lost"]
     assert plan.steps[0].status == "assigned"
     assert plan.steps[0].task_id is not None
+    assert plan.assignments[0].dispatch_status == "pending"
     assert coordinator.spawn_calls[0]["task_id"] == plan.steps[0].task_id
     current_claim = claim_store.get_claim("plan_1")
     assert current_claim is not None

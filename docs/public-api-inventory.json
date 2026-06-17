@@ -1471,6 +1471,10 @@
           "signature": "(ok: 'bool', errors: 'tuple[str, ...]' = (), step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = ()) -> None",
           "stability": "experimental"
         },
+        "PlanDispatchAlreadySubmittedError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
         "PlanDispatchReport": {
           "signature": "(plan_id: 'str', assigned: 'tuple[PlanAssignment, ...]' = (), skipped: 'tuple[PlanDispatchSkip, ...]' = ()) -> None",
           "stability": "experimental"
@@ -1701,6 +1705,10 @@
         },
         "TaskClaim": {
           "signature": "(task_id: 'str', worker_id: 'str', lease_expires_at: 'float', attempt: 'int') -> None",
+          "stability": "experimental"
+        },
+        "TaskAlreadySubmittedError": {
+          "signature": "unavailable",
           "stability": "experimental"
         },
         "TaskHandle": {

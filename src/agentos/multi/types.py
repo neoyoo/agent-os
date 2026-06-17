@@ -22,6 +22,10 @@ CoordinationMode = Literal["spawn", "dispatch"]
 ContextInitStrategy = Literal["isolated"]
 
 
+class TaskAlreadySubmittedError(RuntimeError):
+    """Task coordinator has already accepted the supplied task_id."""
+
+
 @dataclass(frozen=True, slots=True)
 class AgentCard:
     """可发现 agent 的声明，不持有本地 runtime 对象。"""

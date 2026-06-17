@@ -26,6 +26,7 @@ from agentos.multi.types import (
     AgentCard,
     AgentEnvelope,
     SubagentInitRequest,
+    TaskAlreadySubmittedError,
     TaskHandle,
     TaskRecord,
     TaskRequest,
@@ -131,7 +132,7 @@ class AgentCoordinator:
             created_at=created_at,
             deadline_at=created_at + timeout_seconds,
         )
-        handle = self.task_table.create(record)
+        handle = self._create_task_or_raise_already_submitted(record)
 
         init_request = SubagentInitRequest(
             parent_agent_id=parent_agent_id,
@@ -227,7 +228,7 @@ class AgentCoordinator:
             created_at=created_at,
             deadline_at=created_at + timeout_seconds,
         )
-        handle = self.task_table.create(record)
+        handle = self._create_task_or_raise_already_submitted(record)
         if target.endpoint is not None:
             if self.task_table.mark_running(task_id):
                 self._submit_remote_task(target, record, request)
@@ -258,6 +259,17 @@ class AgentCoordinator:
             ),
         )
         return handle
+
+    def _create_task_or_raise_already_submitted(
+        self,
+        record: TaskRecord,
+    ) -> TaskHandle:
+        try:
+            return self.task_table.create(record)
+        except ValueError as error:
+            if self.task_table.get(record.task_id) is not None:
+                raise TaskAlreadySubmittedError(record.task_id) from error
+            raise
 
     def _submit_remote_task(
         self,

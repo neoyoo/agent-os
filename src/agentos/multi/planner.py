@@ -9,7 +9,10 @@ from typing import Literal, Mapping, Protocol, cast
 from uuid import uuid4
 
 from agentos.capabilities import RegisteredTool, ToolRegistry
-from agentos.multi.types import TaskHandle
+from agentos.multi.types import (
+    TaskAlreadySubmittedError as PlanDispatchAlreadySubmittedError,
+    TaskHandle,
+)
 from agentos.workspace import WorkspaceHandle, WorkspaceScope
 
 
@@ -2455,6 +2458,8 @@ class PlannerRuntime:
                 assignment=assignment,
                 template=template,
             )
+        except PlanDispatchAlreadySubmittedError:
+            pass
         except Exception as error:
             self._mark_assignment_dispatch_failed(
                 updated,
@@ -2588,6 +2593,8 @@ class PlannerRuntime:
                     assignment=assignment,
                     template=template,
                 )
+            except PlanDispatchAlreadySubmittedError:
+                pass
             except Exception as error:
                 self._mark_assignment_dispatch_failed(
                     current_plan,
@@ -3296,31 +3303,69 @@ class PlannerRuntime:
         plan_id: str,
         assignment: PlanAssignment,
     ) -> PlanState:
-        record = self._require_plan_record(plan_id)
-        try:
-            current_step = self._require_step(record.plan, assignment.step_id)
-        except PlanStepNotFoundError:
-            return record.plan
-        if (
-            current_step.status != "assigned"
-            or current_step.task_id != assignment.task_id
-            or current_step.assigned_agent_id != assignment.target_agent_id
-        ):
-            return record.plan
-        if assignment not in record.plan.assignments:
-            return record.plan
-        submitted = replace(
-            assignment,
-            dispatch_status="submitted",
-            submitted_at=float(self._clock()),
-            dispatch_error=None,
+        last_plan: PlanState | None = None
+        for _ in range(3):
+            record = self._require_plan_record(plan_id)
+            last_plan = record.plan
+            try:
+                current_step = self._require_step(record.plan, assignment.step_id)
+            except PlanStepNotFoundError:
+                return record.plan
+            if (
+                current_step.status != "assigned"
+                or current_step.task_id != assignment.task_id
+                or current_step.assigned_agent_id != assignment.target_agent_id
+            ):
+                return record.plan
+            current_assignment = next(
+                (
+                    current
+                    for current in record.plan.assignments
+                    if current == assignment
+                ),
+                None,
+            )
+            if current_assignment is None:
+                current_assignment = next(
+                    (
+                        current
+                        for current in record.plan.assignments
+                        if (
+                            current.plan_id == assignment.plan_id
+                            and current.step_id == assignment.step_id
+                            and current.task_id == assignment.task_id
+                            and current.target_agent_id == assignment.target_agent_id
+                            and current.dispatch_status == "submitted"
+                        )
+                    ),
+                    None,
+                )
+                if current_assignment is None:
+                    return record.plan
+                return record.plan
+            if current_assignment.dispatch_status == "submitted":
+                return record.plan
+            submitted = replace(
+                current_assignment,
+                dispatch_status="submitted",
+                submitted_at=float(self._clock()),
+                dispatch_error=None,
+            )
+            updated = self._replace_assignment(
+                record.plan,
+                current_assignment,
+                submitted,
+            )
+            try:
+                self._save_plan(updated, expected_revision=record.revision)
+            except PlanConflictError:
+                continue
+            return updated
+        if last_plan is None:
+            raise PlanNotFoundError(plan_id)
+        raise PlanConflictError(
+            f"plan changed before saving submitted dispatch marker: {plan_id}",
         )
-        updated = self._replace_assignment(record.plan, assignment, submitted)
-        try:
-            self._save_plan(updated, expected_revision=record.revision)
-        except (PlanConflictError, PlanClaimLostError):
-            return record.plan
-        return updated
 
     def _mark_assignment_dispatch_failed(
         self,

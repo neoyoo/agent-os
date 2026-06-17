@@ -488,6 +488,43 @@ def test_release_evidence_generator_treats_empty_runtime_boundary_scan_as_passed
     assert matched_manifest["gates"]["runtime_boundary_scan"]["status"] == "failed"
 
 
+def test_release_evidence_generator_treats_runtime_boundary_scan_errors_as_failed(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "release-evidence.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_EVIDENCE_GENERATOR),
+            "--output",
+            str(output),
+            "--branch",
+            "review/agentos-sdk-architecture-20260611",
+            "--commit",
+            "abc123",
+            "--version",
+            agentos.__version__,
+            "--generated-at",
+            "2026-06-17T01:00:00+08:00",
+            "--independent-review-status",
+            "pending",
+            "--gate-result",
+            "runtime_boundary_scan=2",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+
+    assert manifest["gates"]["runtime_boundary_scan"]["status"] == "failed"
+    assert manifest["gates"]["runtime_boundary_scan"]["result"] == {"exit_code": 2}
+
+
 def test_release_candidate_evidence_gate_requires_expected_identity() -> None:
     from agentos.release import validate_release_candidate_evidence_manifest
 

@@ -941,7 +941,12 @@ Production notes:
   `dispatch_error` as lightweight dispatch outbox evidence. The dispatch path
   first recovers any pending assignment with the original `task_id`; operators
   can also call `PlannerRuntime.recover_pending_dispatches(...)` directly during
-  service startup or repair runs.
+  service startup or repair runs. Coordinators should treat the supplied
+  `task_id` as an idempotency key: return the existing task or raise
+  `PlanDispatchAlreadySubmittedError` / `TaskAlreadySubmittedError` for
+  duplicate submissions so planner recovery can mark the assignment submitted
+  instead of failed. This is at-least-once recovery evidence, not a distributed
+  exactly-once execution guarantee.
 - Use `PlannerRuntime.schedulable_plans(...)` or `plan_schedulable_plans` when
   a deployment-owned scheduler wants an owner-scoped, status-filtered,
   JSON-safe list of plans that currently have ready pending steps, due

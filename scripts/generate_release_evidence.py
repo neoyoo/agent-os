@@ -161,8 +161,7 @@ def _gate_status_from_exit_code(name: str, exit_code: int | None) -> GateStatus:
     if name == "runtime_boundary_scan":
         if exit_code == 1:
             return "passed"
-        if exit_code == 0:
-            return "failed"
+        return "failed"
     return "passed" if exit_code == 0 else "unknown"
 
 

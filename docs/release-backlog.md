@@ -26,17 +26,25 @@ successful coordinator submission or failed evidence on coordinator errors.
 `PlannerRuntime.recover_pending_dispatches(...)` and
 `PlannerRuntime.dispatch_ready_steps(...)` act as the compensation scanner: they
 can submit the pending assignment idempotently using the original `task_id` or
-mark it failed with recovery evidence.
+mark it failed with recovery evidence. The SDK `AgentCoordinator` now converts
+duplicate reserved task ids into `TaskAlreadySubmittedError`, and planner
+recovery treats `PlanDispatchAlreadySubmittedError` as submitted evidence for
+the original assignment. Submitted-marker persistence retries revision
+conflicts, while claim loss is surfaced as `claim-lost` instead of hidden as a
+successful tick.
 
-Residual follow-up: production coordinators and task backends should document
-and test `task_id` as an idempotency key across process restarts. Deployment
-code should still run planner workers under a supervisor, use
+Residual follow-up: production coordinators and task backends should continue
+to live-test `task_id` idempotency across process restarts and durable backend
+failover. The SDK provides at-least-once recovery with a typed duplicate-task
+signal, not distributed exactly-once execution. Deployment code should still run
+planner workers under a supervisor, use
 `PlannerRuntime.claimed_scheduler_tick(...)` with a `PlanClaimStore`, and
 monitor `PlannerWorkerDispatchSupervisionProfile` plus stale claim sweep
 evidence. This is non-blocking for RC because the current release has PlanStore
 public boundary tests, focused planner behavior tests for save-before-dispatch,
-pending-dispatch recovery, coordinator failure handling, and claim-guarded
-scheduler paths, and no known P1 behavior bug remains in planner dispatch.
+pending-dispatch recovery, duplicate-task recovery, coordinator failure
+handling, submitted-marker conflict retry, and claim-guarded scheduler paths,
+and no known P1 behavior bug remains in planner dispatch.
 
 ## A2A public operation rate limiting
 

@@ -6,6 +6,7 @@ from agentos.multi import (
     AgentEnvelope,
     AgentInbox,
     InMemoryRegistry,
+    TaskAlreadySubmittedError,
     SpawnExecutor,
     TaskRecord,
     TaskRequest,
@@ -89,6 +90,46 @@ def test_dispatch_accepts_reserved_task_id() -> None:
     envelope = deliveries[0].envelope
     assert isinstance(envelope.payload, TaskRequest)
     assert envelope.payload.task_id == "task_reserved"
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_dispatch_reports_duplicate_reserved_task_id_as_already_submitted() -> None:
+    coordinator = build_coordinator()
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review", "python"),
+            max_concurrent_tasks=2,
+        ),
+        build_agent_with_response("expert result"),
+    )
+    coordinator.dispatch(
+        instruction="Review Python code",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+        task_id="task_reserved",
+    )
+
+    with pytest.raises(TaskAlreadySubmittedError, match="task_reserved"):
+        coordinator.dispatch(
+            instruction="Review Python code again",
+            required_capabilities=("code-review",),
+            parent_agent_id="parent",
+            target_agent_id="expert",
+            task_id="task_reserved",
+        )
 
     coordinator.spawn_executor.shutdown()
 
