@@ -22,10 +22,22 @@ class ExpertAgentRunner:
 
         self._idle.clear()
         try:
-            if not self.coordinator.inbox.wait(self.agent_id, timeout):
+            wait_matching = getattr(self.coordinator.inbox, "wait_matching", None)
+            if callable(wait_matching):
+                has_work = wait_matching(
+                    self.agent_id,
+                    "task_request",
+                    timeout=timeout,
+                )
+            else:
+                has_work = self.coordinator.inbox.wait(self.agent_id, timeout)
+            if not has_work:
                 return False
             handled = False
-            for delivery in self.coordinator.inbox.collect(self.agent_id):
+            for delivery in self.coordinator.inbox.collect(
+                self.agent_id,
+                envelope_types=("task_request",),
+            ):
                 result = self.coordinator.execute_expert_envelope(delivery.envelope)
                 self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                 if result is not None:

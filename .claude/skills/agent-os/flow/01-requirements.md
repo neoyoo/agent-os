@@ -1,6 +1,6 @@
 ---
 name: agent-os-requirements
-description: Phased requirements gathering for agent-os SDK projects — asks 6 dimensions one at a time, outputs structured decisions for spec generation
+description: Phased requirements gathering for agent-os SDK projects; asks 6 dimensions one at a time and outputs structured decisions for spec generation.
 ---
 
 # Requirements Gathering
@@ -8,143 +8,171 @@ description: Phased requirements gathering for agent-os SDK projects — asks 6 
 ## Rules
 
 <HARD-GATE>
-1. Present ONE dimension at a time. Wait for user response before proceeding.
+1. Present one dimension at a time. Wait for user response before proceeding.
 2. For each dimension, explain what it means in agent-os terms, offer concrete options, and state the default.
 3. After all 6 dimensions, summarize decisions in a table and ask for final confirmation.
-4. Do NOT generate code or spec until user confirms the summary.
-5. ALWAYS respond in the user's language. The templates below are English reference — translate and adapt when presenting to the user. If the user writes in Chinese, all questions, options, and explanations MUST be in Chinese.
+4. Do not generate code or spec until the user confirms the summary.
+5. Always respond in the user's language. The templates below are English reference; translate and adapt when presenting to the user.
 </HARD-GATE>
 
 ## Pre-Check
 
-Before asking dimensions, check if the user's description maps to a known agent form in `modules/agent-forms.md`. If it does, mention the form name and which modules it uses — this helps them understand what the SDK already handles vs. what they need to customize.
+Before asking dimensions, check whether the user's description maps to a known agent form in `modules/agent-forms.md`. If it does, mention the form name, readiness level, and which modules it uses.
+
+For production-bound agents, select the closest readiness form and call
+`get_agent_form_readiness(form_id)` from `agentos.readiness`. Carry its
+`overall_level`, dimension levels, and `required_app_glue` into the final
+summary so the user sees every production delivery gap before spec generation.
+Also ask for the sandbox posture before spec generation: `trusted tools only`,
+`deployment-owned isolation`, or `future adapter`.
+
+Phase 99: SDK Skill / Spec Generator Finalization makes requirements gathering
+the first spec generator finalization gate. For production-bound agents, gather
+the inputs needed for a `production_design_constraints` block. The skill is a
+production agent design constraint generator: before spec generation, the user
+must explicitly choose agent form, runtime profile, state plane components,
+persistence backend, registry backend, queue backend, worker supervisor, A2A
+exposure, planner/team mode, production readiness checklist, and sandbox
+posture: trusted tools only | deployment-owned isolation | future adapter.
+Record that the SDK-owned constraint template does not create
+deployment-owned infrastructure.
 
 ## Dimensions
 
-### 【1/6】Agent Purpose & Provider
+### 1/6 Agent Purpose And Provider
 
-**Ask:**
-- What problem does this agent solve? (one sentence)
-- Which LLM provider? Options:
-  - `AnthropicProvider` — Claude models (recommended for tool-use)
-  - `OpenAIProvider` — GPT-4o / o1 models
-  - `OpenAICompatibleProvider` — any OpenAI-compatible endpoint (Ollama, vLLM, etc.)
-- Model name? (e.g. `claude-sonnet-4-6`, `gpt-4o`)
+Ask:
 
-**Default:** AnthropicProvider + claude-sonnet-4-6
+- What problem does this agent solve? One sentence is enough.
+- Which LLM provider?
+  - `AnthropicProvider`: Claude models, recommended for tool-use.
+  - `OpenAIProvider`: OpenAI models.
+  - `OpenAICompatibleProvider`: any OpenAI-compatible endpoint such as Ollama, vLLM, or a hosted gateway.
+- Which model name?
 
----
+Default: Anthropic provider with the project's recommended Claude model.
 
-### 【2/6】Deployment & State
+### 2/6 Deployment And State
 
-**Ask:**
-- Where does this agent run?
-  - **Local** — single process, in-memory state, dev/CLI use
-  - **Server (single node)** — HTTP API, state persists to disk (SQLite/FileSystem)
-  - **Server (multi-node)** — stateless workers, state in Redis (hot) + Postgres (durable)
+Ask where the agent runs:
 
-**What this decides:**
-| Mode | SessionProvider | Persistence | State between turns |
-|------|----------------|-------------|---------------------|
-| Local | in-memory | none | held in Agent object |
-| Single node | in-memory + snapshot | SQLitePersistence / FileSystemPersistence | save/load between restarts |
-| Multi-node | RedisHotSessionStore + PostgresDurableSessionStore | full pipeline | load from Redis per request, save back after turn |
+- **Local**: single process, in-memory state, dev/CLI use.
+- **Server single-node**: HTTP API, live state in one process, optional snapshot persistence.
+- **Server multi-node, primitives ready**: arbitrary nodes may receive the same session through `DistributedWebRuntimeProfile`; the app still owns backend configuration, migrations, TTL/recovery policy, auth, and workspace enforcement.
 
-**Default:** Local (simplest path, can upgrade later)
+What this decides:
 
----
+| Mode | SDK support | Session/state behavior |
+|------|-------------|------------------------|
+| Local | Direct | Held in the Agent object. |
+| Single node | Direct primitives | `InMemoryAgentSessionProvider` for live process; optional `SessionSnapshot` plus SQLite/FileSystem for manual restore. |
+| Multi-node | Primitives ready | `DistributedWebRuntimeProfile` with `DurableAgentSessionProvider`, `RedisSessionLeaseStore`, `PostgresSessionSnapshotPersistence`, `SnapshotAgentFactory`, and `SessionSnapshot`. |
 
-### 【3/6】Tools & Capabilities
+For production deployments, check `agentos.readiness` for the chosen form and call out required app glue across session state, concurrency, auth, rate limiting, timeout, retry, observability, workspace, protocol, persistence, and schema migration.
 
-**Ask:**
-- What actions can the agent perform? List the tools it needs.
-  - Each tool = a `RegisteredTool(name, description, parameters, handler)`
-  - Examples: file_read, web_search, browser_navigate, db_query, api_call, code_execute
-- Any MCP servers to connect? (MCP = Model Context Protocol, for external tool hosts)
+Default: Local.
 
-**What this decides:**
-- `AgentBuilder.tools([...])` — list of RegisteredTool
-- `ToolCallRouter` — wired automatically by builder
-- MCP → `MCPToolAdapter` if needed
+### 3/6 Tools And Capabilities
 
-**Note:** Context protocol tools (declare_schema, update_state, extend_schema, start_chapter, recall_context) are ALWAYS available — they're wired by default in AgentBuilder. You don't need to declare them.
+Ask:
 
-**Default:** No external tools (agent can still use context protocol tools)
+- What actions can the agent perform?
+- Does it need MCP servers?
+- Are any tools sensitive enough to require hooks, approval, or sandboxing?
 
----
+What this decides:
 
-### 【4/6】Context & Compression Strategy
+- `AgentBuilder.tools([...])` for `RegisteredTool` values.
+- `ToolCallRouter`, wired automatically by builder.
+- `WorkspaceToolSandboxPolicy` plus `ToolPathSandboxRule` if a tool has
+  workspace-local path arguments or capability allow-list requirements.
+- `MCPToolAdapter` if external MCP servers are needed.
+- `HookManager` if approval or policy checks are required.
 
-**Ask:**
+Context protocol tools are always available through AgentBuilder unless the app explicitly changes the default wiring.
+
+Default: no external tools.
+
+### 4/6 Context And Compression Strategy
+
+Ask:
+
 - How long are typical sessions?
-  - **Short** (< 20 messages) — no compression needed
-  - **Medium** (20-100 messages) — rule-based compression recommended
-  - **Long** (100+ messages) — LLM-based compression for quality summaries
-- Does the agent need structured working state? (e.g., tracking goals, progress, discovered facts)
-  - If yes: model will use `declare_schema` / `update_state` to maintain structured state
-  - If no: context protocol tools still available, model decides when to use them
+  - **Short**: no compression needed.
+  - **Medium**: rule-based compression recommended.
+  - **Long**: LLM-based or fallback compression recommended.
+- Does the agent need structured working state?
+- Does the agent need recall over prior conversations or documents?
 
-**What this decides:**
-- `AgentBuilder.with_compression(compressor)` — enables CompressionRuntime
-- `RuleBasedCompressor` (default) vs `LlmCompressor` (needs extra provider calls)
-- `FallbackCompressor(primary=LlmCompressor(...), fallback=RuleBasedCompressor())` for reliability
+What this decides:
 
-**Default:** No compression (short sessions). Context protocol always on.
+- `CompressionRuntime` strategy and budget.
+- Whether to predeclare working-state schema.
+- Whether to add `MemoryRuntime` / `RecallRuntime`.
 
----
+Default: no compression for short sessions; context protocol remains available.
 
-### 【5/6】Multi-Agent
+### 5/6 Multi-Agent
 
-**Ask:**
-- Is this a single agent or does it coordinate with others?
-  - **Single** — one agent, one loop
-  - **Local sub-agents** — spawns child agents in threads (same process)
-  - **Distributed (A2A)** — communicates with remote agents via A2A protocol over HTTP
+Ask whether this is a single agent or coordinates with others:
 
-**What this decides:**
+- **Single**: one agent, one loop.
+- **Local sub-agents**: spawn or dispatch inside the same process.
+- **Distributed task dispatch**: use Postgres/Redis task primitives or endpoint-backed HTTP task bridge.
+- **Team discussion**: team records/messages/wakeup/tools, worker session lifecycle, workspace/capability downgrade policy, workspace-aware tool path/capability sandbox policy, worker runner, daemon polling, worker process lifecycle readiness, persistent retry/backoff, persistent cancellation intent, UI event stream primitives, Postgres UI stream storage, JSON replay endpoint, and SSE follow endpoint exist; actual process supervision/scaling and OS/container sandboxing remain deployment-owned for untrusted code tools.
+- **Planner / intent-router**: planner tools/state/template/decomposition-validation/dependency primitives, failure/retry metadata, `PlannerSchedulerDaemon`, `PostgresPlanStore`, decomposition policy readiness, and worker process lifecycle readiness exist; app owns LLM prompt/model/approval/evaluation policy, plan discovery, distributed scheduler locks, process supervision, worker dispatch loops, lifecycle execution, and complex compensation policy.
+
+What this decides:
+
 | Mode | SDK module | Coordination |
-|------|-----------|--------------|
-| Single | just Agent | — |
-| Local spawn | `multi/coordinator.py` + `multi/spawn.py` | in-process, shared trace context |
-| Distributed | `channels/a2a.py` + `channels/a2a_server.py` | HTTP, W3C trace propagation |
+|------|------------|--------------|
+| Single | Agent | Direct one-agent loop. |
+| Local spawn | `AgentCoordinator`, `TaskTable`, `AgentInbox`, `SpawnExecutor` | In-process task delegation. |
+| Distributed task dispatch | `PostgresTaskStore`, `RedisAgentMessageQueue`, `RemoteTaskExecutor`, `A2AAdapter` | Cross-process task/result primitives. |
+| Team discussion | `TeamRuntime`, `TeamStore`, `TeamNoticeStore`, `TeamWorkerSessionProvider`, `TeamWorkerPermissionPolicy`, `WorkspaceToolSandboxPolicy`, `TeamWorkerRunner`, `TeamWorkerDaemon`, `WorkerProcessLifecycleDeploymentProfile`, `TeamWorkerRetryPolicy`, `PostgresTeamWorkerRetryStore`, `PostgresTeamWorkerCancellationStore`, `TeamUiStreamStore`, `PostgresTeamUiStreamStore` | Team state, message, worker-session, workspace/capability downgrade, tool path/capability pre-execution checks, continuation runner, daemon, worker lifecycle readiness, persistent retry/backoff, persistent cancellation intent, UI event stream boundary, distributed UI replay storage, JSON replay endpoint, and SSE follow endpoint; actual process supervision/scaling and OS/container sandboxing remain deployment-owned. |
+| Planner / intent-router | `PlannerRuntime`, `PlannerTools`, `PlanStore`, `PlanDecomposition`, `PlanDecompositionValidationReport`, `PlannerDecompositionPolicyDeploymentProfile`, `PlannerSchedulerDaemon`, `SubAgentTemplate`, `PlanRetryPolicy`, `WorkerProcessLifecycleDeploymentProfile`, `EvidenceHandle`, `AgentCoordinator` | Plan state, structured decomposition validation/ingestion, dependency metadata, ready-step query, failure recording, retryable-step query, retry reset, tool-driven plan updates, step assignment, explicitly supplied plan id scheduler polling, decomposition policy readiness, worker lifecycle readiness, and evidence handles; LLM prompt/model/approval/evaluation policy/plan discovery/distributed scheduler locks/lifecycle execution/compensation policy remain app-owned. |
 
-**Default:** Single agent
+Default: Single agent.
 
----
+### 6/6 Channel And Access
 
-### 【6/6】Channel & Access
+Ask how users or systems interact with the agent:
 
-**Ask:**
-- How do users/systems interact with this agent?
-  - **Programmatic** — imported as library, called via `agent.run()` / `agent.stream()`
-  - **HTTP API** — exposed via ASGI app, POST `/v1/sessions/{id}/turns`
-  - **HTTP + SSE streaming** — same + streaming endpoint `/v1/sessions/{id}/turns/stream`
-  - **A2A server** — accepts tasks from other agents via A2A protocol
+- **Programmatic**: imported as a library and called via `agent.run()` / `agent.stream()`.
+- **HTTP API**: exposed via ASGI app.
+- **HTTP + SSE streaming**: ASGI plus streaming endpoint.
+- **Internal A2A task bridge**: accepts agent-os task payloads at `/a2a/tasks`.
+- **A2A discovery surface**: publishes A2A Agent Card metadata for discovery.
+- **A2A task status subscribe**: exposes `POST /a2a/tasks/{id}:subscribe`
+  for SSE task updates.
 
-**What this decides:**
-- No channel → use Agent directly
-- HTTP → `AsgiAgentApp` + `AgentSessionProvider`
-- A2A → additionally wire `A2AServer` into the ASGI app
+What this decides:
 
-**Default:** Programmatic (library use)
+- No channel: use Agent directly.
+- HTTP/SSE: use `AsgiAgentApp` plus an `AgentSessionProvider`.
+- Multi-node HTTP: use `DistributedWebRuntimeProfile` with `DurableAgentSessionProvider`, concrete lease and snapshot adapters, and explicit deployment policy.
+- Internal task bridge: wire `A2AServerAdapter`.
+- Discovery: publish A2A Agent Card and optionally expose
+  `message/send`, task get/cancel, and task subscribe, while keeping push
+  notifications, trust, auth, and full A2A parity as roadmap/deployment work.
 
----
+Default: Programmatic.
 
 ## Summary Template
 
-After all 6 dimensions, present:
+After all 6 dimensions, present a concise table:
 
-```
-┌─────────────────────────────────────────────────┐
-│ Agent: [one-line description]                    │
-├─────────────────────────────────────────────────┤
-│ Provider:     [AnthropicProvider / claude-sonnet-4-6]   │
-│ Deployment:   [local / single-node / multi-node]        │
-│ Tools:        [list or "context-only"]                  │
-│ Compression:  [none / rule-based / llm-based]           │
-│ Multi-agent:  [single / local-spawn / a2a]              │
-│ Channel:      [programmatic / http / http+sse / a2a]    │
-└─────────────────────────────────────────────────┘
-```
+| Dimension | Decision |
+|-----------|----------|
+| Agent | One-line description |
+| Provider | Provider and model |
+| Deployment | local / single-node / multi-node primitives |
+| Tools | tool list or context-only |
+| Context | compression, working state, recall |
+| Multi-agent | single / local-spawn / distributed-task / team-primitives / planner-primitives |
+| Channel | programmatic / HTTP / HTTP+SSE / internal-A2A / discovery |
+| Production readiness | direct/primitives-ready/future plus required app glue from `agentos.readiness` |
+| Sandbox posture | trusted tools only / deployment-owned isolation / future adapter |
+| Production design constraints | `production_design_constraints`: agent form, runtime profile, state plane components, persistence backend, registry backend, queue backend, worker supervisor, A2A exposure, planner/team mode, production readiness checklist, sandbox posture: trusted tools only \| deployment-owned isolation \| future adapter, SDK does not create deployment-owned infrastructure |
 
-Ask: "确认这些选择？我来生成 spec。" → proceed to `flow/02-spec-generation.md`
+Ask the user to confirm before generating the spec.

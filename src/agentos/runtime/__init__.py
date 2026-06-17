@@ -43,6 +43,19 @@ from agentos.events import (
 )
 from agentos.runtime.agent import Agent, AgentResult
 from agentos.runtime.async_query_loop import AsyncQueryLoop
+from agentos.runtime.profile import (
+    ChannelRuntimeProfile,
+    DistributedAgentProfile,
+    DistributedRuntimeProfile,
+    DistributedTeamRuntimeProfile,
+    DistributedWebSessionOperationsProfile,
+    DistributedWebRuntimeProfile,
+    LocalRuntimeProfile,
+    ProductionStatePlaneDeploymentProfile,
+    RuntimeProfile,
+    WebRuntimeProfile,
+    WorkerProcessLifecycleDeploymentProfile,
+)
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.query_loop import QueryLoop, TurnNoticeProvider
 from agentos.runtime.retry import ProviderCircuitOpenError, RetryPolicy
@@ -85,14 +98,22 @@ __all__ = [
     "AgentResult",
     "AsyncQueryLoop",
     "ChapterStartedEvent",
+    "ChannelRuntimeProfile",
     "CompressedSegmentAppendedEvent",
     "CompressionCompletedEvent",
     "CompressionFailedEvent",
     "CompressionSkippedEvent",
     "ContextRenderedEvent",
+    "DistributedAgentProfile",
+    "DistributedRuntimeProfile",
+    "DistributedTeamRuntimeProfile",
+    "DistributedWebSessionOperationsProfile",
+    "DistributedWebRuntimeProfile",
     "EventBus",
     "InheritedStateSetEvent",
+    "LocalRuntimeProfile",
     "MemoryContextSetEvent",
+    "ProductionStatePlaneDeploymentProfile",
     "ProviderRequestBuilder",
     "ProviderRequestBuiltEvent",
     "ProviderResponseReceivedEvent",
@@ -101,6 +122,7 @@ __all__ = [
     "QueryLoop",
     "RetryPolicy",
     "RunOptions",
+    "RuntimeProfile",
     "AgentEvent",
     "RecallContextFailedEvent",
     "RecallContextInjectedEvent",
@@ -128,6 +150,8 @@ __all__ = [
     "TurnState",
     "TurnNoticeProvider",
     "UserMessageAppendedEvent",
+    "WebRuntimeProfile",
+    "WorkerProcessLifecycleDeploymentProfile",
     "WorkingStateSchemaDeclaredEvent",
     "WorkingStateSchemaExtendedEvent",
     "WorkingStateUpdatedEvent",

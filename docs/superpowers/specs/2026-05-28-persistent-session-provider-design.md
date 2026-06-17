@@ -1,5 +1,13 @@
 # Phase B — Web 水平扩展：PersistentAgentSessionProvider 设计
 
+> Superseded draft. Use
+> `docs/superpowers/specs/2026-06-11-production-web-session-hydration-design.md`
+> and
+> `docs/superpowers/plans/2026-06-11-production-web-session-hydration-implementation-plan.md`
+> for Phase 2A implementation. This earlier draft is retained for historical
+> context; its local-cache-first shape and distributed-lock non-goal are not the
+> production target for arbitrary-node web routing.
+
 ## Status
 
 **Draft — 待实现。**

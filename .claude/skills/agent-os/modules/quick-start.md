@@ -174,7 +174,7 @@ asyncio.run(main())
 ```python
 from agentos import AgentBuilder
 from agentos.providers import AnthropicProvider
-from agentos.channels import AsgiAgentApp
+from agentos.channels import AllowAllChannelAuthPolicy, AsgiAgentApp
 from agentos.channels.session import InMemoryAgentSessionProvider
 
 def make_agent(session_id: str):
@@ -186,6 +186,7 @@ def make_agent(session_id: str):
 
 app = AsgiAgentApp(
     sessions=InMemoryAgentSessionProvider(make_agent),
+    auth_policy=AllowAllChannelAuthPolicy(),
 )
 
 # Run with: uvicorn main:app --host 0.0.0.0 --port 8000
@@ -193,6 +194,10 @@ app = AsgiAgentApp(
 #   POST /v1/sessions/{id}/turns          → JSON response
 #   POST /v1/sessions/{id}/turns/stream   → SSE stream
 ```
+
+`AllowAllChannelAuthPolicy` is a local/dev convenience only. `AsgiAgentApp`
+uses `RejectAllChannelAuthPolicy` for production-facing defaults; production
+services must inject their own channel auth, tenant, and gateway policy.
 
 ## Hooks (Lifecycle Interception)
 
@@ -238,7 +243,7 @@ agent = (
 )
 ```
 
-## Production HTTP API
+## Single-Process HTTP API
 
 ```python
 from agentos.channels import AsgiAgentApp, InMemoryAgentSessionProvider, SlidingWindowRateLimiter
@@ -256,7 +261,34 @@ app = AsgiAgentApp(
 
 Source: `src/agentos/channels/asgi.py`, `src/agentos/channels/rate_limit.py`, `tests/channels/test_health_endpoint.py`, `tests/channels/test_rate_limit.py`.
 
-## Multi-Node (Redis + Postgres)
+This is suitable for a single-process service or prototype. `InMemoryAgentSessionProvider` does not hydrate shared session state across arbitrary nodes.
+
+## Agent Service Reference Layer
+
+```python
+from agentos import (
+    AGENT_SERVICE_REFERENCE_REQUIRED_COMPONENTS,
+    AgentServiceReference,
+    AgentServiceReferenceProfile,
+)
+
+service = AgentServiceReference(
+    runtime_profile=distributed_web_runtime_profile,
+    service_profile=AgentServiceReferenceProfile(
+        configured_components=AGENT_SERVICE_REFERENCE_REQUIRED_COMPONENTS,
+    ),
+)
+
+app = service.build_asgi_app()
+```
+
+Use this reference service when a distributed web agent needs standard
+`AsgiAgentApp` composition, readiness aggregation, auth/rate-limit injection,
+and JSON-safe evidence. It is not a platform; gateways, tenant directory,
+Kubernetes/systemd/autoscaling, credentials, migrations, and live backend
+verification remain deployment-owned.
+
+## Multi-Node Primitives (Redis + Postgres)
 
 ```python
 from agentos.memory import RedisHotSessionStore
@@ -276,6 +308,8 @@ durable_store = PostgresDurableSessionStore(
 # Use hot_store.save_hot_state(state) after turn
 # Use durable_store for segment persistence and message recovery
 ```
+
+This is not yet a complete copy-paste production web runtime. For arbitrary-node session routing, add an app-owned `AgentSessionProvider` with session locking, snapshot/projection restore, turn execution, save-back, and failure recovery. See `modules/persistence.md`.
 
 ## Progressive Skill Disclosure
 
@@ -309,5 +343,65 @@ async def build_agent():
 
 agent = asyncio.run(build_agent())
 ```
+
+## Skill Release Drift Check
+
+```python
+from agentos import (
+    build_skill_release_manifest,
+    compare_skill_release_manifests,
+)
+
+repository = build_skill_release_manifest(
+    ".claude/skills/agent-os",
+    version="2026.06.16",
+    source="repo://agent-os/.claude/skills/agent-os",
+)
+installed = build_skill_release_manifest(
+    "~/.codex/skills/agent-os",
+    version="2026.06.16",
+    source="user://agent-os",
+)
+
+report = compare_skill_release_manifests(repository, installed)
+if not report.ready:
+    raise SystemExit(report.as_dict())
+```
+
+`SkillReleaseDriftReport` only reports whether the repository skill and the
+installed user-level skill match. Copying, overwriting, publishing, signing,
+and release approval stay outside the SDK boundary.
+
+## Production Reference Web Agent
+
+```python
+from agentos.examples.production_reference_web_agent import (
+    build_production_reference_web_agent,
+)
+
+example = build_production_reference_web_agent()
+app = example.app
+evidence = example.as_dict()
+```
+
+Phase 101: Production Reference Example lives at
+`src/agentos/examples/production_reference_web_agent.py`, with tests in
+`tests/examples/test_production_reference_web_agent.py`. It composes the
+production reference web agent from `AgentServiceReference`,
+`DistributedWebRuntimeProfile`, a Nacos/Redis/Postgres state plane, a
+readiness endpoint, backend verification,
+`ProductionReadinessEvidenceBundle`, `ReferenceStatePlaneStack`,
+`ReferenceLiveBackendProbePack`, and a planner primitive.
+
+This production reference web agent does not create backend clients. Nacos,
+Redis, Postgres, credentials, migrations, CI/CD, process supervision, live
+backend probe execution, gateway/TLS, tenant directory integration, rollout,
+rollback, alerting, runbooks, and sandbox isolation are deployment-owned real
+infrastructure.
+
+The demo runtime blocks production readiness by default. Imported backend
+verification evidence proves deployment-owned probes ran, but the reference app
+still uses demo Memory/InMemory runtime bindings unless a deployment injects
+real Redis/Postgres/Nacos state-plane clients.
 
 `SkillContentSource` 是 async ABC——自定义实现（如 Redis backed）需实现 4 个 async 方法：`list_skills` / `load_skill` / `list_resources` / `load_resource`。

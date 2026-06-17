@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-os"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Context-first Python agent runtime SDK."
 requires-python = ">=3.11"
 dependencies = []
@@ -43,6 +43,9 @@ production-memory = [
     "redis>=5.0",
     "qdrant-client>=1.9",
     "psycopg[binary]>=3.1",
+]
+security = [
+    "cryptography>=42.0",
 ]
 
 [tool.hatch.build.targets.wheel]

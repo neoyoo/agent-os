@@ -119,6 +119,20 @@ def test_agent_builder_build_async_runs_async_tool_handler() -> None:
     }
 
 
+def test_agent_builder_build_async_rejects_sync_run_with_clear_error() -> None:
+    agent = AgentBuilder().provider(FakeProvider(["async only"])).build_async()
+
+    with pytest.raises(RuntimeError, match="async_run"):
+        agent.run("Use the async facade.")
+
+
+def test_agent_builder_build_async_rejects_sync_stream_with_clear_error() -> None:
+    agent = AgentBuilder().provider(FakeProvider(["async only"])).build_async()
+
+    with pytest.raises(RuntimeError, match="async_stream"):
+        list(agent.stream("Use the async facade."))
+
+
 def test_agent_builder_default_path_includes_context_protocol_tools() -> None:
     provider = FakeProvider(
         [

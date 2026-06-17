@@ -103,6 +103,8 @@ class AgentCoordinator:
         allowed_tool_names: tuple[str, ...] = (),
         parent_agent_id: str,
         timeout_seconds: float = 300,
+        task_id: str | None = None,
+        child_agent_id: str | None = None,
     ) -> TaskHandle:
         """创建 ephemeral subagent 并在线程池中执行。"""
 
@@ -110,8 +112,8 @@ class AgentCoordinator:
             raise KeyError(parent_agent_id)
 
         created_at = time.time()
-        task_id = f"task_{uuid4().hex}"
-        child_agent_id = f"subagent_{uuid4().hex}"
+        task_id = task_id or f"task_{uuid4().hex}"
+        child_agent_id = child_agent_id or f"subagent_{uuid4().hex}"
         request = TaskRequest(
             task_id=task_id,
             instruction=instruction,
@@ -172,7 +174,10 @@ class AgentCoordinator:
         """drain inbox，并从 TaskTable 返回未消费的终态 results。"""
 
         self._mark_due_timeouts()
-        for delivery in self.inbox.collect(agent_id):
+        for delivery in self.inbox.collect(
+            agent_id,
+            envelope_types=("task_result",),
+        ):
             self.inbox.ack(agent_id, delivery.delivery_id)
         return self.task_table.consume_results_for_agent(agent_id)
 
@@ -182,15 +187,20 @@ class AgentCoordinator:
         instruction: str,
         required_capabilities: tuple[str, ...],
         parent_agent_id: str,
+        target_agent_id: str | None = None,
         allowed_tool_names: tuple[str, ...] = (),
         timeout_seconds: float = 300,
+        task_id: str | None = None,
     ) -> TaskHandle:
         """按 capability 发现本地 expert 并派发任务。"""
 
         self._mark_due_timeouts()
         if self.registry.resolve(parent_agent_id) is None:
             raise KeyError(parent_agent_id)
-        target = self._select_available_expert(required_capabilities)
+        target = self._select_available_expert(
+            required_capabilities,
+            target_agent_id=target_agent_id,
+        )
         if target is None:
             raise RuntimeError("no available agent")
         if target.endpoint is not None and self.remote_task_executor is None:
@@ -199,7 +209,7 @@ class AgentCoordinator:
             )
 
         created_at = time.time()
-        task_id = f"task_{uuid4().hex}"
+        task_id = task_id or f"task_{uuid4().hex}"
         request = TaskRequest(
             task_id=task_id,
             instruction=instruction,
@@ -415,6 +425,8 @@ class AgentCoordinator:
                 summary="task missing",
                 error="task missing",
             )
+        if envelope.to_agent_id != record.target_agent_id:
+            return None
         agent = self._agents.get(record.target_agent_id)
         started_at = time.time()
         try:
@@ -622,13 +634,19 @@ class AgentCoordinator:
     def _select_available_expert(
         self,
         required_capabilities: tuple[str, ...],
+        *,
+        target_agent_id: str | None = None,
     ) -> AgentCard | None:
-        candidates = [
-            card
-            for card in self.registry.discover(tuple(required_capabilities))
-            if card.lifecycle == "persistent" and card.status != "offline"
-        ]
+        if target_agent_id is None:
+            candidates = self.registry.discover(tuple(required_capabilities))
+        else:
+            target = self.registry.resolve(target_agent_id)
+            candidates = [] if target is None else [target]
         for card in candidates:
+            if card.lifecycle != "persistent" or card.status == "offline":
+                continue
+            if not set(required_capabilities).issubset(set(card.capabilities)):
+                continue
             active_count = self.task_table.active_count_for_target(card.agent_id)
             if active_count < card.max_concurrent_tasks:
                 return card

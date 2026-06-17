@@ -4,12 +4,18 @@ from agentos.persistence.base import (
     SNAPSHOT_VERSION,
     SessionPersistence,
     SessionSnapshot,
+    SessionSnapshotRecord,
+    SnapshotConflictError,
     SnapshotLoadError,
     SnapshotVersionError,
 )
 from agentos.persistence.filesystem import FileSystemPersistence
 from agentos.persistence.memory import MemoryPersistence
-from agentos.persistence.postgres import BackendUnavailableError, PostgresDurableSessionStore
+from agentos.persistence.postgres import (
+    BackendUnavailableError,
+    PostgresDurableSessionStore,
+    PostgresSessionSnapshotPersistence,
+)
 from agentos.persistence.protocols import PostgresConnection, PostgresCursor
 from agentos.persistence.sqlite import SQLitePersistence
 
@@ -19,11 +25,14 @@ __all__ = [
     "PostgresConnection",
     "PostgresCursor",
     "PostgresDurableSessionStore",
+    "PostgresSessionSnapshotPersistence",
     "BackendUnavailableError",
     "SNAPSHOT_VERSION",
     "SessionPersistence",
     "SessionSnapshot",
+    "SessionSnapshotRecord",
     "SQLitePersistence",
+    "SnapshotConflictError",
     "SnapshotLoadError",
     "SnapshotVersionError",
 ]

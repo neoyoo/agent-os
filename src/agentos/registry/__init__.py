@@ -7,6 +7,16 @@ from agentos.registry.persistent import (
     JsonFileAgentRegistryStore,
     PersistentAgentRegistry,
 )
+from agentos.registry.nacos import (
+    NacosAgentCardResolver,
+    NacosAgentRegistryAdapter,
+    NacosRegistryClient,
+    NacosRegistryConfig,
+    NacosRegistryError,
+    NacosRegistryEvidence,
+    agent_card_to_nacos_metadata,
+    nacos_instance_to_agent_card,
+)
 from agentos.registry.postgres import PostgresAgentRegistryStore
 from agentos.registry.resolver import AgentResolver, ServiceResolver, StaticResolver
 from agentos.registry.types import AgentRegistryRecord, SessionAffinity
@@ -18,9 +28,17 @@ __all__ = [
     "AgentResolver",
     "InMemoryAgentRegistryStore",
     "JsonFileAgentRegistryStore",
+    "NacosAgentCardResolver",
+    "NacosAgentRegistryAdapter",
+    "NacosRegistryClient",
+    "NacosRegistryConfig",
+    "NacosRegistryError",
+    "NacosRegistryEvidence",
     "PersistentAgentRegistry",
     "PostgresAgentRegistryStore",
     "ServiceResolver",
     "SessionAffinity",
     "StaticResolver",
+    "agent_card_to_nacos_metadata",
+    "nacos_instance_to_agent_card",
 ]

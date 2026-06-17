@@ -3,9 +3,14 @@ from dataclasses import dataclass, field
 
 from agentos.attachments.types import AttachmentError
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
-from agentos.capabilities.executor import ToolExecutionResult, ToolExecutor
+from agentos.capabilities.executor import (
+    ToolExecutionResult,
+    ToolExecutor,
+    validate_tool_arguments,
+)
 from agentos.capabilities.mcp import MCPToolAdapter
 from agentos.capabilities.registry import ToolRegistry
+from agentos.capabilities.sandbox import ToolSandboxPolicy
 from agentos.context import ContextRuntime, WorkingStateField
 from agentos.context_protocol import (
     CONTEXT_PROTOCOL_TOOL_NAMES,
@@ -29,6 +34,7 @@ class ToolCallRouter:
     security_policy: SecurityPolicy = field(default_factory=SecurityPolicy)
     backend: ExecutionBackend = field(default_factory=InProcessExecutionBackend)
     resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
+    sandbox_policy: ToolSandboxPolicy | None = None
     _executor: ToolExecutor | None = None
 
     def tool_specs(self) -> list[ProviderToolSpec]:
@@ -53,7 +59,8 @@ class ToolCallRouter:
         if tool_call.name.startswith("mcp__"):
             if self.mcp_adapter is None:
                 raise RuntimeError("mcp adapter is required for MCP tool calls")
-            return self.mcp_adapter.execute(tool_call)
+            prepared_call = self._prepare_mcp_tool_call(tool_call)
+            return self.mcp_adapter.execute(prepared_call, prevalidated=True)
         return self._tool_executor().execute(tool_call)
 
     async def async_execute_tool_call(
@@ -78,8 +85,26 @@ class ToolCallRouter:
                 security_policy=self.security_policy,
                 backend=self.backend,
                 resource_policy=self.resource_policy,
+                sandbox_policy=self.sandbox_policy,
             )
         return self._executor
+
+    def _prepare_mcp_tool_call(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ProviderToolCall:
+        if self.mcp_adapter is None:
+            return tool_call
+        tool = self.mcp_adapter.registered_tool_for(tool_call.name)
+        arguments = dict(tool_call.arguments)
+        validate_tool_arguments(tool_call.name, arguments, tool.parameters)
+        if self.sandbox_policy is not None:
+            self.sandbox_policy.ensure_tool_call_allowed(tool, arguments)
+        return ProviderToolCall(
+            id=tool_call.id,
+            name=tool_call.name,
+            arguments=arguments,
+        )
 
     def _execute_context_tool(
         self,

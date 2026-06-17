@@ -55,13 +55,23 @@ class A2AServerAdapter:
         with use_incoming_trace_headers(headers):
             try:
                 request = self._parse_request(payload)
+            except ValueError as error:
+                return self._result_to_dict(
+                    TaskResult(
+                        task_id=str(payload.get("task_id", "")),
+                        status="failed",
+                        summary="task failed",
+                        error=str(error),
+                    ),
+                )
+            try:
                 result = self._runner.run_task(request)
-            except Exception as error:
+            except Exception:
                 result = TaskResult(
                     task_id=str(payload.get("task_id", "")),
                     status="failed",
                     summary="task failed",
-                    error=str(error),
+                    error="internal error",
                 )
         return self._result_to_dict(result)
 

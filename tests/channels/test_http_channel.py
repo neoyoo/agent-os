@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import cast
 
+from agentos.channels.durable_session import SessionLeaseError
+from agentos.persistence import BackendUnavailableError
 from agentos.runtime import Agent, AgentResult
 from tests.multi.helpers import build_agent_with_response
 
@@ -27,6 +29,18 @@ class FailingAgent:
         show_thinking: bool = False,
     ) -> AgentResult:
         raise RuntimeError("provider unavailable")
+
+
+class FailingGetAgentProvider:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.release_calls = 0
+
+    def get_agent(self, session_id: str) -> Agent:
+        raise self.error
+
+    def release_agent(self, session_id: str, agent: Agent) -> None:
+        self.release_calls += 1
 
 
 def test_http_channel_runs_json_turn_and_releases_agent() -> None:
@@ -83,5 +97,50 @@ def test_http_channel_maps_agent_exception_to_failed_result() -> None:
 
     assert result.status_code == 500
     assert result.status == "failed"
+    assert result.error == "internal error"
+    assert provider.released == [("session_1", agent)]
+
+
+def test_http_channel_can_expose_internal_errors_for_local_debug() -> None:
+    from agentos.channels.http import HttpAgentChannel
+
+    agent = cast(Agent, FailingAgent())
+    provider = RecordingProvider(agent)
+    channel = HttpAgentChannel(provider, expose_internal_errors=True)
+
+    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+
+    assert result.status_code == 500
+    assert result.status == "failed"
     assert result.error == "provider unavailable"
     assert provider.released == [("session_1", agent)]
+
+
+def test_http_channel_maps_session_lease_acquisition_failure_to_locked_result() -> None:
+    from agentos.channels.http import HttpAgentChannel
+
+    provider = FailingGetAgentProvider(SessionLeaseError("session is locked: session_1"))
+    channel = HttpAgentChannel(provider)  # type: ignore[arg-type]
+
+    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+
+    assert result.status_code == 423
+    assert result.status == "failed"
+    assert result.error == "session unavailable"
+    assert provider.release_calls == 0
+
+
+def test_http_channel_maps_backend_acquisition_failure_to_unavailable_result() -> None:
+    from agentos.channels.http import HttpAgentChannel
+
+    provider = FailingGetAgentProvider(
+        BackendUnavailableError("Redis backend unavailable"),
+    )
+    channel = HttpAgentChannel(provider)  # type: ignore[arg-type]
+
+    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+
+    assert result.status_code == 503
+    assert result.status == "failed"
+    assert result.error == "backend unavailable"
+    assert provider.release_calls == 0

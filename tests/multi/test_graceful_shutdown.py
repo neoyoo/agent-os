@@ -42,7 +42,11 @@ def test_expert_runner_stop_waits_for_current_run_once() -> None:
         def wait(self, agent_id: str, timeout: float | None = None) -> bool:
             return True
 
-        def collect(self, agent_id: str) -> list[object]:
+        def collect(
+            self,
+            agent_id: str,
+            envelope_types: tuple[str, ...] | None = None,
+        ) -> list[object]:
             time.sleep(0.03)
             finished.set()
             return []

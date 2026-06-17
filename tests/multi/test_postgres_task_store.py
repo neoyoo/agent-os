@@ -80,16 +80,23 @@ class FakeConnection:
         self.commits += 1
 
     def _claim(self, params: tuple[object, ...]) -> FakeCursor:
-        limit = int(params[2])
-        worker_id = str(params[3])
-        lease_expires_at = float(params[4])
-        now = float(params[5])
+        capabilities = {str(capability) for capability in params[2]}
+        limit = int(params[3])
+        worker_id = str(params[4])
+        lease_expires_at = float(params[5])
+        now = float(params[6])
         rows: list[tuple[object, ...]] = []
         for task_id, row in self.records.items():
             if len(rows) >= limit:
                 break
             record = task_record_from_dict(json.loads(str(row["payload"])))
             if record.status != "queued":
+                continue
+            required_capabilities = set(record.request.allowed_tool_names)
+            if (
+                required_capabilities
+                and not required_capabilities.issubset(capabilities)
+            ):
                 continue
             updated = task_record_to_dict(
                 replace(
@@ -134,13 +141,35 @@ class FakeConnection:
         return FakeCursor([(params[4],)])
 
 
-def record() -> TaskRecord:
+class FakePool:
+    def __init__(self, connection: FakeConnection) -> None:
+        self.connection = connection
+        self.gets = 0
+        self.puts: list[FakeConnection] = []
+
+    def getconn(self) -> FakeConnection:
+        self.gets += 1
+        return self.connection
+
+    def putconn(self, connection: FakeConnection) -> None:
+        self.puts.append(connection)
+
+
+def record(
+    task_id: str = "task_1",
+    *,
+    allowed_tool_names: tuple[str, ...] = (),
+) -> TaskRecord:
     return TaskRecord(
-        task_id="task_1",
+        task_id=task_id,
         mode="dispatch",
         parent_agent_id="parent",
         target_agent_id="worker",
-        request=TaskRequest(task_id="task_1", instruction="Do work"),
+        request=TaskRequest(
+            task_id=task_id,
+            instruction="Do work",
+            allowed_tool_names=allowed_tool_names,
+        ),
         status="queued",
         created_at=1.0,
         deadline_at=30.0,
@@ -155,6 +184,28 @@ def test_postgres_task_store_saves_and_loads_record() -> None:
 
     assert store.get("task_1") == record()
     assert connection.commits == 1
+
+
+def test_postgres_task_store_from_pool_borrows_per_operation() -> None:
+    connection = FakeConnection()
+    pool = FakePool(connection)
+    store = PostgresTaskStore.from_pool(
+        dsn="postgresql://unused",
+        pool=pool,
+    )
+
+    assert pool.gets == 0
+
+    store.create(record())
+    assert pool.gets == 1
+    assert pool.puts == [connection]
+
+    assert store.get("task_1") == record()
+    assert pool.gets == 2
+    assert pool.puts == [connection, connection]
+
+    store.close()
+    assert pool.puts == [connection, connection]
 
 
 def test_postgres_task_store_uses_atomic_claim_sql_and_updates_payload() -> None:
@@ -181,6 +232,45 @@ def test_postgres_task_store_uses_atomic_claim_sql_and_updates_payload() -> None
     assert stored.worker_id == "worker-instance-1"
     assert stored.attempt == 1
     assert stored.version == 1
+
+
+def test_postgres_task_store_does_not_claim_when_capabilities_do_not_match() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    original = record(allowed_tool_names=("code", "web"))
+    store.create(original)
+
+    claims = store.claim_queued(
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        limit=1,
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    joined_sql = "\n".join(connection.sql)
+    assert "allowed_tool_names" in joined_sql
+    assert claims == []
+    assert store.get("task_1") == original
+
+
+def test_postgres_task_store_claims_when_capabilities_cover_required_tools() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    store.create(record(allowed_tool_names=("code", "web")))
+
+    claims = store.claim_queued(
+        worker_id="worker-instance-1",
+        capabilities=("code", "web", "search"),
+        limit=1,
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert [claim.task_id for claim in claims] == ["task_1"]
+    stored = store.get("task_1")
+    assert stored is not None
+    assert stored.status == "running"
 
 
 def test_postgres_task_store_terminal_transition_writes_outbox() -> None:

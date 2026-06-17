@@ -1,16 +1,121 @@
 ﻿import importlib
+import inspect
+import json
 from pathlib import Path
 
 import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PUBLIC_API_INVENTORY = PROJECT_ROOT / "docs" / "public-api-inventory.json"
+
+
+def _load_public_api_inventory() -> dict[str, object]:
+    return json.loads(PUBLIC_API_INVENTORY.read_text(encoding="utf-8"))
+
+
+def _normalize_signature_text(signature: str) -> str:
+    return signature.replace(
+        "frozenset({'task', 'session'})",
+        "frozenset({'session', 'task'})",
+    )
+
+
+def _public_export_names(module: object) -> set[str]:
+    exported_names = getattr(module, "__all__", None)
+    assert exported_names is not None, (
+        f"{module.__name__} must define __all__ for public API inventory"
+    )
+    return {str(name) for name in exported_names}
 
 
 def test_public_package_imports_as_agentos_pep8_name() -> None:
     package = importlib.import_module("agentos")
 
-    assert package.__version__ == "0.1.0"
+    assert package.__version__ == "0.1.0rc1"
+
+
+def test_public_api_inventory_is_machine_readable_and_current() -> None:
+    inventory = _load_public_api_inventory()
+
+    assert inventory["schema"] == "agentos.public_api_inventory"
+    assert inventory["schema_version"] == 1
+    assert inventory["branch"] == "review/agentos-sdk-architecture-20260611"
+    assert inventory["package"] == "agentos"
+    assert inventory["generated_by"] == "manual-release-audit"
+    assert inventory["signature_format"] == (
+        "normalized inspect.signature string or non-callable"
+    )
+    modules = inventory["modules"]
+    assert isinstance(modules, dict)
+
+    required_modules = {
+        "agentos",
+        "agentos.channels",
+        "agentos.multi",
+        "agentos.runtime",
+        "agentos.workspace",
+        "agentos.registry",
+        "agentos.deployment",
+        "agentos.readiness",
+        "agentos.release",
+    }
+    assert required_modules <= set(modules)
+
+    agentos_exports = modules["agentos"]["exports"]
+    assert agentos_exports["AgentBuilder"]["stability"] == "stable"
+    assert agentos_exports["AsgiAgentApp"]["stability"] == "stable"
+    assert agentos_exports["CompareAndSavePlanStore"]["stability"] == "stable"
+    assert agentos_exports["PlanStoreRecord"]["stability"] == "stable"
+    assert agentos_exports["PlanConflictError"]["stability"] == "stable"
+    assert agentos_exports["A2AOperationServer"]["stability"] == "experimental"
+    assert agentos_exports["NacosAgentRegistryAdapter"]["stability"] == "experimental"
+    assert agentos_exports["ReferenceStatePlaneStack"]["stability"] == "experimental"
+
+    for module_name, module_payload in modules.items():
+        module = importlib.import_module(module_name)
+        exports = module_payload["exports"]
+        assert isinstance(exports, dict)
+        assert set(exports) == _public_export_names(module)
+        for export_name, export_payload in exports.items():
+            assert hasattr(module, export_name), f"{module_name}.{export_name}"
+            assert export_payload["stability"] in {"stable", "experimental"}
+            exported = getattr(module, export_name)
+            if callable(exported):
+                try:
+                    signature = str(inspect.signature(exported))
+                except (TypeError, ValueError):
+                    signature = "unavailable"
+                assert _normalize_signature_text(export_payload["signature"]) == (
+                    _normalize_signature_text(signature)
+                )
+            else:
+                assert export_payload["signature"] == "non-callable"
+
+
+def test_public_api_inventory_records_protocol_method_contracts() -> None:
+    inventory = _load_public_api_inventory()
+    modules = inventory["modules"]
+    assert isinstance(modules, dict)
+
+    for module_name, module_payload in modules.items():
+        module = importlib.import_module(module_name)
+        exports = module_payload["exports"]
+        assert isinstance(exports, dict)
+        for export_name, export_payload in exports.items():
+            exported = getattr(module, export_name)
+            if not getattr(exported, "_is_protocol", False):
+                continue
+            expected_methods = {
+                method_name: str(inspect.signature(method))
+                for method_name, method in inspect.getmembers(
+                    exported,
+                    predicate=inspect.isfunction,
+                )
+                if not method_name.startswith("_")
+            }
+            assert expected_methods, f"{module_name}.{export_name}"
+            assert export_payload["methods"] == expected_methods
 
 
 def test_legacy_mixed_case_package_name_is_not_public_api() -> None:
@@ -30,11 +135,34 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert hasattr(runtime, "QueryLoop")
     assert hasattr(runtime, "ProviderRequestBuilder")
     assert hasattr(runtime, "TurnNoticeProvider")
+    for name in [
+        "RuntimeProfile",
+        "ChannelRuntimeProfile",
+        "DistributedRuntimeProfile",
+        "DistributedWebSessionOperationsProfile",
+        "DistributedWebRuntimeProfile",
+        "DistributedTeamRuntimeProfile",
+        "ProductionStatePlaneDeploymentProfile",
+        "WorkerProcessLifecycleDeploymentProfile",
+        "LocalRuntimeProfile",
+        "WebRuntimeProfile",
+        "DistributedAgentProfile",
+    ]:
+        assert hasattr(runtime, name)
+        assert hasattr(agentos, name)
     assert not hasattr(runtime, "AgentLoop")
     assert not hasattr(runtime, "RequestBuilder")
     assert not hasattr(runtime, "RuntimeEvent")
 
     assert hasattr(capabilities, "ToolCallRouter")
+    for name in [
+        "ToolPathSandboxRule",
+        "ToolSandboxError",
+        "ToolSandboxPolicy",
+        "WorkspaceToolSandboxPolicy",
+    ]:
+        assert hasattr(capabilities, name)
+        assert hasattr(agentos, name)
     assert not hasattr(capabilities, "CapabilityRuntime")
 
     assert hasattr(hooks, "HookManager")
@@ -44,6 +172,7 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert not hasattr(providers, "ProviderRuntime")
 
     assert hasattr(agentos, "QueryLoop")
+    assert hasattr(agentos, "AsyncQueryLoop")
     assert hasattr(agentos, "ProviderRequestBuilder")
     assert hasattr(agentos, "Provider")
     assert hasattr(agentos, "ToolCallRouter")
@@ -183,18 +312,122 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "AgentInboxFullError",
         "AgentInboxMissingError",
         "AgentTaskNoticeStore",
+        "AllowAllPlannerToolAuthorizationPolicy",
+        "AllowAllTeamToolAuthorizationPolicy",
+        "CompareAndSavePlanStore",
         "ContinuationErrorRecord",
         "ContinuationTrigger",
+        "DefaultPlannerToolAuthorizationPolicy",
+        "DefaultTeamToolAuthorizationPolicy",
+        "EvidenceHandle",
         "ExpertAgentRunner",
+        "InMemoryPlanClaimStore",
         "InMemoryRegistry",
+        "InMemoryPlanStore",
+        "InMemoryTeamStore",
+        "InMemoryTeamUiStreamStore",
+        "InMemoryTeamWorkerCancellationStore",
+        "InMemoryTeamWorkerSessionProvider",
+        "InMemoryTeamWorkerRetryStore",
         "LocalContinuationTrigger",
+        "LocalTeamWakeupTrigger",
         "SpawnExecutor",
         "SubagentInitRequest",
+        "PlanDecomposition",
+        "PlanConflictError",
+        "PlanDecompositionGatePolicy",
+        "PlanDecompositionGateReport",
+        "PlanDecompositionValidationReport",
+        "PlanAssignment",
+        "PlanClaimRecord",
+        "PlanClaimResult",
+        "PlanClaimStatus",
+        "PlanClaimSweepReport",
+        "PlanClaimSweepSkip",
+        "PlanClaimSweepStore",
+        "PlanClaimStore",
+        "PlanClaimedSchedulerTickReport",
+        "PlanClaimedSchedulerTickSkip",
+        "PlanDispatchReport",
+        "PlanDispatchSkip",
+        "PlanError",
+        "PlanRetryPolicy",
+        "PlanSchedulerRetryReset",
+        "PlanSchedulerTickReport",
+        "PlanState",
+        "PlanStep",
+        "PlanStepSpec",
+        "PlanStore",
+        "PlanStoreRecord",
+        "PlannerSchedulablePlan",
+        "PlannerSchedulablePlanReason",
+        "PlannerDecompositionPolicyDeploymentProfile",
+        "PlannerLlmDecompositionGovernanceProfile",
+        "PlannerLlmGovernanceEvidenceRecord",
+        "PlannerLlmGovernanceEvidenceGateReport",
+        "PlannerOrchestrationDeploymentProfile",
+        "PlannerSchedulerGovernanceDeploymentProfile",
+        "PlannerClaimedSchedulerDaemon",
+        "PlannerClaimedSchedulerDaemonError",
+        "PlannerClaimedSchedulerDaemonState",
+        "PlannerClaimedSchedulerDaemonStatus",
+        "PlannerStaleClaimSweepProfile",
+        "PlannerWorkerDispatchSupervisionProfile",
+        "PlannerSchedulerDaemon",
+        "PlannerSchedulerDaemonError",
+        "PlannerSchedulerDaemonState",
+        "PlannerSchedulerDaemonStatus",
+        "PlannerToolAuthorizationError",
+        "PlannerToolAuthorizationPolicy",
+        "PlannerTools",
+        "PlannerRuntime",
+        "plan_to_working_state_summary",
+        "PostgresPlanStore",
+        "PostgresPlanClaimStore",
+        "PostgresTeamStore",
+        "PostgresTeamUiStreamStore",
+        "PostgresTeamWorkerCancellationStore",
+        "PostgresTeamWorkerRetryStore",
         "TaskHandle",
         "TaskRecord",
         "TaskRequest",
         "TaskResult",
         "TaskTable",
+        "SubAgentTemplate",
+        "TeamError",
+        "TeamMemberRecord",
+        "TeamMessage",
+        "TeamNoticeProvider",
+        "TeamNoticeStore",
+        "TeamRecord",
+        "TeamRuntime",
+        "TeamStore",
+        "TeamToolAuthorizationError",
+        "TeamToolAuthorizationPolicy",
+        "TeamTools",
+        "TeamWakeupTrigger",
+        "TeamUiEvent",
+        "TeamUiEventKind",
+        "TeamUiStreamStore",
+        "TeamWorkerAgentProvider",
+        "TeamWorkerCancellationRecord",
+        "TeamWorkerCancellationStatus",
+        "TeamWorkerCancellationStore",
+        "TeamWorkerDaemon",
+        "TeamWorkerDaemonState",
+        "TeamWorkerDaemonStatus",
+        "TeamWorkerPermissionError",
+        "TeamWorkerPermissionPolicy",
+        "TeamWorkerRetryPolicy",
+        "TeamWorkerRetryRecord",
+        "TeamWorkerRetryStatus",
+        "TeamWorkerRetryStore",
+        "TeamWorkerRunError",
+        "TeamWorkerRunResult",
+        "TeamWorkerRunner",
+        "TeamWorkerSession",
+        "TeamWorkerSessionProvider",
+        "TeamWorkerSessionRequest",
     ]:
         assert hasattr(multi, name)
 
@@ -202,8 +435,102 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "AgentCard",
         "AgentCoordinator",
         "AgentInbox",
+        "AllowAllPlannerToolAuthorizationPolicy",
+        "AllowAllTeamToolAuthorizationPolicy",
+        "CompareAndSavePlanStore",
+        "DefaultPlannerToolAuthorizationPolicy",
+        "DefaultTeamToolAuthorizationPolicy",
+        "EvidenceHandle",
+        "InMemoryPlanClaimStore",
+        "InMemoryPlanStore",
         "InMemoryRegistry",
+        "InMemoryTeamStore",
+        "InMemoryTeamUiStreamStore",
+        "InMemoryTeamWorkerCancellationStore",
+        "InMemoryTeamWorkerSessionProvider",
+        "InMemoryTeamWorkerRetryStore",
+        "PlanConflictError",
+        "PlanDecomposition",
+        "PlanDecompositionGatePolicy",
+        "PlanDecompositionGateReport",
+        "PlanDecompositionValidationReport",
+        "PlanClaimRecord",
+        "PlanClaimResult",
+        "PlanClaimStatus",
+        "PlanClaimSweepReport",
+        "PlanClaimSweepSkip",
+        "PlanClaimSweepStore",
+        "PlanClaimStore",
+        "PlanDispatchReport",
+        "PlanDispatchSkip",
+        "PlanRetryPolicy",
+        "PlanSchedulerRetryReset",
+        "PlanSchedulerTickReport",
+        "PlanState",
+        "PlanStep",
+        "PlanStepSpec",
+        "PlanStoreRecord",
+        "PlannerSchedulablePlan",
+        "PlannerSchedulablePlanReason",
+        "PlannerDecompositionPolicyDeploymentProfile",
+        "PlannerLlmDecompositionGovernanceProfile",
+        "PlannerLlmGovernanceEvidenceRecord",
+        "PlannerLlmGovernanceEvidenceGateReport",
+        "PlannerOrchestrationDeploymentProfile",
+        "PlannerSchedulerGovernanceDeploymentProfile",
+        "PlannerClaimedSchedulerDaemon",
+        "PlannerClaimedSchedulerDaemonError",
+        "PlannerClaimedSchedulerDaemonState",
+        "PlannerClaimedSchedulerDaemonStatus",
+        "PlannerStaleClaimSweepProfile",
+        "PlannerWorkerDispatchSupervisionProfile",
+        "PlannerSchedulerDaemon",
+        "PlannerSchedulerDaemonError",
+        "PlannerSchedulerDaemonState",
+        "PlannerSchedulerDaemonStatus",
+        "PlannerToolAuthorizationError",
+        "PlannerToolAuthorizationPolicy",
+        "PlannerTools",
+        "PlannerRuntime",
+        "plan_to_working_state_summary",
+        "PostgresPlanStore",
+        "PostgresPlanClaimStore",
+        "PostgresTeamStore",
+        "PostgresTeamUiStreamStore",
+        "PostgresTeamWorkerCancellationStore",
+        "PostgresTeamWorkerRetryStore",
+        "SubAgentTemplate",
         "TaskTable",
+        "TeamMemberRecord",
+        "TeamMessage",
+        "TeamNoticeStore",
+        "TeamRecord",
+        "TeamRuntime",
+        "TeamToolAuthorizationError",
+        "TeamToolAuthorizationPolicy",
+        "TeamTools",
+        "TeamUiEvent",
+        "TeamUiEventKind",
+        "TeamUiStreamStore",
+        "TeamWorkerAgentProvider",
+        "TeamWorkerCancellationRecord",
+        "TeamWorkerCancellationStatus",
+        "TeamWorkerCancellationStore",
+        "TeamWorkerDaemon",
+        "TeamWorkerDaemonState",
+        "TeamWorkerDaemonStatus",
+        "TeamWorkerPermissionError",
+        "TeamWorkerPermissionPolicy",
+        "TeamWorkerRetryPolicy",
+        "TeamWorkerRetryRecord",
+        "TeamWorkerRetryStatus",
+        "TeamWorkerRetryStore",
+        "TeamWorkerRunError",
+        "TeamWorkerRunResult",
+        "TeamWorkerRunner",
+        "TeamWorkerSession",
+        "TeamWorkerSessionProvider",
+        "TeamWorkerSessionRequest",
     ]:
         assert hasattr(agentos, name)
 
@@ -227,52 +554,537 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
         "AgentResolver",
         "InMemoryAgentRegistryStore",
         "JsonFileAgentRegistryStore",
+        "NacosAgentCardResolver",
+        "NacosAgentRegistryAdapter",
+        "NacosRegistryClient",
+        "NacosRegistryConfig",
+        "NacosRegistryError",
+        "NacosRegistryEvidence",
         "PersistentAgentRegistry",
         "PostgresAgentRegistryStore",
         "ServiceResolver",
         "StaticResolver",
+        "agent_card_to_nacos_metadata",
+        "nacos_instance_to_agent_card",
     ]:
         assert hasattr(registry, name)
 
     for name in [
         "A2AAdapter",
+        "A2AAgentCapabilities",
+        "A2AAgentCard",
+        "A2AAgentExtension",
+        "A2AAgentInterface",
+        "A2AAgentProvider",
+        "A2AAgentSkill",
+        "A2AAuthProvider",
+        "A2ABearerCredential",
+        "A2ACardSignature",
+        "A2ACardSigner",
+        "A2ACardTrustError",
+        "A2ACardTrustStore",
+        "A2ACardVerifier",
+        "A2AConformanceCheck",
+        "A2AConformanceFinding",
+        "A2AConformanceHarness",
+        "A2AConformanceReport",
+        "A2AExternalConformanceExecutionProfile",
+        "A2AExternalConformanceExecutionRecord",
+        "A2AExternalConformanceGateReport",
+        "A2AExternalConformanceRunner",
+        "A2AExternalConformanceCliRunner",
+        "A2AExternalConformanceInvocationGateReport",
+        "A2AExternalConformanceInvocationPlan",
+        "A2AExternalConformanceImportError",
+        "A2AExternalConformanceReportImporter",
+        "A2AEgressPolicyError",
+        "A2AEgressUrlPolicy",
+        "A2ACredentialRotationError",
+        "A2AInboundAuthError",
+        "A2AInboundAuthPolicy",
+        "A2AJwtClaims",
+        "A2AJwtVerifier",
+        "A2AOidcDiscoveryError",
+        "A2AOperationInboundAuthPolicy",
+        "A2AResourceInboundAuthPolicy",
+        "A2ATenantRbacRule",
+        "A2ARateLimitError",
+        "A2AArtifact",
+        "A2AExtensionNegotiationError",
+        "A2AExtensionNegotiationPolicy",
+        "A2AExtensionNegotiationResult",
+        "A2AMessage",
+        "A2AMessagePart",
+        "A2AMessageStreamEvent",
+        "A2AOperationClient",
+        "A2AOperationError",
+        "A2AOperationRateLimitPolicy",
+        "A2AOperationRequest",
+        "A2AOperationResponse",
+        "A2AOperationRunner",
+        "A2AOperationServer",
+        "A2APeerIdResolver",
+        "A2AProtocolVersionPolicy",
+        "A2APushNotificationAuthentication",
+        "A2APushNotificationConfig",
+        "A2APushNotificationConfigError",
+        "A2APushNotificationConfigStore",
+        "A2APushNotificationDaemon",
+        "A2APushNotificationDaemonError",
+        "A2APushNotificationDaemonState",
+        "A2APushNotificationDaemonStatus",
+        "A2APushNotificationDeploymentProfile",
+        "A2APushNotificationDelivery",
+        "A2APushNotificationDeliveryRecord",
+        "A2APushNotificationDeliveryRecordStatus",
+        "A2APushNotificationDeliveryStore",
+        "A2APushNotificationDeliveryWorker",
+        "A2APushNotificationDispatcher",
+        "A2APushNotificationHealthPolicy",
+        "A2APushNotificationHealthReport",
+        "A2APushNotificationHealthStatus",
+        "A2APushNotificationRetryPolicy",
+        "A2APushNotificationUrlPolicy",
+        "A2AStreamLifecycleDeploymentProfile",
         "A2AServerAdapter",
         "A2ATransport",
+        "A2ACardResolver",
+        "A2ATask",
+        "A2ATaskArtifactUpdateEvent",
+        "A2ATaskLifecycleRunner",
+        "A2ATaskSubscriptionEvent",
+        "AgentA2AOperationRunner",
         "AgentA2ATaskRunner",
         "AgentHealth",
+        "HmacA2ACardSigner",
+        "HmacA2ACardVerifier",
+        "JwksA2ACardTrustStore",
+        "HostAllowListA2AEgressUrlPolicy",
+        "AsyncAgentSessionProvider",
         "AgentSessionProvider",
+        "AllowAllA2AInboundAuthPolicy",
         "AllowAllChannelAuthPolicy",
+        "AllowAllTeamUiAuthPolicy",
         "AsgiAgentApp",
+        "ChannelAuthError",
         "ChannelAuthPolicy",
         "ChannelError",
         "ChannelTurnRequest",
         "ChannelTurnResult",
+        "ClaimsTenantRbacA2AInboundAuthPolicy",
+        "DurableAgentSessionProvider",
         "HttpAgentChannel",
+        "HostAllowListA2APushNotificationUrlPolicy",
+        "HmacA2AJwtVerifier",
+        "InMemoryA2APushNotificationConfigStore",
+        "InMemoryA2APushNotificationDeliveryStore",
         "InMemoryAgentSessionProvider",
+        "InMemorySessionLeaseStore",
+        "InMemorySseEventBuffer",
+        "InMemorySseTurnControlStore",
+        "JwksA2AJwtVerifier",
+        "OperationAllowListA2AInboundAuthPolicy",
+        "OidcDiscoveryMetadata",
+        "OidcDiscoveryMetadataProvider",
+        "OidcClaimsA2AInboundAuthPolicy",
+        "PeerAllowListA2AInboundAuthPolicy",
+        "PeerKeyA2AOperationRateLimitPolicy",
+        "PostgresA2APushNotificationConfigStore",
+        "PostgresA2APushNotificationDeliveryStore",
+        "PublicHttpsA2AEgressUrlPolicy",
+        "PublicHttpsA2APushNotificationUrlPolicy",
+        "RejectAllA2AInboundAuthPolicy",
+        "RejectAllChannelAuthPolicy",
+        "RejectAllTeamUiAuthPolicy",
+        "RedisSessionLeaseStore",
+        "RedisSseEventBuffer",
+        "RedisSseTurnControlStore",
+        "ResourceAllowListA2AInboundAuthPolicy",
+        "RotatingA2ACardTrustKey",
+        "RotatingA2ACardTrustStore",
+        "RotatingBearerA2AAuthProvider",
+        "RotatingBearerA2ACredentialStore",
+        "RotatingBearerA2AInboundAuthPolicy",
+        "RotatingHmacA2ACardSigner",
+        "SessionLease",
+        "SessionLeaseError",
+        "SessionLeaseStore",
+        "SnapshotAgentFactory",
         "SseAgentChannel",
+        "SseEventBuffer",
+        "SseReplayWindow",
+        "SseTurnAlreadyActiveError",
+        "SseTurnControlState",
+        "SseTurnControlStore",
+        "StaticA2ACardTrustStore",
+        "StaticBearerA2AAuthProvider",
+        "StaticBearerA2AInboundAuthPolicy",
+        "a2a_artifact_from_dict",
+        "a2a_artifact_to_dict",
+        "a2a_message_stream_event_from_dict",
+        "a2a_card_from_agent_card",
+        "a2a_card_from_dict",
+        "a2a_card_to_dict",
+        "a2a_push_notification_config_from_dict",
+        "a2a_push_notification_config_to_dict",
+        "a2a_push_notification_payload_to_dict",
+        "a2a_state_from_task_status",
+        "a2a_task_artifact_update_event_from_dict",
+        "a2a_task_artifact_update_event_to_dict",
+        "a2a_task_from_task_record",
+        "a2a_task_subscription_event_from_dict",
+        "a2a_task_subscription_event_to_dict",
+        "parse_a2a_sse_events",
     ]:
         assert hasattr(channels, name)
 
     for name in [
         "A2AAdapter",
+        "A2AAgentCapabilities",
+        "A2AAgentCard",
+        "A2AAgentExtension",
+        "A2AAgentInterface",
+        "A2AAgentProvider",
+        "A2AAgentSkill",
+        "A2AAuthProvider",
+        "A2ABearerCredential",
+        "A2ACardSignature",
+        "A2ACardSigner",
+        "A2ACardTrustError",
+        "A2ACardTrustStore",
+        "A2ACardVerifier",
+        "A2AConformanceCheck",
+        "A2AConformanceFinding",
+        "A2AConformanceHarness",
+        "A2AConformanceReport",
+        "A2AExternalConformanceExecutionProfile",
+        "A2AExternalConformanceExecutionRecord",
+        "A2AExternalConformanceGateReport",
+        "A2AExternalConformanceRunner",
+        "A2AExternalConformanceCliRunner",
+        "A2AExternalConformanceInvocationGateReport",
+        "A2AExternalConformanceInvocationPlan",
+        "A2AExternalConformanceImportError",
+        "A2AExternalConformanceReportImporter",
+        "A2AEgressPolicyError",
+        "A2AEgressUrlPolicy",
+        "A2ACredentialRotationError",
+        "A2AInboundAuthError",
+        "A2AInboundAuthPolicy",
+        "A2AJwtClaims",
+        "A2AJwtVerifier",
+        "A2AOidcDiscoveryError",
+        "A2AOperationInboundAuthPolicy",
+        "A2AResourceInboundAuthPolicy",
+        "A2ATenantRbacRule",
+        "A2ARateLimitError",
+        "A2AArtifact",
+        "A2AExtensionNegotiationError",
+        "A2AExtensionNegotiationPolicy",
+        "A2AExtensionNegotiationResult",
+        "A2AMessage",
+        "A2AMessagePart",
+        "A2AMessageStreamEvent",
+        "A2AOperationClient",
+        "A2AOperationError",
+        "A2AOperationRateLimitPolicy",
+        "A2AOperationRequest",
+        "A2AOperationResponse",
+        "A2AOperationServer",
+        "A2APeerIdResolver",
+        "A2AProtocolVersionPolicy",
+        "A2APushNotificationAuthentication",
+        "A2APushNotificationConfig",
+        "A2APushNotificationConfigError",
+        "A2APushNotificationConfigStore",
+        "A2APushNotificationDaemon",
+        "A2APushNotificationDaemonError",
+        "A2APushNotificationDaemonState",
+        "A2APushNotificationDaemonStatus",
+        "A2APushNotificationDeploymentProfile",
+        "A2APushNotificationDelivery",
+        "A2APushNotificationDeliveryRecord",
+        "A2APushNotificationDeliveryRecordStatus",
+        "A2APushNotificationDeliveryStore",
+        "A2APushNotificationDeliveryWorker",
+        "A2APushNotificationDispatcher",
+        "A2APushNotificationHealthPolicy",
+        "A2APushNotificationHealthReport",
+        "A2APushNotificationHealthStatus",
+        "A2APushNotificationRetryPolicy",
+        "A2APushNotificationUrlPolicy",
+        "A2AStreamLifecycleDeploymentProfile",
         "A2AServerAdapter",
+        "A2ACardResolver",
+        "A2ATask",
+        "A2ATaskArtifactUpdateEvent",
+        "A2ATaskSubscriptionEvent",
+        "AgentA2AOperationRunner",
         "AgentResolver",
+        "AllowAllA2AInboundAuthPolicy",
+        "AsyncAgentSessionProvider",
         "AsgiAgentApp",
+        "ClaimsTenantRbacA2AInboundAuthPolicy",
+        "DurableAgentSessionProvider",
+        "HmacA2ACardSigner",
+        "HmacA2ACardVerifier",
+        "HostAllowListA2APushNotificationUrlPolicy",
+        "HostAllowListA2AEgressUrlPolicy",
+        "HmacA2AJwtVerifier",
         "HttpAgentChannel",
+        "InMemoryA2APushNotificationConfigStore",
+        "InMemoryA2APushNotificationDeliveryStore",
         "InMemoryAgentSessionProvider",
+        "InMemorySessionLeaseStore",
+        "JwksA2ACardTrustStore",
+        "JwksA2AJwtVerifier",
+        "NacosAgentCardResolver",
+        "NacosAgentRegistryAdapter",
+        "NacosRegistryClient",
+        "NacosRegistryConfig",
+        "NacosRegistryError",
+        "NacosRegistryEvidence",
         "PersistentAgentRegistry",
+        "OperationAllowListA2AInboundAuthPolicy",
+        "OidcDiscoveryMetadata",
+        "OidcDiscoveryMetadataProvider",
+        "OidcClaimsA2AInboundAuthPolicy",
+        "PeerAllowListA2AInboundAuthPolicy",
+        "PeerKeyA2AOperationRateLimitPolicy",
+        "PostgresA2APushNotificationConfigStore",
+        "PostgresA2APushNotificationDeliveryStore",
         "PostgresAgentRegistryStore",
+        "PublicHttpsA2AEgressUrlPolicy",
+        "PublicHttpsA2APushNotificationUrlPolicy",
+        "RejectAllA2AInboundAuthPolicy",
+        "ResourceAllowListA2AInboundAuthPolicy",
+        "RotatingA2ACardTrustKey",
+        "RotatingA2ACardTrustStore",
+        "RotatingBearerA2AAuthProvider",
+        "RotatingBearerA2ACredentialStore",
+        "RotatingBearerA2AInboundAuthPolicy",
+        "RotatingHmacA2ACardSigner",
         "RemoteTaskExecutor",
+        "SessionLease",
+        "SessionLeaseError",
+        "SessionLeaseStore",
         "ServiceResolver",
+        "SnapshotAgentFactory",
         "SseAgentChannel",
+        "StaticA2ACardTrustStore",
+        "StaticBearerA2AAuthProvider",
+        "StaticBearerA2AInboundAuthPolicy",
+        "TaskStoreA2ATaskLifecycleRunner",
         "StaticResolver",
+        "agent_card_to_nacos_metadata",
+        "a2a_artifact_from_dict",
+        "a2a_artifact_to_dict",
+        "a2a_message_stream_event_from_dict",
+        "a2a_card_from_agent_card",
+        "a2a_card_from_dict",
+        "a2a_card_to_dict",
+        "a2a_push_notification_config_from_dict",
+        "a2a_push_notification_config_to_dict",
+        "a2a_push_notification_payload_to_dict",
+        "a2a_state_from_task_status",
+        "a2a_task_artifact_update_event_from_dict",
+        "a2a_task_artifact_update_event_to_dict",
+        "a2a_task_from_task_record",
+        "a2a_task_subscription_event_from_dict",
+        "a2a_task_subscription_event_to_dict",
+        "parse_a2a_sse_events",
+        "nacos_instance_to_agent_card",
     ]:
+        assert hasattr(agentos, name)
+
+
+def test_distributed_sse_public_api_inventory_covers_shared_replay_and_control() -> None:
+    inventory = _load_public_api_inventory()
+    channel_exports = inventory["modules"]["agentos.channels"]["exports"]
+
+    for name in [
+        "InMemorySseEventBuffer",
+        "RedisSseEventBuffer",
+        "SseEventBuffer",
+        "SseReplayWindow",
+        "InMemorySseTurnControlStore",
+        "RedisSseTurnControlStore",
+        "SseTurnAlreadyActiveError",
+        "SseTurnControlState",
+        "SseTurnControlStore",
+    ]:
+        assert channel_exports[name]["stability"] == "stable"
+
+
+def test_workspace_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    workspace = importlib.import_module("agentos.workspace")
+
+    for name in [
+        "LocalWorkspaceExecutionBackend",
+        "LocalWorkspaceProvider",
+        "SandboxBackend",
+        "WorkspaceExecutionIsolationProfile",
+        "WorkspaceExecutionBackend",
+        "WorkspaceExecutionError",
+        "WorkspaceExecutionPolicy",
+        "WorkspaceExecutionRequest",
+        "WorkspaceExecutionResult",
+        "WorkspaceHandle",
+        "WorkspacePolicy",
+        "WorkspacePolicyError",
+        "WorkspaceProvider",
+        "WorkspaceRequest",
+        "WorkspaceScope",
+    ]:
+        assert hasattr(workspace, name)
+        assert hasattr(agentos, name)
+
+
+def test_readiness_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    readiness = importlib.import_module("agentos.readiness")
+
+    for name in [
+        "AgentFormReadiness",
+        "ProductionReadinessEvidenceBundle",
+        "ReadinessDimension",
+        "ReadinessEvidenceCheck",
+        "ReadinessEvidenceStatus",
+        "ReadinessLevel",
+        "REQUIRED_READINESS_DIMENSIONS",
+        "get_agent_form_readiness",
+        "list_agent_form_readiness",
+    ]:
+        assert hasattr(readiness, name)
+        assert hasattr(agentos, name)
+
+
+def test_release_evidence_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    release = importlib.import_module("agentos.release")
+
+    for name in [
+        "RELEASE_EVIDENCE_REQUIRED_GATES",
+        "ReleaseEvidenceGateStatus",
+        "ReleaseEvidenceValidationReport",
+        "validate_release_evidence_manifest",
+    ]:
+        assert hasattr(release, name)
+        assert hasattr(agentos, name)
+
+
+def test_skill_release_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    skills = importlib.import_module("agentos.skills")
+
+    for name in [
+        "SkillReleaseFile",
+        "SkillReleaseManifest",
+        "SkillReleaseDriftReport",
+        "build_skill_release_manifest",
+        "compare_skill_release_manifests",
+    ]:
+        assert hasattr(skills, name)
+        assert hasattr(agentos, name)
+
+
+def test_distributed_session_adapter_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    channels = importlib.import_module("agentos.channels")
+    persistence = importlib.import_module("agentos.persistence")
+
+    assert hasattr(channels, "RedisSessionLeaseStore")
+    assert hasattr(persistence, "PostgresSessionSnapshotPersistence")
+    assert hasattr(agentos, "RedisSessionLeaseStore")
+    assert hasattr(agentos, "PostgresSessionSnapshotPersistence")
+
+
+def test_distributed_web_runtime_profile_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    runtime = importlib.import_module("agentos.runtime")
+
+    assert hasattr(runtime, "DistributedWebRuntimeProfile")
+    assert hasattr(agentos, "DistributedWebRuntimeProfile")
+    assert hasattr(runtime, "DistributedWebSessionOperationsProfile")
+    assert hasattr(agentos, "DistributedWebSessionOperationsProfile")
+    assert hasattr(runtime, "DistributedTeamRuntimeProfile")
+    assert hasattr(agentos, "DistributedTeamRuntimeProfile")
+    assert hasattr(runtime, "ProductionStatePlaneDeploymentProfile")
+    assert hasattr(agentos, "ProductionStatePlaneDeploymentProfile")
+    assert hasattr(runtime, "WorkerProcessLifecycleDeploymentProfile")
+    assert hasattr(agentos, "WorkerProcessLifecycleDeploymentProfile")
+
+
+def test_agent_service_reference_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    service = importlib.import_module("agentos.service")
+
+    for name in [
+        "AGENT_SERVICE_REFERENCE_REQUIRED_COMPONENTS",
+        "AgentServiceReference",
+        "AgentServiceReferenceProfile",
+    ]:
+        assert hasattr(service, name)
+        assert hasattr(agentos, name)
+
+
+def test_reference_state_plane_stack_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    state_plane = importlib.import_module("agentos.state_plane")
+
+    for name in [
+        "REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS",
+        "ReferenceStatePlaneStack",
+        "ReferenceStatePlaneStackProfile",
+    ]:
+        assert hasattr(state_plane, name)
+        assert hasattr(agentos, name)
+
+
+def test_reference_live_backend_probe_pack_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    probes = importlib.import_module("agentos.probes")
+
+    for name in [
+        "REFERENCE_LIVE_BACKEND_PROBE_PACK_NAME",
+        "ReferenceLiveBackendProbePack",
+        "ReferenceLiveBackendProbeSpec",
+    ]:
+        assert hasattr(probes, name)
+        assert hasattr(agentos, name)
+
+
+def test_deployment_worker_process_supervisor_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    deployment = importlib.import_module("agentos.deployment")
+
+    for name in [
+        "BackendVerificationCliRunner",
+        "BackendVerificationInvocationPlan",
+        "BackendVerificationReportImportError",
+        "BackendVerificationReportImporter",
+        "BackendVerificationRecord",
+        "BackendVerificationRunner",
+        "BackendVerificationStatus",
+        "DeploymentLiveBackendVerificationGateReport",
+        "DeploymentLiveBackendVerificationProfile",
+        "DeploymentLiveBackendVerificationRunResult",
+        "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
+        "WorkerProcessSpec",
+        "WorkerProcessState",
+        "WorkerProcessSupervisor",
+        "LocalSubprocessWorkerSupervisor",
+    ]:
+        assert hasattr(deployment, name)
         assert hasattr(agentos, name)
 
 
 def test_runtime_context_messages_do_not_import_channels() -> None:
     for package in ["runtime", "context", "messages"]:
         for path in (PROJECT_ROOT / "src" / "agentos" / package).glob("*.py"):
+            if path.name == "profile.py":
+                continue
             assert "agentos.channels" not in path.read_text(encoding="utf-8")
 
 

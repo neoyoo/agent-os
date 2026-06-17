@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from agentos.multi.types import AgentEnvelope
+from agentos.multi.types import AgentEnvelope, AgentEnvelopeType
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +26,12 @@ class AgentMessageQueue(Protocol):
     def send(self, envelope: AgentEnvelope) -> str:
         """发送 envelope，并返回 delivery id。"""
 
-    def collect(self, agent_id: str) -> list[QueueDelivery]:
+    def collect(
+        self,
+        agent_id: str,
+        *,
+        envelope_types: tuple[AgentEnvelopeType, ...] | None = None,
+    ) -> list[QueueDelivery]:
         """读取当前可处理 deliveries。"""
 
     def wait(self, agent_id: str, timeout: float | None = None) -> bool:

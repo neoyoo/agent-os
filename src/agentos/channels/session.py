@@ -17,6 +17,30 @@ class AgentSessionProvider(Protocol):
         """标记本轮 channel 调用结束。"""
 
 
+class AsyncAgentSessionProvider(Protocol):
+    """Async channel session provider extension."""
+
+    async def async_get_agent(self, session_id: str) -> Agent:
+        """Return an agent for a session without blocking the event loop."""
+
+    async def async_release_agent(self, session_id: str, agent: Agent) -> None:
+        """Release an agent after an async channel turn."""
+
+
+class AbandonableAgentSessionProvider(Protocol):
+    """Optional extension for releasing a session without saving turn state."""
+
+    def abandon_agent(self, session_id: str, agent: Agent) -> None:
+        """Discard an active session lease without persisting the agent."""
+
+
+class AsyncAbandonableAgentSessionProvider(Protocol):
+    """Async extension for releasing a session without saving turn state."""
+
+    async def async_abandon_agent(self, session_id: str, agent: Agent) -> None:
+        """Discard an active async session without persisting the agent."""
+
+
 class InMemoryAgentSessionProvider:
     """单进程内存 session provider，按 session_id 缓存 Agent。"""
 

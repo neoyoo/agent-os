@@ -2,14 +2,30 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
-from typing import Sequence, cast
+from functools import wraps
+from typing import Callable, Sequence, TypeVar, cast
 
 from agentos.multi.serializers import task_record_from_dict, task_record_to_dict
 from agentos.multi.task_store import TaskClaim
 from agentos.multi.types import TaskHandle, TaskRecord, TaskResult, TaskStatus
 from agentos.persistence.postgres import BackendUnavailableError
 from agentos.persistence.protocols import PostgresConnection, PostgresCursor
+
+
+_F = TypeVar("_F", bound=Callable[..., object])
+
+
+def _with_connection_scope(method: _F) -> _F:
+    @wraps(method)
+    def wrapper(self: "PostgresTaskStore", *args: object, **kwargs: object) -> object:
+        with self._connection_scope():
+            return method(self, *args, **kwargs)
+
+    return cast(_F, wrapper)
 
 
 class PostgresTaskStore:
@@ -23,22 +39,19 @@ class PostgresTaskStore:
     ) -> None:
         """创建 Postgres task store；未安装 postgres extra 时给出清晰错误。"""
 
+        self._active_connection: ContextVar[object | None] = ContextVar(
+            f"{self.__class__.__name__}.active_connection",
+            default=None,
+        )
+        self._connection: object | None = None
         self._pool = pool
+        self._owns_pool = False
         if connection is not None:
             self._connection = connection
             self._dsn = dsn
             return
         if pool is not None:
-            getconn = getattr(pool, "getconn", None)
-            connection_method = getattr(pool, "connection", None)
-            if callable(getconn):
-                self._connection = getconn()
-            elif callable(connection_method):
-                context = connection_method()
-                self._connection = context.__enter__()
-                self._pool_context = context
-            else:
-                raise RuntimeError("Postgres pool must provide getconn() or connection()")
+            self._ensure_pool_supported(pool)
             self._dsn = dsn
             return
         try:
@@ -63,8 +76,12 @@ class PostgresTaskStore:
                     "PostgresTaskStore pool support requires `agentos[postgres]`.",
                 ) from error
             pool = ConnectionPool(dsn)
+            store = cls(dsn, pool=pool)
+            store._owns_pool = True
+            return store
         return cls(dsn, pool=pool)
 
+    @_with_connection_scope
     def create(self, record: TaskRecord) -> TaskHandle:
         """创建 task record。"""
 
@@ -95,6 +112,7 @@ class PostgresTaskStore:
         self._commit()
         return self._handle(record)
 
+    @_with_connection_scope
     def get(self, task_id: str) -> TaskRecord | None:
         """返回 task record。"""
 
@@ -108,6 +126,7 @@ class PostgresTaskStore:
             return None
         return task_record_from_dict(self._json_value(row[0]))
 
+    @_with_connection_scope
     def claim_queued(
         self,
         *,
@@ -136,6 +155,18 @@ class PostgresTaskStore:
                 )
               )
               AND deadline_at > %s
+              AND NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                  COALESCE(
+                    payload #> '{request,allowed_tool_names}',
+                    '[]'::jsonb
+                  )
+                ) AS required_tool(allowed_tool_names)
+                WHERE NOT (
+                  required_tool.allowed_tool_names = ANY(%s::text[])
+                )
+              )
               ORDER BY deadline_at, task_id
               LIMIT %s
               FOR UPDATE SKIP LOCKED
@@ -169,6 +200,7 @@ class PostgresTaskStore:
             (
                 now,
                 now,
+                list(capabilities),
                 limit,
                 worker_id,
                 lease_expires_at,
@@ -192,6 +224,7 @@ class PostgresTaskStore:
             )
         return claims
 
+    @_with_connection_scope
     def mark_running(self, task_id: str, *, now: float | None = None) -> bool:
         """queued -> running。"""
 
@@ -208,6 +241,7 @@ class PostgresTaskStore:
             ),
         )
 
+    @_with_connection_scope
     def mark_completed(
         self,
         task_id: str,
@@ -228,6 +262,7 @@ class PostgresTaskStore:
             attempt=attempt,
         )
 
+    @_with_connection_scope
     def mark_failed(
         self,
         task_id: str,
@@ -248,6 +283,7 @@ class PostgresTaskStore:
             attempt=attempt,
         )
 
+    @_with_connection_scope
     def request_cancel(self, task_id: str, *, now: float) -> bool:
         """queued 直接取消，running 写入 cancel intent。"""
 
@@ -282,6 +318,7 @@ class PostgresTaskStore:
             return self._transition(current, updated)
         return current.status == "cancelled"
 
+    @_with_connection_scope
     def ack_cancelled(
         self,
         task_id: str,
@@ -312,6 +349,7 @@ class PostgresTaskStore:
         )
         return self._transition(current, updated, outbox=True)
 
+    @_with_connection_scope
     def mark_cancelled(
         self,
         task_id: str,
@@ -333,6 +371,7 @@ class PostgresTaskStore:
             allowed={"queued", "running"},
         )
 
+    @_with_connection_scope
     def mark_timed_out(
         self,
         task_id: str,
@@ -351,6 +390,7 @@ class PostgresTaskStore:
             require_claim=False,
         )
 
+    @_with_connection_scope
     def store_late_result(self, task_id: str, result: TaskResult) -> bool:
         """在 timeout/cancelled 之后保存 late result。"""
 
@@ -365,6 +405,7 @@ class PostgresTaskStore:
         )
         return self._transition(current, updated)
 
+    @_with_connection_scope
     def due_timeouts(self, now: float) -> list[TaskRecord]:
         """返回 deadline 已到且仍可标记 timeout 的任务。"""
 
@@ -378,6 +419,7 @@ class PostgresTaskStore:
         ).fetchall()
         return [task_record_from_dict(self._json_value(row[0])) for row in rows]
 
+    @_with_connection_scope
     def active_for_agent(self, agent_id: str | None = None) -> list[TaskHandle]:
         """返回指定 parent 或全部任务的 handles。"""
 
@@ -402,6 +444,7 @@ class PostgresTaskStore:
             for row in rows
         ]
 
+    @_with_connection_scope
     def completed_for_agent(self, agent_id: str) -> list[TaskResult]:
         """返回指定 parent 可见的终态 results。"""
 
@@ -421,6 +464,7 @@ class PostgresTaskStore:
                 results.append(record.result)
         return results
 
+    @_with_connection_scope
     def consume_results_for_agent(self, agent_id: str) -> list[TaskResult]:
         """返回并标记指定 parent 尚未消费的终态 results。"""
 
@@ -450,6 +494,7 @@ class PostgresTaskStore:
                 results.append(current.result)
         return results
 
+    @_with_connection_scope
     def active_count_for_target(self, agent_id: str) -> int:
         """返回指定 target agent 的 queued/running 任务数。"""
 
@@ -462,6 +507,7 @@ class PostgresTaskStore:
         ).fetchone()
         return 0 if row is None else int(row[0])
 
+    @_with_connection_scope
     def mark_result_notified(self, task_id: str, *, now: float) -> bool:
         """标记 terminal result 已发送 result-ready 通知。"""
 
@@ -476,6 +522,7 @@ class PostgresTaskStore:
         )
         return self._transition(current, updated)
 
+    @_with_connection_scope
     def release_running_leases(
         self,
         *,
@@ -532,6 +579,7 @@ class PostgresTaskStore:
         self._commit()
         return len(rows)
 
+    @_with_connection_scope
     def pending_outbox(self, *, limit: int) -> list[object]:
         """返回未投递 outbox rows，供 OutboxReconciler 使用。"""
 
@@ -556,6 +604,7 @@ class PostgresTaskStore:
             for row in rows
         ]
 
+    @_with_connection_scope
     def mark_outbox_delivered(self, outbox_id: int, *, delivered_at: float) -> bool:
         """标记 outbox row 已投递。"""
 
@@ -695,30 +744,90 @@ class PostgresTaskStore:
         sql: str,
         params: tuple[object, ...] = (),
     ) -> PostgresCursor:
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
         try:
-            return cast(PostgresConnection, self._connection).execute(sql, params)
+            return cast(PostgresConnection, connection).execute(sql, params)
         except Exception as error:
             raise BackendUnavailableError("Postgres backend unavailable") from error
 
     def _commit(self) -> None:
-        commit = getattr(self._connection, "commit", None)
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        commit = getattr(connection, "commit", None)
         if commit is not None:
             commit()
 
     def close(self) -> None:
         """关闭或归还当前 Postgres connection。"""
 
-        pool = getattr(self, "_pool", None)
-        if pool is not None:
-            putconn = getattr(pool, "putconn", None)
-            if callable(putconn):
-                putconn(self._connection)
-                return
-        context = getattr(self, "_pool_context", None)
+        if self._connection is None:
+            if self._owns_pool and self._pool is not None:
+                close = getattr(self._pool, "close", None)
+                if callable(close):
+                    close()
+            return
+        close = getattr(self._connection, "close", None)
+        if callable(close):
+            close()
+
+    def _ensure_pool_supported(self, pool: object) -> None:
+        getconn = getattr(pool, "getconn", None)
+        connection_method = getattr(pool, "connection", None)
+        if callable(getconn) or callable(connection_method):
+            return
+        raise RuntimeError("Postgres pool must provide getconn() or connection()")
+
+    @contextmanager
+    def _connection_scope(self) -> Iterator[object]:
+        active_connection = self._active_connection.get()
+        if active_connection is not None:
+            yield active_connection
+            return
+        if self._connection is not None:
+            token = self._active_connection.set(self._connection)
+            try:
+                yield self._connection
+            finally:
+                self._active_connection.reset(token)
+            return
+        pool = self._pool
+        if pool is None:
+            raise BackendUnavailableError("Postgres connection is not configured")
+        connection, context = self._borrow_pool_connection(pool)
+        token = self._active_connection.set(connection)
+        try:
+            yield connection
+        finally:
+            self._active_connection.reset(token)
+            self._return_pool_connection(pool, connection, context)
+
+    def _borrow_pool_connection(self, pool: object) -> tuple[object, object | None]:
+        getconn = getattr(pool, "getconn", None)
+        if callable(getconn):
+            return getconn(), None
+        connection_method = getattr(pool, "connection", None)
+        if callable(connection_method):
+            context = connection_method()
+            return context.__enter__(), context
+        raise RuntimeError("Postgres pool must provide getconn() or connection()")
+
+    def _return_pool_connection(
+        self,
+        pool: object,
+        connection: object,
+        context: object | None,
+    ) -> None:
         if context is not None:
             context.__exit__(None, None, None)
             return
-        close = getattr(self._connection, "close", None)
+        putconn = getattr(pool, "putconn", None)
+        if callable(putconn):
+            putconn(connection)
+            return
+        close = getattr(connection, "close", None)
         if callable(close):
             close()
 

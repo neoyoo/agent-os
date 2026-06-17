@@ -21,7 +21,10 @@ class SseTurnEntry:
     active_readers: int = 0
     released: bool = False
     closed: bool = False
+    lease_error: BaseException | None = None
+    turn_control_task: asyncio.Task[None] | None = None
     runner_task: asyncio.Task[None] | None = None
+    lease_heartbeat_task: asyncio.Task[None] | None = None
     grace_task: asyncio.Task[None] | None = None
     gc_task: asyncio.Task[None] | None = None
     gc_handle: asyncio.TimerHandle | None = None

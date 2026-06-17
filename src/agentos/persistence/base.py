@@ -19,6 +19,10 @@ class SnapshotLoadError(ValueError):
     """持久化 snapshot 数据损坏或无法反序列化。"""
 
 
+class SnapshotConflictError(RuntimeError):
+    """Raised when a compare-and-save snapshot write loses ownership."""
+
+
 @dataclass(frozen=True, slots=True)
 class SessionSnapshot:
     """可持久化恢复的 agentos session 状态。"""
@@ -30,6 +34,14 @@ class SessionSnapshot:
     next_segment_number: int = 1
     event_records: tuple[EventRecord, ...] = field(default_factory=tuple)
     version: int = SNAPSHOT_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class SessionSnapshotRecord:
+    """Snapshot plus backend mutation revision."""
+
+    snapshot: SessionSnapshot
+    revision: int
 
 
 class SessionPersistence(Protocol):

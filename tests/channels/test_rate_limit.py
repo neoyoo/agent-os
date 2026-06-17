@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+from agentos.channels.auth import AllowAllChannelAuthPolicy
 from agentos.channels.asgi import AsgiAgentApp
 from agentos.channels.rate_limit import SlidingWindowRateLimiter
 from agentos.channels.session import InMemoryAgentSessionProvider
@@ -13,6 +14,7 @@ from tests.multi.helpers import build_agent_with_response
 def test_asgi_app_rate_limits_by_session_id() -> None:
     app = AsgiAgentApp(
         sessions=InMemoryAgentSessionProvider(lambda session_id: build_agent_with_response("ok")),
+        auth_policy=AllowAllChannelAuthPolicy(),
         rate_limiter=SlidingWindowRateLimiter(max_requests=1, window_seconds=60),
     )
 

@@ -90,6 +90,46 @@ def test_coordinator_spawn_runs_ephemeral_subagent_and_returns_result() -> None:
     executor.shutdown()
 
 
+def test_coordinator_spawn_accepts_reserved_task_and_child_ids() -> None:
+    registry = InMemoryRegistry()
+    inbox = AgentInbox()
+    task_table = TaskTable()
+    executor = SpawnExecutor(max_workers=1)
+    factory = StaticSubagentFactory()
+    coordinator = AgentCoordinator(
+        registry=registry,
+        inbox=inbox,
+        task_table=task_table,
+        spawn_executor=executor,
+        subagent_factory=factory,
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+
+    handle = coordinator.spawn(
+        instruction="Review this",
+        allowed_tool_names=(),
+        parent_agent_id="parent",
+        task_id="task_reserved",
+        child_agent_id="subagent_reserved",
+    )
+
+    assert handle.task_id == "task_reserved"
+    assert handle.target_agent_id == "subagent_reserved"
+    assert task_table.get("task_reserved") is not None
+    assert factory.requests[0].task.task_id == "task_reserved"
+    assert factory.requests[0].child_agent_id == "subagent_reserved"
+
+    executor.shutdown()
+
+
 def test_coordinator_cancel_queued_task_marks_cancelled() -> None:
     registry = InMemoryRegistry()
     inbox = AgentInbox()

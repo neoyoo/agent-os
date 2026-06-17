@@ -255,13 +255,19 @@ class Agent:
         with self._turn_lock:
             run_options = RunOptions(thinking=thinking, show_thinking=show_thinking)
             if attachments is None:
-                yield from self.query_loop.run_turn_stream(user_message, run_options)
+                stream = self.query_loop.run_turn_stream(user_message, run_options)
             else:
-                yield from self.query_loop.run_turn_stream(
+                stream = self.query_loop.run_turn_stream(
                     user_message,
                     run_options,
                     attachments=attachments,
                 )
+            if hasattr(stream, "__aiter__"):
+                raise RuntimeError(
+                    "Agent is using an async query loop; use async_run() or "
+                    "async_stream() instead of the synchronous run()/stream() API.",
+                )
+            yield from stream
 
     def run_continuation(
         self,
@@ -289,9 +295,16 @@ class Agent:
         """运行 runtime continuation turn，不追加 user 消息。"""
 
         with self._turn_lock:
-            yield from self.query_loop.run_continuation_stream(
+            stream = self.query_loop.run_continuation_stream(
                 RunOptions(thinking=thinking, show_thinking=show_thinking),
             )
+            if hasattr(stream, "__aiter__"):
+                raise RuntimeError(
+                    "Agent is using an async query loop; use async_stream() "
+                    "for user turns. Synchronous continuation turns require "
+                    "a sync QueryLoop.",
+                )
+            yield from stream
 
     def stream_jsonl(
         self,

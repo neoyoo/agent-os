@@ -182,6 +182,7 @@ def test_live_postgres_outbox_delivers_result_to_redis_stream() -> None:
         client=redis_client,
         key_prefix=key_prefix,
         consumer_name="parent-consumer",
+        allowed_consumer_agent_ids=("parent",),
     )
     try:
         queue.create_inbox("parent")
@@ -231,12 +232,14 @@ def test_live_redis_stream_pending_message_can_be_reclaimed() -> None:
         client=redis_client,
         key_prefix=key_prefix,
         consumer_name="consumer_1",
+        allowed_consumer_agent_ids=("worker",),
     )
     reclaimer = RedisAgentMessageQueue(
         redis_url,
         client=redis_client,
         key_prefix=key_prefix,
         consumer_name="consumer_2",
+        allowed_consumer_agent_ids=("worker",),
     )
     try:
         producer.create_inbox("worker")

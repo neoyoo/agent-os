@@ -4,7 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agentos.capabilities.executor import ToolExecutionResult
+from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
+from agentos.capabilities.tools import RegisteredTool
 from agentos.context.projection import MCPServerDeclaration
 from agentos.providers import ProviderToolCall, ProviderToolSpec
 
@@ -19,6 +20,8 @@ class MCPToolInfo:
     name: str
     description: str
     input_schema: dict[str, object] = field(default_factory=dict)
+    capability: str | None = None
+    capabilities: tuple[str, ...] = ()
 
 
 class MCPClient(Protocol):
@@ -90,7 +93,7 @@ class MCPRegistry:
                         f"MCP server `{server.name}` tool `{tool.name}`. "
                         f"{tool.description}"
                     ).strip(),
-                    "parameters": self._normalized_schema(tool.input_schema),
+                    "parameters": self.normalized_schema(tool.input_schema),
                 },
             }
             for provider_name, (server, tool) in self._tools.items()
@@ -122,13 +125,26 @@ class MCPRegistry:
             raise KeyError(provider_name) from error
         return server, tool.name
 
+    def resolve_provider_tool_info(
+        self,
+        provider_name: str,
+    ) -> tuple[MCPServerRegistration, MCPToolInfo]:
+        """Resolve provider tool name to MCP server and full tool metadata."""
+
+        try:
+            self._ensure_fresh()
+            server, tool = self._tools[provider_name]
+        except KeyError as error:
+            raise KeyError(provider_name) from error
+        return server, tool
+
     @staticmethod
     def provider_tool_name(server_name: str, tool_name: str) -> str:
         """返回 MCP tool 在 provider tools 参数中的名称。"""
 
         return f"mcp__{server_name}__{tool_name}"
 
-    def _normalized_schema(self, schema: dict[str, object]) -> dict[str, object]:
+    def normalized_schema(self, schema: dict[str, object]) -> dict[str, object]:
         """确保 MCP schema 至少是 JSON object schema。"""
 
         if schema.get("type") == "object":
@@ -157,14 +173,43 @@ class MCPToolAdapter:
 
         return self.registry.provider_tool_specs()
 
-    def execute(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
-        """执行一个 MCP provider tool call。"""
+    def execute(
+        self,
+        tool_call: ProviderToolCall,
+        *,
+        prevalidated: bool = False,
+    ) -> ToolExecutionResult:
+        """Execute a prevalidated MCP provider tool call."""
+
+        if not prevalidated:
+            raise ToolExecutionError(
+                "MCPToolAdapter.execute() requires prevalidated=True; "
+                "route production MCP tool calls through ToolCallRouter",
+            )
 
         server, local_tool_name = self.registry.resolve_provider_tool(tool_call.name)
         content = server.client.call_tool(local_tool_name, dict(tool_call.arguments))
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
             content=content,
+        )
+
+    def registered_tool_for(self, provider_name: str) -> RegisteredTool:
+        """Return MCP tool metadata in the common sandbox policy shape."""
+
+        _server, tool = self.registry.resolve_provider_tool_info(provider_name)
+        metadata: dict[str, object] = {"mcp_tool_name": tool.name}
+        if tool.capability is not None:
+            metadata["capability"] = tool.capability
+        if tool.capabilities:
+            metadata["capabilities"] = tool.capabilities
+        return RegisteredTool(
+            name=provider_name,
+            description=tool.description,
+            parameters=self.registry.normalized_schema(tool.input_schema),
+            handler=lambda _arguments: "",
+            kind="mcp",
+            metadata=metadata,
         )
 
 

@@ -12,6 +12,12 @@ from agentos.capabilities.mcp import (
 )
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.router import ToolCallRouter
+from agentos.capabilities.sandbox import (
+    ToolPathSandboxRule,
+    ToolSandboxError,
+    ToolSandboxPolicy,
+    WorkspaceToolSandboxPolicy,
+)
 from agentos.capabilities.skills import (
     BuiltinSkillSource,
     ChainedSkillSource,
@@ -47,11 +53,15 @@ __all__ = [
     "SkillRegistry",
     "SkillResourceLoadResult",
     "SkillResourceRef",
+    "ToolPathSandboxRule",
+    "ToolSandboxError",
+    "ToolSandboxPolicy",
     "ToolExecutionError",
     "ToolExecutionResult",
     "ToolCallRouter",
     "ToolHandler",
     "ToolRegistry",
+    "WorkspaceToolSandboxPolicy",
     "builtin_schema_template_skill",
     "read_file_tool",
     "register_skill_loader_tools",

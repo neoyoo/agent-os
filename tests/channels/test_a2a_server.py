@@ -25,6 +25,11 @@ class StaticRunner:
         )
 
 
+class ValueErrorRunner:
+    def run_task(self, request: TaskRequest) -> TaskResult:
+        raise ValueError("secret backend detail")
+
+
 class TracedRunner:
     def __init__(self, tracer: InMemoryTracer) -> None:
         self.tracer = tracer
@@ -121,6 +126,18 @@ def test_a2a_server_adapter_returns_failed_result_for_invalid_payload() -> None:
     assert response["task_id"] == ""
     assert response["status"] == "failed"
     assert "task_id" in str(response["error"])
+
+
+def test_a2a_server_adapter_redacts_runner_value_errors() -> None:
+    from agentos.channels.a2a_server import A2AServerAdapter
+
+    response = A2AServerAdapter(ValueErrorRunner()).handle_task(
+        {"task_id": "task_1", "instruction": "do remote work"},
+    )
+
+    assert response["task_id"] == "task_1"
+    assert response["status"] == "failed"
+    assert response["error"] == "internal error"
 
 
 def test_a2a_server_adapter_health_is_ok() -> None:
