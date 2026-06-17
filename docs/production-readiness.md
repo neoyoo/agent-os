@@ -475,6 +475,11 @@ Production notes:
   writes with pre/post lease ownership verification and rollback before commit
   when the post-save lease check fails; they are not a Redis/Postgres distributed
   transaction. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
+- Distributed stream resume readiness is evidence-based. A configured SSE
+  buffer, turn-control store, and heartbeat interval only prove
+  `distributed_stream_resume_configured`; production readiness additionally
+  requires shared backend evidence and cross-node resume evidence before
+  `distributed_stream_resume_ready` is reported.
 - Use `WorkspaceExecutionIsolationProfile` alongside
   `DistributedWebRuntimeProfile` when multi-node turns need an explicit
   workspace isolation readiness surface.

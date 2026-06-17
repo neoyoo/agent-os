@@ -490,6 +490,14 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
 
         metadata = WebRuntimeProfile.readiness_metadata(self)
         stream_resume_gaps = self._stream_resume_gaps()
+        stream_resume_evidence_gaps = self._stream_resume_evidence_gaps()
+        stream_resume_configured = not stream_resume_gaps
+        stream_resume_shared_backend_evidenced = (
+            "shared_stream_backend_evidence" not in stream_resume_evidence_gaps
+        )
+        stream_resume_cross_node_evidenced = (
+            "cross_node_resume_evidence" not in stream_resume_evidence_gaps
+        )
         metadata.update(
             {
                 "session_provider": self.session_provider.__class__.__name__,
@@ -512,8 +520,24 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
                 "session_lease_heartbeat_interval_seconds": (
                     self.session_lease_heartbeat_interval_seconds
                 ),
-                "distributed_stream_resume_ready": not stream_resume_gaps,
+                "distributed_stream_resume_configured": (
+                    stream_resume_configured
+                ),
+                "distributed_stream_resume_shared_backend_evidenced": (
+                    stream_resume_shared_backend_evidenced
+                ),
+                "distributed_stream_resume_cross_node_evidenced": (
+                    stream_resume_cross_node_evidenced
+                ),
+                "distributed_stream_resume_ready": (
+                    stream_resume_configured
+                    and stream_resume_shared_backend_evidenced
+                    and stream_resume_cross_node_evidenced
+                ),
                 "stream_resume_gaps": list(stream_resume_gaps),
+                "stream_resume_evidence_gaps": list(
+                    stream_resume_evidence_gaps,
+                ),
                 "owner_id": self.owner_id,
                 "lease_ttl_seconds": self.lease_ttl_seconds,
                 "acquire_timeout_seconds": self.acquire_timeout_seconds,
@@ -530,6 +554,7 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
 
     def _stream_resume_readiness_check(self) -> dict[str, object]:
         gaps = self._stream_resume_gaps()
+        evidence_gaps = self._stream_resume_evidence_gaps()
         configured = [
             component
             for component in (
@@ -539,7 +564,7 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
             )
             if component not in gaps
         ]
-        ok = not gaps
+        ok = not gaps and not evidence_gaps
         return {
             "profile": self.__class__.__name__,
             "check_name": "distributed_stream_resume",
@@ -547,6 +572,7 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
             "ok": ok,
             "configured_components": configured,
             "missing_components": list(gaps),
+            "missing_evidence": list(evidence_gaps),
             "sdk_owned": (
                 "SseEventBuffer wiring",
                 "SseTurnControlStore wiring",
@@ -567,6 +593,22 @@ class DistributedWebRuntimeProfile(WebRuntimeProfile):
             gaps.append("sse_turn_control")
         if self.session_lease_heartbeat_interval_seconds is None:
             gaps.append("session_lease_heartbeat")
+        return tuple(gaps)
+
+    def _stream_resume_evidence_gaps(self) -> tuple[str, ...]:
+        gaps: list[str] = []
+        shared_backend_evidenced = bool(
+            getattr(self.sse_event_buffer, "agentos_shared_backend_evidenced", False),
+        ) and bool(
+            getattr(self.sse_turn_control, "agentos_shared_backend_evidenced", False),
+        )
+        cross_node_evidenced = bool(
+            getattr(self.sse_event_buffer, "agentos_cross_node_resume_evidenced", False),
+        )
+        if not shared_backend_evidenced:
+            gaps.append("shared_stream_backend_evidence")
+        if not cross_node_evidenced:
+            gaps.append("cross_node_resume_evidence")
         return tuple(gaps)
 
 

@@ -424,7 +424,7 @@ def test_production_reference_web_agent_readiness_endpoint_blocks_without_live_b
         "status": "not_ready",
         "checks": {
             "agent_service_reference": "failed",
-            "distributed_stream_resume": "ok",
+            "distributed_stream_resume": "failed",
             "distributed_web_session_operations": "ok",
             "production_state_plane": "ok",
             "workspace_execution_isolation": "failed",
@@ -546,9 +546,9 @@ def test_production_reference_web_agent_readiness_blocks_demo_runtime_even_with_
     )
 
     assert response_status(sent) == 503
-    assert json.loads(response_body(sent))["checks"]["production_reference_web_agent"] == (
-        "failed"
-    )
+    checks = json.loads(response_body(sent))["checks"]
+    assert checks["distributed_stream_resume"] == "failed"
+    assert checks["production_reference_web_agent"] == "failed"
 
 
 def test_production_reference_web_agent_readiness_endpoint_requires_auth_policy() -> None:

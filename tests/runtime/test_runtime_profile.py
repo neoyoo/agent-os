@@ -57,6 +57,15 @@ from agentos.runtime import SessionState
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+class VerifiedSharedSseEventBuffer(InMemorySseEventBuffer):
+    agentos_shared_backend_evidenced = True
+    agentos_cross_node_resume_evidenced = True
+
+
+class VerifiedSseTurnControlStore(InMemorySseTurnControlStore):
+    agentos_shared_backend_evidenced = True
+
+
 def test_local_runtime_profile_builds_sync_agent_by_default() -> None:
     profile = LocalRuntimeProfile(
         agent_builder=AgentBuilder().provider(FakeProvider(["ok"])),
@@ -693,7 +702,7 @@ def test_distributed_web_runtime_profile_reports_stream_resume_readiness_gaps() 
     ]
 
 
-def test_distributed_web_runtime_profile_marks_stream_resume_ready_when_shared_components_configured() -> None:
+def test_distributed_web_runtime_profile_distinguishes_stream_resume_configuration_from_evidence() -> None:
     profile = DistributedWebRuntimeProfile(
         agent_factory=SnapshotFactory(),
         lease_store=InMemorySessionLeaseStore(),
@@ -708,15 +717,51 @@ def test_distributed_web_runtime_profile_marks_stream_resume_ready_when_shared_c
     assert profile.readiness_checks is not None
     check = profile.readiness_checks["distributed_stream_resume"]()
 
-    assert metadata["distributed_stream_resume_ready"] is True
+    assert metadata["distributed_stream_resume_configured"] is True
+    assert metadata["distributed_stream_resume_shared_backend_evidenced"] is False
+    assert metadata["distributed_stream_resume_cross_node_evidenced"] is False
+    assert metadata["distributed_stream_resume_ready"] is False
     assert metadata["stream_resume_gaps"] == []
-    assert check["status"] == "ok"
-    assert check["ok"] is True
+    assert metadata["stream_resume_evidence_gaps"] == [
+        "shared_stream_backend_evidence",
+        "cross_node_resume_evidence",
+    ]
+    assert check["status"] == "failed"
+    assert check["ok"] is False
     assert check["configured_components"] == [
         "shared_sse_event_buffer",
         "sse_turn_control",
         "session_lease_heartbeat",
     ]
+    assert check["missing_evidence"] == [
+        "shared_stream_backend_evidence",
+        "cross_node_resume_evidence",
+    ]
+
+
+def test_distributed_web_runtime_profile_marks_stream_resume_ready_with_cross_node_evidence() -> None:
+    profile = DistributedWebRuntimeProfile(
+        agent_factory=SnapshotFactory(),
+        lease_store=InMemorySessionLeaseStore(),
+        snapshot_persistence=MemoryPersistence(),
+        owner_id="node-a",
+        sse_event_buffer=VerifiedSharedSseEventBuffer(),
+        sse_turn_control=VerifiedSseTurnControlStore(),
+        session_lease_heartbeat_interval_seconds=2.0,
+    )
+
+    metadata = profile.readiness_metadata()
+    assert profile.readiness_checks is not None
+    check = profile.readiness_checks["distributed_stream_resume"]()
+
+    assert metadata["distributed_stream_resume_configured"] is True
+    assert metadata["distributed_stream_resume_shared_backend_evidenced"] is True
+    assert metadata["distributed_stream_resume_cross_node_evidenced"] is True
+    assert metadata["distributed_stream_resume_ready"] is True
+    assert metadata["stream_resume_gaps"] == []
+    assert metadata["stream_resume_evidence_gaps"] == []
+    assert check["status"] == "ok"
+    assert check["ok"] is True
 
 
 def test_distributed_web_session_operations_profile_reports_missing_components() -> None:

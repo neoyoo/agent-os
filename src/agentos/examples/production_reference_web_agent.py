@@ -161,9 +161,16 @@ def build_production_reference_web_agent(
         lease_store=served_lease_store,
         snapshot_persistence=served_snapshot_persistence,
     )
-    sse_event_buffer = _reference_sse_event_buffer(served_lease_store)
-    sse_turn_control = _reference_sse_turn_control(served_lease_store)
     backend_evidence_ready = backend_verification.gate_report().accepted
+    stream_resume_evidence_ready = backend_evidence_ready and not served_demo_runtime
+    sse_event_buffer = _reference_sse_event_buffer(
+        served_lease_store,
+        stream_resume_evidence_ready=stream_resume_evidence_ready,
+    )
+    sse_turn_control = _reference_sse_turn_control(
+        served_lease_store,
+        stream_resume_evidence_ready=stream_resume_evidence_ready,
+    )
     if backend_verification_records is None and served_demo_runtime:
         mode = "demo_without_live_backend_evidence"
     elif backend_verification_records is None:
@@ -686,19 +693,34 @@ def _demo_served_runtime_reason(
     return ""
 
 
-def _reference_sse_event_buffer(lease_store: object) -> object:
+def _reference_sse_event_buffer(
+    lease_store: object,
+    *,
+    stream_resume_evidence_ready: bool = False,
+) -> object:
     redis_url = getattr(lease_store, "backend_url", None)
     redis_client = getattr(lease_store, "_client", None)
     if isinstance(redis_url, str) and redis_url:
-        return RedisSseEventBuffer(redis_url, client=redis_client)
+        buffer = RedisSseEventBuffer(redis_url, client=redis_client)
+        if stream_resume_evidence_ready:
+            buffer.agentos_shared_backend_evidenced = True
+            buffer.agentos_cross_node_resume_evidenced = True
+        return buffer
     return InMemorySseEventBuffer()
 
 
-def _reference_sse_turn_control(lease_store: object) -> object:
+def _reference_sse_turn_control(
+    lease_store: object,
+    *,
+    stream_resume_evidence_ready: bool = False,
+) -> object:
     redis_url = getattr(lease_store, "backend_url", None)
     redis_client = getattr(lease_store, "_client", None)
     if isinstance(redis_url, str) and redis_url:
-        return RedisSseTurnControlStore(redis_url, client=redis_client)
+        store = RedisSseTurnControlStore(redis_url, client=redis_client)
+        if stream_resume_evidence_ready:
+            store.agentos_shared_backend_evidenced = True
+        return store
     return InMemorySseTurnControlStore()
 
 
