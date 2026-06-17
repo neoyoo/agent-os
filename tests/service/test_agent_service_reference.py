@@ -255,7 +255,7 @@ def test_agent_service_reference_preserves_distributed_channel_settings() -> Non
         "status": "not_ready",
             "checks": {
                 "agent_service_reference": "failed",
-                "distributed_stream_resume": "ok",
+                "distributed_stream_resume": "failed",
                 "custom": "ok",
             },
         }
