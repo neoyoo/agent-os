@@ -471,7 +471,10 @@ Production notes:
   `RedisSessionLeaseStore`, `SessionSnapshot`, `SessionPersistence`,
   `PostgresSessionSnapshotPersistence`, acquire/hydrate/save/release lifecycle,
   lease-fenced snapshot writes, `lease_fence` monotonic fencing evidence, and
-  async session provider offload. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
+  async session provider offload. Lease-fenced snapshot writes are revision CAS
+  writes with pre/post lease ownership verification and rollback before commit
+  when the post-save lease check fails; they are not a Redis/Postgres distributed
+  transaction. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
 - Use `WorkspaceExecutionIsolationProfile` alongside
   `DistributedWebRuntimeProfile` when multi-node turns need an explicit
   workspace isolation readiness surface.

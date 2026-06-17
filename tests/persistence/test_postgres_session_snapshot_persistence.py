@@ -34,6 +34,7 @@ class FakeConnection:
         self.snapshots: dict[str, dict[str, object]] = {}
         self.sql: list[str] = []
         self.commits = 0
+        self.rollbacks = 0
 
     def _lease_fence(self, value: object) -> int:
         return 0 if value is None else int(value)
@@ -112,6 +113,9 @@ class FakeConnection:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 class FakePool:
@@ -253,14 +257,22 @@ def test_postgres_session_snapshot_persistence_rejects_stale_revision() -> None:
 
 
 class RecordingLeaseStore:
-    def __init__(self, *, owned: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        owned: bool = True,
+        lose_after_first_check: bool = False,
+    ) -> None:
         self.owned = owned
+        self.lose_after_first_check = lose_after_first_check
         self.ensure_calls: list[SessionLease] = []
 
     def ensure_owned(self, lease: SessionLease) -> None:
         self.ensure_calls.append(lease)
         if not self.owned:
             raise SessionLeaseError(f"session lease is not owned: {lease.session_id}")
+        if self.lose_after_first_check and len(self.ensure_calls) == 1:
+            self.owned = False
 
 
 def test_postgres_session_snapshot_persistence_save_if_lease_owned_fences_write() -> None:
@@ -285,7 +297,7 @@ def test_postgres_session_snapshot_persistence_save_if_lease_owned_fences_write(
     )
 
     assert record.revision == 1
-    assert lease_store.ensure_calls == [lease]
+    assert lease_store.ensure_calls == [lease, lease]
     assert connection.commits == 1
     assert connection.snapshots["session_1"]["lease_fence"] == 7
 
@@ -312,6 +324,34 @@ def test_postgres_session_snapshot_persistence_save_if_lease_owned_rejects_stale
 
     assert connection.snapshots == {}
     assert connection.commits == 0
+
+
+def test_postgres_session_snapshot_persistence_save_if_lease_owned_rechecks_after_save() -> None:
+    connection = FakeConnection()
+    store = PostgresSessionSnapshotPersistence(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    lease_store = RecordingLeaseStore(lose_after_first_check=True)
+    lease = SessionLease(
+        session_id="session_1",
+        owner_id="node-a",
+        token="lease-token",
+        fence=7,
+    )
+
+    with pytest.raises(SessionLeaseError, match="session lease is not owned"):
+        store.save_if_lease_owned(
+            make_snapshot(),
+            expected_revision=0,
+            lease=lease,
+            lease_store=lease_store,
+        )
+
+    assert lease_store.ensure_calls == [lease, lease]
+    assert connection.commits == 0
+    assert connection.rollbacks == 1
+    assert connection.snapshots["session_1"]["lease_fence"] == 7
 
 
 def test_postgres_session_snapshot_persistence_save_if_lease_owned_rejects_wrong_session_lease() -> None:

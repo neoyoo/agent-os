@@ -155,6 +155,14 @@ class _PostgresConnectionLeaseMixin:
         if commit is not None:
             commit()
 
+    def _rollback(self) -> None:
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        rollback = getattr(connection, "rollback", None)
+        if callable(rollback):
+            rollback()
+
     def close(self) -> None:
         """Close owned direct connections or owned pools."""
 
@@ -290,7 +298,7 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
         lease: object,
         lease_store: object,
     ) -> SessionSnapshotRecord:
-        """Save snapshot only if revision and session lease ownership still match."""
+        """Save with revision CAS/fence checks and verify lease after write."""
 
         session_id = snapshot.session_state.id
         lease_session_id = getattr(lease, "session_id", None)
@@ -306,12 +314,20 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
         if not callable(ensure_owned):
             raise BackendUnavailableError("session lease store cannot verify ownership")
         with self._connection_scope():
-            ensure_owned(lease)
-            return self._save(
-                snapshot,
-                expected_revision=expected_revision,
-                lease_fence=int(getattr(lease, "fence", 0)),
-            )
+            try:
+                ensure_owned(lease)
+                record = self._save(
+                    snapshot,
+                    expected_revision=expected_revision,
+                    lease_fence=int(getattr(lease, "fence", 0)),
+                    commit=False,
+                )
+                ensure_owned(lease)
+            except Exception:
+                self._rollback()
+                raise
+            self._commit()
+            return record
 
     def list_ids(self) -> list[str]:
         """List saved session ids."""
@@ -344,6 +360,7 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
         *,
         expected_revision: int | None = None,
         lease_fence: int | None = None,
+        commit: bool = True,
     ) -> SessionSnapshotRecord:
         payload = session_snapshot_to_dict(snapshot)
         if expected_revision is None:
@@ -414,7 +431,8 @@ class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
             raise SnapshotConflictError(
                 f"snapshot revision conflict: {snapshot.session_state.id}",
             )
-        self._commit()
+        if commit:
+            self._commit()
         return SessionSnapshotRecord(
             snapshot=snapshot,
             revision=int(row[0]),

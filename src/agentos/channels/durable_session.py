@@ -453,7 +453,7 @@ class LeaseFencedSessionPersistence(SessionPersistence, Protocol):
         lease: SessionLease,
         lease_store: SessionLeaseStore,
     ) -> SessionSnapshotRecord:
-        """Atomically save only while the supplied lease still owns the session."""
+        """Save with revision CAS and fencing after verifying lease ownership."""
 
 
 class DurableAgentSessionProvider:
@@ -612,6 +612,7 @@ class DurableAgentSessionProvider:
                 lease=lease,
                 lease_store=self._lease_store,
             )
+            self._ensure_lease_owned(lease)
             return
         self._ensure_lease_owned(lease)
         save_if_unchanged = getattr(self._persistence, "save_if_unchanged", None)

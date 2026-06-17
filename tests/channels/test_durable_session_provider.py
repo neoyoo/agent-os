@@ -287,6 +287,7 @@ class FencedMemoryPersistence(CasMemoryPersistence):
         self.lease_store = lease_store
         self.fenced_save_calls: list[tuple[str, str, int]] = []
         self.expire_before_save = False
+        self.expire_after_save = False
 
     def save_if_lease_owned(
         self,
@@ -303,13 +304,16 @@ class FencedMemoryPersistence(CasMemoryPersistence):
         self.fenced_save_calls.append(
             (snapshot.session_state.id, lease.token, expected_revision),
         )
-        return self.save_if_unchanged(
+        record = self.save_if_unchanged(
             snapshot,
             expected_revision=expected_revision,
         )
+        if self.expire_after_save:
+            self.lease_store.release(lease)
+        return record
 
 
-def test_durable_session_provider_uses_atomic_fenced_snapshot_save_when_supported() -> None:
+def test_durable_session_provider_uses_fenced_snapshot_save_when_supported() -> None:
     lease_store = InMemorySessionLeaseStore()
     persistence = FencedMemoryPersistence(lease_store)
     provider = DurableAgentSessionProvider(
@@ -350,6 +354,32 @@ def test_durable_session_provider_rejects_snapshot_save_when_lease_expires_durin
     assert persistence.fenced_save_calls == []
     with pytest.raises(KeyError):
         persistence.load("s1")
+
+
+def test_durable_session_provider_rejects_snapshot_save_when_lease_is_lost_after_fenced_save() -> None:
+    lease_store = InMemorySessionLeaseStore()
+    persistence = FencedMemoryPersistence(lease_store)
+    persistence.expire_after_save = True
+    provider = DurableAgentSessionProvider(
+        agent_factory=SnapshotTestFactory(responses={"s1": ["ok"]}),
+        persistence=persistence,
+        lease_store=lease_store,
+        owner_id="node-a",
+    )
+
+    agent = provider.get_agent("s1")
+    agent.run("hello")
+
+    with pytest.raises(SessionLeaseError, match="session lease is not owned"):
+        provider.release_agent("s1", agent)
+
+    assert persistence.fenced_save_calls
+    lease_store.acquire(
+        "s1",
+        owner_id="node-b",
+        ttl_seconds=30.0,
+        wait_timeout_seconds=0,
+    )
 
 
 def test_durable_session_provider_uses_snapshot_cas_when_supported() -> None:
