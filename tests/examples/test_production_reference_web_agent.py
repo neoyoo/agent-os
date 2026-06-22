@@ -135,7 +135,10 @@ def test_production_reference_web_agent_module_has_main_entrypoint() -> None:
     assert 'if __name__ == "__main__"' in path.read_text(encoding="utf-8")
 
 
-def backend_verification_records() -> tuple[BackendVerificationRecord, ...]:
+def backend_verification_records(
+    target_refs: Mapping[str, str] | None = None,
+) -> tuple[BackendVerificationRecord, ...]:
+    target_refs = dict(target_refs or {})
     return tuple(
         BackendVerificationRecord(
             backend_name=name,
@@ -150,7 +153,15 @@ def backend_verification_records() -> tuple[BackendVerificationRecord, ...]:
             status="passed",
             checked_at=1781596800.0,
             evidence_ref=f"ci://agentos/live-backend/{name}",
-            target_ref=f"deployment://agentos/{name}",
+            target_ref=target_refs.get(
+                name,
+                {
+                    "message_queue": "redis://deployment.example/0",
+                    "session_snapshot_persistence": (
+                        "postgresql://deployment.example/agentos"
+                    ),
+                }.get(name, f"deployment://agentos/{name}"),
+            ),
             metadata={"source": "imported deployment evidence"},
         )
         for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
@@ -360,6 +371,49 @@ def test_production_reference_web_agent_requires_deployment_owned_runtime_backen
         evidence,
         "reference_served_runtime",
     )["demo_runtime"] is False
+
+
+def test_production_reference_web_agent_blocks_backend_evidence_for_different_served_runtime_targets() -> None:
+    from agentos.channels import RedisSessionLeaseStore
+    from agentos.examples.production_reference_web_agent import (
+        build_production_reference_web_agent,
+    )
+    from agentos.persistence import PostgresSessionSnapshotPersistence
+
+    example = build_production_reference_web_agent(
+        backend_verification_records=backend_verification_records(
+            {
+                "message_queue": "redis://other-deployment/0",
+                "session_snapshot_persistence": (
+                    "postgresql://other-deployment/agentos"
+                ),
+            },
+        ),
+        lease_store=RedisSessionLeaseStore(
+            "redis://deployment.example/0",
+            client=DeploymentRedisClient(),
+        ),
+        snapshot_persistence=PostgresSessionSnapshotPersistence(
+            "postgresql://deployment.example/agentos",
+            connection=DeploymentPostgresConnection(),
+        ),
+        workspace_isolation_profile=DeploymentWorkspaceIsolationProfile(),
+    )
+    evidence = example.as_dict()
+
+    assert example.readiness_bundle.accepted is False
+    assert "reference_served_backend_binding" in evidence["readiness_bundle"][
+        "blocking_checks"
+    ]
+    binding = readiness_check_evidence(
+        evidence,
+        "reference_served_backend_binding",
+    )
+    assert binding["block_production_readiness"] is True
+    assert binding["mismatched_backends"] == [
+        "message_queue",
+        "session_snapshot_persistence",
+    ]
 
 
 def test_reference_snapshot_agent_factory_restores_full_dynamic_session_state() -> None:

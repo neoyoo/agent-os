@@ -17,7 +17,12 @@ from agentos.channels import (
     InMemorySessionLeaseStore,
     RateLimitDecision,
 )
-from agentos.persistence import MemoryPersistence, SessionSnapshot
+from agentos.persistence import (
+    MemoryPersistence,
+    SessionSnapshot,
+    SessionSnapshotRecord,
+    SnapshotConflictError,
+)
 from agentos.providers import FakeProvider
 from agentos.runtime import DistributedWebRuntimeProfile, SessionState
 from agentos.context import ContextRuntime
@@ -119,11 +124,44 @@ class DenySecondRateLimiter:
         return RateLimitDecision(allowed=self.calls == 1, retry_after_seconds=7)
 
 
+class FencedMemoryPersistence(MemoryPersistence):
+    def __init__(self) -> None:
+        super().__init__()
+        self.revisions: dict[str, int] = {}
+
+    def load_record(self, session_id: str) -> SessionSnapshotRecord:
+        return SessionSnapshotRecord(
+            snapshot=self.load(session_id),
+            revision=self.revisions[session_id],
+        )
+
+    def save_if_lease_owned(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+        lease,
+        lease_store,
+    ) -> SessionSnapshotRecord:
+        session_id = snapshot.session_state.id
+        lease_store.ensure_owned(lease)
+        current_revision = self.revisions.get(session_id, 0)
+        if current_revision != expected_revision:
+            raise SnapshotConflictError(
+                f"snapshot revision conflict: {session_id}",
+            )
+        super().save(snapshot)
+        lease_store.ensure_owned(lease)
+        revision = current_revision + 1
+        self.revisions[session_id] = revision
+        return SessionSnapshotRecord(snapshot=snapshot, revision=revision)
+
+
 def distributed_profile(*, auth_policy: object | None = None) -> DistributedWebRuntimeProfile:
     return DistributedWebRuntimeProfile(
         agent_factory=SnapshotFactory(),
         lease_store=InMemorySessionLeaseStore(),
-        snapshot_persistence=MemoryPersistence(),
+        snapshot_persistence=FencedMemoryPersistence(),
         owner_id="node-a",
         auth_policy=auth_policy,
     )

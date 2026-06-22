@@ -146,6 +146,14 @@ class _PostgresConnectionLeaseMixin:
         if commit is not None:
             commit()
 
+    def _rollback(self) -> None:
+        connection = self._current_active_connection()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        rollback = getattr(connection, "rollback", None)
+        if rollback is not None:
+            rollback()
+
     def _current_active_connection(self) -> object | None:
         return getattr(self._thread_state, "active_connection", None)
 
@@ -287,6 +295,7 @@ class PostgresPlanStore(_PostgresConnectionLeaseMixin, PlanStore):
             if row is None:
                 if self.get_plan(plan.plan_id) is None:
                     raise PlanNotFoundError(plan.plan_id)
+                self._rollback()
                 return False
             self._commit()
             return True
@@ -346,6 +355,7 @@ class PostgresPlanStore(_PostgresConnectionLeaseMixin, PlanStore):
             if row is None:
                 if self.get_plan(plan.plan_id) is None:
                     raise PlanNotFoundError(plan.plan_id)
+                self._rollback()
                 return False
             self._commit()
             return True
@@ -526,9 +536,11 @@ class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
                 ),
             ).fetchone()
             if row is None:
+                existing_claim = self.get_claim(plan_id)
+                self._rollback()
                 return PlanClaimResult(
                     status="busy",
-                    existing_claim=self.get_claim(plan_id),
+                    existing_claim=existing_claim,
                 )
             self._commit()
             return PlanClaimResult(status="claimed", claim=self._row_to_claim(row))
@@ -548,6 +560,7 @@ class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
                 (plan_id, worker_id),
             ).fetchone()
             if row is None:
+                self._rollback()
                 return False
             self._commit()
             return True
@@ -631,6 +644,7 @@ class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
                 ),
             ).fetchone()
             if row is None:
+                self._rollback()
                 return False
             self._commit()
             return True

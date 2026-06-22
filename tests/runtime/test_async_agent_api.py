@@ -295,3 +295,85 @@ def test_agent_async_stream_uses_async_complete_when_stream_is_unavailable() -> 
 
     assert complete_called is False
     assert events[-1] == TurnStreamCompleted(content="async complete")
+
+
+def test_agent_async_run_serializes_native_async_turns() -> None:
+    class BlockingAsyncProvider:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.first_started = asyncio.Event()
+            self.second_started = asyncio.Event()
+            self.release_first = asyncio.Event()
+
+        def complete(self, request: ProviderRequest) -> ProviderResponse:
+            raise AssertionError("async Agent stream must not use sync complete")
+
+        async def async_stream(
+            self,
+            request: ProviderRequest,
+            options: ProviderStreamOptions,
+        ):
+            user_message = str(request.messages[-1].content)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                if user_message == "first":
+                    self.first_started.set()
+                    await self.release_first.wait()
+                elif user_message == "second":
+                    self.second_started.set()
+                yield ProviderStreamStarted(
+                    request_id=f"async_request_{user_message}",
+                    thinking_requested=options.thinking,
+                    thinking_supported=False,
+                )
+                yield ProviderStreamCompleted(
+                    request_id=f"async_request_{user_message}",
+                    response=ProviderResponse(content=f"done:{user_message}"),
+                )
+            finally:
+                self.active -= 1
+
+    async def run_two_turns() -> tuple[str, str, bool, int]:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        provider = BlockingAsyncProvider()
+        agent = Agent(
+            query_loop=AsyncQueryLoop(
+                context_runtime=context,
+                message_runtime=messages,
+                request_builder=ProviderRequestBuilder(
+                    context_renderer=ContextRenderer(),
+                    message_runtime=messages,
+                    tools=[],
+                ),
+                provider=provider,  # type: ignore[arg-type]
+            ),  # type: ignore[arg-type]
+        )
+
+        first = asyncio.create_task(agent.async_run("first"))
+        async with asyncio.timeout(1):
+            await provider.first_started.wait()
+
+        second = asyncio.create_task(agent.async_run("second"))
+        await asyncio.sleep(0.05)
+        second_entered_before_first_released = provider.second_started.is_set()
+        provider.release_first.set()
+        first_result, second_result = await asyncio.gather(first, second)
+
+        return (
+            first_result.content,
+            second_result.content,
+            second_entered_before_first_released,
+            provider.max_active,
+        )
+
+    first_content, second_content, second_entered_early, max_active = asyncio.run(
+        run_two_turns(),
+    )
+
+    assert first_content == "done:first"
+    assert second_content == "done:second"
+    assert second_entered_early is False
+    assert max_active == 1

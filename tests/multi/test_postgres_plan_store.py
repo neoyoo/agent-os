@@ -36,6 +36,7 @@ class FakeConnection:
         self.claims: dict[str, PlanClaimRecord] = {}
         self.sql: list[str] = []
         self.commits = 0
+        self.rollbacks = 0
 
     def execute(
         self,
@@ -144,6 +145,9 @@ class FakeConnection:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 class FakePool:
@@ -363,6 +367,7 @@ def test_postgres_plan_store_saves_only_when_revision_is_unchanged() -> None:
     )
 
     assert saved is False
+    assert connection.rollbacks == 1
     assert store.get_plan("plan_1").status == "running"
     fresh = store.get_plan_record("plan_1")
     assert fresh is not None
@@ -405,6 +410,7 @@ def test_postgres_plan_store_saves_only_when_exact_claim_is_current() -> None:
         expected_revision=record.revision,
         now=13.0,
     ) is False
+    assert connection.rollbacks == 1
     assert store.get_plan("plan_1").status == "completed"
     joined_sql = "\n".join(connection.sql)
     assert "agentos_plan_claims" in joined_sql

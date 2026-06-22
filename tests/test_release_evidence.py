@@ -10,6 +10,7 @@ from pathlib import Path
 import agentos
 from agentos.release import (
     RELEASE_EVIDENCE_REQUIRED_GATES,
+    validate_release_candidate_evidence_manifest,
     validate_release_evidence_manifest,
 )
 
@@ -338,9 +339,24 @@ def test_generated_release_evidence_artifact_is_validated_when_present() -> None
     if not RELEASE_EVIDENCE.exists():
         return
     manifest = json.loads(RELEASE_EVIDENCE.read_text(encoding="utf-8"))
+    current_branch = subprocess.check_output(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    current_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
 
     assert manifest["release_candidate"]["version"] == agentos.__version__
-    report = validate_release_evidence_manifest(manifest)
+    report = validate_release_candidate_evidence_manifest(
+        manifest,
+        expected_branch=current_branch,
+        expected_commit=current_commit,
+        expected_version=agentos.__version__,
+    )
 
     if manifest["independent_review"]["status"] == "passed":
         assert report.accepted is True

@@ -24,6 +24,7 @@ class FakeConnection:
         self.claims: dict[str, dict[str, object]] = {}
         self.sql: list[str] = []
         self.commits = 0
+        self.rollbacks = 0
 
     def execute(
         self,
@@ -71,6 +72,9 @@ class FakeConnection:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
 
     def _claim(self, params: tuple[object, ...]) -> FakeCursor:
         plan_id = str(params[0])
@@ -173,6 +177,7 @@ def test_postgres_plan_claim_store_claims_and_reports_busy_claims() -> None:
     )
     assert second.status == "busy"
     assert second.existing_claim == first.claim
+    assert connection.rollbacks == 1
     assert connection.commits == 1
     joined_sql = "\n".join(connection.sql)
     assert "ON CONFLICT (plan_id) DO UPDATE" in joined_sql
@@ -264,6 +269,7 @@ def test_postgres_plan_claim_store_releases_matching_worker_only() -> None:
     )
 
     assert store.release_plan(plan_id="plan_1", worker_id="scheduler_b") is False
+    assert connection.rollbacks == 1
     assert store.get_claim("plan_1") is not None
     assert store.release_plan(plan_id="plan_1", worker_id="scheduler_a") is True
     assert store.get_claim("plan_1") is None
@@ -338,6 +344,7 @@ def test_postgres_plan_claim_store_releases_exact_expired_claim_only() -> None:
     )
     assert renewed.claim is not None
     assert store.release_expired_claim(first.claim, now=30.0) is False
+    assert connection.rollbacks == 1
     assert store.get_claim("expired_plan") == renewed.claim
 
     joined_sql = "\n".join(connection.sql)

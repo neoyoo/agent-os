@@ -468,6 +468,7 @@ class DurableAgentSessionProvider:
         owner_id: str,
         lease_ttl_seconds: float = 60.0,
         acquire_timeout_seconds: float | None = 10.0,
+        allow_unfenced_single_process_persistence: bool = False,
     ) -> None:
         """Create a durable session provider."""
 
@@ -477,6 +478,9 @@ class DurableAgentSessionProvider:
         self._owner_id = owner_id
         self._lease_ttl_seconds = lease_ttl_seconds
         self._acquire_timeout_seconds = acquire_timeout_seconds
+        self._allow_unfenced_single_process_persistence = (
+            allow_unfenced_single_process_persistence
+        )
         self._active_leases: dict[str, SessionLease] = {}
         self._active_revisions: dict[str, int] = {}
         self._active_lock = RLock()
@@ -614,6 +618,12 @@ class DurableAgentSessionProvider:
             )
             self._ensure_lease_owned(lease)
             return
+        if not self._allow_unfenced_single_process_persistence:
+            raise BackendUnavailableError(
+                "DurableAgentSessionProvider requires lease-fenced persistence; "
+                "set allow_unfenced_single_process_persistence=True only for "
+                "single-process tests or demos.",
+            )
         self._ensure_lease_owned(lease)
         save_if_unchanged = getattr(self._persistence, "save_if_unchanged", None)
         if callable(save_if_unchanged):

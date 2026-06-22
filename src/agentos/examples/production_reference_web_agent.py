@@ -268,14 +268,7 @@ def build_production_reference_web_agent(
             "blocking_reason": (
                 ""
                 if readiness_bundle.accepted
-                else (
-                    _demo_served_runtime_reason(
-                        lease_store=served_lease_store,
-                        snapshot_persistence=served_snapshot_persistence,
-                    )
-                    if backend_evidence_ready and served_demo_runtime
-                    else "live backend verification evidence is required"
-                )
+                else ", ".join(readiness_bundle.blocking_checks)
             ),
         },
     }
@@ -554,6 +547,12 @@ def _reference_readiness_bundle(
                 runtime_profile=runtime_profile,
                 allow_demo_runtime_readiness=allow_demo_runtime_readiness,
             ),
+            "reference_served_backend_binding": (
+                _reference_served_backend_binding_check(
+                    runtime_profile=runtime_profile,
+                    backend_verification=backend_verification,
+                )
+            ),
             "workspace_execution_isolation": service_reference.workspace_isolation_profile,
             "production_state_plane": state_plane_profile,
             "distributed_web_runtime_profile": {
@@ -570,6 +569,7 @@ def _reference_readiness_bundle(
         required_checks=(
             "reference_state_plane_stack",
             "reference_served_runtime",
+            "reference_served_backend_binding",
             "workspace_execution_isolation",
             "production_state_plane",
             "distributed_web_runtime_profile",
@@ -621,6 +621,94 @@ def _reference_served_runtime_check(
             "serve the ASGI app with real state-plane backends",
         ),
     }
+
+
+def _reference_served_backend_binding_check(
+    *,
+    runtime_profile: DistributedWebRuntimeProfile,
+    backend_verification: DeploymentLiveBackendVerificationProfile,
+) -> dict[str, object]:
+    served_targets = _served_backend_targets(runtime_profile)
+    if not served_targets:
+        return {
+            "status": "ok",
+            "ok": True,
+            "ready": True,
+            "profile": "ProductionReferenceServedBackendBinding",
+            "served_targets": {},
+            "evidence_targets": {},
+            "mismatched_backends": (),
+            "missing_target_backends": (),
+            "block_production_readiness": False,
+            "blocking_reason": "",
+        }
+    records_by_name = {
+        record.backend_name: record
+        for record in backend_verification.records
+    }
+    evidence_targets = {
+        name: record.target_ref
+        for name, record in records_by_name.items()
+        if name in served_targets and record.target_ref is not None
+    }
+    missing = tuple(
+        name
+        for name in served_targets
+        if records_by_name.get(name) is not None
+        and not records_by_name[name].target_ref
+    )
+    mismatched = tuple(
+        name
+        for name, expected in served_targets.items()
+        if name in evidence_targets and evidence_targets[name] != expected
+    )
+    ok = not missing and not mismatched
+    return {
+        "status": "ok" if ok else "failed",
+        "ok": ok,
+        "ready": ok,
+        "profile": "ProductionReferenceServedBackendBinding",
+        "served_targets": served_targets,
+        "evidence_targets": evidence_targets,
+        "mismatched_backends": mismatched,
+        "missing_target_backends": missing,
+        "block_production_readiness": not ok,
+        "blocking_reason": (
+            ""
+            if ok
+            else "live backend verification target_ref does not match served runtime"
+        ),
+        "sdk_owned": (
+            "production reference runtime backend target binding",
+            "BackendVerificationRecord.target_ref comparison",
+        ),
+        "deployment_owned": (
+            "emit backend verification records for the exact served Redis/Postgres targets",
+            "rotate credentials without changing the stable non-secret target identity",
+        ),
+    }
+
+
+def _served_backend_targets(
+    runtime_profile: DistributedWebRuntimeProfile,
+) -> dict[str, str]:
+    if _is_demo_served_runtime(
+        lease_store=runtime_profile.lease_store,
+        snapshot_persistence=runtime_profile.snapshot_persistence,
+    ):
+        return {}
+    targets: dict[str, str] = {}
+    redis_url = getattr(runtime_profile.lease_store, "backend_url", None)
+    if isinstance(redis_url, str) and redis_url:
+        targets["message_queue"] = redis_url
+    postgres_dsn = getattr(
+        runtime_profile.snapshot_persistence,
+        "backend_dsn",
+        None,
+    )
+    if isinstance(postgres_dsn, str) and postgres_dsn:
+        targets["session_snapshot_persistence"] = postgres_dsn
+    return targets
 
 
 class _ReferenceWorkspaceIsolationCheck:

@@ -49,7 +49,12 @@ from agentos.runtime.profile import (
     WebRuntimeProfile,
     WorkerProcessLifecycleDeploymentProfile,
 )
-from agentos.persistence import MemoryPersistence, SessionSnapshot
+from agentos.persistence import (
+    MemoryPersistence,
+    SessionSnapshot,
+    SessionSnapshotRecord,
+    SnapshotConflictError,
+)
 from agentos.workspace import LocalWorkspaceProvider, WorkspaceRequest
 from agentos.runtime import SessionState
 
@@ -273,6 +278,39 @@ class SnapshotFactory:
             message_runtime=query_loop.message_runtime,
             compression_index=CompressionIndex(),
         )
+
+
+class FencedMemoryPersistence(MemoryPersistence):
+    def __init__(self) -> None:
+        super().__init__()
+        self.revisions: dict[str, int] = {}
+
+    def load_record(self, session_id: str) -> SessionSnapshotRecord:
+        return SessionSnapshotRecord(
+            snapshot=self.load(session_id),
+            revision=self.revisions[session_id],
+        )
+
+    def save_if_lease_owned(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+        lease,
+        lease_store,
+    ) -> SessionSnapshotRecord:
+        session_id = snapshot.session_state.id
+        lease_store.ensure_owned(lease)
+        current_revision = self.revisions.get(session_id, 0)
+        if current_revision != expected_revision:
+            raise SnapshotConflictError(
+                f"snapshot revision conflict: {session_id}",
+            )
+        super().save(snapshot)
+        lease_store.ensure_owned(lease)
+        revision = current_revision + 1
+        self.revisions[session_id] = revision
+        return SessionSnapshotRecord(snapshot=snapshot, revision=revision)
 
 
 def test_distributed_agent_profile_holds_coordination_primitives() -> None:
@@ -626,7 +664,7 @@ def test_distributed_web_runtime_profile_wires_sse_turn_control() -> None:
 def test_distributed_web_runtime_profile_hydrates_session_across_nodes() -> None:
     factory = SnapshotFactory()
     lease_store = InMemorySessionLeaseStore()
-    persistence = MemoryPersistence()
+    persistence = FencedMemoryPersistence()
     node_a = DistributedWebRuntimeProfile(
         agent_factory=factory,
         lease_store=lease_store,

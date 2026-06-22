@@ -52,7 +52,7 @@
           "stability": "stable"
         },
         "DurableAgentSessionProvider": {
-          "signature": "(*, agent_factory: 'SnapshotAgentFactory', persistence: 'SessionPersistence', lease_store: 'SessionLeaseStore', owner_id: 'str', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0) -> 'None'",
+          "signature": "(*, agent_factory: 'SnapshotAgentFactory', persistence: 'SessionPersistence', lease_store: 'SessionLeaseStore', owner_id: 'str', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0, allow_unfenced_single_process_persistence: 'bool' = False) -> 'None'",
           "stability": "stable"
         },
         "InMemoryPlanStore": {
@@ -735,7 +735,7 @@
           "stability": "experimental"
         },
         "DurableAgentSessionProvider": {
-          "signature": "(*, agent_factory: 'SnapshotAgentFactory', persistence: 'SessionPersistence', lease_store: 'SessionLeaseStore', owner_id: 'str', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0) -> 'None'",
+          "signature": "(*, agent_factory: 'SnapshotAgentFactory', persistence: 'SessionPersistence', lease_store: 'SessionLeaseStore', owner_id: 'str', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0, allow_unfenced_single_process_persistence: 'bool' = False) -> 'None'",
           "stability": "stable"
         },
         "HmacA2ACardSigner": {

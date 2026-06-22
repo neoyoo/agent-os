@@ -14,6 +14,7 @@ from agentos.compression import CompressionIndex
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.persistence import (
+    BackendUnavailableError,
     MemoryPersistence,
     SessionSnapshot,
     SessionSnapshotRecord,
@@ -135,12 +136,14 @@ def test_durable_session_provider_hydrates_from_shared_persistence() -> None:
         persistence=persistence,
         lease_store=lease_store,
         owner_id="node-a",
+        allow_unfenced_single_process_persistence=True,
     )
     node_b = DurableAgentSessionProvider(
         agent_factory=factory,
         persistence=persistence,
         lease_store=lease_store,
         owner_id="node-b",
+        allow_unfenced_single_process_persistence=True,
     )
 
     agent_a = node_a.get_agent("s1")
@@ -169,6 +172,7 @@ def test_durable_session_provider_releases_lease_when_save_fails() -> None:
         persistence=FailingPersistence(),
         lease_store=lease_store,
         owner_id="node-a",
+        allow_unfenced_single_process_persistence=True,
     )
     agent = provider.get_agent("s1")
 
@@ -200,6 +204,7 @@ def test_durable_session_provider_refreshes_active_session_lease() -> None:
         persistence=MemoryPersistence(),
         lease_store=lease_store,
         owner_id="node-a",
+        allow_unfenced_single_process_persistence=True,
     )
 
     agent = provider.get_agent("s1")
@@ -237,6 +242,7 @@ def test_durable_session_provider_rejects_refresh_for_inactive_session() -> None
         persistence=MemoryPersistence(),
         lease_store=InMemorySessionLeaseStore(),
         owner_id="node-a",
+        allow_unfenced_single_process_persistence=True,
     )
 
     with pytest.raises(SessionLeaseError, match="session is not active"):
@@ -382,7 +388,33 @@ def test_durable_session_provider_rejects_snapshot_save_when_lease_is_lost_after
     )
 
 
-def test_durable_session_provider_uses_snapshot_cas_when_supported() -> None:
+def test_durable_session_provider_rejects_unfenced_snapshot_persistence_by_default() -> None:
+    persistence = MemoryPersistence()
+    lease_store = InMemorySessionLeaseStore()
+    provider = DurableAgentSessionProvider(
+        agent_factory=SnapshotTestFactory(responses={"s1": ["ok"]}),
+        persistence=persistence,
+        lease_store=lease_store,
+        owner_id="node-a",
+    )
+
+    agent = provider.get_agent("s1")
+    agent.run("hello")
+
+    with pytest.raises(BackendUnavailableError, match="lease-fenced persistence"):
+        provider.release_agent("s1", agent)
+
+    with pytest.raises(KeyError):
+        persistence.load("s1")
+    lease_store.acquire(
+        "s1",
+        owner_id="node-b",
+        ttl_seconds=30.0,
+        wait_timeout_seconds=0,
+    )
+
+
+def test_durable_session_provider_rejects_cas_only_persistence_by_default() -> None:
     persistence = CasMemoryPersistence()
     lease_store = InMemorySessionLeaseStore()
     provider = DurableAgentSessionProvider(
@@ -390,6 +422,28 @@ def test_durable_session_provider_uses_snapshot_cas_when_supported() -> None:
         persistence=persistence,
         lease_store=lease_store,
         owner_id="node-a",
+    )
+
+    agent = provider.get_agent("s1")
+    agent.run("hello")
+
+    with pytest.raises(BackendUnavailableError, match="lease-fenced persistence"):
+        provider.release_agent("s1", agent)
+
+    assert persistence.save_if_unchanged_calls == []
+    with pytest.raises(KeyError):
+        persistence.load("s1")
+
+
+def test_durable_session_provider_uses_snapshot_cas_when_explicitly_allowed() -> None:
+    persistence = CasMemoryPersistence()
+    lease_store = InMemorySessionLeaseStore()
+    provider = DurableAgentSessionProvider(
+        agent_factory=SnapshotTestFactory(responses={"s1": ["ok"]}),
+        persistence=persistence,
+        lease_store=lease_store,
+        owner_id="node-a",
+        allow_unfenced_single_process_persistence=True,
     )
 
     agent = provider.get_agent("s1")
@@ -419,6 +473,7 @@ def test_durable_session_provider_rejects_stale_snapshot_before_release() -> Non
         persistence=persistence,
         lease_store=lease_store,
         owner_id="node-a",
+        allow_unfenced_single_process_persistence=True,
     )
     agent = provider.get_agent("s1")
     agent.run("hello")
@@ -462,6 +517,7 @@ def test_durable_session_provider_fences_snapshot_save_with_live_lease_token(
         owner_id="node-a",
         lease_ttl_seconds=1.0,
         acquire_timeout_seconds=0,
+        allow_unfenced_single_process_persistence=True,
     )
 
     agent_a = node_a.get_agent("s1")
@@ -493,6 +549,7 @@ def test_durable_session_provider_abandons_session_without_snapshot_save() -> No
         lease_store=lease_store,
         owner_id="node-a",
         acquire_timeout_seconds=0,
+        allow_unfenced_single_process_persistence=True,
     )
 
     agent = provider.get_agent("s1")
