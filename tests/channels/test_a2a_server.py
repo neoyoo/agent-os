@@ -20,7 +20,10 @@ class StaticRunner:
             task_id=request.task_id,
             status="completed",
             summary="runner done",
-            artifacts={"allowed": list(request.allowed_tool_names)},
+            artifacts={
+                "allowed": list(request.allowed_tool_names),
+                "required": list(request.required_capabilities),
+            },
             elapsed_seconds=0.5,
         )
 
@@ -75,6 +78,7 @@ def test_a2a_server_adapter_handles_task_payload() -> None:
         {
             "task_id": "task_1",
             "instruction": "do remote work",
+            "required_capabilities": ["search"],
             "allowed_tool_names": ["read_file"],
             "timeout_seconds": 12,
         },
@@ -84,7 +88,7 @@ def test_a2a_server_adapter_handles_task_payload() -> None:
         "task_id": "task_1",
         "status": "completed",
         "summary": "runner done",
-        "artifacts": {"allowed": ["read_file"]},
+        "artifacts": {"allowed": ["read_file"], "required": ["search"]},
         "error": None,
         "elapsed_seconds": 0.5,
     }
@@ -92,6 +96,7 @@ def test_a2a_server_adapter_handles_task_payload() -> None:
         TaskRequest(
             task_id="task_1",
             instruction="do remote work",
+            required_capabilities=("search",),
             allowed_tool_names=("read_file",),
             timeout_seconds=12,
         ),
@@ -126,6 +131,22 @@ def test_a2a_server_adapter_returns_failed_result_for_invalid_payload() -> None:
     assert response["task_id"] == ""
     assert response["status"] == "failed"
     assert "task_id" in str(response["error"])
+
+
+def test_a2a_server_adapter_requires_capabilities_to_be_a_list() -> None:
+    from agentos.channels.a2a_server import A2AServerAdapter
+
+    response = A2AServerAdapter(StaticRunner()).handle_task(
+        {
+            "task_id": "task_1",
+            "instruction": "do remote work",
+            "required_capabilities": "search",
+        },
+    )
+
+    assert response["task_id"] == "task_1"
+    assert response["status"] == "failed"
+    assert "required_capabilities" in str(response["error"])
 
 
 def test_a2a_server_adapter_redacts_runner_value_errors() -> None:

@@ -3,6 +3,7 @@ import time
 from agentos.multi import (
     AgentCard,
     AgentCoordinator,
+    AgentEnvelope,
     AgentInbox,
     ExpertAgentRunner,
     InMemoryRegistry,
@@ -254,6 +255,83 @@ def test_expert_runner_does_not_ack_when_terminal_save_is_rejected() -> None:
     assert stored.worker_id == "expert-worker-1"
     assert stored.attempt == 1
     assert inbox.acked == []
+    assert inbox.has_pending("expert")
+    assert coordinator.collect_results("parent") == []
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_rejects_wrong_target_delivery_before_claiming_task() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="other_expert",
+            name="Other Expert",
+            description="Other expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("wrong expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+        target_agent_id="expert",
+    )
+    record = coordinator.task_table.get(handle.task_id)
+    assert record is not None
+    inbox.send(
+        AgentEnvelope(
+            envelope_id="env_wrong_target",
+            from_agent_id="parent",
+            to_agent_id="other_expert",
+            type="task_request",
+            payload=record.request,
+            created_at=time.time(),
+        ),
+    )
+
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="other_expert",
+        worker_id="other-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is False
+
+    stored = coordinator.task_table.get(handle.task_id)
+    assert stored is not None
+    assert stored.status == "queued"
+    assert stored.worker_id is None
+    assert stored.attempt == 0
+    assert ("other_expert", "env_wrong_target") in inbox.acked
     assert coordinator.collect_results("parent") == []
 
     coordinator.spawn_executor.shutdown()

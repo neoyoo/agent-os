@@ -1257,6 +1257,7 @@
             "ack": "(self, agent_id: 'str', delivery_id: 'str') -> 'bool'",
             "collect": "(self, agent_id: 'str', *, envelope_types: 'tuple[AgentEnvelopeType, ...] | None' = None) -> 'list[QueueDelivery]'",
             "create_inbox": "(self, agent_id: 'str') -> 'None'",
+            "requeue": "(self, agent_id: 'str', delivery: 'QueueDelivery') -> 'None'",
             "remove_inbox": "(self, agent_id: 'str') -> 'None'",
             "send": "(self, envelope: 'AgentEnvelope') -> 'str'",
             "wait": "(self, agent_id: 'str', timeout: 'float | None' = None) -> 'bool'"
@@ -1727,7 +1728,7 @@
           "stability": "experimental"
         },
         "TaskRequest": {
-          "signature": "(task_id: 'str', instruction: 'str', required_capabilities: 'tuple[str, ...]' = (), allowed_tool_names: 'tuple[str, ...]' = (), timeout_seconds: 'float' = 300, trace_context: 'dict[str, str] | None' = None) -> None",
+          "signature": "(task_id: 'str', instruction: 'str', allowed_tool_names: 'tuple[str, ...]' = (), required_capabilities: 'tuple[str, ...]' = (), timeout_seconds: 'float' = 300, trace_context: 'dict[str, str] | None' = None) -> None",
           "stability": "experimental"
         },
         "TaskResult": {
@@ -1743,7 +1744,7 @@
             "ack_cancelled": "(self, task_id: 'str', result: 'TaskResult', *, now: 'float', worker_id: 'str | None' = None, attempt: 'int | None' = None) -> 'bool'",
             "active_count_for_target": "(self, agent_id: 'str') -> 'int'",
             "active_for_agent": "(self, agent_id: 'str | None' = None) -> 'list[TaskHandle]'",
-            "claim_queued": "(self, *, worker_id: 'str', capabilities: 'Sequence[str]', limit: 'int', lease_expires_at: 'float', now: 'float') -> 'list[TaskClaim]'",
+            "claim_queued": "(self, *, worker_id: 'str', target_agent_id: 'str | None' = None, capabilities: 'Sequence[str]', limit: 'int', lease_expires_at: 'float', now: 'float') -> 'list[TaskClaim]'",
             "claim_task": "(self, task_id: 'str', *, worker_id: 'str', capabilities: 'Sequence[str]', lease_expires_at: 'float', now: 'float') -> 'TaskClaim | None'",
             "consume_results_for_agent": "(self, agent_id: 'str') -> 'list[TaskResult]'",
             "create": "(self, record: 'TaskRecord') -> 'TaskHandle'",

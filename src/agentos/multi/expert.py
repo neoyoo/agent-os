@@ -4,6 +4,7 @@ import time
 from threading import Event
 
 from agentos.multi.coordinator import AgentCoordinator
+from agentos.multi.message_queue import QueueDelivery
 from agentos.multi.types import TaskRequest
 
 
@@ -60,6 +61,13 @@ class ExpertAgentRunner:
                 if not isinstance(request, TaskRequest):
                     self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     continue
+                record = self.coordinator.task_table.get(request.task_id)
+                if (
+                    record is not None
+                    and delivery.envelope.to_agent_id != record.target_agent_id
+                ):
+                    self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
+                    continue
                 now = time.time()
                 claim = self.coordinator.task_table.claim_task(
                     request.task_id,
@@ -73,11 +81,7 @@ class ExpertAgentRunner:
                         self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                         handled = True
                     else:
-                        # Durable queues keep unacked deliveries pending; AgentInbox
-                        # needs an explicit replay because collect() drains in memory.
-                        requeue = getattr(self.coordinator.inbox, "requeue", None)
-                        if callable(requeue):
-                            requeue(self.agent_id, delivery)
+                        self._requeue_delivery(delivery)
                     continue
                 result = self.coordinator.execute_expert_envelope(
                     delivery.envelope,
@@ -88,6 +92,8 @@ class ExpertAgentRunner:
                 ):
                     self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     handled = True
+                elif result is not None:
+                    self._requeue_delivery(delivery)
             return handled
         finally:
             self._idle.set()
@@ -112,3 +118,9 @@ class ExpertAgentRunner:
             and record.result is not None
             and record.result.status == record.status
         )
+
+    def _requeue_delivery(self, delivery: QueueDelivery) -> None:
+        # Durable queues keep unacked deliveries pending; AgentInbox drains in memory.
+        requeue = getattr(self.coordinator.inbox, "requeue", None)
+        if callable(requeue):
+            requeue(self.agent_id, delivery)

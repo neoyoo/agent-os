@@ -229,6 +229,18 @@ class RedisAgentMessageQueue:
             acknowledged = self._ack_stream(stream_key, delivery_id) or acknowledged
         return acknowledged
 
+    def requeue(self, agent_id: str, delivery: QueueDelivery) -> None:
+        """Keep an unacked Redis stream delivery pending for later reclaim."""
+
+        self._require_consumer_scope(agent_id)
+        parsed = self._parse_delivery_id(delivery.delivery_id)
+        if parsed is not None:
+            stream_key, _message_id = parsed
+            if not self._stream_key_belongs_to_agent(agent_id, stream_key):
+                raise RedisAgentMessageQueueConsumerScopeError(
+                    f"redis delivery does not belong to agent inbox: {agent_id}",
+                )
+
     def ack_matching(
         self,
         agent_id: str,

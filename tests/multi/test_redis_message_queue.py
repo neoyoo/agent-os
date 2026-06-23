@@ -183,6 +183,38 @@ def test_redis_queue_sends_collects_and_acks_envelope() -> None:
     ]
 
 
+def test_redis_queue_requeue_keeps_unacked_delivery_pending_for_reclaim() -> None:
+    client = FakeRedis()
+    queue = RedisAgentMessageQueue(
+        url="redis://unused",
+        client=client,
+        allowed_consumer_agent_ids=("worker",),
+    )
+    queue.create_inbox("worker")
+    queue.send(envelope())
+    delivery = queue.collect("worker")[0]
+
+    queue.requeue("worker", delivery)
+
+    assert client.acked == []
+
+
+def test_redis_queue_requeue_rejects_delivery_for_wrong_agent_stream() -> None:
+    client = FakeRedis()
+    queue = RedisAgentMessageQueue(
+        url="redis://unused",
+        client=client,
+        allowed_consumer_agent_ids=("worker", "other_worker"),
+    )
+    queue.create_inbox("worker")
+    queue.create_inbox("other_worker")
+    queue.send(envelope())
+    delivery = queue.collect("worker")[0]
+
+    with pytest.raises(PermissionError, match="other_worker"):
+        queue.requeue("other_worker", delivery)
+
+
 def test_redis_queue_collects_payload_from_redis_py_byte_fields() -> None:
     client = FakeRedis()
     queue = RedisAgentMessageQueue(

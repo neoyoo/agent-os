@@ -4,6 +4,7 @@ from agentos.multi import TaskRecord, TaskRequest, TaskResult, TaskTable
 def record(
     task_id: str = "task_1",
     *,
+    target_agent_id: str = "code-worker",
     required_capabilities: tuple[str, ...] = ("code",),
     allowed_tool_names: tuple[str, ...] = ("code",),
 ) -> TaskRecord:
@@ -11,7 +12,7 @@ def record(
         task_id=task_id,
         mode="dispatch",
         parent_agent_id="parent",
-        target_agent_id="code-worker",
+        target_agent_id=target_agent_id,
         request=TaskRequest(
             task_id=task_id,
             instruction="Do work",
@@ -53,6 +54,30 @@ def test_task_table_claims_queued_task_with_worker_lease() -> None:
     assert claimed.attempt == 1
     assert claimed.updated_at == 2.0
     assert claimed.version == 1
+
+
+def test_task_table_claim_queued_can_be_constrained_to_target_agent() -> None:
+    store = TaskTable()
+    other = record("task_1", target_agent_id="other-worker")
+    target = record("task_2", target_agent_id="code-worker")
+    store.create(other)
+    store.create(target)
+
+    claims = store.claim_queued(
+        worker_id="worker-instance-1",
+        target_agent_id="code-worker",
+        capabilities=("code",),
+        limit=2,
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert [claim.task_id for claim in claims] == ["task_2"]
+    assert store.get("task_1") == other
+    claimed = store.get("task_2")
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-instance-1"
 
 
 def test_task_table_claims_exact_queued_task_with_worker_lease() -> None:

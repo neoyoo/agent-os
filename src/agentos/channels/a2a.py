@@ -2531,6 +2531,7 @@ class A2AAdapter:
         payload = {
             "task_id": request.task_id,
             "instruction": request.instruction,
+            "required_capabilities": list(request.required_capabilities),
             "allowed_tool_names": list(request.allowed_tool_names),
             "timeout_seconds": request.timeout_seconds,
         }

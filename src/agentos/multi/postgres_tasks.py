@@ -147,6 +147,7 @@ class PostgresTaskStore:
         self,
         *,
         worker_id: str,
+        target_agent_id: str | None = None,
         capabilities: Sequence[str],
         limit: int,
         lease_expires_at: float,
@@ -171,6 +172,7 @@ class PostgresTaskStore:
                 )
               )
               AND deadline_at > %s
+              AND (%s::text IS NULL OR target_agent_id = %s::text)
               AND NOT EXISTS (
                 SELECT 1
                 FROM jsonb_array_elements_text(
@@ -216,6 +218,8 @@ class PostgresTaskStore:
             (
                 now,
                 now,
+                target_agent_id,
+                target_agent_id,
                 list(capabilities),
                 limit,
                 worker_id,

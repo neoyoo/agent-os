@@ -58,6 +58,7 @@ def test_a2a_adapter_sends_task_request_to_remote_endpoint() -> None:
     request = TaskRequest(
         task_id="task_1",
         instruction="search docs",
+        required_capabilities=("search",),
         allowed_tool_names=("read_file",),
         timeout_seconds=12,
     )
@@ -73,6 +74,7 @@ def test_a2a_adapter_sends_task_request_to_remote_endpoint() -> None:
             {
                 "task_id": "task_1",
                 "instruction": "search docs",
+                "required_capabilities": ["search"],
                 "allowed_tool_names": ["read_file"],
                 "timeout_seconds": 12,
             },

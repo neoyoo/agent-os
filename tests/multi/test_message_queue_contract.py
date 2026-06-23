@@ -24,3 +24,14 @@ def test_agent_inbox_returns_delivery_ids_and_acks() -> None:
     assert deliveries[0].envelope == request_envelope()
     assert queue.ack("worker", delivery_id) is True
     assert queue.ack("worker", delivery_id) is False
+
+
+def test_agent_inbox_requeues_unacked_drained_delivery() -> None:
+    queue = AgentInbox()
+    queue.create_inbox("worker")
+    queue.send(request_envelope())
+    delivery = queue.collect("worker")[0]
+
+    queue.requeue("worker", delivery)
+
+    assert queue.collect("worker") == [delivery]

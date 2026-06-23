@@ -3063,6 +3063,10 @@ class PlannerRuntime:
             raise PlanClaimLostError(
                 f"claim changed before dispatching plan assignment: {plan_id}",
             )
+        if current.lease_expires_at <= float(self._clock()):
+            raise PlanClaimLostError(
+                f"claim expired before dispatching plan assignment: {plan_id}",
+            )
 
     def _require_plan(self, plan_id: str) -> PlanState:
         plan = self.store.get_plan(plan_id)

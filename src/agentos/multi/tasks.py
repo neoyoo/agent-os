@@ -37,6 +37,7 @@ class TaskTable:
         self,
         *,
         worker_id: str,
+        target_agent_id: str | None = None,
         capabilities: Sequence[str],
         limit: int,
         lease_expires_at: float,
@@ -54,6 +55,7 @@ class TaskTable:
                     break
                 if not self._can_claim(
                     record,
+                    target_agent_id=target_agent_id,
                     capabilities=available_capabilities,
                     now=now,
                 ):
@@ -467,9 +469,12 @@ class TaskTable:
         self,
         record: TaskRecord,
         *,
+        target_agent_id: str | None = None,
         capabilities: set[str],
         now: float,
     ) -> bool:
+        if target_agent_id is not None and record.target_agent_id != target_agent_id:
+            return False
         if not (
             record.status == "queued"
             or (

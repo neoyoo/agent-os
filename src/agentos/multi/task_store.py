@@ -29,6 +29,7 @@ class TaskStore(Protocol):
         self,
         *,
         worker_id: str,
+        target_agent_id: str | None = None,
         capabilities: Sequence[str],
         limit: int,
         lease_expires_at: float,

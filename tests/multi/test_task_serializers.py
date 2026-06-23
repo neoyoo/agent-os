@@ -45,6 +45,13 @@ def test_task_request_from_legacy_payload_defaults_required_capabilities() -> No
     assert request.allowed_tool_names == ("read",)
 
 
+def test_task_request_third_positional_argument_remains_allowed_tool_names() -> None:
+    request = TaskRequest("task_1", "Do work", ("read",))
+
+    assert request.allowed_tool_names == ("read",)
+    assert request.required_capabilities == ()
+
+
 def test_task_result_round_trips_json_safe_fields() -> None:
     result = TaskResult(
         task_id="task_1",

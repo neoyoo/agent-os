@@ -120,12 +120,14 @@ class FakeConnection:
         exact_task_id: str | None = None,
     ) -> FakeCursor:
         if exact_task_id is None:
-            capabilities = {str(capability) for capability in params[2]}
-            limit = int(params[3])
-            worker_id = str(params[4])
-            lease_expires_at = float(params[5])
-            now = float(params[6])
+            target_agent_id = None if params[2] is None else str(params[2])
+            capabilities = {str(capability) for capability in params[4]}
+            limit = int(params[5])
+            worker_id = str(params[6])
+            lease_expires_at = float(params[7])
+            now = float(params[8])
         else:
+            target_agent_id = None
             capabilities = {str(capability) for capability in params[3]}
             limit = 1
             worker_id = str(params[4])
@@ -138,6 +140,11 @@ class FakeConnection:
             if exact_task_id is not None and task_id != exact_task_id:
                 continue
             record = task_record_from_dict(json.loads(str(row["payload"])))
+            if (
+                target_agent_id is not None
+                and record.target_agent_id != target_agent_id
+            ):
+                continue
             if record.status != "queued":
                 continue
             required_capabilities = set(record.request.required_capabilities)
@@ -237,6 +244,7 @@ class ContextPool:
 def record(
     task_id: str = "task_1",
     *,
+    target_agent_id: str = "worker",
     required_capabilities: tuple[str, ...] = (),
     allowed_tool_names: tuple[str, ...] = (),
 ) -> TaskRecord:
@@ -244,7 +252,7 @@ def record(
         task_id=task_id,
         mode="dispatch",
         parent_agent_id="parent",
-        target_agent_id="worker",
+        target_agent_id=target_agent_id,
         request=TaskRequest(
             task_id=task_id,
             instruction="Do work",
@@ -362,6 +370,33 @@ def test_postgres_task_store_uses_atomic_claim_sql_and_updates_payload() -> None
     assert stored.worker_id == "worker-instance-1"
     assert stored.attempt == 1
     assert stored.version == 1
+
+
+def test_postgres_task_store_claim_queued_can_be_constrained_to_target_agent() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    other = record("task_1", target_agent_id="other-worker")
+    target = record("task_2", target_agent_id="worker")
+    store.create(other)
+    store.create(target)
+
+    claims = store.claim_queued(
+        worker_id="worker-instance-1",
+        target_agent_id="worker",
+        capabilities=("code",),
+        limit=2,
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    joined_sql = "\n".join(connection.sql)
+    assert "%s::text IS NULL OR target_agent_id = %s::text" in joined_sql
+    assert [claim.task_id for claim in claims] == ["task_2"]
+    assert store.get("task_1") == other
+    stored = store.get("task_2")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.worker_id == "worker-instance-1"
 
 
 def test_postgres_task_store_claims_exact_task_id_atomically() -> None:
