@@ -1347,7 +1347,7 @@
           "stability": "experimental"
         },
         "ExpertAgentRunner": {
-          "signature": "(*, coordinator: 'AgentCoordinator', agent_id: 'str', worker_id: 'str | None' = None, capabilities: 'tuple[str, ...]' = (), lease_ttl_seconds: 'float' = 300.0) -> 'None'",
+          "signature": "(*, coordinator: 'AgentCoordinator', agent_id: 'str', worker_id: 'str | None' = None, capabilities: 'tuple[str, ...]' = (), lease_ttl_seconds: 'float' = 300.0, requeue_backoff_seconds: 'float' = 1.0) -> 'None'",
           "stability": "experimental"
         },
         "InMemoryPlanClaimStore": {

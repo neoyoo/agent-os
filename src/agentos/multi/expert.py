@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from threading import Event
+from threading import Event, Timer
 
 from agentos.multi.coordinator import AgentCoordinator
 from agentos.multi.message_queue import QueueDelivery
@@ -19,6 +19,7 @@ class ExpertAgentRunner:
         worker_id: str | None = None,
         capabilities: tuple[str, ...] = (),
         lease_ttl_seconds: float = 300.0,
+        requeue_backoff_seconds: float = 1.0,
     ) -> None:
         """绑定 coordinator 和 expert agent id。"""
 
@@ -32,6 +33,9 @@ class ExpertAgentRunner:
             capabilities or (() if card is None else card.capabilities),
         )
         self.lease_ttl_seconds = lease_ttl_seconds
+        self.requeue_backoff_seconds = float(requeue_backoff_seconds)
+        if self.requeue_backoff_seconds < 0:
+            raise ValueError("requeue_backoff_seconds must be >= 0")
         self._stopped = Event()
         self._idle = Event()
         self._idle.set()
@@ -84,7 +88,7 @@ class ExpertAgentRunner:
                         self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                         handled = True
                     else:
-                        self._requeue_delivery(delivery)
+                        self._requeue_delivery(delivery, delay=True)
                     continue
                 result = self.coordinator.execute_expert_envelope(
                     delivery.envelope,
@@ -122,8 +126,20 @@ class ExpertAgentRunner:
             and record.result.status == record.status
         )
 
-    def _requeue_delivery(self, delivery: QueueDelivery) -> None:
+    def _requeue_delivery(
+        self,
+        delivery: QueueDelivery,
+        *,
+        delay: bool = False,
+    ) -> None:
         # Durable queues keep unacked deliveries pending; AgentInbox drains in memory.
         requeue = getattr(self.coordinator.inbox, "requeue", None)
-        if callable(requeue):
+        if not callable(requeue):
+            return
+        delay_seconds = self.requeue_backoff_seconds if delay else 0.0
+        if delay_seconds <= 0:
             requeue(self.agent_id, delivery)
+            return
+        timer = Timer(delay_seconds, requeue, args=(self.agent_id, delivery))
+        timer.daemon = True
+        timer.start()

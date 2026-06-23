@@ -2626,6 +2626,8 @@ class PlannerRuntime:
                     assignment=assignment,
                     template=template,
                 )
+            except PlanClaimLostError:
+                raise
             except PlanDispatchAlreadySubmittedError:
                 pass
             except Exception as error:

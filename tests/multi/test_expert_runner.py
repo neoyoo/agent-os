@@ -551,10 +551,67 @@ def test_expert_runner_requeues_in_memory_delivery_when_claim_is_missed() -> Non
         worker_id="expert-worker-1",
         capabilities=("code-review",),
         lease_ttl_seconds=30.0,
+        requeue_backoff_seconds=0.0,
     )
 
     assert runner.run_once(timeout=0.1) is False
     assert inbox.acked == []
     assert inbox.has_pending("expert")
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_backs_off_claim_missed_delivery_by_default() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+    )
+    first_claim = coordinator.task_table.claim_task(
+        handle.task_id,
+        worker_id="other-worker",
+        capabilities=("code-review",),
+        lease_expires_at=time.time() + 30.0,
+        now=time.time(),
+    )
+    assert first_claim is not None
+
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="expert",
+        worker_id="expert-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is False
+    assert inbox.acked == []
+    assert not inbox.has_pending("expert")
 
     coordinator.spawn_executor.shutdown()
