@@ -7,6 +7,7 @@ from agentos.multi import (
     AgentInbox,
     ExpertAgentRunner,
     InMemoryRegistry,
+    QueueDelivery,
     SpawnExecutor,
     TaskResult,
     TaskTable,
@@ -23,6 +24,28 @@ class RecordingInbox(AgentInbox):
     def ack(self, agent_id: str, delivery_id: str) -> bool:
         self.acked.append((agent_id, delivery_id))
         return super().ack(agent_id, delivery_id)
+
+
+class CorruptDeliveryInbox(RecordingInbox):
+    def __init__(self) -> None:
+        super().__init__()
+        self.corrupt_deliveries: dict[str, list[QueueDelivery]] = {}
+
+    def wait(self, agent_id: str, timeout: float | None = None) -> bool:
+        if self.corrupt_deliveries.get(agent_id):
+            return True
+        return super().wait(agent_id, timeout)
+
+    def collect(
+        self,
+        agent_id: str,
+        *,
+        envelope_types: tuple[str, ...] | None = None,
+    ) -> list[QueueDelivery]:
+        deliveries = self.corrupt_deliveries.pop(agent_id, [])
+        if deliveries:
+            return deliveries
+        return super().collect(agent_id, envelope_types=envelope_types)
 
 
 class RejectTerminalTaskTable(TaskTable):
@@ -333,6 +356,84 @@ def test_expert_runner_rejects_wrong_target_delivery_before_claiming_task() -> N
     assert stored.attempt == 0
     assert ("other_expert", "env_wrong_target") in inbox.acked
     assert coordinator.collect_results("parent") == []
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_rejects_delivery_not_addressed_to_runner() -> None:
+    inbox = CorruptDeliveryInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="other_expert",
+            name="Other Expert",
+            description="Other expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("wrong expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+        target_agent_id="expert",
+    )
+    record = coordinator.task_table.get(handle.task_id)
+    assert record is not None
+    inbox.corrupt_deliveries["other_expert"] = [
+        QueueDelivery(
+            delivery_id="env_wrong_queue",
+            envelope=AgentEnvelope(
+                envelope_id="env_wrong_queue",
+                from_agent_id="parent",
+                to_agent_id="expert",
+                type="task_request",
+                payload=record.request,
+                created_at=time.time(),
+            ),
+        ),
+    ]
+
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="other_expert",
+        worker_id="other-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is False
+
+    stored = coordinator.task_table.get(handle.task_id)
+    assert stored is not None
+    assert stored.status == "queued"
+    assert stored.worker_id is None
+    assert stored.attempt == 0
+    assert inbox.acked == []
 
     coordinator.spawn_executor.shutdown()
 

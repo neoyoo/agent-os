@@ -127,12 +127,12 @@ class FakeConnection:
             lease_expires_at = float(params[7])
             now = float(params[8])
         else:
-            target_agent_id = None
-            capabilities = {str(capability) for capability in params[3]}
+            target_agent_id = None if params[3] is None else str(params[3])
+            capabilities = {str(capability) for capability in params[5]}
             limit = 1
-            worker_id = str(params[4])
-            lease_expires_at = float(params[5])
-            now = float(params[6])
+            worker_id = str(params[6])
+            lease_expires_at = float(params[7])
+            now = float(params[8])
         rows: list[tuple[object, ...]] = []
         for task_id, row in self.records.items():
             if len(rows) >= limit:
@@ -424,6 +424,27 @@ def test_postgres_task_store_claims_exact_task_id_atomically() -> None:
     assert stored.status == "running"
     assert stored.worker_id == "worker-instance-1"
     assert stored.attempt == 1
+
+
+def test_postgres_task_store_exact_claim_can_be_constrained_to_target_agent() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    original = record("task_1", target_agent_id="worker")
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="wrong-worker-instance",
+        target_agent_id="other-worker",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    joined_sql = "\n".join(connection.sql)
+    assert "%s::text IS NULL OR target_agent_id = %s::text" in joined_sql
+    assert claim is None
+    assert store.get("task_1") == original
 
 
 def test_postgres_task_store_does_not_claim_when_capabilities_do_not_match() -> None:

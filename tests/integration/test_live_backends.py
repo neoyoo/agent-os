@@ -66,13 +66,22 @@ def _store(dsn: str) -> PostgresTaskStore:
     return PostgresTaskStore(dsn=dsn, connection=_connect_postgres(dsn))
 
 
-def _record(task_id: str = "task_1") -> TaskRecord:
+def _record(
+    task_id: str = "task_1",
+    *,
+    target_agent_id: str = "worker",
+    required_capabilities: tuple[str, ...] = (),
+) -> TaskRecord:
     return TaskRecord(
         task_id=task_id,
         mode="dispatch",
         parent_agent_id="parent",
-        target_agent_id="worker",
-        request=TaskRequest(task_id=task_id, instruction="Do work"),
+        target_agent_id=target_agent_id,
+        request=TaskRequest(
+            task_id=task_id,
+            instruction="Do work",
+            required_capabilities=required_capabilities,
+        ),
         status="queued",
         created_at=1.0,
         deadline_at=300.0,
@@ -114,6 +123,87 @@ def test_live_postgres_concurrent_claim_assigns_one_worker() -> None:
         assert stored.attempt == 1
     finally:
         verify_store.close()
+
+
+def test_live_postgres_claims_are_fenced_by_target_and_capabilities() -> None:
+    postgres_dsn, _redis_url = _require_live_backends()
+    _reset_postgres_schema(postgres_dsn)
+    store = _store(postgres_dsn)
+    try:
+        store.create(
+            _record(
+                "task_other",
+                target_agent_id="other_worker",
+                required_capabilities=("code",),
+            ),
+        )
+        store.create(
+            _record(
+                "task_target",
+                target_agent_id="worker",
+                required_capabilities=("code", "review"),
+            ),
+        )
+
+        missing_capability = store.claim_queued(
+            worker_id="worker_1",
+            capabilities=("code",),
+            target_agent_id="worker",
+            limit=10,
+            lease_expires_at=60.0,
+            now=2.0,
+        )
+        claims = store.claim_queued(
+            worker_id="worker_1",
+            capabilities=("code", "review"),
+            target_agent_id="worker",
+            limit=10,
+            lease_expires_at=60.0,
+            now=3.0,
+        )
+
+        assert missing_capability == []
+        assert [claim.task_id for claim in claims] == ["task_target"]
+        assert store.get("task_other").status == "queued"  # type: ignore[union-attr]
+    finally:
+        store.close()
+
+
+def test_live_postgres_exact_claim_rejects_wrong_target_agent() -> None:
+    postgres_dsn, _redis_url = _require_live_backends()
+    _reset_postgres_schema(postgres_dsn)
+    store = _store(postgres_dsn)
+    try:
+        store.create(
+            _record(
+                "task_target",
+                target_agent_id="worker",
+                required_capabilities=("code",),
+            ),
+        )
+
+        wrong_target = store.claim_task(
+            "task_target",
+            worker_id="worker_1",
+            capabilities=("code",),
+            target_agent_id="other_worker",
+            lease_expires_at=60.0,
+            now=2.0,
+        )
+        correct_target = store.claim_task(
+            "task_target",
+            worker_id="worker_1",
+            capabilities=("code",),
+            target_agent_id="worker",
+            lease_expires_at=60.0,
+            now=3.0,
+        )
+
+        assert wrong_target is None
+        assert correct_target is not None
+        assert correct_target.task_id == "task_target"
+    finally:
+        store.close()
 
 
 def test_live_postgres_cancel_ack_and_completion_race_converges_once() -> None:
@@ -265,5 +355,41 @@ def test_live_redis_stream_pending_message_can_be_reclaimed() -> None:
         assert [delivery.delivery_id for delivery in deliveries]
         assert deliveries[0].envelope.correlation_id == "task_1"
         assert reclaimer.ack("worker", deliveries[0].delivery_id)
+    finally:
+        redis_client.delete(stream_key, f"{stream_key}:dead")
+
+
+def test_live_redis_requeue_returns_delivery_to_next_collect() -> None:
+    _postgres_dsn, redis_url = _require_live_backends()
+    key_prefix = f"agentos-test-{uuid4().hex}"
+    redis_client = _connect_redis(redis_url)
+    stream_key = f"{key_prefix}:multi:inbox:worker"
+    queue = RedisAgentMessageQueue(
+        redis_url,
+        client=redis_client,
+        key_prefix=key_prefix,
+        consumer_name="consumer_1",
+        allowed_consumer_agent_ids=("worker",),
+    )
+    try:
+        queue.create_inbox("worker")
+        queue.send(
+            AgentEnvelope(
+                envelope_id="env_1",
+                from_agent_id="parent",
+                to_agent_id="worker",
+                type="task_request",
+                payload=TaskRequest(task_id="task_1", instruction="work"),
+                created_at=1.0,
+                correlation_id="task_1",
+            ),
+        )
+        delivery = queue.collect("worker")[0]
+
+        queue.requeue("worker", delivery)
+        redelivered = queue.collect("worker")
+
+        assert redelivered == [delivery]
+        assert queue.ack("worker", delivery.delivery_id)
     finally:
         redis_client.delete(stream_key, f"{stream_key}:dead")

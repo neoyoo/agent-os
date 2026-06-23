@@ -196,6 +196,7 @@ def test_redis_queue_requeue_keeps_unacked_delivery_pending_for_reclaim() -> Non
 
     queue.requeue("worker", delivery)
 
+    assert queue.collect("worker") == [delivery]
     assert client.acked == []
 
 

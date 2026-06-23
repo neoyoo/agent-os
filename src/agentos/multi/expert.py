@@ -61,6 +61,8 @@ class ExpertAgentRunner:
                 if not isinstance(request, TaskRequest):
                     self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     continue
+                if delivery.envelope.to_agent_id != self.agent_id:
+                    continue
                 record = self.coordinator.task_table.get(request.task_id)
                 if (
                     record is not None
@@ -72,6 +74,7 @@ class ExpertAgentRunner:
                 claim = self.coordinator.task_table.claim_task(
                     request.task_id,
                     worker_id=self.worker_id,
+                    target_agent_id=self.agent_id,
                     capabilities=self.capabilities,
                     lease_expires_at=now + self.lease_ttl_seconds,
                     now=now,

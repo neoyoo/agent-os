@@ -2619,6 +2619,7 @@ class PlannerRuntime:
                 )
                 continue
             try:
+                self._ensure_active_plan_claim(plan_id)
                 self._submit_assignment_to_coordinator(
                     plan=current_plan,
                     step=step,

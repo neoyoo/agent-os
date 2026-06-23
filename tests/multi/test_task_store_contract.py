@@ -107,6 +107,24 @@ def test_task_table_claims_exact_queued_task_with_worker_lease() -> None:
     assert claimed.version == 1
 
 
+def test_task_table_exact_claim_can_be_constrained_to_target_agent() -> None:
+    store = TaskTable()
+    original = record("task_1", target_agent_id="expert")
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="wrong-worker-instance",
+        target_agent_id="other_expert",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
+
+
 def test_task_table_exact_claim_rejects_wrong_capabilities() -> None:
     store = TaskTable()
     original = record("task_1", required_capabilities=("code", "web"))
