@@ -474,7 +474,9 @@ Production notes:
   async session provider offload. Lease-fenced snapshot writes are revision CAS
   writes with pre/post lease ownership verification and rollback before commit
   when the post-save lease check fails; they are not a Redis/Postgres distributed
-  transaction. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
+  transaction. `lease_fence` records monotonic fencing evidence for committed
+  snapshot writes; it is not a Postgres-side atomic proof of current Redis lease
+  ownership. The deployment-owned side remains Redis/Postgres credentials, migration execution, lease TTL tuning, stale lease recovery policy, auth and tenant integration, workspace policy configuration, live backend verification, rollout and rollback policy, and alerting and incident response.
 - Distributed stream resume readiness is evidence-based. A configured SSE
   buffer, turn-control store, and heartbeat interval only prove
   `distributed_stream_resume_configured`; production readiness additionally

@@ -1414,7 +1414,7 @@
           "methods": {
             "claim_plan": "(self, *, plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', lease_seconds: 'float', now: 'float') -> 'PlanClaimResult'",
             "get_claim": "(self, plan_id: 'str') -> 'PlanClaimRecord | None'",
-            "release_plan": "(self, *, plan_id: 'str', worker_id: 'str') -> 'bool'"
+            "release_plan": "(self, *, plan_id: 'str', worker_id: 'str', owner_agent_id: 'str | None' = None) -> 'bool'"
           },
           "signature": "(*args, **kwargs)",
           "stability": "experimental"

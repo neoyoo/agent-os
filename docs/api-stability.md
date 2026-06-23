@@ -83,6 +83,11 @@ changes are involved, in migration notes.
 
 - Stable API changes require a deprecation path or migration notes.
 - Experimental API changes require changelog entries and test updates.
+- The root `agentos` namespace is a stable facade. Only names in
+  `agentos.__all__` and the root inventory are supported as root imports.
+  Stable or experimental names that are governed in submodules must be imported
+  from their owning namespace, for example `agentos.channels`,
+  `agentos.multi`, `agentos.registry`, or `agentos.deployment`.
 - boundary-first ownership stays unchanged: SDK API exposes protocols, profiles,
   reference compositions, readiness, and audit evidence; deployment code owns
   real infrastructure, credentials, migrations execution, CI/CD, signing,

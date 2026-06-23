@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from threading import Event, Thread, current_thread
 
 import pytest
 
@@ -19,6 +20,7 @@ from agentos.multi.planner import (
     PlanDecomposition,
     PlanDecompositionGatePolicy,
     PlanConflictError,
+    PlanDispatchReport,
     PlanNotFoundError,
     PlanRetryPolicy,
     PlanClaimRecord,
@@ -2952,6 +2954,59 @@ def test_in_memory_plan_claim_store_claims_releases_and_expires_leases() -> None
     assert takeover.claim.generation == 2
 
 
+def test_in_memory_plan_claim_store_does_not_renew_active_claim_for_other_owner() -> None:
+    store = InMemoryPlanClaimStore()
+    first = store.claim_plan(
+        plan_id="plan_1",
+        owner_agent_id="leader",
+        worker_id="shared_worker",
+        lease_seconds=30.0,
+        now=10.0,
+    )
+
+    other_owner = store.claim_plan(
+        plan_id="plan_1",
+        owner_agent_id="other",
+        worker_id="shared_worker",
+        lease_seconds=30.0,
+        now=20.0,
+    )
+
+    assert other_owner.status == "busy"
+    assert other_owner.existing_claim == first.claim
+    assert store.get_claim("plan_1") == first.claim
+
+
+def test_in_memory_plan_claim_store_release_can_require_matching_owner() -> None:
+    store = InMemoryPlanClaimStore()
+    first = store.claim_plan(
+        plan_id="plan_1",
+        owner_agent_id="leader",
+        worker_id="shared_worker",
+        lease_seconds=30.0,
+        now=10.0,
+    )
+
+    assert (
+        store.release_plan(
+            plan_id="plan_1",
+            worker_id="shared_worker",
+            owner_agent_id="other",
+        )
+        is False
+    )
+    assert store.get_claim("plan_1") == first.claim
+    assert (
+        store.release_plan(
+            plan_id="plan_1",
+            worker_id="shared_worker",
+            owner_agent_id="leader",
+        )
+        is True
+    )
+    assert store.get_claim("plan_1") is None
+
+
 def test_planner_runtime_sweep_expired_claims_supports_dry_run_and_release() -> None:
     claim_store = InMemoryPlanClaimStore()
     runtime = PlannerRuntime(
@@ -3313,6 +3368,118 @@ def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_
     assert current_claim.worker_id == "scheduler_b"
 
 
+def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
+    class RecordingPlanStore(InMemoryPlanStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.claims_by_thread: dict[str, PlanClaimRecord] = {}
+
+        def save_plan_if_claimed(
+            self,
+            plan: PlanState,
+            claim: PlanClaimRecord,
+            *,
+            expected_revision: int,
+            now: float,
+        ) -> bool:
+            self.claims_by_thread[current_thread().name] = claim
+            return True
+
+        def save_plan_if_unchanged(
+            self,
+            plan: PlanState,
+            *,
+            expected_revision: int,
+        ) -> bool:
+            raise AssertionError("claimed scheduler save fell back to CAS")
+
+    class CoordinatedPlannerRuntime(PlannerRuntime):
+        def scheduler_tick(
+            self,
+            plan_id: str,
+            *,
+            default_template_id: str | None = None,
+            retry_limit: int | None = None,
+            dispatch_limit: int | None = None,
+        ) -> PlanSchedulerTickReport:
+            if current_thread().name == "scheduler-a":
+                thread_a_context_ready.set()
+                assert thread_b_saved.wait(timeout=5)
+            else:
+                assert thread_a_context_ready.wait(timeout=5)
+            record = self._require_plan_record(plan_id)
+            self._save_plan(
+                record.plan.with_status("running", now=10.0),
+                expected_revision=record.revision,
+            )
+            if current_thread().name == "scheduler-b":
+                thread_b_saved.set()
+                assert thread_a_saved.wait(timeout=5)
+            else:
+                thread_a_saved.set()
+            return PlanSchedulerTickReport(
+                plan_id=plan_id,
+                retry_resets=(),
+                dispatch=PlanDispatchReport(plan_id=plan_id),
+            )
+
+    store = RecordingPlanStore()
+    runtime = CoordinatedPlannerRuntime(store=store, clock=lambda: 10.0)
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Keep overlapping scheduler claims isolated.",
+            owner_agent_id="leader",
+            status="running",
+        ),
+    )
+    claim_a = PlanClaimRecord(
+        plan_id="plan_1",
+        owner_agent_id="leader",
+        worker_id="scheduler_a",
+        claimed_at=1.0,
+        lease_expires_at=31.0,
+        generation=1,
+    )
+    claim_b = PlanClaimRecord(
+        plan_id="plan_1",
+        owner_agent_id="leader",
+        worker_id="scheduler_b",
+        claimed_at=2.0,
+        lease_expires_at=32.0,
+        generation=2,
+    )
+    thread_a_context_ready = Event()
+    thread_b_saved = Event()
+    thread_a_saved = Event()
+    errors: list[BaseException] = []
+
+    def run_claim(claim: PlanClaimRecord) -> None:
+        try:
+            runtime._run_scheduler_tick_with_claim(
+                claim,
+                default_template_id=None,
+                retry_limit=None,
+                dispatch_limit=None,
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    thread_a = Thread(target=run_claim, args=(claim_a,), name="scheduler-a")
+    thread_b = Thread(target=run_claim, args=(claim_b,), name="scheduler-b")
+
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=5)
+    thread_b.join(timeout=5)
+
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+    assert errors == []
+    assert store.claims_by_thread["scheduler-a"] == claim_a
+    assert store.claims_by_thread["scheduler-b"] == claim_b
+
+
 def test_in_memory_plan_store_claim_guarded_save_requires_exact_live_claim() -> None:
     store = InMemoryPlanStore()
     claim_store = InMemoryPlanClaimStore()
@@ -3638,3 +3805,63 @@ def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() 
     assert second.claims[0].claim.worker_id == "scheduler_b"
     assert second.released_plan_ids == ("plan_2",)
     assert claim_store.get_claim("plan_2") is None
+
+
+def test_planner_runtime_release_after_tick_supports_legacy_claim_stores() -> None:
+    class LegacyReleaseClaimStore:
+        def __init__(self, delegate: InMemoryPlanClaimStore) -> None:
+            self.delegate = delegate
+
+        def claim_plan(
+            self,
+            *,
+            plan_id: str,
+            owner_agent_id: str,
+            worker_id: str,
+            lease_seconds: float,
+            now: float,
+        ) -> PlanClaimResult:
+            return self.delegate.claim_plan(
+                plan_id=plan_id,
+                owner_agent_id=owner_agent_id,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+                now=now,
+            )
+
+        def release_plan(self, *, plan_id: str, worker_id: str) -> bool:
+            return self.delegate.release_plan(plan_id=plan_id, worker_id=worker_id)
+
+        def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
+            return self.delegate.get_claim(plan_id)
+
+    delegate = InMemoryPlanClaimStore()
+    runtime = PlannerRuntime(
+        store=InMemoryPlanStore(),
+        claim_store=LegacyReleaseClaimStore(delegate),  # type: ignore[arg-type]
+        clock=lambda: 10.0,
+    )
+    runtime.store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Release with a legacy claim store.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Run legacy release.",
+                    status="pending",
+                ),
+            ),
+        ),
+    )
+
+    report = runtime.claimed_scheduler_tick(
+        worker_id="scheduler_a",
+        lease_seconds=30.0,
+        release_after_tick=True,
+    )
+
+    assert report.released_plan_ids == ("plan_1",)
+    assert delegate.get_claim("plan_1") is None

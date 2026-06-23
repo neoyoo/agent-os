@@ -416,6 +416,49 @@ def test_production_reference_web_agent_blocks_backend_evidence_for_different_se
     ]
 
 
+def test_production_reference_web_agent_redacts_secret_backend_targets() -> None:
+    from agentos.channels import RedisSessionLeaseStore
+    from agentos.examples.production_reference_web_agent import (
+        build_production_reference_web_agent,
+    )
+    from agentos.persistence import PostgresSessionSnapshotPersistence
+
+    example = build_production_reference_web_agent(
+        backend_verification_records=backend_verification_records(
+            {
+                "message_queue": "redis://agentos:raw-redis-secret@deployment.example/0",
+                "session_snapshot_persistence": (
+                    "postgresql://agentos:raw-postgres-secret@deployment.example/agentos"
+                ),
+            },
+        ),
+        lease_store=RedisSessionLeaseStore(
+            "redis://agentos:raw-redis-secret@deployment.example/0",
+            client=DeploymentRedisClient(),
+        ),
+        snapshot_persistence=PostgresSessionSnapshotPersistence(
+            "postgresql://agentos:raw-postgres-secret@deployment.example/agentos",
+            connection=DeploymentPostgresConnection(),
+        ),
+        workspace_isolation_profile=DeploymentWorkspaceIsolationProfile(),
+    )
+    evidence = example.as_dict()
+    encoded = json.dumps(evidence)
+
+    assert "raw-redis-secret" not in encoded
+    assert "raw-postgres-secret" not in encoded
+    binding = readiness_check_evidence(
+        evidence,
+        "reference_served_backend_binding",
+    )
+    assert binding["served_targets"]["message_queue"] == (
+        "redis://<redacted>@deployment.example/0"
+    )
+    assert binding["evidence_targets"]["session_snapshot_persistence"] == (
+        "postgresql://<redacted>@deployment.example/agentos"
+    )
+
+
 def test_reference_snapshot_agent_factory_restores_full_dynamic_session_state() -> None:
     from agentos.compression import CompressionIndex
     from agentos.context import ContextState

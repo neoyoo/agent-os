@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from agentos import AgentBuilder
+from agentos._redaction import redact_secret_patterns
 from agentos.channels import (
     AsgiAgentApp,
     InMemorySessionLeaseStore,
@@ -647,7 +648,7 @@ def _reference_served_backend_binding_check(
         for record in backend_verification.records
     }
     evidence_targets = {
-        name: record.target_ref
+        name: redact_secret_patterns(record.target_ref)
         for name, record in records_by_name.items()
         if name in served_targets and record.target_ref is not None
     }
@@ -700,14 +701,14 @@ def _served_backend_targets(
     targets: dict[str, str] = {}
     redis_url = getattr(runtime_profile.lease_store, "backend_url", None)
     if isinstance(redis_url, str) and redis_url:
-        targets["message_queue"] = redis_url
+        targets["message_queue"] = redact_secret_patterns(redis_url)
     postgres_dsn = getattr(
         runtime_profile.snapshot_persistence,
         "backend_dsn",
         None,
     )
     if isinstance(postgres_dsn, str) and postgres_dsn:
-        targets["session_snapshot_persistence"] = postgres_dsn
+        targets["session_snapshot_persistence"] = redact_secret_patterns(postgres_dsn)
     return targets
 
 

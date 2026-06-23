@@ -40,11 +40,19 @@ class FakeConnection:
             row = self.claims.get(str(params[0]))
             return FakeCursor([self._row(row)] if row is not None else [])
         if "DELETE FROM agentos_plan_claims" in sql:
-            if len(params) == 2:
+            if len(params) in {2, 3}:
                 plan_id = str(params[0])
                 worker_id = str(params[1])
+                owner_agent_id = str(params[2]) if len(params) == 3 else None
                 row = self.claims.get(plan_id)
-                if row is None or row["worker_id"] != worker_id:
+                if (
+                    row is None
+                    or row["worker_id"] != worker_id
+                    or (
+                        owner_agent_id is not None
+                        and row["owner_agent_id"] != owner_agent_id
+                    )
+                ):
                     return FakeCursor()
                 del self.claims[plan_id]
                 return FakeCursor([(plan_id,)])
@@ -83,12 +91,16 @@ class FakeConnection:
         claimed_at = float(params[3])
         lease_expires_at = float(params[4])
         now = float(params[6])
-        existing_worker_id = str(params[7])
+        existing_owner_agent_id = str(params[7])
+        existing_worker_id = str(params[8])
         existing = self.claims.get(plan_id)
         if (
             existing is not None
             and float(existing["lease_expires_at"]) > now
-            and existing["worker_id"] != existing_worker_id
+            and (
+                existing["owner_agent_id"] != existing_owner_agent_id
+                or existing["worker_id"] != existing_worker_id
+            )
         ):
             return FakeCursor()
         generation = 1 if existing is None else int(existing["generation"]) + 1
@@ -254,6 +266,36 @@ def test_postgres_plan_claim_store_renews_and_takes_over_expired_claims() -> Non
     assert connection.commits == 3
 
 
+def test_postgres_plan_claim_store_does_not_renew_active_claim_for_other_owner() -> None:
+    connection = FakeConnection()
+    store = PostgresPlanClaimStore(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    first = store.claim_plan(
+        plan_id="plan_1",
+        owner_agent_id="leader",
+        worker_id="shared_scheduler",
+        lease_seconds=30.0,
+        now=10.0,
+    )
+
+    other_owner = store.claim_plan(
+        plan_id="plan_1",
+        owner_agent_id="other",
+        worker_id="shared_scheduler",
+        lease_seconds=30.0,
+        now=20.0,
+    )
+
+    assert other_owner.status == "busy"
+    assert other_owner.existing_claim == first.claim
+    assert store.get_claim("plan_1") == first.claim
+    joined_sql = "\n".join(connection.sql)
+    assert "agentos_plan_claims.owner_agent_id = %s" in joined_sql
+    assert "agentos_plan_claims.worker_id = %s" in joined_sql
+
+
 def test_postgres_plan_claim_store_releases_matching_worker_only() -> None:
     connection = FakeConnection()
     store = PostgresPlanClaimStore(
@@ -274,6 +316,42 @@ def test_postgres_plan_claim_store_releases_matching_worker_only() -> None:
     assert store.release_plan(plan_id="plan_1", worker_id="scheduler_a") is True
     assert store.get_claim("plan_1") is None
     assert connection.commits == 2
+
+
+def test_postgres_plan_claim_store_release_can_require_matching_owner() -> None:
+    connection = FakeConnection()
+    store = PostgresPlanClaimStore(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    first = store.claim_plan(
+        plan_id="plan_1",
+        owner_agent_id="leader",
+        worker_id="shared_scheduler",
+        lease_seconds=10.0,
+        now=10.0,
+    )
+
+    assert (
+        store.release_plan(
+            plan_id="plan_1",
+            worker_id="shared_scheduler",
+            owner_agent_id="other",
+        )
+        is False
+    )
+    assert store.get_claim("plan_1") == first.claim
+    assert (
+        store.release_plan(
+            plan_id="plan_1",
+            worker_id="shared_scheduler",
+            owner_agent_id="leader",
+        )
+        is True
+    )
+    assert store.get_claim("plan_1") is None
+    joined_sql = "\n".join(connection.sql)
+    assert "owner_agent_id = %s" in joined_sql
 
 
 def test_postgres_plan_claim_store_lists_expired_claims_with_owner_and_limit() -> None:
@@ -343,8 +421,9 @@ def test_postgres_plan_claim_store_releases_exact_expired_claim_only() -> None:
         now=30.0,
     )
     assert renewed.claim is not None
+    rollbacks_before_stale_release = connection.rollbacks
     assert store.release_expired_claim(first.claim, now=30.0) is False
-    assert connection.rollbacks == 1
+    assert connection.rollbacks == rollbacks_before_stale_release + 1
     assert store.get_claim("expired_plan") == renewed.claim
 
     joined_sql = "\n".join(connection.sql)

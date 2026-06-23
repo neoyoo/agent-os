@@ -32,6 +32,7 @@ class FakeCursor:
 class FakeConnection:
     def __init__(self) -> None:
         self.snapshots: dict[str, dict[str, object]] = {}
+        self._pending_snapshots: dict[str, dict[str, object] | None] = {}
         self.sql: list[str] = []
         self.commits = 0
         self.rollbacks = 0
@@ -39,21 +40,34 @@ class FakeConnection:
     def _lease_fence(self, value: object) -> int:
         return 0 if value is None else int(value)
 
+    def _visible_snapshots(self) -> dict[str, dict[str, object]]:
+        visible = dict(self.snapshots)
+        for session_id, row in self._pending_snapshots.items():
+            if row is None:
+                visible.pop(session_id, None)
+            else:
+                visible[session_id] = row
+        return visible
+
+    def _stage_snapshot(self, session_id: str, row: dict[str, object]) -> None:
+        self._pending_snapshots[session_id] = row
+
     def execute(
         self,
         sql: str,
         params: tuple[object, ...] = (),
     ) -> FakeCursor:
         self.sql.append(sql)
+        visible_snapshots = self._visible_snapshots()
         if (
             "INSERT INTO agentos_session_snapshots" in sql
             and "DO NOTHING" in sql
         ):
             session_id = str(params[0])
-            if session_id in self.snapshots:
+            if session_id in visible_snapshots:
                 return FakeCursor()
             payload = json.loads(str(params[2]))
-            self.snapshots[session_id] = {
+            row = {
                 "version": params[1],
                 "revision": 1,
                 "lease_fence": (
@@ -61,60 +75,74 @@ class FakeConnection:
                 ),
                 "payload": payload,
             }
-            return FakeCursor([(1, self.snapshots[session_id]["lease_fence"])])
+            self._stage_snapshot(session_id, row)
+            return FakeCursor([(1, row["lease_fence"])])
         if (
             "INSERT INTO agentos_session_snapshots" in sql
             and "DO UPDATE SET" in sql
         ):
             session_id = str(params[0])
             payload = json.loads(str(params[2]))
-            revision = self.snapshots.get(session_id, {}).get("revision", 0) + 1
-            current_fence = int(self.snapshots.get(session_id, {}).get("lease_fence", 0))
+            revision = visible_snapshots.get(session_id, {}).get("revision", 0) + 1
+            current_fence = int(
+                visible_snapshots.get(session_id, {}).get("lease_fence", 0),
+            )
             lease_fence = self._lease_fence(params[3]) if len(params) > 3 else 0
-            self.snapshots[session_id] = {
+            row = {
                 "version": params[1],
                 "revision": revision,
                 "lease_fence": max(current_fence, lease_fence),
                 "payload": payload,
             }
-            return FakeCursor([(revision, self.snapshots[session_id]["lease_fence"])])
+            self._stage_snapshot(session_id, row)
+            return FakeCursor([(revision, row["lease_fence"])])
         if "UPDATE agentos_session_snapshots" in sql:
             lease_fence = self._lease_fence(params[2])
             session_id = str(params[3])
             expected_revision = int(params[4])
-            row = self.snapshots.get(session_id)
+            row = visible_snapshots.get(session_id)
             if row is None or int(row["revision"]) != expected_revision:
                 return FakeCursor()
             if lease_fence < int(row.get("lease_fence", 0)):
                 return FakeCursor()
             payload = json.loads(str(params[1]))
             revision = expected_revision + 1
-            self.snapshots[session_id] = {
+            updated_row = {
                 "version": params[0],
                 "revision": revision,
                 "lease_fence": lease_fence,
                 "payload": payload,
             }
+            self._stage_snapshot(session_id, updated_row)
             return FakeCursor([(revision, lease_fence)])
         if "SELECT revision, payload, lease_fence FROM agentos_session_snapshots" in sql:
-            row = self.snapshots.get(str(params[0]))
+            row = visible_snapshots.get(str(params[0]))
             return FakeCursor(
                 [(row["revision"], row["payload"], row["lease_fence"])] if row else [],
             )
         if "SELECT payload FROM agentos_session_snapshots" in sql:
-            row = self.snapshots.get(str(params[0]))
+            row = visible_snapshots.get(str(params[0]))
             return FakeCursor([(row["payload"],)] if row else [])
         if "SELECT session_id FROM agentos_session_snapshots" in sql:
-            return FakeCursor([(session_id,) for session_id in sorted(self.snapshots)])
+            return FakeCursor(
+                [(session_id,) for session_id in sorted(visible_snapshots)],
+            )
         if "DELETE FROM agentos_session_snapshots" in sql:
-            self.snapshots.pop(str(params[0]), None)
+            self._pending_snapshots[str(params[0])] = None
             return FakeCursor()
         return FakeCursor()
 
     def commit(self) -> None:
+        for session_id, row in self._pending_snapshots.items():
+            if row is None:
+                self.snapshots.pop(session_id, None)
+            else:
+                self.snapshots[session_id] = row
+        self._pending_snapshots.clear()
         self.commits += 1
 
     def rollback(self) -> None:
+        self._pending_snapshots.clear()
         self.rollbacks += 1
 
 
@@ -351,7 +379,7 @@ def test_postgres_session_snapshot_persistence_save_if_lease_owned_rechecks_afte
     assert lease_store.ensure_calls == [lease, lease]
     assert connection.commits == 0
     assert connection.rollbacks == 1
-    assert connection.snapshots["session_1"]["lease_fence"] == 7
+    assert connection.snapshots == {}
 
 
 def test_postgres_session_snapshot_persistence_save_if_lease_owned_rejects_wrong_session_lease() -> None:

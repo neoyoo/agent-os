@@ -112,7 +112,11 @@ class BackendVerificationRecord:
             "status": self.status,
             "checked_at": self.checked_at,
             "evidence_ref": self.evidence_ref,
-            "target_ref": self.target_ref,
+            "target_ref": (
+                None
+                if self.target_ref is None
+                else redact_secret_patterns(self.target_ref)
+            ),
             "error": self.error,
             "metadata": _json_safe_mapping(self.metadata),
         }

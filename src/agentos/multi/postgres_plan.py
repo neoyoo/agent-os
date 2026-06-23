@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import local
@@ -71,6 +72,11 @@ class _PostgresConnectionLeaseMixin:
             self._set_active_connection(self._connection)
             try:
                 yield self._connection
+            except BaseException:
+                self._rollback()
+                raise
+            else:
+                self._rollback_if_transaction_open()
             finally:
                 self._clear_active_connection()
             return
@@ -81,6 +87,11 @@ class _PostgresConnectionLeaseMixin:
         self._set_active_connection(connection)
         try:
             yield connection
+        except BaseException:
+            self._rollback()
+            raise
+        else:
+            self._rollback_if_transaction_open()
         finally:
             self._clear_active_connection()
             self._return_pool_connection(pool, connection, context)
@@ -102,7 +113,7 @@ class _PostgresConnectionLeaseMixin:
         context: object | None,
     ) -> None:
         if context is not None:
-            context.__exit__(None, None, None)
+            context.__exit__(*sys.exc_info())
             return
         putconn = getattr(pool, "putconn", None)
         if callable(putconn):
@@ -145,6 +156,7 @@ class _PostgresConnectionLeaseMixin:
         commit = getattr(connection, "commit", None)
         if commit is not None:
             commit()
+        self._mark_transaction_closed()
 
     def _rollback(self) -> None:
         connection = self._current_active_connection()
@@ -153,17 +165,30 @@ class _PostgresConnectionLeaseMixin:
         rollback = getattr(connection, "rollback", None)
         if rollback is not None:
             rollback()
+        self._mark_transaction_closed()
+
+    def _rollback_if_transaction_open(self) -> None:
+        if not self._transaction_closed():
+            self._rollback()
 
     def _current_active_connection(self) -> object | None:
         return getattr(self._thread_state, "active_connection", None)
 
     def _set_active_connection(self, connection: object) -> None:
         self._thread_state.active_connection = connection
+        self._thread_state.transaction_closed = False
         self._active_connection = connection
 
     def _clear_active_connection(self) -> None:
         self._thread_state.active_connection = None
+        self._thread_state.transaction_closed = True
         self._active_connection = None
+
+    def _transaction_closed(self) -> bool:
+        return bool(getattr(self._thread_state, "transaction_closed", True))
+
+    def _mark_transaction_closed(self) -> None:
+        self._thread_state.transaction_closed = True
 
 
 class PostgresPlanStore(_PostgresConnectionLeaseMixin, PlanStore):
@@ -511,7 +536,10 @@ class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
                     ),
                     updated_at = now()
                 WHERE agentos_plan_claims.lease_expires_at <= %s
-                   OR agentos_plan_claims.worker_id = %s
+                   OR (
+                     agentos_plan_claims.owner_agent_id = %s
+                     AND agentos_plan_claims.worker_id = %s
+                   )
                 RETURNING plan_id, owner_agent_id, worker_id, claimed_at,
                           lease_expires_at, generation
                 """,
@@ -532,6 +560,7 @@ class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
                         },
                     ),
                     now,
+                    owner_agent_id,
                     worker_id,
                 ),
             ).fetchone()
@@ -545,20 +574,40 @@ class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
             self._commit()
             return PlanClaimResult(status="claimed", claim=self._row_to_claim(row))
 
-    def release_plan(self, *, plan_id: str, worker_id: str) -> bool:
-        """Release the claim for this worker only."""
+    def release_plan(
+        self,
+        *,
+        plan_id: str,
+        worker_id: str,
+        owner_agent_id: str | None = None,
+    ) -> bool:
+        """Release the claim for this worker and optional owner only."""
 
         self._validate_non_empty(plan_id, field_name="plan_id")
         self._validate_non_empty(worker_id, field_name="worker_id")
+        if owner_agent_id is not None:
+            self._validate_non_empty(owner_agent_id, field_name="owner_agent_id")
         with self._connection_scope():
-            row = self._execute(
-                """
-                DELETE FROM agentos_plan_claims
-                WHERE plan_id = %s AND worker_id = %s
-                RETURNING plan_id
-                """,
-                (plan_id, worker_id),
-            ).fetchone()
+            if owner_agent_id is None:
+                row = self._execute(
+                    """
+                    DELETE FROM agentos_plan_claims
+                    WHERE plan_id = %s AND worker_id = %s
+                    RETURNING plan_id
+                    """,
+                    (plan_id, worker_id),
+                ).fetchone()
+            else:
+                row = self._execute(
+                    """
+                    DELETE FROM agentos_plan_claims
+                    WHERE plan_id = %s
+                      AND worker_id = %s
+                      AND owner_agent_id = %s
+                    RETURNING plan_id
+                    """,
+                    (plan_id, worker_id, owner_agent_id),
+                ).fetchone()
             if row is None:
                 self._rollback()
                 return False

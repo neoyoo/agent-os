@@ -282,6 +282,17 @@ def test_postgres_plan_store_round_trips_plans() -> None:
     assert connection.commits == 3
 
 
+def test_postgres_plan_store_rolls_back_after_read_only_scope() -> None:
+    connection = FakeConnection()
+    store = PostgresPlanStore(dsn="postgresql://unused", connection=connection)
+    store.create_plan(plan())
+
+    rollbacks_before_read = connection.rollbacks
+    assert store.get_plan("plan_1") == plan()
+
+    assert connection.rollbacks == rollbacks_before_read + 1
+
+
 def test_postgres_plan_store_from_pool_borrows_and_returns_per_method() -> None:
     connection = FakeConnection()
     pool = FakePool(connection)
@@ -348,8 +359,10 @@ def test_postgres_plan_store_rejects_missing_and_duplicate_plans() -> None:
     store.create_plan(original)
     with pytest.raises(ValueError, match="plan already exists"):
         store.create_plan(original)
+    assert connection.rollbacks == 1
     with pytest.raises(PlanNotFoundError):
         store.save_plan(plan("missing"))
+    assert connection.rollbacks == 2
 
 
 def test_postgres_plan_store_saves_only_when_revision_is_unchanged() -> None:
@@ -361,13 +374,14 @@ def test_postgres_plan_store_saves_only_when_revision_is_unchanged() -> None:
     assert record is not None
     store.save_plan(original.with_status("running", now=5.0))
 
+    rollbacks_before_conflict = connection.rollbacks
     saved = store.save_plan_if_unchanged(
         original.with_status("completed", now=6.0),
         expected_revision=record.revision,
     )
 
     assert saved is False
-    assert connection.rollbacks == 1
+    assert connection.rollbacks == rollbacks_before_conflict + 1
     assert store.get_plan("plan_1").status == "running"
     fresh = store.get_plan_record("plan_1")
     assert fresh is not None
@@ -404,13 +418,14 @@ def test_postgres_plan_store_saves_only_when_exact_claim_is_current() -> None:
     )
 
     assert saved is True
+    rollbacks_before_claim_mismatch = connection.rollbacks
     assert store.save_plan_if_claimed(
         original.with_status("failed", now=13.0),
         claim,
         expected_revision=record.revision,
         now=13.0,
     ) is False
-    assert connection.rollbacks == 1
+    assert connection.rollbacks == rollbacks_before_claim_mismatch + 1
     assert store.get_plan("plan_1").status == "completed"
     joined_sql = "\n".join(connection.sql)
     assert "agentos_plan_claims" in joined_sql

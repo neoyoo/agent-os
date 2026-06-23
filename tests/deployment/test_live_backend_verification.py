@@ -50,6 +50,23 @@ def test_backend_verification_record_payload_is_json_safe() -> None:
     json.dumps(payload)
 
 
+def test_backend_verification_record_redacts_secret_patterns_in_target_ref() -> None:
+    record = BackendVerificationRecord(
+        backend_name="session_snapshot_persistence",
+        backend_kind="postgres",
+        status="passed",
+        checked_at=1781580000.0,
+        evidence_ref="ci://checks/postgres-session-snapshots",
+        target_ref="postgresql://agentos:raw-password@db.example/agentos",
+        metadata={"note": "safe"},
+    )
+
+    payload = record.as_dict()
+
+    assert payload["target_ref"] == "postgresql://<redacted>@db.example/agentos"
+    assert "raw-password" not in json.dumps(payload)
+
+
 def test_backend_verification_record_rejects_missing_refs_and_secret_metadata() -> None:
     with pytest.raises(ValueError, match="backend_name must not be empty"):
         BackendVerificationRecord(

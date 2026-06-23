@@ -533,6 +533,74 @@ def test_json_turn_stops_session_lease_heartbeat_when_request_is_cancelled() -> 
     assert provider.async_release_calls == 1
 
 
+def test_json_turn_abandons_session_without_save_when_request_is_cancelled() -> None:
+    class BlockingJsonAgent(SlowAsyncOnlyAgent):
+        def __init__(self) -> None:
+            super().__init__("json ok")
+            self.started = asyncio.Event()
+
+        async def async_run(
+            self,
+            user_message: str,
+            *,
+            thinking: bool = False,
+            show_thinking: bool = False,
+        ) -> AgentResult:
+            self.started.set()
+            await self.allow_json_response.wait()
+            return AgentResult(content=self.content)
+
+    class AsyncSessionProvider:
+        def __init__(self) -> None:
+            self.agent = BlockingJsonAgent()
+            self.async_release_calls = 0
+            self.async_abandon_calls = 0
+
+        async def async_get_agent(self, session_id: str) -> BlockingJsonAgent:
+            return self.agent
+
+        async def async_release_agent(
+            self,
+            session_id: str,
+            agent: BlockingJsonAgent,
+        ) -> None:
+            self.async_release_calls += 1
+
+        async def async_abandon_agent(
+            self,
+            session_id: str,
+            agent: BlockingJsonAgent,
+        ) -> None:
+            self.async_abandon_calls += 1
+
+    provider = AsyncSessionProvider()
+    app = AsgiAgentApp(  # type: ignore[arg-type]
+        sessions=provider,
+        auth_policy=AllowAllChannelAuthPolicy(),
+    )
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            call_http_asgi(
+                app,
+                method="POST",
+                path="/v1/sessions/session_1/turns",
+                body=b'{"message":"hello"}',
+            ),
+        )
+        await asyncio.wait_for(provider.agent.started.wait(), timeout=0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+
+    assert provider.async_abandon_calls == 1
+    assert provider.async_release_calls == 0
+
+
 def test_json_turn_fails_when_session_lease_refresh_fails() -> None:
     class AsyncSessionProvider:
         def __init__(self) -> None:

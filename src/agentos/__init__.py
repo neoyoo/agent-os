@@ -457,3 +457,12 @@ __all__ = [
 ]
 
 __version__ = "0.1.0rc1"
+
+for _root_name, _root_value in tuple(globals().items()):
+    if _root_name.startswith("_") or _root_name in __all__:
+        continue
+    if getattr(_root_value, "__package__", "").startswith("agentos"):
+        continue
+    del globals()[_root_name]
+del _root_name
+del _root_value

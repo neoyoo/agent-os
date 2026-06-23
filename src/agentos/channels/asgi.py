@@ -478,7 +478,7 @@ class AsgiAgentApp:
             except asyncio.CancelledError:
                 await self._stop_json_session_lease_heartbeat(heartbeat_task)
                 with suppress(Exception):
-                    await async_release_agent(session_id, agent)
+                    await self._abandon_agent_for_session(session_id, agent)
                 raise
             except Exception as error:
                 heartbeat_error: BaseException | None = None

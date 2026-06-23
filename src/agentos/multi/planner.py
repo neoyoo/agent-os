@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping as MappingABC
 import time
 from dataclasses import dataclass, field, replace
+from inspect import signature
 import json
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, local
 from typing import Literal, Mapping, Protocol, cast
 from uuid import uuid4
 
@@ -1647,8 +1648,14 @@ class PlanClaimStore(Protocol):
     ) -> PlanClaimResult:
         """Attempt to claim a plan lease for one worker."""
 
-    def release_plan(self, *, plan_id: str, worker_id: str) -> bool:
-        """Release a plan lease if owned by the worker."""
+    def release_plan(
+        self,
+        *,
+        plan_id: str,
+        worker_id: str,
+        owner_agent_id: str | None = None,
+    ) -> bool:
+        """Release a plan lease if owned by the worker and optional owner."""
 
     def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
         """Return the current claim record when present."""
@@ -1805,7 +1812,10 @@ class InMemoryPlanClaimStore:
             if (
                 existing is not None
                 and existing.lease_expires_at > now
-                and existing.worker_id != worker_id
+                and (
+                    existing.owner_agent_id != owner_agent_id
+                    or existing.worker_id != worker_id
+                )
             ):
                 return PlanClaimResult(
                     status="busy",
@@ -1823,14 +1833,29 @@ class InMemoryPlanClaimStore:
             self._claims[plan_id] = claim
             return PlanClaimResult(status="claimed", claim=claim)
 
-    def release_plan(self, *, plan_id: str, worker_id: str) -> bool:
-        """Release the claim for this worker only."""
+    def release_plan(
+        self,
+        *,
+        plan_id: str,
+        worker_id: str,
+        owner_agent_id: str | None = None,
+    ) -> bool:
+        """Release the claim for this worker and optional owner only."""
 
         self._validate_non_empty(plan_id, field_name="plan_id")
         self._validate_non_empty(worker_id, field_name="worker_id")
+        if owner_agent_id is not None:
+            self._validate_non_empty(owner_agent_id, field_name="owner_agent_id")
         with self._lock:
             existing = self._claims.get(plan_id)
-            if existing is None or existing.worker_id != worker_id:
+            if (
+                existing is None
+                or existing.worker_id != worker_id
+                or (
+                    owner_agent_id is not None
+                    and existing.owner_agent_id != owner_agent_id
+                )
+            ):
                 return False
             del self._claims[plan_id]
             return True
@@ -1916,7 +1941,7 @@ class PlannerRuntime:
         self.claim_store = claim_store
         self._clock = clock if callable(clock) else time.time
         self._id_factory = id_factory if callable(id_factory) else self._default_id
-        self._active_plan_claims: dict[str, PlanClaimRecord] = {}
+        self._active_plan_claim_context = local()
         bind_claim_store = getattr(self.store, "bind_claim_store", None)
         if claim_store is not None and callable(bind_claim_store):
             bind_claim_store(claim_store)
@@ -2763,8 +2788,8 @@ class PlannerRuntime:
                     ),
                 )
             finally:
-                if release_after_tick and self.claim_store.release_plan(
-                    plan_id=summary.plan_id,
+                if release_after_tick and self._release_claim_after_tick(
+                    summary,
                     worker_id=worker_id,
                 ):
                     released_plan_ids.append(summary.plan_id)
@@ -2775,6 +2800,27 @@ class PlannerRuntime:
             tick_reports=tuple(tick_reports),
             skipped=tuple(skipped),
             released_plan_ids=tuple(released_plan_ids),
+        )
+
+    def _release_claim_after_tick(
+        self,
+        summary: PlannerSchedulablePlan,
+        *,
+        worker_id: str,
+    ) -> bool:
+        if self.claim_store is None:
+            return False
+        release_plan = self.claim_store.release_plan
+        release_parameters = signature(release_plan).parameters
+        if "owner_agent_id" in release_parameters:
+            return self.claim_store.release_plan(
+                plan_id=summary.plan_id,
+                worker_id=worker_id,
+                owner_agent_id=summary.owner_agent_id,
+            )
+        return self.claim_store.release_plan(
+            plan_id=summary.plan_id,
+            worker_id=worker_id,
         )
 
     def record_evidence(
@@ -2933,8 +2979,9 @@ class PlannerRuntime:
     ) -> PlanSchedulerTickReport:
         if claim is None:
             raise PlanClaimLostError("missing scheduler claim record")
-        existing = self._active_plan_claims.get(claim.plan_id)
-        self._active_plan_claims[claim.plan_id] = claim
+        active_claims = self._active_plan_claims_for_thread()
+        existing = active_claims.get(claim.plan_id)
+        active_claims[claim.plan_id] = claim
         try:
             return self.scheduler_tick(
                 claim.plan_id,
@@ -2944,9 +2991,9 @@ class PlannerRuntime:
             )
         finally:
             if existing is None:
-                self._active_plan_claims.pop(claim.plan_id, None)
+                active_claims.pop(claim.plan_id, None)
             else:
-                self._active_plan_claims[claim.plan_id] = existing
+                active_claims[claim.plan_id] = existing
 
     def _save_plan(
         self,
@@ -2954,7 +3001,7 @@ class PlannerRuntime:
         *,
         expected_revision: int | None = None,
     ) -> None:
-        claim = self._active_plan_claims.get(plan.plan_id)
+        claim = self._active_plan_claims_for_thread().get(plan.plan_id)
         if claim is None:
             if expected_revision is not None:
                 compare_save = getattr(self.store, "save_plan_if_unchanged", None)
@@ -3010,6 +3057,13 @@ class PlannerRuntime:
         raise PlanClaimLostError(
             f"plan changed before saving plan: {plan.plan_id}",
         )
+
+    def _active_plan_claims_for_thread(self) -> dict[str, PlanClaimRecord]:
+        claims = getattr(self._active_plan_claim_context, "claims", None)
+        if claims is None:
+            claims = {}
+            self._active_plan_claim_context.claims = claims
+        return claims
 
     def _require_plan(self, plan_id: str) -> PlanState:
         plan = self.store.get_plan(plan_id)
