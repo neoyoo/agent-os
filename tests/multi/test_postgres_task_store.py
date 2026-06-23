@@ -32,6 +32,7 @@ class FakeConnection:
         self.commits = 0
         self.rollbacks = 0
         self.aborted = False
+        self.fail_outbox_insert = False
         self.sql: list[str] = []
 
     def execute(
@@ -91,6 +92,9 @@ class FakeConnection:
         if "UPDATE agentos_multi_agent_tasks" in sql and "RETURNING payload" in sql:
             return self._update(params)
         if "INSERT INTO agentos_multi_agent_task_outbox" in sql:
+            if self.fail_outbox_insert:
+                self.aborted = True
+                raise RuntimeError("outbox insert failed")
             self.outbox.append(
                 {
                     "task_id": params[0],
@@ -136,7 +140,7 @@ class FakeConnection:
             record = task_record_from_dict(json.loads(str(row["payload"])))
             if record.status != "queued":
                 continue
-            required_capabilities = set(record.request.allowed_tool_names)
+            required_capabilities = set(record.request.required_capabilities)
             if (
                 required_capabilities
                 and not required_capabilities.issubset(capabilities)
@@ -199,9 +203,41 @@ class FakePool:
         self.puts.append(connection)
 
 
+class RecordingConnectionContext:
+    def __init__(self, connection: FakeConnection) -> None:
+        self.connection = connection
+        self.exit_args: list[
+            tuple[type[BaseException] | None, BaseException | None, object | None]
+        ] = []
+
+    def __enter__(self) -> FakeConnection:
+        return self.connection
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        self.exit_args.append((exc_type, exc, traceback))
+        return False
+
+
+class ContextPool:
+    def __init__(self, connection: FakeConnection) -> None:
+        self._connection = connection
+        self.contexts: list[RecordingConnectionContext] = []
+
+    def connection(self) -> RecordingConnectionContext:
+        context = RecordingConnectionContext(self._connection)
+        self.contexts.append(context)
+        return context
+
+
 def record(
     task_id: str = "task_1",
     *,
+    required_capabilities: tuple[str, ...] = (),
     allowed_tool_names: tuple[str, ...] = (),
 ) -> TaskRecord:
     return TaskRecord(
@@ -212,6 +248,7 @@ def record(
         request=TaskRequest(
             task_id=task_id,
             instruction="Do work",
+            required_capabilities=required_capabilities,
             allowed_tool_names=allowed_tool_names,
         ),
         status="queued",
@@ -280,6 +317,27 @@ def test_postgres_task_store_from_pool_borrows_per_operation() -> None:
     assert pool.puts == [connection, connection]
 
 
+def test_postgres_task_store_pool_context_receives_exception_context() -> None:
+    connection = FakeConnection()
+    pool = ContextPool(connection)
+    store = PostgresTaskStore.from_pool(
+        dsn="postgresql://unused",
+        pool=pool,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with store._connection_scope():
+            raise RuntimeError("boom")
+
+    assert len(pool.contexts) == 1
+    assert len(pool.contexts[0].exit_args) == 1
+    exc_type, exc, traceback = pool.contexts[0].exit_args[0]
+    assert exc_type is RuntimeError
+    assert isinstance(exc, RuntimeError)
+    assert str(exc) == "boom"
+    assert traceback is not None
+
+
 def test_postgres_task_store_uses_atomic_claim_sql_and_updates_payload() -> None:
     connection = FakeConnection()
     store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
@@ -336,7 +394,7 @@ def test_postgres_task_store_claims_exact_task_id_atomically() -> None:
 def test_postgres_task_store_does_not_claim_when_capabilities_do_not_match() -> None:
     connection = FakeConnection()
     store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
-    original = record(allowed_tool_names=("code", "web"))
+    original = record(required_capabilities=("code", "web"))
     store.create(original)
 
     claims = store.claim_queued(
@@ -348,15 +406,15 @@ def test_postgres_task_store_does_not_claim_when_capabilities_do_not_match() -> 
     )
 
     joined_sql = "\n".join(connection.sql)
-    assert "allowed_tool_names" in joined_sql
+    assert "required_capabilities" in joined_sql
     assert claims == []
     assert store.get("task_1") == original
 
 
-def test_postgres_task_store_claims_when_capabilities_cover_required_tools() -> None:
+def test_postgres_task_store_claims_when_capabilities_cover_required_capabilities() -> None:
     connection = FakeConnection()
     store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
-    store.create(record(allowed_tool_names=("code", "web")))
+    store.create(record(required_capabilities=("code", "web")))
 
     claims = store.claim_queued(
         worker_id="worker-instance-1",
@@ -370,6 +428,54 @@ def test_postgres_task_store_claims_when_capabilities_cover_required_tools() -> 
     stored = store.get("task_1")
     assert stored is not None
     assert stored.status == "running"
+
+
+def test_postgres_task_store_claims_by_required_capabilities_not_allowed_tools() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    store.create(
+        record(
+            required_capabilities=("architecture-review",),
+            allowed_tool_names=("read_file",),
+        ),
+    )
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("architecture-review",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    joined_sql = "\n".join(connection.sql)
+    assert "required_capabilities" in joined_sql
+    assert claim is not None
+    stored = store.get("task_1")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.request.allowed_tool_names == ("read_file",)
+
+
+def test_postgres_task_store_does_not_treat_allowed_tools_as_capabilities() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    original = record(
+        required_capabilities=("architecture-review",),
+        allowed_tool_names=("read_file",),
+    )
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("read_file",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
 
 
 def test_postgres_task_store_terminal_transition_writes_outbox() -> None:
@@ -395,6 +501,32 @@ def test_postgres_task_store_terminal_transition_writes_outbox() -> None:
     assert changed is True
     assert connection.outbox[0]["task_id"] == "task_1"
     assert connection.outbox[0]["event_type"] == "result_ready"
+
+
+def test_postgres_task_store_rolls_back_when_outbox_insert_fails() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    store.create(record())
+    store.claim_queued(
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        limit=1,
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+    connection.fail_outbox_insert = True
+
+    with pytest.raises(Exception, match="Postgres backend unavailable"):
+        store.mark_completed(
+            "task_1",
+            TaskResult(task_id="task_1", status="completed", summary="done"),
+            now=3.0,
+            worker_id="worker-instance-1",
+            attempt=1,
+        )
+
+    assert connection.rollbacks == 1
+    assert connection.commits == 2
 
 
 def test_postgres_task_store_consumes_results_once() -> None:

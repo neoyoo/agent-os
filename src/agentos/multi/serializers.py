@@ -211,6 +211,7 @@ def task_request_to_dict(request: TaskRequest) -> JsonDict:
     return {
         "task_id": request.task_id,
         "instruction": request.instruction,
+        "required_capabilities": list(request.required_capabilities),
         "allowed_tool_names": list(request.allowed_tool_names),
         "timeout_seconds": request.timeout_seconds,
         "trace_context": (
@@ -226,6 +227,9 @@ def task_request_from_dict(data: JsonDict) -> TaskRequest:
     return TaskRequest(
         task_id=str(data["task_id"]),
         instruction=str(data["instruction"]),
+        required_capabilities=tuple(
+            str(name) for name in data.get("required_capabilities", [])
+        ),
         allowed_tool_names=tuple(
             str(name) for name in data.get("allowed_tool_names", [])
         ),

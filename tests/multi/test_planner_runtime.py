@@ -3657,21 +3657,27 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
 
 
 def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guarded_save() -> None:
-    class RacingCoordinator(FakeCoordinator):
-        def spawn(self, **kwargs: object) -> TaskHandle:
-            clock.value = 11.0
-            claim_store.claim_plan(
-                plan_id="plan_1",
-                owner_agent_id="leader",
-                worker_id="scheduler_b",
-                lease_seconds=30.0,
-                now=11.0,
-            )
-            return super().spawn(**kwargs)
+    class RacingClaimStore(InMemoryPlanClaimStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self._raced = False
+
+        def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
+            if plan_id == "plan_1" and not self._raced:
+                self._raced = True
+                clock.value = 11.0
+                self.claim_plan(
+                    plan_id="plan_1",
+                    owner_agent_id="leader",
+                    worker_id="scheduler_b",
+                    lease_seconds=30.0,
+                    now=11.0,
+                )
+            return super().get_claim(plan_id)
 
     clock = ManualClock(10.0)
-    claim_store = InMemoryPlanClaimStore()
-    coordinator = RacingCoordinator()
+    claim_store = RacingClaimStore()
+    coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         coordinator=coordinator,
@@ -3716,7 +3722,7 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
     assert plan.steps[0].status == "assigned"
     assert plan.steps[0].task_id is not None
     assert plan.assignments[0].dispatch_status == "pending"
-    assert coordinator.spawn_calls[0]["task_id"] == plan.steps[0].task_id
+    assert coordinator.spawn_calls == []
     current_claim = claim_store.get_claim("plan_1")
     assert current_claim is not None
     assert current_claim.worker_id == "scheduler_b"

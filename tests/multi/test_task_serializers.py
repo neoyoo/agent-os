@@ -19,6 +19,7 @@ def test_task_request_round_trips_json_safe_fields() -> None:
     request = TaskRequest(
         task_id="task_1",
         instruction="Do work",
+        required_capabilities=("architecture-review",),
         allowed_tool_names=("read", "write"),
         timeout_seconds=30.0,
         trace_context={"trace_id": "trace_1"},
@@ -26,8 +27,22 @@ def test_task_request_round_trips_json_safe_fields() -> None:
 
     data = task_request_to_dict(request)
 
+    assert data["required_capabilities"] == ["architecture-review"]
     assert data["allowed_tool_names"] == ["read", "write"]
     assert task_request_from_dict(data) == request
+
+
+def test_task_request_from_legacy_payload_defaults_required_capabilities() -> None:
+    data = {
+        "task_id": "task_1",
+        "instruction": "Do work",
+        "allowed_tool_names": ["read"],
+    }
+
+    request = task_request_from_dict(data)
+
+    assert request.required_capabilities == ()
+    assert request.allowed_tool_names == ("read",)
 
 
 def test_task_result_round_trips_json_safe_fields() -> None:

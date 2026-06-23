@@ -24,7 +24,12 @@ class ExpertAgentRunner:
         self.coordinator = coordinator
         self.agent_id = agent_id
         self.worker_id = worker_id or agent_id
-        self.capabilities = tuple(capabilities)
+        registry = getattr(coordinator, "registry", None)
+        resolve = None if registry is None else getattr(registry, "resolve", None)
+        card = resolve(agent_id) if callable(resolve) else None
+        self.capabilities = tuple(
+            capabilities or (() if card is None else card.capabilities),
+        )
         self.lease_ttl_seconds = lease_ttl_seconds
         self._stopped = Event()
         self._idle = Event()
@@ -64,6 +69,15 @@ class ExpertAgentRunner:
                     now=now,
                 )
                 if claim is None:
+                    if self._terminal_result_saved(request.task_id):
+                        self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
+                        handled = True
+                    else:
+                        # Durable queues keep unacked deliveries pending; AgentInbox
+                        # needs an explicit replay because collect() drains in memory.
+                        requeue = getattr(self.coordinator.inbox, "requeue", None)
+                        if callable(requeue):
+                            requeue(self.agent_id, delivery)
                     continue
                 result = self.coordinator.execute_expert_envelope(
                     delivery.envelope,
@@ -71,7 +85,6 @@ class ExpertAgentRunner:
                 )
                 if result is not None and self._terminal_result_saved(
                     request.task_id,
-                    result.status,
                 ):
                     self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     handled = True
@@ -91,11 +104,11 @@ class ExpertAgentRunner:
         self._stopped.set()
         return self._idle.wait(timeout=timeout_seconds)
 
-    def _terminal_result_saved(self, task_id: str, status: str) -> bool:
+    def _terminal_result_saved(self, task_id: str) -> bool:
         record = self.coordinator.task_table.get(task_id)
         return (
             record is not None
             and record.status in {"completed", "failed", "cancelled", "timeout"}
             and record.result is not None
-            and record.result.status == status
+            and record.result.status == record.status
         )

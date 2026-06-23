@@ -214,6 +214,7 @@ class AgentCoordinator:
         request = TaskRequest(
             task_id=task_id,
             instruction=instruction,
+            required_capabilities=tuple(required_capabilities),
             allowed_tool_names=tuple(allowed_tool_names),
             timeout_seconds=timeout_seconds,
             trace_context=self._trace_context(),
@@ -344,6 +345,8 @@ class AgentCoordinator:
         self,
         record: TaskRecord,
         result: TaskResult,
+        *,
+        claim: TaskClaim | None = None,
     ) -> bool:
         current = self.task_table.get(record.task_id)
         if current is None or current.cancel_requested_at is None:
@@ -353,6 +356,8 @@ class AgentCoordinator:
                 record.task_id,
                 result,
                 now=time.time(),
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
             )
         else:
             cancelled = TaskResult(
@@ -360,7 +365,12 @@ class AgentCoordinator:
                 status="cancelled",
                 summary="task cancelled",
             )
-            changed = self.task_table.mark_cancelled(record.task_id, cancelled)
+            changed = self.task_table.mark_cancelled(
+                record.task_id,
+                cancelled,
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
+            )
         if changed:
             self._emit(
                 AgentTaskCancelledEvent(
@@ -459,7 +469,11 @@ class AgentCoordinator:
                 summary=agent_result.content,
                 elapsed_seconds=time.time() - started_at,
             )
-            if self._handle_result_after_cancel_requested(record, result):
+            if self._handle_result_after_cancel_requested(
+                record,
+                result,
+                claim=claim,
+            ):
                 return result
             if self.task_table.mark_completed(
                 request.task_id,
@@ -492,7 +506,11 @@ class AgentCoordinator:
                 error=str(error),
                 elapsed_seconds=time.time() - started_at,
             )
-            if self._handle_result_after_cancel_requested(record, result):
+            if self._handle_result_after_cancel_requested(
+                record,
+                result,
+                claim=claim,
+            ):
                 return result
             if self.task_table.mark_failed(
                 request.task_id,

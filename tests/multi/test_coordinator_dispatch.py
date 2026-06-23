@@ -69,6 +69,7 @@ def test_dispatch_sends_task_request_to_available_expert() -> None:
     assert envelope.from_agent_id == "parent"
     assert isinstance(envelope.payload, TaskRequest)
     assert envelope.payload.instruction == "Review Python code"
+    assert envelope.payload.required_capabilities == ("code-review",)
 
     coordinator.spawn_executor.shutdown()
 

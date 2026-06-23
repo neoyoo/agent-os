@@ -47,6 +47,7 @@ class TaskRequest:
 
     task_id: str
     instruction: str
+    required_capabilities: tuple[str, ...] = ()
     allowed_tool_names: tuple[str, ...] = ()
     timeout_seconds: float = 300
     trace_context: dict[str, str] | None = None

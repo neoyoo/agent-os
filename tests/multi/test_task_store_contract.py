@@ -4,6 +4,7 @@ from agentos.multi import TaskRecord, TaskRequest, TaskResult, TaskTable
 def record(
     task_id: str = "task_1",
     *,
+    required_capabilities: tuple[str, ...] = ("code",),
     allowed_tool_names: tuple[str, ...] = ("code",),
 ) -> TaskRecord:
     return TaskRecord(
@@ -14,6 +15,7 @@ def record(
         request=TaskRequest(
             task_id=task_id,
             instruction="Do work",
+            required_capabilities=required_capabilities,
             allowed_tool_names=allowed_tool_names,
         ),
         status="queued",
@@ -82,13 +84,59 @@ def test_task_table_claims_exact_queued_task_with_worker_lease() -> None:
 
 def test_task_table_exact_claim_rejects_wrong_capabilities() -> None:
     store = TaskTable()
-    original = record("task_1", allowed_tool_names=("code", "web"))
+    original = record("task_1", required_capabilities=("code", "web"))
     store.create(original)
 
     claim = store.claim_task(
         "task_1",
         worker_id="worker-instance-1",
         capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
+
+
+def test_task_table_claims_by_required_capabilities_not_allowed_tools() -> None:
+    store = TaskTable()
+    store.create(
+        record(
+            "task_1",
+            required_capabilities=("architecture-review",),
+            allowed_tool_names=("read_file",),
+        ),
+    )
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("architecture-review",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is not None
+    stored = store.get("task_1")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.request.allowed_tool_names == ("read_file",)
+
+
+def test_task_table_does_not_treat_allowed_tools_as_worker_capabilities() -> None:
+    store = TaskTable()
+    original = record(
+        "task_1",
+        required_capabilities=("architecture-review",),
+        allowed_tool_names=("read_file",),
+    )
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("read_file",),
         lease_expires_at=20.0,
         now=2.0,
     )
@@ -164,7 +212,7 @@ def test_task_table_reclaims_expired_running_lease() -> None:
 
 def test_task_table_does_not_claim_when_capabilities_do_not_match() -> None:
     store = TaskTable()
-    store.create(record(allowed_tool_names=("code", "web")))
+    store.create(record(required_capabilities=("code", "web")))
 
     claims = store.claim_queued(
         worker_id="worker-instance-1",
@@ -175,7 +223,7 @@ def test_task_table_does_not_claim_when_capabilities_do_not_match() -> None:
     )
 
     assert claims == []
-    assert store.get("task_1") == record(allowed_tool_names=("code", "web"))
+    assert store.get("task_1") == record(required_capabilities=("code", "web"))
 
 
 def test_task_table_rejects_stale_worker_completion_after_reclaim() -> None:

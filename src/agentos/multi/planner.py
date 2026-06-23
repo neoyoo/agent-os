@@ -2476,6 +2476,7 @@ class PlannerRuntime:
             assignments=plan.assignments + (assignment,),
         )
         self._save_plan(updated, expected_revision=record.revision)
+        self._ensure_active_plan_claim(plan_id)
         try:
             self._submit_assignment_to_coordinator(
                 plan=updated,
@@ -3048,6 +3049,20 @@ class PlannerRuntime:
             claims = {}
             self._active_plan_claim_context.claims = claims
         return claims
+
+    def _ensure_active_plan_claim(self, plan_id: str) -> None:
+        claim = self._active_plan_claims_for_thread().get(plan_id)
+        if claim is None:
+            return
+        if self.claim_store is None:
+            raise PlanClaimLostError(
+                f"claim store is required to verify active claim: {plan_id}",
+            )
+        current = self.claim_store.get_claim(plan_id)
+        if current != claim:
+            raise PlanClaimLostError(
+                f"claim changed before dispatching plan assignment: {plan_id}",
+            )
 
     def _require_plan(self, plan_id: str) -> PlanState:
         plan = self.store.get_plan(plan_id)

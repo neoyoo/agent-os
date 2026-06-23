@@ -7,6 +7,7 @@ from agentos.multi import (
     ExpertAgentRunner,
     InMemoryRegistry,
     SpawnExecutor,
+    TaskResult,
     TaskTable,
 )
 from tests.multi.helpers import build_agent_with_response
@@ -26,6 +27,19 @@ class RecordingInbox(AgentInbox):
 class RejectTerminalTaskTable(TaskTable):
     def mark_completed(self, *args: object, **kwargs: object) -> bool:
         return False
+
+
+class CancellingAgent:
+    def __init__(self, coordinator: AgentCoordinator, task_id: str) -> None:
+        self.coordinator = coordinator
+        self.task_id = task_id
+
+    def run(self, instruction: str):
+        self.coordinator.cancel(self.task_id)
+        return type("AgentResult", (), {"content": "expert result"})()
+
+    def interrupt(self) -> None:
+        pass
 
 
 def wait_for_parent_result(coordinator: AgentCoordinator):
@@ -137,6 +151,60 @@ def test_expert_runner_claims_task_before_execution_and_acks_after_terminal_save
     coordinator.spawn_executor.shutdown()
 
 
+def test_expert_runner_fences_cancelled_claim_before_ack() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+    )
+    coordinator._agents["expert"] = CancellingAgent(coordinator, handle.task_id)
+
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="expert",
+        worker_id="expert-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is True
+
+    stored = coordinator.task_table.get(handle.task_id)
+    assert stored is not None
+    assert stored.status == "cancelled"
+    assert stored.result is not None
+    assert stored.result.status == "cancelled"
+    assert len(inbox.acked) == 1
+
+    coordinator.spawn_executor.shutdown()
+
+
 def test_expert_runner_does_not_ack_when_terminal_save_is_rejected() -> None:
     inbox = RecordingInbox()
     coordinator = AgentCoordinator(
@@ -187,5 +255,127 @@ def test_expert_runner_does_not_ack_when_terminal_save_is_rejected() -> None:
     assert stored.attempt == 1
     assert inbox.acked == []
     assert coordinator.collect_results("parent") == []
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_acks_stale_delivery_for_terminal_task() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+    )
+    claim = coordinator.task_table.claim_task(
+        handle.task_id,
+        worker_id="other-worker",
+        capabilities=("code-review",),
+        lease_expires_at=time.time() + 30.0,
+        now=time.time(),
+    )
+    assert claim is not None
+    assert coordinator.task_table.mark_completed(
+        handle.task_id,
+        TaskResult(task_id=handle.task_id, status="completed", summary="done"),
+        now=time.time(),
+        worker_id="other-worker",
+        attempt=1,
+    )
+
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="expert",
+        worker_id="expert-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is True
+    assert len(inbox.acked) == 1
+    stored = coordinator.task_table.get(handle.task_id)
+    assert stored is not None
+    assert stored.status == "completed"
+    assert stored.worker_id == "other-worker"
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_requeues_in_memory_delivery_when_claim_is_missed() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+    )
+    first_claim = coordinator.task_table.claim_task(
+        handle.task_id,
+        worker_id="other-worker",
+        capabilities=("code-review",),
+        lease_expires_at=time.time() + 30.0,
+        now=time.time(),
+    )
+    assert first_claim is not None
+
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="expert",
+        worker_id="expert-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is False
+    assert inbox.acked == []
+    assert inbox.has_pending("expert")
 
     coordinator.spawn_executor.shutdown()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -29,7 +30,11 @@ def _with_connection_scope(method: _F) -> _F:
     @wraps(method)
     def wrapper(self: "PostgresTaskStore", *args: object, **kwargs: object) -> object:
         with self._connection_scope():
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            except Exception:
+                self._rollback()
+                raise
 
     return cast(_F, wrapper)
 
@@ -118,7 +123,6 @@ class PostgresTaskStore:
             )
         except BackendUnavailableError as error:
             if self._is_duplicate_task_error(error):
-                self._rollback()
                 raise TaskAlreadySubmittedError(record.task_id) from error
             raise
         self._commit()
@@ -171,12 +175,12 @@ class PostgresTaskStore:
                 SELECT 1
                 FROM jsonb_array_elements_text(
                   COALESCE(
-                    payload #> '{request,allowed_tool_names}',
+                    payload #> '{request,required_capabilities}',
                     '[]'::jsonb
                   )
-                ) AS required_tool(allowed_tool_names)
+                ) AS required_capability(required_capability)
                 WHERE NOT (
-                  required_tool.allowed_tool_names = ANY(%s::text[])
+                  required_capability.required_capability = ANY(%s::text[])
                 )
               )
               ORDER BY deadline_at, task_id
@@ -268,12 +272,12 @@ class PostgresTaskStore:
                   SELECT 1
                   FROM jsonb_array_elements_text(
                     COALESCE(
-                      payload #> '{request,allowed_tool_names}',
+                      payload #> '{request,required_capabilities}',
                       '[]'::jsonb
                     )
-                  ) AS required_tool(allowed_tool_names)
+                  ) AS required_capability(required_capability)
                   WHERE NOT (
-                    required_tool.allowed_tool_names = ANY(%s::text[])
+                    required_capability.required_capability = ANY(%s::text[])
                   )
                 )
               FOR UPDATE SKIP LOCKED
@@ -932,11 +936,28 @@ class PostgresTaskStore:
             raise BackendUnavailableError("Postgres connection is not configured")
         connection, context = self._borrow_pool_connection(pool)
         token = self._active_connection.set(connection)
+        exc_info: tuple[type[BaseException] | None, BaseException | None, object | None] = (
+            None,
+            None,
+            None,
+        )
         try:
             yield connection
+        except BaseException:
+            raw_exc_type, raw_exc, raw_traceback = sys.exc_info()
+            exc_info = (
+                (
+                    raw_exc_type
+                    if raw_exc_type is None
+                    else cast(type[BaseException], raw_exc_type)
+                ),
+                raw_exc,
+                raw_traceback,
+            )
+            raise
         finally:
             self._active_connection.reset(token)
-            self._return_pool_connection(pool, connection, context)
+            self._return_pool_connection(pool, connection, context, exc_info)
 
     def _borrow_pool_connection(self, pool: object) -> tuple[object, object | None]:
         getconn = getattr(pool, "getconn", None)
@@ -953,9 +974,14 @@ class PostgresTaskStore:
         pool: object,
         connection: object,
         context: object | None,
+        exc_info: tuple[type[BaseException] | None, BaseException | None, object | None] = (
+            None,
+            None,
+            None,
+        ),
     ) -> None:
         if context is not None:
-            context.__exit__(None, None, None)
+            context.__exit__(*exc_info)
             return
         putconn = getattr(pool, "putconn", None)
         if callable(putconn):

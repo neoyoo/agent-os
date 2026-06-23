@@ -192,6 +192,14 @@ class AgentInbox:
             self._acked_delivery_ids.add(key)
             return True
 
+    def requeue(self, agent_id: str, delivery: QueueDelivery) -> None:
+        """Put an unhandled in-memory delivery back for a later runner attempt."""
+
+        with self._lock:
+            queue = self._queue_for(agent_id)
+            queue.put(delivery)
+            self._events[agent_id].set()
+
     def wait(self, agent_id: str, timeout: float | None = None) -> bool:
         """阻塞等待 inbox 中出现消息。"""
 

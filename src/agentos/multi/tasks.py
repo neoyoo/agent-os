@@ -482,7 +482,7 @@ class TaskTable:
             return False
         if record.deadline_at <= now:
             return False
-        required_capabilities = set(record.request.allowed_tool_names)
+        required_capabilities = set(record.request.required_capabilities)
         return not required_capabilities or required_capabilities.issubset(
             capabilities,
         )
