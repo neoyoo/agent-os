@@ -56,3 +56,16 @@ def test_packaged_postgres_migrations_match_docs_sources() -> None:
 
     for name, package_sql in package_files.items():
         assert package_sql == Path("docs/migrations", name).read_text()
+
+
+def test_all_documented_postgres_migrations_are_packaged() -> None:
+    docs_postgres_names = sorted(
+        path.name for path in Path("docs/migrations").glob("*postgres*.sql")
+    )
+    package_names = sorted(
+        item.name
+        for item in files("agentos.migrations").iterdir()
+        if item.name.endswith(".sql")
+    )
+
+    assert package_names == docs_postgres_names

@@ -452,9 +452,7 @@ class RedisAgentMessageQueue:
         deliveries: list[QueueDelivery] = []
         for message_id, fields in messages:
             raw_message_id = self._message_id(message_id)
-            payload = fields.get("payload")
-            if isinstance(payload, bytes):
-                payload = payload.decode("utf-8")
+            payload = self._payload_field(fields)
             deliveries.append(
                 QueueDelivery(
                     delivery_id=self._delivery_id(stream_key, raw_message_id),
@@ -499,6 +497,16 @@ class RedisAgentMessageQueue:
         if isinstance(value, bytes):
             return value.decode("utf-8")
         return str(value)
+
+    def _payload_field(self, fields: dict[object, object]) -> str:
+        payload = fields.get("payload")
+        if payload is None:
+            payload = fields.get(b"payload")
+        if isinstance(payload, bytes):
+            return payload.decode("utf-8")
+        if isinstance(payload, str):
+            return payload
+        raise BackendUnavailableError("Redis stream message is missing payload")
 
     def _json_safe_pending_value(self, value: object) -> object:
         if isinstance(value, bytes):

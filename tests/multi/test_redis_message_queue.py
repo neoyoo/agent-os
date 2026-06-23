@@ -1,3 +1,5 @@
+import json
+
 from agentos.multi import AgentEnvelope, TaskRequest
 from agentos.multi.redis_queue import RedisAgentMessageQueue
 from agentos.multi.team import TeamMessage
@@ -179,6 +181,39 @@ def test_redis_queue_sends_collects_and_acks_envelope() -> None:
     assert client.acked == [
         ("agentos:multi:inbox:worker", "agentos-workers", delivery_id),
     ]
+
+
+def test_redis_queue_collects_payload_from_redis_py_byte_fields() -> None:
+    client = FakeRedis()
+    queue = RedisAgentMessageQueue(
+        url="redis://unused",
+        client=client,
+        allowed_consumer_agent_ids=("worker",),
+    )
+    queue.create_inbox("worker")
+    stream_key = "agentos:multi:inbox:worker"
+    payload = json.dumps(
+        {
+            "envelope_id": "env_1",
+            "from_agent_id": "parent",
+            "to_agent_id": "worker",
+            "type": "task_request",
+            "payload": {"task_id": "task_1", "instruction": "Do work"},
+            "created_at": 1.0,
+            "correlation_id": "task_1",
+        },
+    )
+    client.streams[stream_key].append(
+        (
+            b"1-0",
+            {b"payload": payload.encode("utf-8")},
+        ),
+    )
+
+    deliveries = queue.collect("worker")
+
+    assert deliveries[0].delivery_id.startswith("redis-stream:")
+    assert deliveries[0].envelope == envelope()
 
 
 def test_redis_queue_wait_does_not_consume_delivery() -> None:

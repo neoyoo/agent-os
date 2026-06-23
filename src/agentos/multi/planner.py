@@ -3037,25 +3037,9 @@ class PlannerRuntime:
                 f"claim changed before saving plan: {plan.plan_id}",
             )
 
-        compare_save = getattr(self.store, "save_plan_if_unchanged", None)
-        if expected_revision is None or not callable(compare_save):
-            raise PlanClaimLostError(
-                "PlanStore must implement save_plan_if_claimed or "
-                f"save_plan_if_unchanged for claim-guarded save: {plan.plan_id}",
-            )
-        if self.claim_store is None:
-            raise PlanClaimLostError(
-                f"claim_store is required to guard plan save: {plan.plan_id}",
-            )
-        current_claim = self.claim_store.get_claim(plan.plan_id)
-        if current_claim != claim or claim.lease_expires_at <= now:
-            raise PlanClaimLostError(
-                f"claim changed before saving plan: {plan.plan_id}",
-            )
-        if compare_save(plan, expected_revision=expected_revision):
-            return
         raise PlanClaimLostError(
-            f"plan changed before saving plan: {plan.plan_id}",
+            "PlanStore must implement save_plan_if_claimed for "
+            f"claim-guarded save: {plan.plan_id}",
         )
 
     def _active_plan_claims_for_thread(self) -> dict[str, PlanClaimRecord]:

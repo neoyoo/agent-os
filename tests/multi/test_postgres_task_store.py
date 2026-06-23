@@ -86,6 +86,8 @@ class FakeConnection:
             return FakeCursor([(count,)])
         if "WITH candidates AS" in sql and "FOR UPDATE SKIP LOCKED" in sql:
             return self._claim(params)
+        if "WITH candidate AS" in sql and "FOR UPDATE SKIP LOCKED" in sql:
+            return self._claim(params, exact_task_id=str(params[0]))
         if "UPDATE agentos_multi_agent_tasks" in sql and "RETURNING payload" in sql:
             return self._update(params)
         if "INSERT INTO agentos_multi_agent_task_outbox" in sql:
@@ -107,16 +109,30 @@ class FakeConnection:
         self.rollbacks += 1
         self.aborted = False
 
-    def _claim(self, params: tuple[object, ...]) -> FakeCursor:
-        capabilities = {str(capability) for capability in params[2]}
-        limit = int(params[3])
-        worker_id = str(params[4])
-        lease_expires_at = float(params[5])
-        now = float(params[6])
+    def _claim(
+        self,
+        params: tuple[object, ...],
+        *,
+        exact_task_id: str | None = None,
+    ) -> FakeCursor:
+        if exact_task_id is None:
+            capabilities = {str(capability) for capability in params[2]}
+            limit = int(params[3])
+            worker_id = str(params[4])
+            lease_expires_at = float(params[5])
+            now = float(params[6])
+        else:
+            capabilities = {str(capability) for capability in params[3]}
+            limit = 1
+            worker_id = str(params[4])
+            lease_expires_at = float(params[5])
+            now = float(params[6])
         rows: list[tuple[object, ...]] = []
         for task_id, row in self.records.items():
             if len(rows) >= limit:
                 break
+            if exact_task_id is not None and task_id != exact_task_id:
+                continue
             record = task_record_from_dict(json.loads(str(row["payload"])))
             if record.status != "queued":
                 continue
@@ -288,6 +304,33 @@ def test_postgres_task_store_uses_atomic_claim_sql_and_updates_payload() -> None
     assert stored.worker_id == "worker-instance-1"
     assert stored.attempt == 1
     assert stored.version == 1
+
+
+def test_postgres_task_store_claims_exact_task_id_atomically() -> None:
+    connection = FakeConnection()
+    store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
+    store.create(record("task_1"))
+    store.create(record("task_2"))
+
+    claim = store.claim_task(
+        "task_2",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    joined_sql = "\n".join(connection.sql)
+    assert "WHERE task_id = %s" in joined_sql
+    assert "FOR UPDATE SKIP LOCKED" in joined_sql
+    assert claim is not None
+    assert claim.task_id == "task_2"
+    assert store.get("task_1") == record("task_1")
+    stored = store.get("task_2")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.worker_id == "worker-instance-1"
+    assert stored.attempt == 1
 
 
 def test_postgres_task_store_does_not_claim_when_capabilities_do_not_match() -> None:

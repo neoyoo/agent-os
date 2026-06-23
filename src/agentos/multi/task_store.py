@@ -36,6 +36,17 @@ class TaskStore(Protocol):
     ) -> list[TaskClaim]:
         """原子领取 queued 或 lease-expired tasks。"""
 
+    def claim_task(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        capabilities: Sequence[str],
+        lease_expires_at: float,
+        now: float,
+    ) -> TaskClaim | None:
+        """Atomically claim one exact queued or lease-expired task."""
+
     def mark_running(self, task_id: str, *, now: float | None = None) -> bool:
         """queued -> running。"""
 

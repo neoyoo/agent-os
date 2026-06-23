@@ -18,7 +18,7 @@ _OPENAI_STYLE_KEY_PATTERN = re.compile(
 )
 _URL_USERINFO_PATTERN = re.compile(
     r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)"
-    r"(?P<userinfo>[^/@\s:]+:[^/@\s]+)@",
+    r"(?P<userinfo>[^/@\s:]*:[^/@\s]+)@",
 )
 
 

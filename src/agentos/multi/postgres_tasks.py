@@ -237,6 +237,99 @@ class PostgresTaskStore:
         return claims
 
     @_with_connection_scope
+    def claim_task(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        capabilities: Sequence[str],
+        lease_expires_at: float,
+        now: float,
+    ) -> TaskClaim | None:
+        """Atomically claim one exact queued or expired running task."""
+
+        row = self._execute(
+            """
+            WITH candidate AS (
+              SELECT task_id, payload, version
+              FROM agentos_multi_agent_tasks
+              WHERE task_id = %s
+                AND (
+                  status = 'queued'
+                  OR (
+                    status = 'running'
+                    AND lease_expires_at IS NOT NULL
+                    AND lease_expires_at <= %s
+                    AND (payload->>'cancel_requested_at') IS NULL
+                  )
+                )
+                AND deadline_at > %s
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(
+                    COALESCE(
+                      payload #> '{request,allowed_tool_names}',
+                      '[]'::jsonb
+                    )
+                  ) AS required_tool(allowed_tool_names)
+                  WHERE NOT (
+                    required_tool.allowed_tool_names = ANY(%s::text[])
+                  )
+                )
+              FOR UPDATE SKIP LOCKED
+            ),
+            patched AS (
+              SELECT
+                task_id,
+                version + 1 AS version,
+                payload
+                  || jsonb_build_object(
+                    'status', 'running',
+                    'worker_id', %s::text,
+                    'lease_expires_at', %s::double precision,
+                    'attempt', COALESCE((payload->>'attempt')::integer, 0) + 1,
+                    'updated_at', %s::double precision,
+                    'version', version + 1
+                  ) AS payload
+              FROM candidate
+            )
+            UPDATE agentos_multi_agent_tasks AS tasks
+            SET status = 'running',
+                worker_id = %s,
+                lease_expires_at = %s,
+                version = patched.version,
+                updated_at = %s,
+                payload = patched.payload
+            FROM patched
+            WHERE tasks.task_id = patched.task_id
+            RETURNING tasks.task_id, tasks.payload
+            """,
+            (
+                task_id,
+                now,
+                now,
+                list(capabilities),
+                worker_id,
+                lease_expires_at,
+                now,
+                worker_id,
+                lease_expires_at,
+                now,
+            ),
+        ).fetchone()
+        self._commit()
+        if row is None:
+            return None
+        claimed_task_id, payload = row
+        record = task_record_from_dict(self._json_value(payload))
+        return TaskClaim(
+            task_id=str(claimed_task_id),
+            worker_id=worker_id,
+            lease_expires_at=lease_expires_at,
+            attempt=record.attempt,
+        )
+
+    @_with_connection_scope
     def mark_running(self, task_id: str, *, now: float | None = None) -> bool:
         """queued -> running。"""
 

@@ -66,6 +66,7 @@ def passed_backend_verification() -> DeploymentLiveBackendVerificationProfile:
                 status="passed",
                 checked_at=1781590000.0,
                 evidence_ref=f"ci://backend-probes/{name}",
+                target_ref=f"deployment://agentos/{name}",
             )
             for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
         ),

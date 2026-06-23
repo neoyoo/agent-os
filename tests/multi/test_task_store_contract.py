@@ -53,6 +53,83 @@ def test_task_table_claims_queued_task_with_worker_lease() -> None:
     assert claimed.version == 1
 
 
+def test_task_table_claims_exact_queued_task_with_worker_lease() -> None:
+    store = TaskTable()
+    store.create(record("task_1"))
+    store.create(record("task_2"))
+
+    claim = store.claim_task(
+        "task_2",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is not None
+    assert claim.task_id == "task_2"
+    assert claim.worker_id == "worker-instance-1"
+    assert claim.attempt == 1
+    assert store.get("task_1") == record("task_1")
+    claimed = store.get("task_2")
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-instance-1"
+    assert claimed.lease_expires_at == 20.0
+    assert claimed.updated_at == 2.0
+    assert claimed.version == 1
+
+
+def test_task_table_exact_claim_rejects_wrong_capabilities() -> None:
+    store = TaskTable()
+    original = record("task_1", allowed_tool_names=("code", "web"))
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
+
+
+def test_task_table_exact_claim_reclaims_expired_running_lease() -> None:
+    store = TaskTable()
+    store.create(record())
+    first = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=3.0,
+        now=2.0,
+    )
+
+    second = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-2",
+        capabilities=("code",),
+        lease_expires_at=8.0,
+        now=4.0,
+    )
+
+    assert first is not None
+    assert second is not None
+    assert second.worker_id == "worker-instance-2"
+    assert second.attempt == 2
+    claimed = store.get("task_1")
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-instance-2"
+    assert claimed.lease_expires_at == 8.0
+    assert claimed.attempt == 2
+    assert claimed.updated_at == 4.0
+    assert claimed.version == 2
+
+
 def test_task_table_reclaims_expired_running_lease() -> None:
     store = TaskTable()
     store.create(record())

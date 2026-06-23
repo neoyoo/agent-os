@@ -33,7 +33,12 @@ class PendingRedis:
             created_at=1,
             correlation_id="task_1",
         )
-        return [(b"1-0", {"payload": json.dumps(envelope_to_dict(envelope))})]
+        return [
+            (
+                b"1-0",
+                {b"payload": json.dumps(envelope_to_dict(envelope)).encode("utf-8")},
+            ),
+        ]
 
     def xadd(self, stream: str, fields: dict[str, str], maxlen: int, approximate: bool) -> str:
         self.dead_letters.append((stream, fields))

@@ -52,22 +52,10 @@ class TaskTable:
             for task_id, record in self._records.items():
                 if len(claims) >= limit:
                     break
-                if not (
-                    record.status == "queued"
-                    or (
-                        record.status == "running"
-                        and record.lease_expires_at is not None
-                        and record.lease_expires_at <= now
-                        and record.cancel_requested_at is None
-                    )
-                ):
-                    continue
-                if record.deadline_at <= now:
-                    continue
-                required_capabilities = set(record.request.allowed_tool_names)
-                if (
-                    required_capabilities
-                    and not required_capabilities.issubset(available_capabilities)
+                if not self._can_claim(
+                    record,
+                    capabilities=available_capabilities,
+                    now=now,
                 ):
                     continue
                 attempt = record.attempt + 1
@@ -89,6 +77,43 @@ class TaskTable:
                     ),
                 )
         return claims
+
+    def claim_task(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        capabilities: Sequence[str],
+        lease_expires_at: float,
+        now: float,
+    ) -> TaskClaim | None:
+        """Claim one exact queued or expired task for an inbox delivery."""
+
+        available_capabilities = set(capabilities)
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None or not self._can_claim(
+                record,
+                capabilities=available_capabilities,
+                now=now,
+            ):
+                return None
+            attempt = record.attempt + 1
+            self._records[task_id] = replace(
+                record,
+                status="running",
+                worker_id=worker_id,
+                lease_expires_at=lease_expires_at,
+                attempt=attempt,
+                updated_at=now,
+                version=record.version + 1,
+            )
+            return TaskClaim(
+                task_id=task_id,
+                worker_id=worker_id,
+                lease_expires_at=lease_expires_at,
+                attempt=attempt,
+            )
 
     def mark_running(self, task_id: str, *, now: float | None = None) -> bool:
         """queued -> running。"""
@@ -437,3 +462,27 @@ class TaskTable:
         if attempt is not None and record.attempt != attempt:
             return False
         return True
+
+    def _can_claim(
+        self,
+        record: TaskRecord,
+        *,
+        capabilities: set[str],
+        now: float,
+    ) -> bool:
+        if not (
+            record.status == "queued"
+            or (
+                record.status == "running"
+                and record.lease_expires_at is not None
+                and record.lease_expires_at <= now
+                and record.cancel_requested_at is None
+            )
+        ):
+            return False
+        if record.deadline_at <= now:
+            return False
+        required_capabilities = set(record.request.allowed_tool_names)
+        return not required_capabilities or required_capabilities.issubset(
+            capabilities,
+        )

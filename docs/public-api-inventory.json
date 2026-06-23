@@ -1153,7 +1153,7 @@
           "stability": "experimental"
         },
         "DeploymentLiveBackendVerificationGateReport": {
-          "signature": "(required_backends: 'tuple[str, ...]', records: 'tuple[BackendVerificationRecord, ...]', missing_backends: 'tuple[str, ...]', failed_backends: 'tuple[str, ...]', skipped_backends: 'tuple[str, ...]', unknown_backends: 'tuple[str, ...]', accepted: 'bool', block_production_readiness: 'bool') -> None",
+          "signature": "(required_backends: 'tuple[str, ...]', records: 'tuple[BackendVerificationRecord, ...]', missing_backends: 'tuple[str, ...]', failed_backends: 'tuple[str, ...]', skipped_backends: 'tuple[str, ...]', unknown_backends: 'tuple[str, ...]', invalid_backends: 'tuple[str, ...]', duplicate_backends: 'tuple[str, ...]', accepted: 'bool', block_production_readiness: 'bool') -> None",
           "stability": "experimental"
         },
         "DeploymentLiveBackendVerificationProfile": {
@@ -1295,6 +1295,13 @@
           "signature": "()",
           "stability": "experimental"
         },
+        "ClaimGuardedPlanStore": {
+          "methods": {
+            "save_plan_if_claimed": "(self, plan: 'PlanState', claim: \"'PlanClaimRecord'\", *, expected_revision: 'int', now: 'float') -> 'bool'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "stable"
+        },
         "CompareAndSavePlanStore": {
           "methods": {
             "get_plan_record": "(self, plan_id: 'str') -> 'PlanStoreRecord | None'",
@@ -1339,7 +1346,7 @@
           "stability": "experimental"
         },
         "ExpertAgentRunner": {
-          "signature": "(*, coordinator: 'AgentCoordinator', agent_id: 'str') -> 'None'",
+          "signature": "(*, coordinator: 'AgentCoordinator', agent_id: 'str', worker_id: 'str | None' = None, capabilities: 'tuple[str, ...]' = (), lease_ttl_seconds: 'float' = 300.0) -> 'None'",
           "stability": "experimental"
         },
         "InMemoryPlanClaimStore": {
@@ -1737,6 +1744,7 @@
             "active_count_for_target": "(self, agent_id: 'str') -> 'int'",
             "active_for_agent": "(self, agent_id: 'str | None' = None) -> 'list[TaskHandle]'",
             "claim_queued": "(self, *, worker_id: 'str', capabilities: 'Sequence[str]', limit: 'int', lease_expires_at: 'float', now: 'float') -> 'list[TaskClaim]'",
+            "claim_task": "(self, task_id: 'str', *, worker_id: 'str', capabilities: 'Sequence[str]', lease_expires_at: 'float', now: 'float') -> 'TaskClaim | None'",
             "consume_results_for_agent": "(self, agent_id: 'str') -> 'list[TaskResult]'",
             "create": "(self, record: 'TaskRecord') -> 'TaskHandle'",
             "due_timeouts": "(self, now: 'float') -> 'list[TaskRecord]'",

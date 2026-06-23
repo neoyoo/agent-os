@@ -231,6 +231,9 @@ class FakeRegistryPostgresConnection:
         self.affinity: dict[str, tuple[str, float]] = {}
         self.ddl_calls: list[str] = []
         self.commits = 0
+        self.rollbacks = 0
+        self.fail_next_write = False
+        self.aborted = False
 
     def execute(
         self,
@@ -238,10 +241,16 @@ class FakeRegistryPostgresConnection:
         params: tuple[object, ...] | None = None,
     ) -> FakeRegistryPostgresCursor:
         params = params or ()
+        if self.aborted:
+            raise RuntimeError("current transaction is aborted")
         if "CREATE TABLE" in sql:
             self.ddl_calls.append(sql)
             return FakeRegistryPostgresCursor()
         if "INSERT INTO agentos_agent_registry" in sql:
+            if self.fail_next_write:
+                self.fail_next_write = False
+                self.aborted = True
+                raise RuntimeError("write failed")
             self.records[str(params[0])] = (str(params[1]), float(params[2]))
             return FakeRegistryPostgresCursor()
         if "DELETE FROM agentos_agent_registry" in sql:
@@ -265,6 +274,10 @@ class FakeRegistryPostgresConnection:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        self.aborted = False
 
 
 def test_postgres_registry_store_persists_records_and_affinity() -> None:
@@ -307,3 +320,31 @@ def test_postgres_registry_store_does_not_create_tables_at_runtime() -> None:
     PostgresAgentRegistryStore(dsn="postgresql://unused", connection=connection)
 
     assert connection.ddl_calls == []
+
+
+def test_postgres_registry_store_rolls_back_failed_writes() -> None:
+    from agentos.registry import AgentRegistryRecord, PostgresAgentRegistryStore
+
+    connection = FakeRegistryPostgresConnection()
+    store = PostgresAgentRegistryStore(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    connection.fail_next_write = True
+
+    try:
+        store.save_record(
+            AgentRegistryRecord(card=card("worker_1", "search"), heartbeat_at=1000),
+        )
+    except RuntimeError:
+        pass
+
+    store.save_record(
+        AgentRegistryRecord(card=card("worker_2", "search"), heartbeat_at=1001),
+    )
+
+    assert connection.rollbacks == 1
+    assert store.load_record("worker_2") == AgentRegistryRecord(
+        card=card("worker_2", "search"),
+        heartbeat_at=1001,
+    )

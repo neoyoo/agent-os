@@ -19,6 +19,7 @@ from agentos.multi.inbox import (
 from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
 from agentos.multi.planner import (
     AllowAllPlannerToolAuthorizationPolicy,
+    ClaimGuardedPlanStore,
     CompareAndSavePlanStore,
     DefaultPlannerToolAuthorizationPolicy,
     EvidenceHandle,
@@ -227,6 +228,7 @@ __all__ = [
     "AgentStatus",
     "ContextInitStrategy",
     "CoordinationMode",
+    "ClaimGuardedPlanStore",
     "CompareAndSavePlanStore",
     "DefaultPlannerToolAuthorizationPolicy",
     "DefaultTeamToolAuthorizationPolicy",

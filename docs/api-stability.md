@@ -25,6 +25,7 @@ Every namespace listed here must be represented in
 - `agentos`
 - `agentos.channels`
 - `agentos.multi`
+- `agentos.persistence`
 - `agentos.runtime`
 - `agentos.workspace`
 - `agentos.registry`
@@ -35,17 +36,19 @@ Every namespace listed here must be represented in
 ## Stable API
 
 Stable API should be safe for production specs to depend on with normal
-deprecation and migration notes before incompatible change:
+deprecation and migration notes before incompatible change. The authoritative
+stable surface is the set of `stable` exports in
+`docs/public-api-inventory.json`; module descriptions below summarize those
+governed exports and do not promote unlisted submodule names to stable API.
 
 - `AgentBuilder`, `Agent`, `QueryLoop`, `AsyncQueryLoop`, and
   `ProviderRequestBuilder`
-- provider protocols and typed provider messages
-- context runtime, message runtime, context protocol tools, compression, hooks,
-  and event bus surfaces
-- `ToolCallRouter`, `ToolRegistry`, `RegisteredTool`, and MCP/skill loading
-  boundaries
-- `AsgiAgentApp`, durable session provider protocols, session lease protocols,
-  and session snapshot persistence protocols
+- governed channel exports such as `AsgiAgentApp`, durable session provider
+  protocols, session lease protocols, SSE replay/control stores, and
+  `LeaseFencedSessionPersistence`
+- governed persistence exports such as `SessionPersistence`,
+  `SessionSnapshot`, `PostgresSessionSnapshotPersistence`, and related snapshot
+  records/errors
 - `RuntimeProfile`, `LocalRuntimeProfile`, `WebRuntimeProfile`,
   `DistributedWebRuntimeProfile`, and distributed session operation profiles
 - `ProductionReadinessEvidenceBundle`, `ReadinessEvidenceCheck`,

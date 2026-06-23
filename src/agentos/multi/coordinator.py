@@ -21,7 +21,7 @@ from agentos.multi.continuation import ContinuationTrigger
 from agentos.multi.message_queue import AgentMessageQueue
 from agentos.multi.registry import AgentRegistry
 from agentos.multi.spawn import SpawnExecutor
-from agentos.multi.task_store import TaskStore
+from agentos.multi.task_store import TaskClaim, TaskStore
 from agentos.multi.types import (
     AgentCard,
     AgentEnvelope,
@@ -420,7 +420,12 @@ class AgentCoordinator:
             "timeout",
         }
 
-    def execute_expert_envelope(self, envelope: AgentEnvelope) -> TaskResult | None:
+    def execute_expert_envelope(
+        self,
+        envelope: AgentEnvelope,
+        *,
+        claim: TaskClaim | None = None,
+    ) -> TaskResult | None:
         """执行 expert inbox 中的一条 task_request envelope。"""
 
         if envelope.type != "task_request" or not isinstance(
@@ -444,7 +449,7 @@ class AgentCoordinator:
         try:
             if agent is None:
                 raise RuntimeError(f"missing local agent: {record.target_agent_id}")
-            if not self.task_table.mark_running(request.task_id):
+            if claim is None and not self.task_table.mark_running(request.task_id):
                 current = self.task_table.get(request.task_id)
                 return current.result if current is not None else None
             agent_result = agent.run(request.instruction)
@@ -456,7 +461,12 @@ class AgentCoordinator:
             )
             if self._handle_result_after_cancel_requested(record, result):
                 return result
-            if self.task_table.mark_completed(request.task_id, result):
+            if self.task_table.mark_completed(
+                request.task_id,
+                result,
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
+            ):
                 self._emit(
                     AgentTaskCompletedEvent(
                         agent_id=record.target_agent_id,
@@ -484,7 +494,12 @@ class AgentCoordinator:
             )
             if self._handle_result_after_cancel_requested(record, result):
                 return result
-            if self.task_table.mark_failed(request.task_id, result):
+            if self.task_table.mark_failed(
+                request.task_id,
+                result,
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
+            ):
                 self._emit(
                     AgentTaskFailedEvent(
                         agent_id=record.target_agent_id,

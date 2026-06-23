@@ -143,8 +143,7 @@ def test_documented_stable_namespaces_are_governed() -> None:
         re.findall(r"- `(agentos(?:\.[a-z_]+)*)`", api_stability),
     )
 
-    assert documented_namespaces
-    assert documented_namespaces <= set(inventory["modules"])
+    assert documented_namespaces == set(inventory["modules"])
 
 
 def test_public_api_inventory_records_protocol_method_contracts() -> None:
@@ -373,6 +372,7 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "AllowAllPlannerToolAuthorizationPolicy",
         "AllowAllTeamToolAuthorizationPolicy",
         "CompareAndSavePlanStore",
+        "ClaimGuardedPlanStore",
         "ContinuationErrorRecord",
         "ContinuationTrigger",
         "DefaultPlannerToolAuthorizationPolicy",

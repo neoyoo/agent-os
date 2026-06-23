@@ -67,6 +67,27 @@ def test_backend_verification_record_redacts_secret_patterns_in_target_ref() -> 
     assert "raw-password" not in json.dumps(payload)
 
 
+def test_backend_verification_record_redacts_secret_patterns_in_evidence_and_error() -> None:
+    record = BackendVerificationRecord(
+        backend_name="message_queue",
+        backend_kind="redis",
+        status="failed",
+        checked_at=1781580000.0,
+        evidence_ref="https://ci.example/run?api_key=raw-token",
+        error="Authorization: Bearer raw-token failed for redis://:raw-password@redis/0",
+    )
+
+    payload = record.as_dict()
+    rendered = json.dumps(payload)
+
+    assert payload["evidence_ref"] == "https://ci.example/run?api_key=<redacted>"
+    assert payload["error"] == (
+        "Authorization: Bearer <redacted> failed for redis://<redacted>@redis/0"
+    )
+    assert "raw-token" not in rendered
+    assert "raw-password" not in rendered
+
+
 def test_backend_verification_record_rejects_missing_refs_and_secret_metadata() -> None:
     with pytest.raises(ValueError, match="backend_name must not be empty"):
         BackendVerificationRecord(
@@ -173,6 +194,92 @@ def test_live_backend_verification_gate_blocks_failed_or_unknown_backend() -> No
     assert report.failed_backends == ("message_queue",)
     assert report.unknown_backends == ("plan_store",)
     assert report.as_dict()["status"] == "failed"
+
+
+def test_live_backend_verification_gate_blocks_passed_record_without_target_ref() -> None:
+    records = [
+        _passed_record(name)
+        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    ]
+    records[0] = BackendVerificationRecord(
+        backend_name="agent_registry",
+        backend_kind="nacos",
+        status="passed",
+        checked_at=1781580000.0,
+        evidence_ref="ci://checks/nacos-agent-registry",
+    )
+
+    report = DeploymentLiveBackendVerificationGateReport.from_records(
+        tuple(records),
+        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+
+    assert report.accepted is False
+    assert report.block_production_readiness is True
+    assert report.invalid_backends == ("agent_registry",)
+    assert report.as_dict()["invalid_backends"] == ("agent_registry",)
+
+
+def test_live_backend_verification_gate_blocks_passed_record_without_checked_at() -> None:
+    records = [
+        _passed_record(name)
+        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    ]
+    records[1] = BackendVerificationRecord(
+        backend_name="message_queue",
+        backend_kind="redis",
+        status="passed",
+        checked_at=0.0,
+        evidence_ref="ci://checks/redis-message-queue",
+        target_ref="redis://deployment.example/0",
+    )
+
+    report = DeploymentLiveBackendVerificationGateReport.from_records(
+        tuple(records),
+        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+
+    assert report.accepted is False
+    assert report.invalid_backends == ("message_queue",)
+
+
+def test_live_backend_verification_gate_blocks_placeholder_evidence_ref() -> None:
+    records = [
+        _passed_record(name)
+        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    ]
+    records[2] = BackendVerificationRecord(
+        backend_name="task_store",
+        backend_kind="postgres",
+        status="passed",
+        checked_at=1781580000.0,
+        evidence_ref="<artifact-or-log-ref>",
+        target_ref="postgresql://deployment.example/agentos",
+    )
+
+    report = DeploymentLiveBackendVerificationGateReport.from_records(
+        tuple(records),
+        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+
+    assert report.accepted is False
+    assert report.invalid_backends == ("task_store",)
+
+
+def test_live_backend_verification_gate_blocks_duplicate_backend_records() -> None:
+    records = tuple(
+        _passed_record(name)
+        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    ) + (_passed_record("plan_store"),)
+
+    report = DeploymentLiveBackendVerificationGateReport.from_records(
+        records,
+        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+
+    assert report.accepted is False
+    assert report.duplicate_backends == ("plan_store",)
+    assert report.as_dict()["duplicate_backends"] == ("plan_store",)
 
 
 def test_live_backend_verification_profile_exposes_readiness_check() -> None:

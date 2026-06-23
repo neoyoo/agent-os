@@ -1,18 +1,31 @@
 from __future__ import annotations
 
+import time
 from threading import Event
 
 from agentos.multi.coordinator import AgentCoordinator
+from agentos.multi.types import TaskRequest
 
 
 class ExpertAgentRunner:
     """常驻 expert agent 的 inbox 消费循环。"""
 
-    def __init__(self, *, coordinator: AgentCoordinator, agent_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        coordinator: AgentCoordinator,
+        agent_id: str,
+        worker_id: str | None = None,
+        capabilities: tuple[str, ...] = (),
+        lease_ttl_seconds: float = 300.0,
+    ) -> None:
         """绑定 coordinator 和 expert agent id。"""
 
         self.coordinator = coordinator
         self.agent_id = agent_id
+        self.worker_id = worker_id or agent_id
+        self.capabilities = tuple(capabilities)
+        self.lease_ttl_seconds = lease_ttl_seconds
         self._stopped = Event()
         self._idle = Event()
         self._idle.set()
@@ -38,9 +51,29 @@ class ExpertAgentRunner:
                 self.agent_id,
                 envelope_types=("task_request",),
             ):
-                result = self.coordinator.execute_expert_envelope(delivery.envelope)
-                self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
-                if result is not None:
+                request = delivery.envelope.payload
+                if not isinstance(request, TaskRequest):
+                    self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
+                    continue
+                now = time.time()
+                claim = self.coordinator.task_table.claim_task(
+                    request.task_id,
+                    worker_id=self.worker_id,
+                    capabilities=self.capabilities,
+                    lease_expires_at=now + self.lease_ttl_seconds,
+                    now=now,
+                )
+                if claim is None:
+                    continue
+                result = self.coordinator.execute_expert_envelope(
+                    delivery.envelope,
+                    claim=claim,
+                )
+                if result is not None and self._terminal_result_saved(
+                    request.task_id,
+                    result.status,
+                ):
+                    self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     handled = True
             return handled
         finally:
@@ -57,3 +90,12 @@ class ExpertAgentRunner:
 
         self._stopped.set()
         return self._idle.wait(timeout=timeout_seconds)
+
+    def _terminal_result_saved(self, task_id: str, status: str) -> bool:
+        record = self.coordinator.task_table.get(task_id)
+        return (
+            record is not None
+            and record.status in {"completed", "failed", "cancelled", "timeout"}
+            and record.result is not None
+            and record.result.status == status
+        )

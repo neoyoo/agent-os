@@ -3368,6 +3368,56 @@ def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_
     assert current_claim.worker_id == "scheduler_b"
 
 
+def test_planner_runtime_claimed_scheduler_requires_atomic_claim_guarded_save() -> None:
+    class CompareOnlyPlanStore(InMemoryPlanStore):
+        save_plan_if_claimed = None  # type: ignore[assignment]
+
+    claim_store = InMemoryPlanClaimStore()
+    coordinator = FakeCoordinator()
+    store = CompareOnlyPlanStore()
+    runtime = PlannerRuntime(
+        store=store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="reviewer",
+                name="Reviewer",
+                role="Review code.",
+            ),
+        ),
+        claim_store=claim_store,
+        clock=lambda: 10.0,
+    )
+    store.create_plan(
+        PlanState(
+            plan_id="plan_1",
+            objective="Require atomic claim-guarded scheduler saves.",
+            owner_agent_id="leader",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_1",
+                    instruction="Should not dispatch through CAS fallback.",
+                    status="pending",
+                    template_id="reviewer",
+                ),
+            ),
+        ),
+    )
+
+    report = runtime.claimed_scheduler_tick(
+        owner_agent_id="leader",
+        worker_id="scheduler_a",
+        lease_seconds=20.0,
+        default_template_id="reviewer",
+    )
+
+    plan = runtime.get_plan("plan_1")
+    assert plan.steps[0].status == "pending"
+    assert coordinator.spawn_calls == []
+    assert [skip.reason for skip in report.skipped] == ["claim-lost"]
+
+
 def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
     class RecordingPlanStore(InMemoryPlanStore):
         def __init__(self) -> None:

@@ -74,6 +74,18 @@ _RESTRICTED_EVIDENCE_METADATA_KEYS: tuple[str, ...] = (
     "token",
 )
 
+_PLACEHOLDER_EVIDENCE_REFS: tuple[str, ...] = (
+    "<artifact-or-log-ref>",
+    "<evidence-ref>",
+    "<todo>",
+    "artifact-or-log-ref",
+    "example",
+    "pending",
+    "placeholder",
+    "tbd",
+    "todo",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BackendVerificationRecord:
@@ -111,15 +123,34 @@ class BackendVerificationRecord:
             "backend_kind": self.backend_kind,
             "status": self.status,
             "checked_at": self.checked_at,
-            "evidence_ref": self.evidence_ref,
+            "evidence_ref": redact_secret_patterns(self.evidence_ref),
             "target_ref": (
                 None
                 if self.target_ref is None
                 else redact_secret_patterns(self.target_ref)
             ),
-            "error": self.error,
+            "error": None if self.error is None else redact_secret_patterns(self.error),
             "metadata": _json_safe_mapping(self.metadata),
         }
+
+
+def _is_trusted_passed_backend_verification(
+    record: BackendVerificationRecord,
+) -> bool:
+    if record.checked_at <= 0:
+        return False
+    if record.target_ref is None:
+        return False
+    if not record.target_ref.strip():
+        return False
+    evidence_ref = record.evidence_ref.strip().lower()
+    if evidence_ref in _PLACEHOLDER_EVIDENCE_REFS:
+        return False
+    if evidence_ref.startswith("example://"):
+        return False
+    if evidence_ref.startswith("placeholder://"):
+        return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +163,8 @@ class DeploymentLiveBackendVerificationGateReport:
     failed_backends: tuple[str, ...]
     skipped_backends: tuple[str, ...]
     unknown_backends: tuple[str, ...]
+    invalid_backends: tuple[str, ...]
+    duplicate_backends: tuple[str, ...]
     accepted: bool
     block_production_readiness: bool
 
@@ -150,7 +183,11 @@ class DeploymentLiveBackendVerificationGateReport:
             raise ValueError("required_backends must not be empty")
         if any(not backend.strip() for backend in required_backends):
             raise ValueError("required_backends must not contain empty names")
-        by_name = {record.backend_name: record for record in records}
+        by_name: dict[str, BackendVerificationRecord] = {}
+        counts: dict[str, int] = {}
+        for record in records:
+            counts[record.backend_name] = counts.get(record.backend_name, 0) + 1
+            by_name.setdefault(record.backend_name, record)
         missing = tuple(
             backend for backend in required_backends if backend not in by_name
         )
@@ -172,7 +209,17 @@ class DeploymentLiveBackendVerificationGateReport:
             if by_name.get(backend) is not None
             and by_name[backend].status == "unknown"
         )
-        accepted = not (missing or failed or skipped or unknown)
+        invalid = tuple(
+            backend
+            for backend in required_backends
+            if by_name.get(backend) is not None
+            and by_name[backend].status == "passed"
+            and not _is_trusted_passed_backend_verification(by_name[backend])
+        )
+        duplicate = tuple(
+            backend for backend in required_backends if counts.get(backend, 0) > 1
+        )
+        accepted = not (missing or failed or skipped or unknown or invalid or duplicate)
         return cls(
             required_backends=tuple(required_backends),
             records=tuple(records),
@@ -180,6 +227,8 @@ class DeploymentLiveBackendVerificationGateReport:
             failed_backends=failed,
             skipped_backends=skipped,
             unknown_backends=unknown,
+            invalid_backends=invalid,
+            duplicate_backends=duplicate,
             accepted=accepted,
             block_production_readiness=not accepted,
         )
@@ -196,11 +245,15 @@ class DeploymentLiveBackendVerificationGateReport:
             "failed_backends": self.failed_backends,
             "skipped_backends": self.skipped_backends,
             "unknown_backends": self.unknown_backends,
+            "invalid_backends": self.invalid_backends,
+            "duplicate_backends": self.duplicate_backends,
             "records": tuple(record.as_dict() for record in self.records),
             "sdk_owned": (
                 "BackendVerificationRecord",
                 "DeploymentLiveBackendVerificationGateReport",
                 "required backend evidence coverage checks",
+                "duplicate backend evidence checks",
+                "passed backend evidence trust checks",
                 "JSON-safe verification evidence payloads",
             ),
             "deployment_owned": (
