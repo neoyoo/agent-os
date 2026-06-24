@@ -66,6 +66,7 @@ class ExpertAgentRunner:
                     self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     continue
                 if delivery.envelope.to_agent_id != self.agent_id:
+                    self.coordinator.inbox.ack(self.agent_id, delivery.delivery_id)
                     continue
                 record = self.coordinator.task_table.get(request.task_id)
                 if (

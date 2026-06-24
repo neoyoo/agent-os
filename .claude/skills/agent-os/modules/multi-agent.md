@@ -67,6 +67,18 @@ Use `TaskTable` + `AgentInbox` for local tests and single-process development. U
 
 Source: `src/agentos/multi/coordinator.py`, `src/agentos/multi/task_store.py`, `src/agentos/multi/message_queue.py`, `src/agentos/multi/tasks.py`, `src/agentos/multi/inbox.py`, `src/agentos/multi/postgres_tasks.py`, `src/agentos/multi/redis_queue.py`.
 
+## Direct Task Claim Safety
+
+Prefer `ExpertAgentRunner` for persistent expert workers. It checks the inbox
+delivery target and calls `claim_task(..., target_agent_id=<agent id>)` before
+executing the task.
+
+If a worker calls `claim_task` or `claim_queued` directly, use
+`target_agent_id=<agent id>` for every dedicated worker process. Leaving
+`target_agent_id=None` is compatibility/shared-pool behavior and should only be
+used for an intentional shared worker pool that may claim any matching task by
+capability.
+
 ## Local Coordinator
 
 ```python

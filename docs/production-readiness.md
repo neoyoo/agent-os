@@ -151,6 +151,20 @@ credentials, migrations, worker supervisor choice, secret distribution, tenant
 directory integration, autoscaling, alerting, runbooks, and live backend
 verification.
 
+### Direct Task Claim Safety
+
+Production workers should normally consume task deliveries through
+`ExpertAgentRunner`, which verifies the envelope target and passes
+`target_agent_id=<agent id>` into `TaskStore.claim_task(...)` before execution.
+When a deployment calls `claim_task` or `claim_queued` directly for a dedicated
+worker process, it must pass the worker's `target_agent_id`; otherwise the
+claim is treated as compatibility/shared-pool behavior.
+
+Use `target_agent_id=None` only for an intentional shared worker pool that is
+allowed to claim any task matching its capabilities. Dedicated worker processes
+must fence direct claims by `target_agent_id` so a stale, corrupt, or misrouted
+delivery cannot cause the wrong agent process to execute another agent's task.
+
 ### Live Backend Verification Evidence Boundary
 
 Use `BackendVerificationRecord`,

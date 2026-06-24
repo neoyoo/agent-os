@@ -262,6 +262,28 @@ def test_production_readiness_doc_describes_live_backend_verification_evidence_b
         assert expected in spec_generation
 
 
+def test_production_readiness_doc_describes_direct_task_claim_target_fence() -> None:
+    text = (ROOT / "docs" / "production-readiness.md").read_text(
+        encoding="utf-8",
+    )
+    multi_agent = (
+        ROOT / ".claude" / "skills" / "agent-os" / "modules" / "multi-agent.md"
+    ).read_text(encoding="utf-8")
+
+    for expected in [
+        "Direct Task Claim Safety",
+        "claim_task",
+        "claim_queued",
+        "target_agent_id",
+        "ExpertAgentRunner",
+        "dedicated worker",
+        "shared worker pool",
+        "compatibility/shared-pool behavior",
+    ]:
+        assert_phrase(text, expected)
+        assert_phrase(multi_agent, expected)
+
+
 def test_production_readiness_doc_describes_live_backend_verification_runner_boundary() -> None:
     text = (ROOT / "docs" / "production-readiness.md").read_text(
         encoding="utf-8",

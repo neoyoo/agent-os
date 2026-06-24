@@ -433,7 +433,7 @@ def test_expert_runner_rejects_delivery_not_addressed_to_runner() -> None:
     assert stored.status == "queued"
     assert stored.worker_id is None
     assert stored.attempt == 0
-    assert inbox.acked == []
+    assert inbox.acked == [("other_expert", "env_wrong_queue")]
 
     coordinator.spawn_executor.shutdown()
 
