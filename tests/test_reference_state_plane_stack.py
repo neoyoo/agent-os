@@ -5,6 +5,7 @@ import json
 from agentos.deployment import (
     BackendVerificationRecord,
     DeploymentLiveBackendVerificationProfile,
+    LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
     PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS,
     ProductionStatePlaneDeploymentProfile,
@@ -62,7 +63,7 @@ def passed_backend_verification() -> DeploymentLiveBackendVerificationProfile:
         records=tuple(
             BackendVerificationRecord(
                 backend_name=name,
-                backend_kind=name,
+                backend_kind=LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS[name],
                 status="passed",
                 checked_at=1781590000.0,
                 evidence_ref=f"ci://backend-probes/{name}",

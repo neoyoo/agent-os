@@ -957,6 +957,7 @@ def test_deployment_worker_process_supervisor_public_api_exports() -> None:
         "DeploymentLiveBackendVerificationGateReport",
         "DeploymentLiveBackendVerificationProfile",
         "DeploymentLiveBackendVerificationRunResult",
+        "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS",
         "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
         "WorkerProcessSpec",
         "WorkerProcessState",

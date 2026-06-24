@@ -1164,6 +1164,10 @@
           "signature": "(command: 'tuple[str, ...]', exit_code: 'int', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), records: 'tuple[BackendVerificationRecord, ...]' = (), started_at: 'float | None' = None, ended_at: 'float | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_summary: 'str' = '', stderr_summary: 'str' = '', metadata: 'Mapping[str, object]' = <factory>) -> None",
           "stability": "experimental"
         },
+        "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
         "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS": {
           "signature": "non-callable",
           "stability": "experimental"

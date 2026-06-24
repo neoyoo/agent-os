@@ -98,6 +98,16 @@ still uses demo Memory/InMemory runtime bindings unless a deployment injects
 real Redis/Postgres/Nacos state-plane clients. `allow_demo_runtime_readiness` is
 an explicit demo-fixture opt-in, not a production signal.
 
+For production readiness, the reference app also requires
+`state_plane_backend_targets`: stable, non-secret target identities for every
+state-plane backend. The `reference_served_backend_binding` check compares
+those exact state-plane target_ref bindings with imported
+`BackendVerificationRecord.target_ref` values. The runtime can derive the
+served Redis lease target and Postgres snapshot target, but registry, task
+store, plan store, and worker supervisor targets must be supplied by the
+deployment. These bindings are evidence only; they do not create backend
+clients.
+
 ## Skill Release Governance
 
 AgentOS is both a runtime SDK and a developer guidance skill. Use
@@ -205,15 +215,18 @@ kits from their explicit testing namespace.
 Use `BackendVerificationRecord`,
 `DeploymentLiveBackendVerificationGateReport`,
 `DeploymentLiveBackendVerificationProfile`, and
+`LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS` plus
 `LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS` when a production deployment
 needs to prove the configured `agent_registry`, `message_queue`, `task_store`,
 `plan_store`, `worker_process_supervisor`, and
 `session_snapshot_persistence` backends were actually checked. The readiness
 probe is `deployment_live_backend_verification`; it sets
-`block_production_readiness=True` when there is missing or failed backend evidence.
+`block_production_readiness=True` when there is missing or failed backend evidence,
+invalid evidence, or backend kind mismatch.
 
 This is an evidence consumption boundary, not a live checker. AgentOS owns the
-JSON-safe record shape, missing-backend detection, failed/skipped/unknown status
+JSON-safe record shape, expected backend-kind mapping, missing-backend
+detection, failed/skipped/unknown status classification, invalid evidence
 classification, and readiness payload. Deployment owns backend check execution,
 credentials and secret distribution, migration execution, network/TLS policy,
 CI matrix execution, alert routing and runbooks, release approval, and

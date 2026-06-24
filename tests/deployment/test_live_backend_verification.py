@@ -8,6 +8,7 @@ from agentos.deployment import (
     BackendVerificationRecord,
     DeploymentLiveBackendVerificationGateReport,
     DeploymentLiveBackendVerificationProfile,
+    LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
 )
 
@@ -15,7 +16,7 @@ from agentos.deployment import (
 def _passed_record(name: str) -> BackendVerificationRecord:
     return BackendVerificationRecord(
         backend_name=name,
-        backend_kind=name,
+        backend_kind=LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS[name],
         status="passed",
         checked_at=1781580000.0,
         evidence_ref=f"ci://live-backend/{name}",
@@ -218,6 +219,29 @@ def test_live_backend_verification_gate_blocks_passed_record_without_target_ref(
     assert report.block_production_readiness is True
     assert report.invalid_backends == ("agent_registry",)
     assert report.as_dict()["invalid_backends"] == ("agent_registry",)
+
+
+def test_live_backend_verification_gate_blocks_backend_kind_mismatch() -> None:
+    records = [
+        _passed_record(name)
+        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    ]
+    records[2] = BackendVerificationRecord(
+        backend_name="task_store",
+        backend_kind="redis",
+        status="passed",
+        checked_at=1781580000.0,
+        evidence_ref="ci://checks/postgres-task-store",
+        target_ref="postgresql://deployment.example/agentos",
+    )
+
+    report = DeploymentLiveBackendVerificationGateReport.from_records(
+        tuple(records),
+        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+
+    assert report.accepted is False
+    assert report.invalid_backends == ("task_store",)
 
 
 def test_live_backend_verification_gate_blocks_passed_record_without_checked_at() -> None:

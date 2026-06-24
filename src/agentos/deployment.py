@@ -52,6 +52,15 @@ LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS: tuple[str, ...] = (
     "session_snapshot_persistence",
 )
 
+LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS: Mapping[str, str] = {
+    "agent_registry": "nacos",
+    "message_queue": "redis",
+    "task_store": "postgres",
+    "plan_store": "postgres",
+    "worker_process_supervisor": "worker_process_supervisor",
+    "session_snapshot_persistence": "postgres",
+}
+
 _BACKEND_VERIFICATION_STATUSES: tuple[str, ...] = (
     "passed",
     "failed",
@@ -136,7 +145,14 @@ class BackendVerificationRecord:
 
 def _is_trusted_passed_backend_verification(
     record: BackendVerificationRecord,
+    *,
+    expected_backend_kind: str | None = None,
 ) -> bool:
+    if (
+        expected_backend_kind is not None
+        and record.backend_kind != expected_backend_kind
+    ):
+        return False
     if record.checked_at <= 0:
         return False
     if record.target_ref is None:
@@ -214,7 +230,12 @@ class DeploymentLiveBackendVerificationGateReport:
             for backend in required_backends
             if by_name.get(backend) is not None
             and by_name[backend].status == "passed"
-            and not _is_trusted_passed_backend_verification(by_name[backend])
+            and not _is_trusted_passed_backend_verification(
+                by_name[backend],
+                expected_backend_kind=(
+                    LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS.get(backend)
+                ),
+            )
         )
         duplicate = tuple(
             backend for backend in required_backends if counts.get(backend, 0) > 1
@@ -1427,6 +1448,7 @@ __all__ = [
     "DeploymentLiveBackendVerificationGateReport",
     "DeploymentLiveBackendVerificationProfile",
     "DeploymentLiveBackendVerificationRunResult",
+    "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS",
     "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
     "LocalSubprocessWorkerSupervisor",
     "PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS",

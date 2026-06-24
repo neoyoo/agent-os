@@ -5,9 +5,11 @@ import sys
 
 
 def _passed_record_payload(name: str) -> dict[str, object]:
+    from agentos.deployment import LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS
+
     return {
         "backend_name": name,
-        "backend_kind": name,
+        "backend_kind": LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS[name],
         "status": "passed",
         "checked_at": 1781589000.0,
         "evidence_ref": f"ci://live-backend/{name}",
@@ -130,6 +132,33 @@ def test_backend_verification_cli_runner_imports_stdout_json() -> None:
     assert result.accepted is True
     assert result.records[0].backend_name == "agent_registry"
     assert result.metadata["report_source"] == "stdout"
+
+
+def test_backend_verification_cli_runner_blocks_backend_kind_mismatch() -> None:
+    from agentos.deployment import (
+        BackendVerificationCliRunner,
+        BackendVerificationInvocationPlan,
+    )
+
+    report_payload = {
+        "records": [
+            {
+                **_passed_record_payload("task_store"),
+                "backend_kind": "redis",
+            },
+        ],
+    }
+    plan = BackendVerificationInvocationPlan(
+        command=(sys.executable, "-c", f"print({json.dumps(report_payload)!r})"),
+        required_backends=("task_store",),
+    )
+
+    result = BackendVerificationCliRunner().run(plan)
+
+    assert result.exit_code == 0
+    assert result.accepted is False
+    assert result.block_production_readiness is True
+    assert result.gate_report().invalid_backends == ("task_store",)
 
 
 def test_backend_verification_cli_runner_records_timeout_as_blocking_evidence() -> None:

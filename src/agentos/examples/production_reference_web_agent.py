@@ -150,6 +150,7 @@ def build_production_reference_web_agent(
     lease_store: object | None = None,
     snapshot_persistence: object | None = None,
     workspace_isolation_profile: object | None = None,
+    state_plane_backend_targets: Mapping[str, str] | None = None,
 ) -> ProductionReferenceWebAgentExample:
     """Build the deterministic production reference web agent composition."""
 
@@ -248,6 +249,7 @@ def build_production_reference_web_agent(
         distributed_session_profile=distributed_session_profile,
         backend_verification=backend_verification,
         allow_demo_runtime_readiness=allow_demo_runtime_readiness,
+        state_plane_backend_targets=state_plane_backend_targets,
     )
     state_plane_stack = _reference_state_plane_stack(
         runtime_profile=runtime_profile,
@@ -308,6 +310,7 @@ def build_reference_app(
     lease_store: object | None = None,
     snapshot_persistence: object | None = None,
     workspace_isolation_profile: object | None = None,
+    state_plane_backend_targets: Mapping[str, str] | None = None,
 ) -> AsgiAgentApp:
     """Build the ASGI app for the production reference web agent."""
 
@@ -318,6 +321,7 @@ def build_reference_app(
         lease_store=lease_store,
         snapshot_persistence=snapshot_persistence,
         workspace_isolation_profile=workspace_isolation_profile,
+        state_plane_backend_targets=state_plane_backend_targets,
     ).app
 
 
@@ -329,6 +333,7 @@ def build_reference_readiness_evidence(
     lease_store: object | None = None,
     snapshot_persistence: object | None = None,
     workspace_isolation_profile: object | None = None,
+    state_plane_backend_targets: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Return JSON-safe readiness evidence for release gate consumption."""
 
@@ -339,6 +344,7 @@ def build_reference_readiness_evidence(
         lease_store=lease_store,
         snapshot_persistence=snapshot_persistence,
         workspace_isolation_profile=workspace_isolation_profile,
+        state_plane_backend_targets=state_plane_backend_targets,
     ).as_dict()
 
 
@@ -528,6 +534,7 @@ def _reference_readiness_bundle(
     distributed_session_profile: DistributedWebSessionOperationsProfile,
     backend_verification: DeploymentLiveBackendVerificationProfile,
     allow_demo_runtime_readiness: bool,
+    state_plane_backend_targets: Mapping[str, str] | None,
 ) -> ProductionReadinessEvidenceBundle:
     runtime_metadata = runtime_profile.readiness_metadata()
     return ProductionReadinessEvidenceBundle.from_sources(
@@ -552,6 +559,7 @@ def _reference_readiness_bundle(
                 _reference_served_backend_binding_check(
                     runtime_profile=runtime_profile,
                     backend_verification=backend_verification,
+                    state_plane_backend_targets=state_plane_backend_targets,
                 )
             ),
             "workspace_execution_isolation": service_reference.workspace_isolation_profile,
@@ -628,14 +636,24 @@ def _reference_served_backend_binding_check(
     *,
     runtime_profile: DistributedWebRuntimeProfile,
     backend_verification: DeploymentLiveBackendVerificationProfile,
+    state_plane_backend_targets: Mapping[str, str] | None,
 ) -> dict[str, object]:
-    served_targets = _served_backend_targets(runtime_profile)
+    served_targets = _served_backend_targets(
+        runtime_profile,
+        state_plane_backend_targets=state_plane_backend_targets,
+    )
+    required_target_backends = (
+        ()
+        if not served_targets
+        else LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    )
     if not served_targets:
         return {
             "status": "ok",
             "ok": True,
             "ready": True,
             "profile": "ProductionReferenceServedBackendBinding",
+            "required_target_backends": (),
             "served_targets": {},
             "evidence_targets": {},
             "mismatched_backends": (),
@@ -650,13 +668,13 @@ def _reference_served_backend_binding_check(
     evidence_targets = {
         name: redact_secret_patterns(record.target_ref)
         for name, record in records_by_name.items()
-        if name in served_targets and record.target_ref is not None
+        if name in required_target_backends and record.target_ref is not None
     }
     missing = tuple(
         name
-        for name in served_targets
-        if records_by_name.get(name) is not None
-        and not records_by_name[name].target_ref
+        for name in required_target_backends
+        if name not in served_targets
+        or not evidence_targets.get(name)
     )
     mismatched = tuple(
         name
@@ -669,6 +687,7 @@ def _reference_served_backend_binding_check(
         "ok": ok,
         "ready": ok,
         "profile": "ProductionReferenceServedBackendBinding",
+        "required_target_backends": required_target_backends,
         "served_targets": served_targets,
         "evidence_targets": evidence_targets,
         "mismatched_backends": mismatched,
@@ -692,13 +711,15 @@ def _reference_served_backend_binding_check(
 
 def _served_backend_targets(
     runtime_profile: DistributedWebRuntimeProfile,
+    *,
+    state_plane_backend_targets: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     if _is_demo_served_runtime(
         lease_store=runtime_profile.lease_store,
         snapshot_persistence=runtime_profile.snapshot_persistence,
     ):
         return {}
-    targets: dict[str, str] = {}
+    targets = _explicit_state_plane_backend_targets(state_plane_backend_targets)
     redis_url = getattr(runtime_profile.lease_store, "backend_url", None)
     if isinstance(redis_url, str) and redis_url:
         targets["message_queue"] = redact_secret_patterns(redis_url)
@@ -710,6 +731,20 @@ def _served_backend_targets(
     if isinstance(postgres_dsn, str) and postgres_dsn:
         targets["session_snapshot_persistence"] = redact_secret_patterns(postgres_dsn)
     return targets
+
+
+def _explicit_state_plane_backend_targets(
+    state_plane_backend_targets: Mapping[str, str] | None,
+) -> dict[str, str]:
+    if state_plane_backend_targets is None:
+        return {}
+    return {
+        name: redact_secret_patterns(target)
+        for name, target in state_plane_backend_targets.items()
+        if name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+        and isinstance(target, str)
+        and bool(target.strip())
+    }
 
 
 class _ReferenceWorkspaceIsolationCheck:

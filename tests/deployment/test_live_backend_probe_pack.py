@@ -9,6 +9,7 @@ def _passed_run_result(backend_name: str):
     from agentos.deployment import (
         BackendVerificationRecord,
         DeploymentLiveBackendVerificationRunResult,
+        LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
     )
 
     return DeploymentLiveBackendVerificationRunResult(
@@ -18,7 +19,9 @@ def _passed_run_result(backend_name: str):
         records=(
             BackendVerificationRecord(
                 backend_name=backend_name,
-                backend_kind=backend_name,
+                backend_kind=LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS[
+                    backend_name
+                ],
                 status="passed",
                 checked_at=1781592000.0,
                 evidence_ref=f"ci://live-backend/{backend_name}",

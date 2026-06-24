@@ -35,11 +35,13 @@ snapshots.
 For live backend verification evidence, use `BackendVerificationRecord`,
 `DeploymentLiveBackendVerificationGateReport`,
 `DeploymentLiveBackendVerificationProfile`, and
+`LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS` plus
 `LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS`. The
 `deployment_live_backend_verification` probe covers `agent_registry`,
 `message_queue`, `task_store`, `plan_store`, `worker_process_supervisor`, and
 `session_snapshot_persistence`, and it sets `block_production_readiness` when
-there is missing or failed backend evidence. The SDK consumes JSON-safe
+there is missing or failed backend evidence, invalid evidence, or
+backend kind mismatch. The SDK consumes JSON-safe
 evidence; backend check execution, credentials and secret distribution,
 CI matrix execution, alert routing and runbooks remain deployment-owned.
 

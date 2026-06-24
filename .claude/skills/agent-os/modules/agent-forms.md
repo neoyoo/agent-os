@@ -53,11 +53,13 @@ separate:
 Live backend verification evidence should use `BackendVerificationRecord`,
 `DeploymentLiveBackendVerificationGateReport`,
 `DeploymentLiveBackendVerificationProfile`, and
+`LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS` plus
 `LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS`. The
 `deployment_live_backend_verification` probe covers `agent_registry`,
 `message_queue`, `task_store`, `plan_store`, `worker_process_supervisor`, and
 `session_snapshot_persistence`; it sets `block_production_readiness` on
-missing or failed backend evidence. AgentOS consumes JSON-safe evidence only.
+missing or failed backend evidence, invalid evidence, or backend kind mismatch.
+AgentOS consumes JSON-safe evidence only.
 Deployment owns backend check execution, credentials and secret distribution,
 CI matrix execution, alert routing and runbooks.
 

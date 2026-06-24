@@ -96,3 +96,6 @@ python -m agentos.examples.production_reference_web_agent
 The example is copyable SDK guidance. It does not create backend clients;
 Nacos/Redis/Postgres deployment, credentials, migrations, CI/CD, process
 supervision, and sandbox isolation are deployment-owned real infrastructure.
+Production readiness requires deployment-owned runtime backends plus
+`state_plane_backend_targets`, `reference_served_backend_binding`, and exact
+state-plane target_ref bindings for every state-plane backend.

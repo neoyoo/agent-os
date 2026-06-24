@@ -287,6 +287,10 @@ migrations, live backend probe execution, gateway/TLS, tenant directory
 integration, rollout, rollback, alerting, runbooks, and sandbox isolation are
 deployment-owned real infrastructure. The demo runtime blocks production
 readiness by default.
+Production readiness also requires `state_plane_backend_targets`,
+`reference_served_backend_binding`, and exact state-plane target_ref bindings
+for every state-plane backend; these bindings are evidence only and do not
+create backend clients.
 
 ## Skill Release Drift Check
 
