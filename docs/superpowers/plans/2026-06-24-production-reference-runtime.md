@@ -409,11 +409,11 @@ Expected: all selected tests pass.
 - Modify: `tests/integration/test_live_backends.py` only if shared fixtures can be extracted without changing behavior.
 - Modify: `docs/production-readiness.md`
 
-- [ ] **Step 1: Add skipped-by-default live test skeleton**
+- [x] **Step 1: Add skipped-by-default live test skeleton**
 
 Create a pytest integration test marked with the existing live backend skip convention. The first test should skip unless `AGENTOS_RUN_INTEGRATION=1` and required Postgres/Redis environment variables are configured.
 
-- [ ] **Step 2: Build the smallest real flow**
+- [x] **Step 2: Build the smallest real flow**
 
 Use real `PostgresTaskStore` and `RedisAgentMessageQueue`, but keep planner state in memory for the first slice. Dispatch one task to one `ExpertAgentRunner`, run `run_once`, and assert the parent collects one terminal result.
 
