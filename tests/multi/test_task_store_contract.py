@@ -1,4 +1,5 @@
 from agentos.multi import TaskRecord, TaskRequest, TaskResult, TaskTable
+from agentos.testing.contracts.task_store import run_task_store_contract
 
 
 def record(
@@ -31,6 +32,10 @@ def result(task_id: str = "task_1", status: str = "completed") -> TaskResult:
         status=status,  # type: ignore[arg-type]
         summary=f"{status} result",
     )
+
+
+def test_task_table_satisfies_reusable_task_store_contract() -> None:
+    run_task_store_contract(lambda: TaskTable())
 
 
 def test_task_table_claims_queued_task_with_worker_lease() -> None:

@@ -3,6 +3,7 @@ import json
 from agentos.multi import AgentEnvelope, TaskRequest
 from agentos.multi.redis_queue import RedisAgentMessageQueue
 from agentos.multi.team import TeamMessage
+from agentos.testing.contracts.message_queue import run_agent_message_queue_contract
 import pytest
 
 
@@ -133,6 +134,17 @@ def team_envelope_for(team_id: str, envelope_id: str) -> AgentEnvelope:
         ),
         created_at=5.0,
         correlation_id=f"msg_{team_id}",
+    )
+
+
+def test_redis_queue_satisfies_reusable_message_queue_contract() -> None:
+    run_agent_message_queue_contract(
+        lambda: RedisAgentMessageQueue(
+            url="redis://unused",
+            client=FakeRedis(),
+            allowed_consumer_agent_ids=("worker", "other_worker"),
+        ),
+        supports_duplicate_ack_false=False,
     )
 
 

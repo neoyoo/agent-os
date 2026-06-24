@@ -12,6 +12,7 @@ from agentos.multi import (
 )
 from agentos.multi.postgres_tasks import PostgresTaskStore
 from agentos.multi.serializers import task_record_from_dict, task_record_to_dict
+from agentos.testing.contracts.task_store import run_task_store_contract
 
 
 class FakeCursor:
@@ -145,7 +146,13 @@ class FakeConnection:
                 and record.target_agent_id != target_agent_id
             ):
                 continue
-            if record.status != "queued":
+            claimable = record.status == "queued" or (
+                record.status == "running"
+                and record.lease_expires_at is not None
+                and record.lease_expires_at <= now
+                and record.cancel_requested_at is None
+            )
+            if not claimable:
                 continue
             required_capabilities = set(record.request.required_capabilities)
             if (
@@ -262,6 +269,15 @@ def record(
         status="queued",
         created_at=1.0,
         deadline_at=30.0,
+    )
+
+
+def test_postgres_task_store_satisfies_reusable_task_store_contract() -> None:
+    run_task_store_contract(
+        lambda: PostgresTaskStore(
+            dsn="postgresql://unused",
+            connection=FakeConnection(),
+        ),
     )
 
 

@@ -2218,6 +2218,78 @@
         }
       }
     },
+    "agentos.testing": {
+      "exports": {
+        "contract_envelope": {
+          "signature": "(envelope_id: 'str' = 'contract_env_request', *, to_agent_id: 'str' = 'worker', envelope_type: 'str' = 'task_request') -> 'AgentEnvelope'",
+          "stability": "stable"
+        },
+        "contract_plan": {
+          "signature": "(plan_id: 'str' = 'contract_plan', *, owner_agent_id: 'str' = 'leader', updated_at: 'float' = 2.0) -> 'PlanState'",
+          "stability": "stable"
+        },
+        "contract_record": {
+          "signature": "(task_id: 'str' = 'contract_task_1', *, parent_agent_id: 'str' = 'parent', target_agent_id: 'str' = 'expert', required_capabilities: 'tuple[str, ...]' = ('architecture-review',), allowed_tool_names: 'tuple[str, ...]' = ('read_file',)) -> 'TaskRecord'",
+          "stability": "stable"
+        },
+        "contract_result": {
+          "signature": "(task_id: 'str', status: 'str' = 'completed') -> 'TaskResult'",
+          "stability": "stable"
+        },
+        "run_agent_message_queue_contract": {
+          "signature": "(factory: 'Callable[[], AgentMessageQueue]', *, supports_duplicate_ack_false: 'bool' = True, supports_wait_without_consuming: 'bool' = True, supports_filtered_collect_retention: 'bool' = True, supports_requeue: 'bool' = True) -> 'None'",
+          "stability": "stable"
+        },
+        "run_plan_claim_store_contract": {
+          "signature": "(factory: 'Callable[[], PlanClaimStore]') -> 'None'",
+          "stability": "stable"
+        },
+        "run_plan_store_contract": {
+          "signature": "(factory: 'Callable[[], PlanStore]', *, seed_claim: 'Callable[[PlanStore, PlanClaimRecord], None] | None' = None) -> 'None'",
+          "stability": "stable"
+        },
+        "run_task_store_contract": {
+          "signature": "(factory: 'Callable[[], TaskStore]') -> 'None'",
+          "stability": "stable"
+        }
+      }
+    },
+    "agentos.testing.contracts": {
+      "exports": {
+        "contract_envelope": {
+          "signature": "(envelope_id: 'str' = 'contract_env_request', *, to_agent_id: 'str' = 'worker', envelope_type: 'str' = 'task_request') -> 'AgentEnvelope'",
+          "stability": "stable"
+        },
+        "contract_plan": {
+          "signature": "(plan_id: 'str' = 'contract_plan', *, owner_agent_id: 'str' = 'leader', updated_at: 'float' = 2.0) -> 'PlanState'",
+          "stability": "stable"
+        },
+        "contract_record": {
+          "signature": "(task_id: 'str' = 'contract_task_1', *, parent_agent_id: 'str' = 'parent', target_agent_id: 'str' = 'expert', required_capabilities: 'tuple[str, ...]' = ('architecture-review',), allowed_tool_names: 'tuple[str, ...]' = ('read_file',)) -> 'TaskRecord'",
+          "stability": "stable"
+        },
+        "contract_result": {
+          "signature": "(task_id: 'str', status: 'str' = 'completed') -> 'TaskResult'",
+          "stability": "stable"
+        },
+        "run_agent_message_queue_contract": {
+          "signature": "(factory: 'Callable[[], AgentMessageQueue]', *, supports_duplicate_ack_false: 'bool' = True, supports_wait_without_consuming: 'bool' = True, supports_filtered_collect_retention: 'bool' = True, supports_requeue: 'bool' = True) -> 'None'",
+          "stability": "stable"
+        },
+        "run_plan_claim_store_contract": {
+          "signature": "(factory: 'Callable[[], PlanClaimStore]') -> 'None'",
+          "stability": "stable"
+        },
+        "run_plan_store_contract": {
+          "signature": "(factory: 'Callable[[], PlanStore]', *, seed_claim: 'Callable[[PlanStore, PlanClaimRecord], None] | None' = None) -> 'None'",
+          "stability": "stable"
+        },
+        "run_task_store_contract": {
+          "signature": "(factory: 'Callable[[], TaskStore]') -> 'None'",
+          "stability": "stable"
+        }
+      }
+    },
     "agentos.runtime": {
       "exports": {
         "Agent": {

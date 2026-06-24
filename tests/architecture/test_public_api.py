@@ -1,5 +1,6 @@
 ﻿import importlib
 import inspect
+import ast
 import json
 import re
 from pathlib import Path
@@ -169,6 +170,19 @@ def test_public_api_inventory_records_protocol_method_contracts() -> None:
             }
             assert expected_methods, f"{module_name}.{export_name}"
             assert export_payload["methods"] == expected_methods
+
+
+def test_public_testing_contract_helpers_do_not_use_optimized_asserts() -> None:
+    contract_dir = PROJECT_ROOT / "src" / "agentos" / "testing" / "contracts"
+
+    offenders: list[str] = []
+    for path in sorted(contract_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assert):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}")
+
+    assert offenders == []
 
 
 def test_legacy_mixed_case_package_name_is_not_public_api() -> None:

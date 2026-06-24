@@ -32,6 +32,8 @@ Every namespace listed here must be represented in
 - `agentos.deployment`
 - `agentos.readiness`
 - `agentos.release`
+- `agentos.testing`
+- `agentos.testing.contracts`
 
 ## Stable API
 
@@ -81,6 +83,15 @@ changes are involved, in migration notes.
 - `ReferenceStatePlaneStack` and `ReferenceLiveBackendProbePack`
 - worker supervisor reference adapters
 - release evidence helpers that aggregate external backend probe output
+
+## Testing Support API
+
+The `agentos.testing` and `agentos.testing.contracts` namespaces are stable
+adapter-author support APIs for reusable SDK contract tests. They are governed
+by the public API inventory, but they are not exported from the root `agentos`
+facade. Production application runtime code should depend on runtime
+namespaces; adapter test suites should import contract runners from
+`agentos.testing`.
 
 ## Compatibility Rules
 

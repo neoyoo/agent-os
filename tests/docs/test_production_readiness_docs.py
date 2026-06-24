@@ -284,6 +284,49 @@ def test_production_readiness_doc_describes_direct_task_claim_target_fence() -> 
         assert_phrase(multi_agent, expected)
 
 
+def test_production_readiness_doc_describes_adapter_contract_test_kits() -> None:
+    text = (ROOT / "docs" / "production-readiness.md").read_text(
+        encoding="utf-8",
+    )
+
+    for expected in [
+        "Adapter Contract Test Kits",
+        "agentos.testing.contracts",
+        "run_task_store_contract",
+        "run_agent_message_queue_contract",
+        "run_plan_store_contract",
+        "run_plan_claim_store_contract",
+        "production plan-store contract",
+        "production plan-claim-store contract",
+        "compare-and-save and claim-guarded save extensions",
+        "stale-claim sweep behavior",
+        "Third-party task-store adapters",
+        "Third-party message-queue adapters",
+        "Third-party plan-store adapters",
+        "Third-party plan-claim-store adapters",
+        "target-agent fencing",
+        "capability matching",
+        "lease reclaim",
+        "claimed terminal writes",
+        "cancellation convergence",
+        "single-consumer result consumption",
+        "send/collect delivery",
+        "ack idempotency",
+        "requeue",
+        "wait semantics",
+        "filtered collect retention",
+        "save/load",
+        "owner-scoped listing",
+        "revision compare-and-save",
+        "claim-guarded save",
+        "busy claim reporting",
+        "same-worker refresh",
+        "expired claim takeover",
+        "exact expired-claim release",
+    ]:
+        assert_phrase(text, expected)
+
+
 def test_production_readiness_doc_describes_live_backend_verification_runner_boundary() -> None:
     text = (ROOT / "docs" / "production-readiness.md").read_text(
         encoding="utf-8",

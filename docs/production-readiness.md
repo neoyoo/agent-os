@@ -165,6 +165,41 @@ allowed to claim any task matching its capabilities. Dedicated worker processes
 must fence direct claims by `target_agent_id` so a stale, corrupt, or misrouted
 delivery cannot cause the wrong agent process to execute another agent's task.
 
+### Adapter Contract Test Kits
+
+Third-party task-store adapters should run
+`run_task_store_contract(...)` imported from `agentos.testing.contracts`
+before claiming production compatibility. The production contract covers
+target-agent fencing, capability matching, lease reclaim, claimed terminal
+writes, cancellation convergence, and single-consumer result consumption.
+
+Third-party message-queue adapters should run
+`run_agent_message_queue_contract(...)` from
+`agentos.testing.contracts` before claiming production compatibility. The
+contract covers send/collect delivery, inbox isolation, ack idempotency,
+requeue, wait semantics, and filtered collect retention without treating the
+queue as the final task truth source.
+
+Third-party plan-store adapters should run `run_plan_store_contract(...)` from
+`agentos.testing.contracts` before claiming planner production compatibility.
+This production plan-store contract requires the compare-and-save and
+claim-guarded save extensions in addition to the base `PlanStore` protocol. It
+covers save/load, owner-scoped listing, revision compare-and-save, and
+claim-guarded save so scheduler workers cannot silently overwrite concurrent
+planner state.
+
+Third-party plan-claim-store adapters should run
+`run_plan_claim_store_contract(...)` from
+`agentos.testing.contracts` before claiming scheduler lease compatibility.
+This production plan-claim-store contract requires stale-claim sweep behavior
+in addition to the base `PlanClaimStore` protocol. It covers first claim, busy
+claim reporting, same-worker refresh, expired claim takeover, owner/worker
+release fencing, expired claim listing, and exact expired-claim release.
+
+The `agentos.testing` namespace is SDK-owned adapter-author support. It is not
+part of the root `agentos` facade, so application code should import contract
+kits from their explicit testing namespace.
+
 ### Live Backend Verification Evidence Boundary
 
 Use `BackendVerificationRecord`,

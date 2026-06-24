@@ -1,4 +1,5 @@
 from agentos.multi import AgentEnvelope, AgentInbox, TaskRequest
+from agentos.testing.contracts.message_queue import run_agent_message_queue_contract
 
 
 def request_envelope(envelope_id: str = "env_1") -> AgentEnvelope:
@@ -35,3 +36,7 @@ def test_agent_inbox_requeues_unacked_drained_delivery() -> None:
     queue.requeue("worker", delivery)
 
     assert queue.collect("worker") == [delivery]
+
+
+def test_agent_inbox_satisfies_reusable_message_queue_contract() -> None:
+    run_agent_message_queue_contract(lambda: AgentInbox())
