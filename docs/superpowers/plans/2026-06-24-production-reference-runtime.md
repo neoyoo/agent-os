@@ -417,7 +417,7 @@ Create a pytest integration test marked with the existing live backend skip conv
 
 Use real `PostgresTaskStore` and `RedisAgentMessageQueue`, but keep planner state in memory for the first slice. Dispatch one task to one `ExpertAgentRunner`, run `run_once`, and assert the parent collects one terminal result.
 
-- [ ] **Step 3: Add crash/recovery slice**
+- [x] **Step 3: Add crash/recovery slice**
 
 Simulate a delivery that is claimed but not acked, call Redis pending reclaim, and assert a later runner can finish or skip according to TaskStore truth.
 
