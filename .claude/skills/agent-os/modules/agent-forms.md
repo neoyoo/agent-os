@@ -110,8 +110,11 @@ Worker process lifecycle execution can use `WorkerProcessSpec`,
 `WorkerProcessState`, `WorkerProcessSupervisor`, and
 `LocalSubprocessWorkerSupervisor` for local reference supervision. The evidence
 shape covers `team_worker`, `planner_worker`, and `a2a_push_worker` processes,
-including `exit_code`, `started_at`, `stop_requested_at`, `stopped_at`, and
-`env_keys`. The adapter is argv-only, uses no shell parsing, and is not a Kubernetes, systemd, autoscaling, or secret-distribution layer.
+including `exit_code`, `started_at`, `last_heartbeat_at`,
+`stop_requested_at`, `stopped_at`, and `env_keys`. `heartbeat` records an
+evidence timestamp only. The adapter is argv-only, uses no shell parsing, and
+is not a Kubernetes, systemd, autoscaling, health/readiness, restart-policy,
+or secret-distribution layer.
 
 ## Readiness Terms
 

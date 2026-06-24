@@ -332,11 +332,13 @@ The reference adapter is deliberately narrow:
   WorkerProcessSpec rejects secret-like metadata keys so lifecycle evidence does
   not carry raw tokens, passwords, or credentials.
 - `WorkerProcessState` records JSON-safe lifecycle evidence: `status`, `pid`,
-  `exit_code`, `started_at`, `stop_requested_at`, `stopped_at`, `error`,
-  `worker_kind`, `command`, `env_keys`, and metadata. Environment values are
-  never emitted; only `env_keys` appear in evidence.
+  `exit_code`, `started_at`, `last_heartbeat_at`, `stop_requested_at`,
+  `stopped_at`, `error`, `worker_kind`, `command`, `env_keys`, and metadata.
+  Environment values are never emitted; only `env_keys` appear in evidence.
 - `WorkerProcessSupervisor` is the protocol boundary for `start`, `stop`,
-  `wait`, `state`, `is_running`, and `evidence`.
+  `wait`, `heartbeat`, `state`, `is_running`, and `evidence`. `heartbeat`
+  only records a lifecycle evidence timestamp; it is not a health/readiness
+  probe, restart policy, or autoscaling signal.
 - `LocalSubprocessWorkerSupervisor` is the local subprocess reference adapter
   for tests, development, and simple supervised service hosts. It does not
   inherit the host environment by default; only explicitly supplied env keys are

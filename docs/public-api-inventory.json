@@ -1189,7 +1189,7 @@
           "stability": "experimental"
         },
         "WorkerProcessState": {
-          "signature": "(worker_id: 'str', worker_kind: 'WorkerProcessKind', command: 'tuple[str, ...]', status: 'WorkerProcessStatus', cwd: 'str | None' = None, env_keys: 'tuple[str, ...]' = (), metadata: 'Mapping[str, object]' = <factory>, pid: 'int | None' = None, started_at: 'float | None' = None, stop_requested_at: 'float | None' = None, stopped_at: 'float | None' = None, exit_code: 'int | None' = None, error: 'str | None' = None) -> None",
+          "signature": "(worker_id: 'str', worker_kind: 'WorkerProcessKind', command: 'tuple[str, ...]', status: 'WorkerProcessStatus', cwd: 'str | None' = None, env_keys: 'tuple[str, ...]' = (), metadata: 'Mapping[str, object]' = <factory>, pid: 'int | None' = None, started_at: 'float | None' = None, last_heartbeat_at: 'float | None' = None, stop_requested_at: 'float | None' = None, stopped_at: 'float | None' = None, exit_code: 'int | None' = None, error: 'str | None' = None) -> None",
           "stability": "experimental"
         },
         "WorkerProcessStatus": {
@@ -1199,6 +1199,7 @@
         "WorkerProcessSupervisor": {
           "methods": {
             "evidence": "(self, worker_id: 'str') -> 'dict[str, object]'",
+            "heartbeat": "(self, worker_id: 'str', *, now: 'float | None' = None) -> 'WorkerProcessState'",
             "is_running": "(self, worker_id: 'str') -> 'bool'",
             "start": "(self, spec: 'WorkerProcessSpec') -> 'WorkerProcessState'",
             "state": "(self, worker_id: 'str') -> 'WorkerProcessState'",

@@ -882,10 +882,14 @@ class WorkerProcessState:
     metadata: Mapping[str, object] = field(default_factory=dict)
     pid: int | None = None
     started_at: float | None = None
+    last_heartbeat_at: float | None = None
     stop_requested_at: float | None = None
     stopped_at: float | None = None
     exit_code: int | None = None
     error: str | None = None
+
+    def __post_init__(self) -> None:
+        _reject_restricted_metadata_keys(self.metadata)
 
     @classmethod
     def from_spec(
@@ -895,6 +899,7 @@ class WorkerProcessState:
         status: WorkerProcessStatus = "configured",
         pid: int | None = None,
         started_at: float | None = None,
+        last_heartbeat_at: float | None = None,
         stop_requested_at: float | None = None,
         stopped_at: float | None = None,
         exit_code: int | None = None,
@@ -912,6 +917,7 @@ class WorkerProcessState:
             metadata=dict(spec.metadata),
             pid=pid,
             started_at=started_at,
+            last_heartbeat_at=last_heartbeat_at,
             stop_requested_at=stop_requested_at,
             stopped_at=stopped_at,
             exit_code=exit_code,
@@ -931,6 +937,7 @@ class WorkerProcessState:
             "metadata": _json_safe_mapping(self.metadata),
             "pid": self.pid,
             "started_at": self.started_at,
+            "last_heartbeat_at": self.last_heartbeat_at,
             "stop_requested_at": self.stop_requested_at,
             "stopped_at": self.stopped_at,
             "exit_code": self.exit_code,
@@ -959,6 +966,14 @@ class WorkerProcessSupervisor(Protocol):
         timeout_seconds: float | None = None,
     ) -> WorkerProcessState:
         """Wait for a worker process exit and return final or current state."""
+
+    def heartbeat(
+        self,
+        worker_id: str,
+        *,
+        now: float | None = None,
+    ) -> WorkerProcessState:
+        """Record a worker heartbeat evidence timestamp."""
 
     def state(self, worker_id: str) -> WorkerProcessState:
         """Return the latest known state for one worker."""
@@ -1070,6 +1085,25 @@ class LocalSubprocessWorkerSupervisor:
 
         with self._lock:
             return self._refresh_locked(worker_id)
+
+    def heartbeat(
+        self,
+        worker_id: str,
+        *,
+        now: float | None = None,
+    ) -> WorkerProcessState:
+        """Record a JSON-safe heartbeat evidence timestamp."""
+
+        with self._lock:
+            state = self._refresh_locked(worker_id)
+            if state.status not in {"running", "stopping"}:
+                return state
+            updated = replace(
+                state,
+                last_heartbeat_at=float(self._clock() if now is None else now),
+            )
+            self._states[worker_id] = updated
+            return updated
 
     def is_running(self, worker_id: str) -> bool:
         """Return whether the worker process is currently alive."""

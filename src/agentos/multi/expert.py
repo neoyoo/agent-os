@@ -43,8 +43,12 @@ class ExpertAgentRunner:
     def run_once(self, timeout: float | None = None) -> bool:
         """等待并处理当前 inbox 中的一批 task_request。"""
 
+        if self._stopped.is_set():
+            return False
         self._idle.clear()
         try:
+            if self._stopped.is_set():
+                return False
             wait_matching = getattr(self.coordinator.inbox, "wait_matching", None)
             if callable(wait_matching):
                 has_work = wait_matching(
@@ -54,7 +58,7 @@ class ExpertAgentRunner:
                 )
             else:
                 has_work = self.coordinator.inbox.wait(self.agent_id, timeout)
-            if not has_work:
+            if not has_work or self._stopped.is_set():
                 return False
             handled = False
             for delivery in self.coordinator.inbox.collect(
@@ -91,10 +95,15 @@ class ExpertAgentRunner:
                     else:
                         self._requeue_delivery(delivery, delay=True)
                     continue
-                result = self.coordinator.execute_expert_envelope(
-                    delivery.envelope,
-                    claim=claim,
-                )
+                try:
+                    result = self.coordinator.execute_expert_envelope(
+                        delivery.envelope,
+                        claim=claim,
+                    )
+                except Exception:
+                    self._requeue_delivery(delivery)
+                    self._release_worker_leases()
+                    continue
                 if result is not None and self._terminal_result_saved(
                     request.task_id,
                 ):
@@ -116,7 +125,10 @@ class ExpertAgentRunner:
         """请求 runner 停止。"""
 
         self._stopped.set()
-        return self._idle.wait(timeout=timeout_seconds)
+        drained = self._idle.wait(timeout=timeout_seconds)
+        if drained:
+            self._release_worker_leases()
+        return drained
 
     def _terminal_result_saved(self, task_id: str) -> bool:
         record = self.coordinator.task_table.get(task_id)
@@ -144,3 +156,15 @@ class ExpertAgentRunner:
         timer = Timer(delay_seconds, requeue, args=(self.agent_id, delivery))
         timer.daemon = True
         timer.start()
+
+    def _release_worker_leases(self) -> None:
+        task_table = getattr(self.coordinator, "task_table", None)
+        if task_table is None:
+            return
+        release_running_leases = getattr(
+            task_table,
+            "release_running_leases",
+            None,
+        )
+        if callable(release_running_leases):
+            release_running_leases(worker_id=self.worker_id, now=time.time())

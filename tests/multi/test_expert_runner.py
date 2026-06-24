@@ -1,4 +1,5 @@
 import time
+from threading import Event, Thread
 
 from agentos.multi import (
     AgentCard,
@@ -121,6 +122,95 @@ def test_expert_runner_processes_one_task_request_and_returns_result() -> None:
     coordinator.spawn_executor.shutdown()
 
 
+def test_expert_runner_run_once_does_not_accept_new_work_after_stop() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+    )
+    runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
+
+    assert runner.stop(timeout_seconds=0.1)
+    assert runner.run_once(timeout=0.1) is False
+
+    stored = coordinator.task_table.get(handle.task_id)
+    assert stored is not None
+    assert stored.status == "queued"
+    assert inbox.has_pending("expert")
+    assert inbox.acked == []
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_stop_during_wait_prevents_late_collect() -> None:
+    wait_entered = Event()
+    allow_wait_return = Event()
+
+    class BlockingInbox(RecordingInbox):
+        def wait(self, agent_id: str, timeout: float | None = None) -> bool:
+            wait_entered.set()
+            allow_wait_return.wait(timeout=1)
+            return True
+
+        def collect(
+            self,
+            agent_id: str,
+            *,
+            envelope_types: tuple[str, ...] | None = None,
+        ) -> list[QueueDelivery]:
+            raise AssertionError("stopped runner must not collect new deliveries")
+
+    inbox = BlockingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
+
+    result: list[bool] = []
+    thread = Thread(target=lambda: result.append(runner.run_once(timeout=5)))
+    thread.start()
+    assert wait_entered.wait(timeout=1)
+
+    assert runner.stop(timeout_seconds=0.01) is False
+    allow_wait_return.set()
+    thread.join(timeout=1)
+
+    assert result == [False]
+    assert not thread.is_alive()
+
+    coordinator.spawn_executor.shutdown()
+
+
 def test_expert_runner_claims_task_before_execution_and_acks_after_terminal_save() -> None:
     inbox = RecordingInbox()
     coordinator = AgentCoordinator(
@@ -171,6 +261,66 @@ def test_expert_runner_claims_task_before_execution_and_acks_after_terminal_save
     assert stored.attempt == 1
     assert len(inbox.acked) == 1
     assert inbox.acked[0][0] == "expert"
+
+    coordinator.spawn_executor.shutdown()
+
+
+def test_expert_runner_requeues_claimed_delivery_and_releases_lease_on_outer_failure() -> None:
+    inbox = RecordingInbox()
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        inbox=inbox,
+        task_table=TaskTable(),
+        spawn_executor=SpawnExecutor(max_workers=1),
+        subagent_factory=StaticSubagentFactory(),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="parent",
+            name="Parent",
+            description="Parent agent.",
+            capabilities=("coordinate",),
+        ),
+        build_agent_with_response("parent"),
+    )
+    coordinator.attach_agent(
+        AgentCard(
+            agent_id="expert",
+            name="Expert",
+            description="Expert agent.",
+            capabilities=("code-review",),
+        ),
+        build_agent_with_response("expert result"),
+    )
+    handle = coordinator.dispatch(
+        instruction="Review this",
+        required_capabilities=("code-review",),
+        parent_agent_id="parent",
+    )
+
+    def raise_outer_failure(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("runner boundary unavailable")
+
+    coordinator.execute_expert_envelope = raise_outer_failure  # type: ignore[method-assign]
+    runner = ExpertAgentRunner(
+        coordinator=coordinator,
+        agent_id="expert",
+        worker_id="expert-worker-1",
+        capabilities=("code-review",),
+        lease_ttl_seconds=30.0,
+        requeue_backoff_seconds=0.0,
+    )
+
+    assert runner.run_once(timeout=0.1) is False
+
+    stored = coordinator.task_table.get(handle.task_id)
+    assert stored is not None
+    assert stored.status == "queued"
+    assert stored.worker_id is None
+    assert stored.lease_expires_at is None
+    assert inbox.has_pending("expert")
+    assert inbox.acked == []
+    assert coordinator.collect_results("parent") == []
 
     coordinator.spawn_executor.shutdown()
 

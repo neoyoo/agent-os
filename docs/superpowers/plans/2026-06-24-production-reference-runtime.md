@@ -445,23 +445,23 @@ Expected without env: skipped. Expected with env: pass.
 - Test: `tests/multi/test_expert_runner.py`
 - Docs: `docs/production-readiness.md`
 
-- [ ] **Step 1: Write failing tests for heartbeat evidence**
+- [x] **Step 1: Write failing tests for heartbeat evidence**
 
 Add tests proving a worker process state can record a heartbeat timestamp without exposing secrets or inheriting platform-specific supervisor behavior.
 
-- [ ] **Step 2: Add minimal heartbeat evidence primitive**
+- [x] **Step 2: Add minimal heartbeat evidence primitive**
 
 Add only SDK-owned data/evidence fields and local reference methods. Do not add Kubernetes/systemd/autoscaling integrations.
 
-- [ ] **Step 3: Write failing tests for graceful drain**
+- [x] **Step 3: Write failing tests for graceful drain**
 
 Add tests proving `ExpertAgentRunner.stop(...)` stops accepting new work, waits for the current `run_once` critical section to become idle, and does not drop an already collected delivery silently.
 
-- [ ] **Step 4: Implement graceful drain behavior**
+- [x] **Step 4: Implement graceful drain behavior**
 
 Keep implementation inside `ExpertAgentRunner` and existing task lease APIs. Do not add a new process manager.
 
-- [ ] **Step 5: Run lifecycle focused tests**
+- [x] **Step 5: Run lifecycle focused tests**
 
 Run:
 

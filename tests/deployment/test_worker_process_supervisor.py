@@ -64,6 +64,37 @@ def test_worker_process_state_evidence_is_json_safe_and_redacts_env_values() -> 
     json.dumps(evidence)
 
 
+def test_worker_process_state_evidence_records_heartbeat_timestamp() -> None:
+    spec = WorkerProcessSpec(
+        worker_id="planner-worker-heartbeat",
+        command=(sys.executable, "-c", "print('heartbeat')"),
+        worker_kind="planner_worker",
+    )
+    state = WorkerProcessState.from_spec(
+        spec,
+        status="running",
+        pid=1234,
+        started_at=10.0,
+        last_heartbeat_at=12.5,
+    )
+
+    evidence = state.to_evidence()
+
+    assert evidence["last_heartbeat_at"] == 12.5
+    json.dumps(evidence)
+
+
+def test_worker_process_state_rejects_secret_like_metadata_when_directly_constructed() -> None:
+    with pytest.raises(ValueError, match="metadata contains restricted key"):
+        WorkerProcessState(
+            worker_id="planner-worker-secret",
+            worker_kind="planner_worker",
+            command=(sys.executable,),
+            status="running",
+            metadata={"nested": {"api_token": "raw-token"}},
+        )
+
+
 def test_worker_process_state_evidence_redacts_secret_command_arguments() -> None:
     spec = WorkerProcessSpec(
         worker_id="team-worker-1",
@@ -114,6 +145,29 @@ def test_local_subprocess_worker_supervisor_records_exit_evidence() -> None:
     assert finished.stopped_at is not None
     assert supervisor.state("planner-worker-1") == finished
     assert supervisor.evidence("planner-worker-1")["status"] == "failed"
+
+
+def test_local_subprocess_worker_supervisor_records_heartbeat_evidence() -> None:
+    supervisor = LocalSubprocessWorkerSupervisor(
+        clock=iter([10.0, 12.5, 13.0, 14.0]).__next__,
+    )
+    spec = WorkerProcessSpec(
+        worker_id="planner-worker-heartbeat",
+        command=(sys.executable, "-c", "import time; time.sleep(30)"),
+        worker_kind="planner_worker",
+    )
+
+    supervisor.start(spec)
+    try:
+        heartbeat = supervisor.heartbeat("planner-worker-heartbeat")
+    finally:
+        supervisor.stop("planner-worker-heartbeat", timeout_seconds=5)
+
+    assert heartbeat.status == "running"
+    assert heartbeat.last_heartbeat_at == 12.5
+    assert supervisor.evidence("planner-worker-heartbeat")[
+        "last_heartbeat_at"
+    ] == 12.5
 
 
 def test_local_subprocess_worker_supervisor_does_not_inherit_host_environment(
