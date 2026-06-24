@@ -421,7 +421,7 @@ Use real `PostgresTaskStore` and `RedisAgentMessageQueue`, but keep planner stat
 
 Simulate a delivery that is claimed but not acked, call Redis pending reclaim, and assert a later runner can finish or skip according to TaskStore truth.
 
-- [ ] **Step 4: Add planner pending-dispatch recovery slice**
+- [x] **Step 4: Add planner pending-dispatch recovery slice**
 
 Use `PlannerRuntime.recover_pending_dispatches(...)` with a real `PostgresTaskStore` and existing planner store primitives when possible. Keep the test narrow: one pending assignment, one recovery call, one submitted evidence result.
 

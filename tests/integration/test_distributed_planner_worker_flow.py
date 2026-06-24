@@ -12,6 +12,9 @@ from agentos.multi import (
     ExpertAgentRunner,
     InMemoryPlanStore,
     InMemoryRegistry,
+    PlanAssignment,
+    PlanState,
+    PlanStep,
     PlannerRuntime,
     SpawnExecutor,
     SubagentInitRequest,
@@ -203,6 +206,124 @@ def test_live_distributed_planner_dispatches_expert_worker_to_completion() -> No
         assert len(results) == 1
         assert results[0].status == "completed"
         assert results[0].summary == "expert completed live work"
+        assert stored_task is not None
+        assert stored_task.status == "completed"
+        assert stored_task.result == results[0]
+    finally:
+        _cleanup_redis_agent_streams(redis_client, key_prefix)
+        task_store.close()
+        spawn_executor.shutdown()
+
+
+def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None:
+    postgres_dsn, redis_url = _require_live_backends()
+    _reset_postgres_schema(postgres_dsn)
+    redis_client = _connect_redis(redis_url)
+    key_prefix = f"agentos-test-{uuid4().hex}"
+    task_store = PostgresTaskStore(
+        dsn=postgres_dsn,
+        connection=_connect_postgres(postgres_dsn),
+    )
+    queue = RedisAgentMessageQueue(
+        redis_url,
+        client=redis_client,
+        key_prefix=key_prefix,
+        consumer_name="pending-dispatch-recovery",
+        allow_unscoped_consumers=True,
+    )
+    spawn_executor = SpawnExecutor(max_workers=1)
+    coordinator = AgentCoordinator(
+        registry=InMemoryRegistry(),
+        message_queue=queue,
+        task_store=task_store,
+        spawn_executor=spawn_executor,
+        subagent_factory=_StaticSubagentFactory(),
+    )
+    plan_store = InMemoryPlanStore()
+    plan_store.create_plan(
+        PlanState(
+            plan_id="plan_pending_dispatch",
+            objective="Recover planner assignment after scheduler restart.",
+            owner_agent_id="parent",
+            status="running",
+            steps=(
+                PlanStep(
+                    step_id="step_pending_dispatch",
+                    instruction="Review recovered pending dispatch.",
+                    status="assigned",
+                    required_capabilities=("review",),
+                    template_id="expert-reviewer",
+                    task_id="task_pending_dispatch",
+                    assigned_agent_id="expert",
+                ),
+            ),
+            assignments=(
+                PlanAssignment(
+                    plan_id="plan_pending_dispatch",
+                    step_id="step_pending_dispatch",
+                    template_id="expert-reviewer",
+                    task_id="task_pending_dispatch",
+                    target_agent_id="expert",
+                    created_at=10.0,
+                    dispatch_status="pending",
+                ),
+            ),
+            created_at=9.0,
+            updated_at=10.0,
+        ),
+    )
+    planner = PlannerRuntime(
+        store=plan_store,
+        coordinator=coordinator,
+        templates=(
+            SubAgentTemplate(
+                template_id="expert-reviewer",
+                name="Expert Reviewer",
+                role="Review recovered planner work.",
+                capabilities=("review",),
+                target_agent_id="expert",
+            ),
+        ),
+        clock=lambda: 20.0,
+    )
+
+    try:
+        coordinator.attach_agent(
+            AgentCard(
+                agent_id="parent",
+                name="Parent",
+                description="Planner owner.",
+                capabilities=("coordinate",),
+            ),
+            _build_agent_with_response("parent unused"),
+        )
+        coordinator.attach_agent(
+            AgentCard(
+                agent_id="expert",
+                name="Expert",
+                description="Live state-plane expert.",
+                capabilities=("review",),
+            ),
+            _build_agent_with_response("expert recovered pending dispatch"),
+        )
+
+        report = planner.recover_pending_dispatches("plan_pending_dispatch")
+        recovered_plan = planner.get_plan("plan_pending_dispatch")
+        runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
+
+        assert [assignment.task_id for assignment in report.assigned] == [
+            "task_pending_dispatch",
+        ]
+        assert report.skipped == ()
+        assert recovered_plan.assignments[0].dispatch_status == "submitted"
+        assert recovered_plan.assignments[0].submitted_at == 20.0
+        assert runner.run_once(timeout=1.0) is True
+
+        results = coordinator.collect_results("parent")
+        stored_task = task_store.get("task_pending_dispatch")
+        assert len(results) == 1
+        assert results[0].status == "completed"
+        assert results[0].summary == "expert recovered pending dispatch"
         assert stored_task is not None
         assert stored_task.status == "completed"
         assert stored_task.result == results[0]
