@@ -3,6 +3,11 @@ import json
 from agentos.runtime import (
     AssistantContentDelta,
     AssistantThinkingDelta,
+    ContextLoaded,
+    FinalResult,
+    PlanUpdated,
+    SkillLoaded,
+    StatusUpdate,
     ToolStreamFailed,
     ToolStreamStarted,
     TurnStreamFailed,
@@ -57,6 +62,28 @@ def test_event_to_json_serializes_event_type() -> None:
     }
 
 
+def test_event_to_json_serializes_observable_interaction_events() -> None:
+    events = [
+        StatusUpdate(stage="context", message="正在装载上下文。"),
+        ContextLoaded(summary="已装载 1 条消息。"),
+        SkillLoaded(skill_name="quote-skill", resource="SKILL.md", summary="loaded"),
+        PlanUpdated(summary="先看图再加载 skill。", status="created"),
+        FinalResult(content="完成"),
+    ]
+
+    payloads = [json.loads(event_to_json(event) or "{}") for event in events]
+
+    assert [payload["type"] for payload in payloads] == [
+        "status_update",
+        "context_loaded",
+        "skill_loaded",
+        "plan_updated",
+        "final_result",
+    ]
+    assert payloads[0]["message"] == "正在装载上下文。"
+    assert payloads[2]["skill_name"] == "quote-skill"
+
+
 def test_event_to_json_serializes_tool_failure_error_message() -> None:
     payload = json.loads(
         event_to_json(
@@ -77,3 +104,16 @@ def test_event_to_sse_serializes_turn_failure_error_message() -> None:
 
     assert chunk is not None
     assert json.loads(chunk.split("data: ", 1)[1])["error"] == "provider failed"
+
+
+def test_event_to_sse_serializes_turn_failure_with_non_deepcopyable_error() -> None:
+    class NonDeepcopyableError(RuntimeError):
+        def __deepcopy__(self, memo: object) -> object:
+            raise TypeError("cannot deepcopy provider error")
+
+    chunk = event_to_sse(TurnStreamFailed(error=NonDeepcopyableError("401 Unauthorized")))
+
+    assert chunk is not None
+    payload = json.loads(chunk.split("data: ", 1)[1])
+    assert payload["type"] == "TurnStreamFailed"
+    assert payload["error"] == "401 Unauthorized"

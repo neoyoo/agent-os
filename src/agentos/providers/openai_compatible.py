@@ -224,9 +224,10 @@ class HttpxAsyncJSONTransport:
                 response.raise_for_status()
                 parsed = response.json()
         except httpx.HTTPStatusError as error:
+            body = await _async_response_error_text(error.response)
             raise OpenAICompatibleProviderError(
                 "OpenAI-compatible request failed with HTTP "
-                f"{error.response.status_code}: {error.response.text}",
+                f"{error.response.status_code}: {body}",
             ) from error
         except httpx.HTTPError as error:
             raise OpenAICompatibleProviderError(
@@ -265,9 +266,10 @@ class HttpxAsyncJSONTransport:
                             break
                         yield parsed
         except httpx.HTTPStatusError as error:
+            body = await _async_response_error_text(error.response)
             raise OpenAICompatibleProviderError(
                 "OpenAI-compatible request failed with HTTP "
-                f"{error.response.status_code}: {error.response.text}",
+                f"{error.response.status_code}: {body}",
             ) from error
         except httpx.HTTPError as error:
             raise OpenAICompatibleProviderError(
@@ -285,6 +287,19 @@ class HttpxAsyncJSONTransport:
                 "agent-os[async-http]",
             ) from error
         return httpx
+
+
+async def _async_response_error_text(response: object) -> str:
+    aread = getattr(response, "aread", None)
+    if callable(aread):
+        try:
+            await aread()
+        except Exception:
+            pass
+    try:
+        return str(getattr(response, "text"))
+    except Exception:
+        return ""
 
 
 @dataclass(slots=True)

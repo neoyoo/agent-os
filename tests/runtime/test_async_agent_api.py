@@ -250,9 +250,26 @@ def test_agent_async_stream_cancels_running_async_provider_task() -> None:
         first = await anext(stream)
         assert isinstance(first, TurnStreamStarted)
 
-        pending_next = asyncio.create_task(anext(stream))
-        started = await asyncio.to_thread(provider_started.wait, 1)
-        assert started is True
+        pending_next: asyncio.Task[object]
+        while True:
+            pending_next = asyncio.create_task(anext(stream))
+            started_wait = asyncio.create_task(
+                asyncio.to_thread(provider_started.wait, 1),
+            )
+            done, pending = await asyncio.wait(
+                {pending_next, started_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if started_wait in done and started_wait.result():
+                if pending_next.done():
+                    await pending_next
+                    continue
+                break
+            await pending_next
+            for task in pending:
+                task.cancel()
+        started_wait.cancel()
+        assert provider_started.is_set() is True
         pending_next.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending_next

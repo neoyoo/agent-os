@@ -14,9 +14,13 @@ from agentos.providers import (
 from agentos.runtime import (
     AssistantCompleted,
     AssistantContentDelta,
+    ContextLoaded,
+    FinalResult,
+    PlanUpdated,
     ProviderRequestBuilder,
     QueryLoop,
     RunOptions,
+    StatusUpdate,
     TurnStreamCompleted,
     TurnStreamStarted,
 )
@@ -52,13 +56,23 @@ def test_query_loop_streams_content_and_completes_turn() -> None:
 
     assert [type(event).__name__ for event in events] == [
         "TurnStreamStarted",
+        "StatusUpdate",
+        "PlanUpdated",
+        "StatusUpdate",
+        "ContextLoaded",
+        "StatusUpdate",
         "AssistantContentDelta",
         "AssistantCompleted",
+        "FinalResult",
         "TurnStreamCompleted",
     ]
     assert isinstance(events[0], TurnStreamStarted)
-    assert events[1] == AssistantContentDelta(index=1, text="hello")
-    assert isinstance(events[2], AssistantCompleted)
+    assert isinstance(events[1], StatusUpdate)
+    assert isinstance(events[2], PlanUpdated)
+    assert isinstance(events[4], ContextLoaded)
+    assert events[6] == AssistantContentDelta(index=1, text="hello")
+    assert isinstance(events[7], AssistantCompleted)
+    assert events[8] == FinalResult(content="hello")
     assert isinstance(events[-1], TurnStreamCompleted)
     assert messages.materialize_provider_messages() == [
         {"role": "user", "content": "hi"},
@@ -138,6 +152,11 @@ def test_query_loop_yields_content_delta_before_provider_stream_completes() -> N
     events = loop.run_turn_stream("hi")
 
     assert isinstance(next(events), TurnStreamStarted)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), PlanUpdated)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), ContextLoaded)
+    assert isinstance(next(events), StatusUpdate)
     assert next(events) == AssistantContentDelta(index=1, text="hel")
     assert provider.resumed_after_content_delta is False
 
@@ -153,6 +172,11 @@ def test_query_loop_does_not_retry_after_streaming_visible_delta() -> None:
     events = loop.run_turn_stream("hi")
 
     assert isinstance(next(events), TurnStreamStarted)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), PlanUpdated)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), ContextLoaded)
+    assert isinstance(next(events), StatusUpdate)
     assert next(events) == AssistantContentDelta(index=1, text="partial")
     with pytest.raises(RuntimeError, match="stream failed after partial output"):
         list(events)
@@ -178,6 +202,11 @@ def test_provider_stream_cancelled_after_delta_does_not_retry() -> None:
     events = loop.run_turn_stream("hi")
 
     assert isinstance(next(events), TurnStreamStarted)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), PlanUpdated)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), ContextLoaded)
+    assert isinstance(next(events), StatusUpdate)
     assert next(events) == AssistantContentDelta(index=1, text="partial")
     with pytest.raises(RuntimeError, match="provider stream was cancelled"):
         list(events)
@@ -230,9 +259,15 @@ def test_query_loop_can_emit_thinking_when_requested() -> None:
 
     assert [type(event).__name__ for event in events] == [
         "TurnStreamStarted",
+        "StatusUpdate",
+        "PlanUpdated",
+        "StatusUpdate",
+        "ContextLoaded",
+        "StatusUpdate",
         "AssistantThinkingDelta",
         "AssistantContentDelta",
         "AssistantCompleted",
+        "FinalResult",
         "TurnStreamCompleted",
     ]
-    assert events[1].text == "private reasoning"
+    assert events[6].text == "private reasoning"

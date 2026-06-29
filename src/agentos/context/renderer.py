@@ -51,6 +51,7 @@ class ContextRenderer:
 
         sections = [
             self._runtime_contract(),
+            self._interaction_protocol(),
             self._capability_plane(),
             self._context_management_rules(),
         ]
@@ -89,6 +90,22 @@ class ContextRenderer:
             f"- {guardrail}" for guardrail in self._runtime_contract_config.guardrails()
         )
         return "\n".join(lines)
+
+    def _interaction_protocol(self) -> str:
+        """渲染用户可见交互协议。"""
+
+        return "\n".join(
+            [
+                "# Interaction Protocol",
+                "",
+                "- 在开始较长任务、读取上下文或调用工具前，先用简短自然语言回应用户当前要做什么。",
+                "- 执行过程中持续给出用户可见进展，特别是上下文装载、skill 加载、计划创建或工具调用前后。",
+                "- 工具调用不是静默内部动作；调用前说明目的，调用后说明学到了什么或下一步是什么。",
+                "- 如果任务需要多步完成，先形成简短计划，并在计划变化、完成关键步骤或遇到阻塞时更新状态。",
+                "- skill、附件、压缩历史、memory 或 recall 进入上下文时，把这件事作为可观察状态说明给用户。",
+                "- 最终结果只放完成结论、依据、验证情况和必要的后续事项；不要把所有内部事件流水账重复一遍。",
+            ],
+        )
 
     def _capability_plane(self) -> str:
         """渲染当前 session 注册能力的摘要。"""

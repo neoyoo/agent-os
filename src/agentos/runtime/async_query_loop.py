@@ -49,7 +49,12 @@ from agentos.runtime.stream_events import (
     AssistantCompleted,
     AssistantContentDelta,
     AssistantThinkingDelta,
+    ContextLoaded,
+    FinalResult,
+    PlanUpdated,
+    SkillLoaded,
     RunOptions,
+    StatusUpdate,
     ToolStreamCompleted,
     ToolStreamFailed,
     ToolStreamStarted,
@@ -160,6 +165,14 @@ class AsyncQueryLoop:
             ),
         )
         yield TurnStreamStarted(user_message=user_message)
+        yield StatusUpdate(
+            stage="received",
+            message="我已收到请求，先整理上下文再开始执行。",
+        )
+        yield PlanUpdated(
+            status="created",
+            summary="先装载上下文和可用能力，再由模型决定是否调用工具或 skill，最后整合结果。",
+        )
 
         try:
             try:
@@ -244,7 +257,18 @@ class AsyncQueryLoop:
         applied_tool_signatures: set[str] = set()
         while True:
             self._raise_if_interrupted()
+            yield StatusUpdate(
+                stage="context",
+                message="正在装载会话上下文、工作状态和可用能力。",
+            )
             request = self.sync_loop.build_request()
+            yield ContextLoaded(
+                source="runtime",
+                summary=(
+                    f"已装载 {len(request.messages)} 条消息和 "
+                    f"{len(request.tools)} 个工具声明。"
+                ),
+            )
             request = self.sync_loop._before_provider_call(request)
             self.sync_loop._emit(
                 ProviderRequestBuiltEvent(**self.sync_loop._event_context(turn)),
@@ -253,6 +277,10 @@ class AsyncQueryLoop:
                 "provider_call",
                 message_count=len(request.messages),
                 tool_count=len(request.tools),
+            )
+            yield StatusUpdate(
+                stage="model",
+                message="正在请求模型生成下一步响应。",
             )
             response: ProviderResponse | None = None
             async for event in self._consume_provider_stream(request, options):
@@ -288,6 +316,7 @@ class AsyncQueryLoop:
             yield AssistantCompleted(response=response)
 
             if not response.tool_calls:
+                yield FinalResult(content=response.content)
                 yield _FinalContent(response.content)
                 return
             if self.tool_call_router is None:
@@ -301,6 +330,11 @@ class AsyncQueryLoop:
             appended_message_ids: list[str] = [assistant.id]
             for tool_call in response.tool_calls:
                 self._raise_if_interrupted()
+                yield StatusUpdate(
+                    stage="tool",
+                    message=f"准备调用工具 `{tool_call.name}`。",
+                    detail=tool_call.id,
+                )
                 yield ToolStreamStarted(
                     tool_name=tool_call.name,
                     tool_call_id=tool_call.id,
@@ -378,6 +412,41 @@ class AsyncQueryLoop:
                     tool_call_id=tool_call.id,
                     content=result.content,
                 )
+                skill_event = self._skill_loaded_event(tool_call, result)
+                if skill_event is not None:
+                    yield skill_event
+                yield StatusUpdate(
+                    stage="tool_result",
+                    message=f"已读取 `{tool_call.name}` 的结果，继续推理。",
+                    detail=tool_call.id,
+                )
+
+    def _skill_loaded_event(
+        self,
+        tool_call: object,
+        result: ToolExecutionResult,
+    ) -> SkillLoaded | None:
+        """把 skill loader 工具结果提升为用户可见事件。"""
+
+        tool_name = str(getattr(tool_call, "name", ""))
+        if tool_name not in {"load_skill", "load_skill_resource"}:
+            return None
+        arguments = getattr(tool_call, "arguments", {})
+        skill_name = str(
+            arguments.get("skill_name")
+            or arguments.get("name")
+            or arguments.get("skill")
+            or "unknown",
+        )
+        resource = arguments.get("resource")
+        if resource is None:
+            resource = arguments.get("path")
+        summary = result.content.strip().splitlines()[0] if result.content.strip() else None
+        return SkillLoaded(
+            skill_name=skill_name,
+            resource=None if resource is None else str(resource),
+            summary=summary,
+        )
 
     async def _execute_tool_call(self, tool_call: object) -> ToolExecutionResult:
         if self.tool_call_router is None:

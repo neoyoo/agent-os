@@ -355,6 +355,80 @@ def test_openai_compatible_async_stream_transport_ignores_sse_metadata(
     assert [chunk["id"] for chunk in chunks] == ["chatcmpl_1", "chatcmpl_2"]
 
 
+def test_openai_compatible_async_stream_transport_reads_error_body(
+    monkeypatch,
+) -> None:
+    class ResponseNotRead(RuntimeError):
+        pass
+
+    class FakeHTTPStatusError(RuntimeError):
+        def __init__(self, response: object) -> None:
+            super().__init__("401 Unauthorized")
+            self.response = response
+
+    class FakeStreamResponse:
+        status_code = 401
+        _content: bytes | None = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def aread(self) -> bytes:
+            self._content = b'{"error":"invalid api key"}'
+            return self._content
+
+        @property
+        def text(self) -> str:
+            if self._content is None:
+                raise ResponseNotRead("streaming response has not been read")
+            return self._content.decode("utf-8")
+
+        def raise_for_status(self) -> None:
+            raise FakeHTTPStatusError(self)
+
+        async def aiter_lines(self):
+            yield "data: [DONE]"
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def stream(self, *args: object, **kwargs: object) -> FakeStreamResponse:
+            return FakeStreamResponse()
+
+    class FakeHTTPX:
+        AsyncClient = FakeAsyncClient
+        HTTPStatusError = FakeHTTPStatusError
+        HTTPError = RuntimeError
+
+    monkeypatch.setattr(HttpxAsyncJSONTransport, "_httpx", lambda self: FakeHTTPX)
+
+    async def collect() -> None:
+        async for _ in HttpxAsyncJSONTransport().post_json_stream(
+            url="https://api.example.test/chat/completions",
+            headers={},
+            payload={},
+            timeout=1.0,
+        ):
+            pass
+
+    with pytest.raises(OpenAICompatibleProviderError) as error:
+        asyncio.run(collect())
+
+    message = str(error.value)
+    assert "HTTP 401" in message
+    assert "invalid api key" in message
+
+
 def test_openai_compatible_provider_leaves_http_error_translation_to_transport() -> None:
     source = inspect.getsource(OpenAICompatibleProvider.complete)
 
