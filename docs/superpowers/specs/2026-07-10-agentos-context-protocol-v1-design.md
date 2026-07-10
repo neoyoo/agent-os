@@ -5,7 +5,7 @@
 - 协议名称：AgentOS Context Protocol
 - 协议标识：agentos.context
 - 协议版本：1.0
-- 状态：设计草案，核心方向已确认，待书面规范复核
+- 状态：已批准，进入实施规划
 - 适用范围：Local、Durable、Distributed 三种 Runtime Profile
 - 上位设计：2026-07-10-agentos-next-generation-sdk-architecture-design.md
 
