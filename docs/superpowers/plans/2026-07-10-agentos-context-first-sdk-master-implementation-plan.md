@@ -305,6 +305,7 @@ Phase 6  Distributed Runtime / Transport
 主要文件：
 
 - `AGENTS.md`
+- `docs/governance/agentos-engineering-standard.md`
 - `docs/design/sdk-architecture.md`
 - `docs/design/llm-context-only-example.md`
 - `docs/api-stability.md`
@@ -316,6 +317,7 @@ Phase 6  Distributed Runtime / Transport
 
 完成条件：
 
+- Mandatory Context Bootstrap、Scope Contract、文件规模门禁和双层 Review 成为所有工作包的共同约束；
 - 活跃设计文档不再声明 `system = rendered context`；
 - 旧七段式范文明确标记为历史输入，不再是规范；
 - Public API 签名比较跨 Python 3.11-3.13 稳定；
@@ -323,6 +325,7 @@ Phase 6  Distributed Runtime / Transport
 - Release Evidence 的静态 Fixture 与“当前候选提交验证”职责分离；
 - `python -m pytest -q` 在无 Live Backend 环境下全绿；
 - 生成 `0.2.0a1` Public API 基线策略，但此阶段不提前导出未实现类型。
+- 生成当前 300/500/800 行模块规模基线；后续工作包不得继续向 800 行以上项目文件追加新的独立职责。
 
 ### Phase 1：Context Protocol Kernel
 
@@ -489,6 +492,7 @@ Phase 2 冻结后可独立执行，不修改 Provider Adapter。
 - 修改 `src/agentos/runtime/provider_request_builder.py`
 - 修改 `src/agentos/runtime/query_loop.py`
 - 修改 `src/agentos/runtime/async_query_loop.py`
+- 创建 `src/agentos/capabilities/scheduler.py`
 - 修改 `src/agentos/context/registry.py`
 - 修改 `src/agentos/__init__.py`
 - 修改 `docs/public-api-inventory.json`
@@ -506,6 +510,10 @@ Phase 2 冻结后可独立执行，不修改 Provider Adapter。
 
 - `AgentBuilder().provider(provider).tools(tools).build()` 保持 Level 1 简单入口；
 - 基础安装无数据库和远程服务依赖；
+- Run 状态机拥有统一 Kernel 语义；短时 I/O 保持 `RUNNING`，持久等待退出当前 Loop，唤醒按 `WAITING -> QUEUED -> RUNNING` 创建 Continuation Turn；
+- 恢复执行从权威状态重新组装 ProviderRequest，不复用暂停前的内存 Provider Transcript；
+- `ToolCallScheduler` 统一同步和异步批次语义，Tool 默认 `EXCLUSIVE`，显式 `PARALLEL_SAFE` 才并发；
+- `max_parallel_calls` 默认 `8`，超限 FIFO 排队，独占调用形成屏障，Tool Result 按 Provider 原始顺序写回；
 - Root API 收敛到五个约定名称；
 - Local 垂直切片覆盖用户消息、双平面 Context、Tool、附件挂载和最终回复；
 - ContextMount 位于 `load_attachment` Tool Result 后，首轮上传自动 Mount，Turn 终态清除 Mount 但保留 Artifact；
@@ -520,6 +528,7 @@ Phase 2 冻结后可独立执行，不修改 Provider Adapter。
 - SQLite 保存 Session、Run、StoredMessage、Working State、Plan 和 Artifact Metadata；
 - Filesystem 保存 Artifact Content；
 - 进程重启后恢复，不依赖 Provider Transcript；
+- 持久化 WaitReason、Checkpoint、Resume Command 和 Continuation Turn 所需权威状态；
 - Skill、Plan、Memory、HITL 和定时 Wakeup 可组合；
 - 引入 `agentos[durable]` 可选依赖组；
 - 不导入 Redis/PostgreSQL Client。
@@ -538,6 +547,7 @@ Phase 2 冻结后可独立执行，不修改 Provider Adapter。
 - 新增 `agentos.transports`，承接 HTTP、SSE、WebSocket、CLI 和 A2A wire mapping；
 - PostgreSQL 是持久真值，Redis 承担 Lease、Queue、Inbox、Wakeup 和 Stream Replay；
 - at-least-once 交付结合 Command ID、CAS 和 Fencing；
+- `WAITING -> QUEUED` 使用幂等 Wakeup Command 和 CAS，Worker Claim 后才进入 `RUNNING`；
 - Side Effect Policy 决定 Retry；
 - `agentos[distributed]` 才安装 PostgreSQL/Redis Client。
 
@@ -581,7 +591,7 @@ Phase 2 冻结后可独立执行，不修改 Provider Adapter。
 - Workstream B：Provider Adapter Contract；
 - Workstream C：Skill/Plan/Memory Projection。
 
-三个 Workstream 使用独立 git worktree。Architecture Owner 保留第四个并发位负责接口答疑、Review 和集成，不同时实现另一个大工作包。
+三个 Workstream 使用独立分支或明确的文件隔离边界；是否创建 git worktree 由用户和工作区条件决定。Architecture Owner 保留第四个并发位负责接口答疑、Review 和集成，不同时实现另一个大工作包。
 
 ### Wave 2：集成优先
 
@@ -608,15 +618,18 @@ Wave 2 不再并行修改 QueryLoop。主集成分支先合并 Provider，再合
 
 - 对应 Spec 和上游接口已经批准；
 - 有独立的详细实施计划文档；
+- 已完成 Mandatory Context Bootstrap 和七项 Scope Contract；
 - 文件 Owner 和禁止修改范围明确；
+- 已完成 300/500/800 行文件规模审查；触碰 500 行以上文件时已有拆分方案或有效例外记录；
 - 测试文件、测试命令和预期失败原因明确；
 - 上游阶段全量测试通过；
 - 工作包不与同波次其他任务修改同一个共享核心文件；
 - 回滚边界和提交粒度明确。
 
-### 11.2 分支与 Worktree
+### 11.2 分支与隔离
 
-- 每个工作包使用独立 worktree；
+- 是否使用 worktree 由用户、任务风险和当前工作区状态决定，不作为强制要求；
+- 不使用 worktree 时必须在当前分支明确允许文件，并使用精确路径暂存，禁止 `git add .`；
 - 分支命名：`feature/<phase>-<workstream>`；
 - 一个提交只完成一个可验证行为；
 - 禁止在 Workstream 分支修改未声明文件；
@@ -658,6 +671,30 @@ Review 分两层：
 其他实现细节由详细计划和代码评审决定。
 
 ## 12. 质量门禁
+
+所有工作包必须遵守 `docs/governance/agentos-engineering-standard.md`。文件规模门禁为：
+
+```text
+300 行：职责审查
+500 行：默认拆分或登记例外
+800 行：项目代码禁止继续扩张，修改前必须有批准的拆分计划
+```
+
+实现前和 Review 时运行模块规模扫描：
+
+```powershell
+Get-ChildItem -Recurse -File src/agentos -Filter '*.py' |
+  ForEach-Object {
+    [pscustomobject]@{
+      Path = $_.FullName
+      Lines = (Get-Content -Encoding utf8 $_.FullName).Count
+    }
+  } |
+  Where-Object { $_.Lines -ge 300 } |
+  Sort-Object Lines -Descending
+```
+
+扫描结果不是机械失败条件，但本工作包触碰的 500 行以上文件必须拆分或提供规范要求的例外记录。不得在 800 行以上项目文件中追加新的独立子系统。
 
 每个工作包至少运行：
 
@@ -706,6 +743,7 @@ rg -n "system: rendered context|AttachmentLifecycle|ProviderMessage|class Messag
 | 旧文档继续误导实现 | 多份旧 Spec 声明 system=all context | Phase 0 标记取代关系，测试主动检查漂移 |
 | 并行分支互相覆盖 | Context、QueryLoop、Builder 是共享热点 | Wave 0 串行，Wave 1 单 Owner 文件矩阵 |
 | Distributed 反向污染 Core | 当前 multi/channels 包含多种基础设施实现 | Phase 6 按 Port/Adapter 迁移，Core Import Test 禁止泄漏 |
+| 超大模块继续吸收职责 | `multi/planner.py`、`channels/a2a_operations.py` 等文件已远超 800 行 | Phase 0 建立规模基线；后续触碰时按责任拆分，不再向超大文件追加独立子系统 |
 
 ## 14. Spec 覆盖矩阵
 
@@ -718,9 +756,10 @@ rg -n "system: rendered context|AttachmentLifecycle|ProviderMessage|class Messag
 | Artifact Catalog、Tool Result、ContextMount、Session Scope | Phase 3A |
 | OpenAI/Anthropic/严格角色 Adapter | Phase 3B |
 | Skill、Plan、Memory Projection | Phase 3C |
-| Local Loop 和渐进式 AgentBuilder | Phase 4 |
-| SQLite/Filesystem Durable Runtime | Phase 5 |
-| PostgreSQL/Redis、Worker、Transport、Team | Phase 6 |
+| Local Loop、渐进式 AgentBuilder、ToolCallScheduler | Phase 4 |
+| Run 状态机与 WAITING/Continuation Kernel 语义 | Phase 4 |
+| SQLite/Filesystem Durable Runtime、Wait Checkpoint | Phase 5 |
+| PostgreSQL/Redis、Worker、Transport、Team、分布式 Wakeup/Claim | Phase 6 |
 | Observability、Security、Public API、Release Evidence | 所有阶段的共同门禁 |
 
 ## 15. 详细计划生成顺序
