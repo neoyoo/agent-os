@@ -1,8 +1,52 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _sdk_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    source_root = str(PROJECT_ROOT / "src")
+    inherited_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        os.pathsep.join((source_root, inherited_pythonpath))
+        if inherited_pythonpath
+        else source_root
+    )
+    return env
+
+
+def _run_live_backend_probe(
+    backend_name: str,
+    *arguments: str,
+    cwd: Path | None = None,
+    disable_site: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    command = [sys.executable]
+    if disable_site:
+        command.append("-S")
+    command.extend(
+        (
+            "-m",
+            "agentos.examples.live_backend_probe",
+            backend_name,
+            *arguments,
+        )
+    )
+    return subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        env=_sdk_subprocess_env(),
+    )
 
 
 def _passed_run_result(backend_name: str):
@@ -112,27 +156,34 @@ def test_reference_probe_pack_default_invocation_uses_sdk_example_module() -> No
     )
 
 
+def test_reference_live_backend_probe_subprocess_has_isolated_import(
+    tmp_path: Path,
+) -> None:
+    completed = _run_live_backend_probe(
+        "agent_registry",
+        cwd=tmp_path,
+        disable_site=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["records"][0]["backend_name"] == (
+        "agent_registry"
+    )
+
+
 def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> None:
     from agentos.deployment import BackendVerificationReportImporter
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "agentos.examples.live_backend_probe",
-            "agent_registry",
-            "--status",
-            "passed",
-            "--checked-at",
-            "1781592000",
-            "--evidence-ref",
-            "ci://live-backend/agent_registry",
-            "--target-ref",
-            "nacos://agentos/agent-registry",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    completed = _run_live_backend_probe(
+        "agent_registry",
+        "--status",
+        "passed",
+        "--checked-at",
+        "1781592000",
+        "--evidence-ref",
+        "ci://live-backend/agent_registry",
+        "--target-ref",
+        "nacos://agentos/agent-registry",
     )
 
     records = BackendVerificationReportImporter().from_json(completed.stdout)
@@ -147,24 +198,16 @@ def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> 
 def test_reference_live_backend_probe_example_does_not_certify_passed_status() -> None:
     from agentos.deployment import BackendVerificationReportImporter
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "agentos.examples.live_backend_probe",
-            "agent_registry",
-            "--status",
-            "passed",
-            "--checked-at",
-            "1781592000",
-            "--evidence-ref",
-            "ci://live-backend/agent_registry",
-            "--target-ref",
-            "nacos://agentos/agent-registry",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    completed = _run_live_backend_probe(
+        "agent_registry",
+        "--status",
+        "passed",
+        "--checked-at",
+        "1781592000",
+        "--evidence-ref",
+        "ci://live-backend/agent_registry",
+        "--target-ref",
+        "nacos://agentos/agent-registry",
     )
 
     records = BackendVerificationReportImporter().from_json(completed.stdout)
@@ -181,17 +224,7 @@ def test_reference_live_backend_probe_example_does_not_certify_passed_status() -
 def test_reference_live_backend_probe_example_defaults_to_non_certifying_unknown() -> None:
     from agentos.deployment import BackendVerificationReportImporter
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "agentos.examples.live_backend_probe",
-            "agent_registry",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    completed = _run_live_backend_probe("agent_registry")
 
     records = BackendVerificationReportImporter().from_json(completed.stdout)
     payload = json.loads(completed.stdout)
