@@ -863,6 +863,14 @@ python -m pytest tests/context/test_context_snapshot_renderer.py -k "orders or d
 
 Root 属性和顺序固定为 protocol、version、origin、authority、persistence、visibility；最小 Snapshot 即使没有 Slot 也必须输出根节点、LF 和确定性缩进。构造签名冻结为 `ContextSnapshotRenderer(token_counter: TokenCounter, extension_registry: ContextExtensionRegistry | None = None)`，不允许预算路径隐式选择 tokenizer。生产 Builder 注入项目默认 TokenCounter；所有 renderer/预算测试显式注入确定 Fake，不依赖可选 tiktoken。
 
+**Phase 1 Task 6 Extension scope:** Extension ownership remains authoritative in
+`ContextExtensionRegistry`. This task enforces registered and unique namespaces,
+registered versions and XML schemas, plus `ContextExtensionSpec.max_tokens` as a
+hard limit counted from a complete root containing only that namespace. Namespace-
+level variants and independent `trim_rank` trimming are not representable by the
+current frozen `ContextSlotProjection` DTO and are explicitly deferred to Phase 3
+Extension Projection. Phase 1 must not claim those deferred behaviors are complete.
+
 - [ ] **Step 4: 写 Full/Minimal Golden 并验证字节一致**
 
 Full Golden 必须用测试 Projection 覆盖九个 Slot 和一个已注册 Extension；这些 Projection 只是 renderer contract fixture，不表示 Planner/Memory/Skill/Artifact Runtime 已实现。Minimal Golden 只包含 root；空 root 的 self-closing 表达遵守 Task 3 已冻结规则。

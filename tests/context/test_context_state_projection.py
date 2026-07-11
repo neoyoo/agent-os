@@ -5,7 +5,7 @@ import pytest
 
 from agentos.context import ContextRuntime, ContextState, WorkingStateField
 from agentos.context import projection
-from agentos.context.models import ContextProtocolError
+from agentos.context.models import ContextProtocolError, ContextSensitiveDataError
 from agentos.context.schema import WorkingStateSchema
 from agentos.context.xml import XmlElement, render_xml
 
@@ -390,3 +390,36 @@ def test_object_projection_is_deterministic_across_mapping_order() -> None:
     assert projected_text({"z": 1, "a": {"y": 2, "b": 3}}) == projected_text(
         {"a": {"b": 3, "y": 2}, "z": 1},
     )
+
+
+def test_projection_rejects_raw_working_state_before_json_serialization() -> None:
+    source = r"\\server\share\private.txt"
+    state = ContextState(
+        working_state_schema=WorkingStateSchema(
+            fields=(field("metadata", "object"),),
+        ),
+        working_state={"metadata": {"nested": [{"path": source}]}},
+    )
+
+    with pytest.raises(ContextSensitiveDataError) as error:
+        projection.project_context_state(state)
+    assert str(error.value) == (
+        "sensitive representation category=absolute-path slot=working-state"
+    )
+    assert source not in str(error.value)
+
+
+def test_projection_rejects_declared_schema_typed_strings_before_xml() -> None:
+    source = r"\\server\share\schema.txt"
+    state = ContextState(
+        working_state_schema=WorkingStateSchema(
+            fields=(field("metadata", purpose=source),),
+        ),
+    )
+
+    with pytest.raises(ContextSensitiveDataError) as error:
+        projection.project_context_state(state)
+    assert str(error.value) == (
+        "sensitive representation category=absolute-path slot=declared-schema"
+    )
+    assert source not in str(error.value)

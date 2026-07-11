@@ -11,6 +11,7 @@ from agentos.context.models import (
     RuntimeContract,
 )
 from agentos.context.registry import SystemSectionRegistry
+from agentos.context.sensitive import SensitiveRepresentationValidator
 from agentos.context.schema import (
     WorkingStateField,
     json_compatible_value,
@@ -109,6 +110,13 @@ def project_context_state(
         if type(name) is not str or name not in declared:
             raise ContextProtocolError("working state field not declared")
         validate_working_state_value(declared[name].type, value)
+    sensitive = SensitiveRepresentationValidator()
+    for item in fields:
+        sensitive.validate(
+            (item.name, item.type, item.purpose),
+            slot="declared-schema",
+        )
+    sensitive.validate(working_state, slot="working-state")
     if not fields:
         return ()
 
