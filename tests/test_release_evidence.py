@@ -8,8 +8,10 @@ import tomllib
 from pathlib import Path
 
 import agentos
+import pytest
 from agentos.release import (
     RELEASE_EVIDENCE_REQUIRED_GATES,
+    ReleaseEvidenceValidationReport,
     validate_release_candidate_evidence_manifest,
     validate_release_evidence_manifest,
 )
@@ -19,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RELEASE_EVIDENCE = ROOT / "docs" / "release-evidence.json"
 RELEASE_EVIDENCE_EXAMPLE = ROOT / "docs" / "release-evidence.example.json"
 RELEASE_EVIDENCE_GENERATOR = ROOT / "scripts" / "generate_release_evidence.py"
+RELEASE_EVIDENCE_VALIDATOR = ROOT / "scripts" / "validate_release_evidence.py"
+LOCAL_RELEASE_EVIDENCE_ENV = "AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE"
 
 
 def release_evidence_generator_env(
@@ -31,6 +35,70 @@ def release_evidence_generator_env(
         source_path if not pythonpath else os.pathsep.join((source_path, pythonpath))
     )
     return env
+
+
+def run_release_evidence_validator(
+    manifest: Path,
+    *,
+    branch: str,
+    commit: str,
+    version: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_EVIDENCE_VALIDATOR),
+            "--manifest",
+            str(manifest),
+            "--branch",
+            branch,
+            "--commit",
+            commit,
+            "--version",
+            version,
+        ],
+        cwd=ROOT,
+        env=release_evidence_generator_env(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def current_release_identity() -> tuple[str, str, str]:
+    branch = subprocess.check_output(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    return branch, commit, agentos.__version__
+
+
+def _local_release_evidence_validation_enabled() -> bool:
+    return os.environ.get(LOCAL_RELEASE_EVIDENCE_ENV) == "1"
+
+
+def _validate_local_release_evidence_if_requested(
+    manifest_path: Path,
+) -> ReleaseEvidenceValidationReport | None:
+    if not _local_release_evidence_validation_enabled():
+        return None
+    if not manifest_path.exists():
+        pytest.fail(f"release evidence manifest missing: {manifest_path}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    branch, commit, version = current_release_identity()
+    return validate_release_candidate_evidence_manifest(
+        manifest,
+        expected_branch=branch,
+        expected_commit=commit,
+        expected_version=version,
+    )
 
 
 def passing_gate(name: str) -> dict[str, object]:
@@ -89,6 +157,208 @@ def release_manifest(**overrides: object) -> dict[str, object]:
     }
     manifest.update(overrides)
     return manifest
+
+
+def test_local_release_evidence_is_not_an_implicit_unit_test_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text("not-json", encoding="utf-8")
+    monkeypatch.delenv(LOCAL_RELEASE_EVIDENCE_ENV, raising=False)
+
+    assert _validate_local_release_evidence_if_requested(manifest) is None
+
+
+def test_local_release_evidence_validation_accepts_matching_identity_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    branch, commit, version = current_release_identity()
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(
+        json.dumps(
+            release_manifest(
+                release_candidate={
+                    "branch": branch,
+                    "generated_at": "2026-07-11T01:00:00+08:00",
+                    "commit": commit,
+                    "version": version,
+                },
+            ),
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+
+    report = _validate_local_release_evidence_if_requested(manifest)
+
+    assert report is not None
+    assert report.accepted is True
+
+
+def test_local_release_evidence_validation_requires_manifest_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+
+    with pytest.raises(pytest.fail.Exception, match="release evidence manifest missing"):
+        _validate_local_release_evidence_if_requested(
+            tmp_path / "missing-release-evidence.json",
+        )
+
+
+def test_local_release_evidence_validation_rejects_identity_drift_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    branch, _, version = current_release_identity()
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(
+        json.dumps(
+            release_manifest(
+                release_candidate={
+                    "branch": branch,
+                    "generated_at": "2026-07-11T01:00:00+08:00",
+                    "commit": "old-commit",
+                    "version": version,
+                },
+            ),
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+
+    report = _validate_local_release_evidence_if_requested(manifest)
+
+    assert report is not None
+    assert report.accepted is False
+    assert any(
+        "release_candidate.commit expected" in finding
+        for finding in report.gate_evidence_findings
+    )
+
+
+def test_local_release_evidence_validation_preserves_blocking_gates_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    branch, commit, version = current_release_identity()
+    payload = release_manifest(
+        release_candidate={
+            "branch": branch,
+            "generated_at": "2026-07-11T01:00:00+08:00",
+            "commit": commit,
+            "version": version,
+        },
+        independent_review={
+            "status": "pending",
+            "ready_for_release_candidate": False,
+            "evidence_ref": "fresh review not run",
+        },
+    )
+    gates = payload["gates"]
+    assert isinstance(gates, dict)
+    gates["independent_review"] = {
+        **passing_gate("independent_review"),
+        "status": "pending",
+    }
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+
+    report = _validate_local_release_evidence_if_requested(manifest)
+
+    assert report is not None
+    assert report.accepted is False
+    assert report.blocking_gates == ("independent_review",)
+    assert report.gate_evidence_findings == ()
+
+
+def test_release_evidence_validator_cli_accepts_matching_manifest(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(json.dumps(release_manifest()), encoding="utf-8")
+
+    result = run_release_evidence_validator(
+        manifest,
+        branch="review/agentos-sdk-architecture-20260611",
+        commit="abc123",
+        version="0.1.0rc1",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["accepted"] is True
+
+
+def test_release_evidence_validator_cli_rejects_missing_manifest(
+    tmp_path: Path,
+) -> None:
+    result = run_release_evidence_validator(
+        tmp_path / "missing-release-evidence.json",
+        branch="review/agentos-sdk-architecture-20260611",
+        commit="abc123",
+        version="0.1.0rc1",
+    )
+
+    assert result.returncode != 0
+    assert "release evidence manifest missing" in result.stderr
+
+
+def test_release_evidence_validator_cli_rejects_identity_drift(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(json.dumps(release_manifest()), encoding="utf-8")
+
+    result = run_release_evidence_validator(
+        manifest,
+        branch="review/agentos-sdk-architecture-20260611",
+        commit="old-commit",
+        version="0.1.0rc1",
+    )
+
+    assert result.returncode != 0
+    report = json.loads(result.stdout)
+    assert report["accepted"] is False
+    assert any(
+        "release_candidate.commit expected old-commit but found abc123" in finding
+        for finding in report["gate_evidence_findings"]
+    )
+
+
+def test_release_evidence_validator_cli_rejects_pending_independent_review_with_matching_identity(
+    tmp_path: Path,
+) -> None:
+    payload = release_manifest(
+        independent_review={
+            "status": "pending",
+            "ready_for_release_candidate": False,
+            "evidence_ref": "fresh review not run",
+        },
+    )
+    gates = payload["gates"]
+    assert isinstance(gates, dict)
+    gates["independent_review"] = {
+        **passing_gate("independent_review"),
+        "status": "pending",
+    }
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = run_release_evidence_validator(
+        manifest,
+        branch="review/agentos-sdk-architecture-20260611",
+        commit="abc123",
+        version="0.1.0rc1",
+    )
+
+    assert result.returncode != 0
+    report = json.loads(result.stdout)
+    assert report["blocking_gates"] == ["independent_review"]
+    assert report["gate_evidence_findings"] == []
 
 
 def test_release_evidence_validator_blocks_pending_independent_review() -> None:
@@ -336,28 +606,13 @@ def test_generated_release_evidence_is_ignored_not_source_tracked() -> None:
 
 
 def test_generated_release_evidence_artifact_is_validated_when_present() -> None:
-    if not RELEASE_EVIDENCE.exists():
-        return
+    report = _validate_local_release_evidence_if_requested(RELEASE_EVIDENCE)
+    if report is None:
+        pytest.skip(
+            f"set {LOCAL_RELEASE_EVIDENCE_ENV}=1 for local candidate validation",
+        )
+
     manifest = json.loads(RELEASE_EVIDENCE.read_text(encoding="utf-8"))
-    current_branch = subprocess.check_output(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
-    current_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
-
-    assert manifest["release_candidate"]["version"] == agentos.__version__
-    report = validate_release_candidate_evidence_manifest(
-        manifest,
-        expected_branch=current_branch,
-        expected_commit=current_commit,
-        expected_version=agentos.__version__,
-    )
-
     if manifest["independent_review"]["status"] == "passed":
         assert report.accepted is True
     else:

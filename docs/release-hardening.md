@@ -80,6 +80,29 @@ item below has evidence in the branch:
 
 ## Reference Commands
 
+Ordinary unit tests do not read the ignored local
+`docs/release-evidence.json` candidate artifact. Run the normal contract tests
+without enabling local candidate validation:
+
+```powershell
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py -q
+```
+
+To validate the current worktree's local candidate artifact through pytest,
+enable the explicit gate first:
+
+```powershell
+$env:AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE='1'
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py -q
+```
+
+Release automation must use the non-skippable validator CLI with explicit
+candidate identity:
+
+```powershell
+& (Resolve-Path '.\.venv\Scripts\python.exe') scripts/validate_release_evidence.py --manifest docs/release-evidence.json --branch <current-branch> --commit <current-commit> --version <pyproject-version>
+```
+
 Use these commands as release candidate evidence:
 
 ```bash
