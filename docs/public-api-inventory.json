@@ -2385,6 +2385,10 @@
           "signature": "(reason: str = '', *, session_id: str | None = None, turn_id: str | None = None) -> None",
           "stability": "experimental"
         },
+        "ContextLoaded": {
+          "signature": "(source: \"Literal['runtime', 'memory', 'session', 'attachment']\" = 'runtime', summary: 'str' = '上下文已装载。') -> None",
+          "stability": "stable"
+        },
         "ContextRenderedEvent": {
           "signature": "(*, session_id: str | None = None, turn_id: str | None = None) -> None",
           "stability": "experimental"
@@ -2418,6 +2422,10 @@
           "signature": "(subscribers: list[agentos.events.bus.EventSubscriber] = <factory>, events: list[agentos.events.types.AgentEvent] = <factory>, subscriber_errors: list[str] = <factory>) -> None",
           "stability": "experimental"
         },
+        "FinalResult": {
+          "signature": "(content: 'str') -> None",
+          "stability": "stable"
+        },
         "InheritedStateSetEvent": {
           "signature": "(item_count: int = 0, *, session_id: str | None = None, turn_id: str | None = None) -> None",
           "stability": "experimental"
@@ -2429,6 +2437,10 @@
         "MemoryContextSetEvent": {
           "signature": "(item_count: int = 0, *, session_id: str | None = None, turn_id: str | None = None) -> None",
           "stability": "experimental"
+        },
+        "PlanUpdated": {
+          "signature": "(summary: 'str', status: \"Literal['created', 'updated', 'completed']\" = 'updated') -> None",
+          "stability": "stable"
         },
         "ProductionStatePlaneDeploymentProfile": {
           "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence', 'state_plane_boundary_policy', 'live_backend_verification'), probe_name: 'str' = 'production_state_plane') -> None",
@@ -2496,6 +2508,10 @@
           "signature": "(id: str, status: Literal['new', 'running', 'closed'] = 'new', _next_turn_number: int = 1) -> None",
           "stability": "experimental"
         },
+        "SkillLoaded": {
+          "signature": "(skill_name: 'str', resource: 'str | None' = None, summary: 'str | None' = None) -> None",
+          "stability": "stable"
+        },
         "SnapshotLoadedEvent": {
           "signature": "(snapshot_session_id: str = '', *, session_id: str | None = None, turn_id: str | None = None) -> None",
           "stability": "experimental"
@@ -2503,6 +2519,10 @@
         "SnapshotSavedEvent": {
           "signature": "(snapshot_session_id: str = '', *, session_id: str | None = None, turn_id: str | None = None) -> None",
           "stability": "experimental"
+        },
+        "StatusUpdate": {
+          "signature": "(stage: 'str', message: 'str', detail: 'str | None' = None) -> None",
+          "stability": "stable"
         },
         "SubagentSpawnedEvent": {
           "signature": "(parent_agent_id: str = '', child_agent_id: str = '', task_id: str = '', *, session_id: str | None = None, turn_id: str | None = None) -> None",
