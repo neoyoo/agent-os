@@ -186,6 +186,8 @@ def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> 
         "nacos://agentos/agent-registry",
     )
 
+    assert completed.returncode == 0, completed.stderr
+
     records = BackendVerificationReportImporter().from_json(completed.stdout)
 
     assert len(records) == 1
@@ -210,6 +212,8 @@ def test_reference_live_backend_probe_example_does_not_certify_passed_status() -
         "nacos://agentos/agent-registry",
     )
 
+    assert completed.returncode == 0, completed.stderr
+
     records = BackendVerificationReportImporter().from_json(completed.stdout)
     payload = json.loads(completed.stdout)
 
@@ -225,6 +229,8 @@ def test_reference_live_backend_probe_example_defaults_to_non_certifying_unknown
     from agentos.deployment import BackendVerificationReportImporter
 
     completed = _run_live_backend_probe("agent_registry")
+
+    assert completed.returncode == 0, completed.stderr
 
     records = BackendVerificationReportImporter().from_json(completed.stdout)
     payload = json.loads(completed.stdout)
