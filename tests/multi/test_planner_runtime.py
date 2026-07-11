@@ -3142,13 +3142,8 @@ def test_planner_runtime_sweep_expired_claims_supports_dry_run_and_release() -> 
     assert release.skipped_claims == ()
 
 
-def test_planner_runtime_sweep_expired_claims_is_generation_safe() -> None:
+def test_plan_claim_store_release_expired_claim_is_generation_safe() -> None:
     claim_store = InMemoryPlanClaimStore()
-    runtime = PlannerRuntime(
-        store=InMemoryPlanStore(),
-        claim_store=claim_store,
-        clock=lambda: 30.0,
-    )
     original = claim_store.claim_plan(
         plan_id="expired_plan",
         owner_agent_id="leader",

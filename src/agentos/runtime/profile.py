@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from agentos.deployment import (
-    PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS,
-    ProductionStatePlaneDeploymentProfile,
+    ProductionStatePlaneDeploymentProfile as ProductionStatePlaneDeploymentProfile,
 )
 from agentos.runtime.agent import Agent
 from agentos.workspace import WorkspaceHandle, WorkspaceProvider, WorkspaceRequest

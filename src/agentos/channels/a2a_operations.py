@@ -19,7 +19,6 @@ from agentos.channels.a2a import (
     A2AInboundAuthPolicy,
     A2AOperationInboundAuthPolicy,
     A2AResourceInboundAuthPolicy,
-    AllowAllA2AInboundAuthPolicy,
     PublicHttpsA2AEgressUrlPolicy,
     RejectAllA2AInboundAuthPolicy,
     A2ATransport,

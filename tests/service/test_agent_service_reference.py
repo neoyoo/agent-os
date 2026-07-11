@@ -6,8 +6,6 @@ from typing import Any
 from collections.abc import Mapping
 from pathlib import Path
 
-import pytest
-
 from agentos import AgentBuilder
 from agentos.channels import (
     AsgiAgentApp,

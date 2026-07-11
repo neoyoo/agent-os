@@ -13,7 +13,6 @@ from agentos.channels.a2a import (
     A2AAgentCard,
     A2AInboundAuthError,
     A2AInboundAuthPolicy,
-    AllowAllA2AInboundAuthPolicy,
     RejectAllA2AInboundAuthPolicy,
     a2a_card_to_dict,
 )
@@ -25,7 +24,6 @@ from agentos.channels.a2a_operations import (
     a2a_task_subscription_event_to_dict,
 )
 from agentos.channels.auth import (
-    AllowAllChannelAuthPolicy,
     ChannelAuthContext,
     ChannelAuthError,
     ChannelAuthPolicy,
@@ -480,7 +478,8 @@ class AsgiAgentApp:
                 with suppress(Exception):
                     await self._abandon_agent_for_session(session_id, agent)
                 raise
-            except Exception as error:
+            except Exception as caught_error:
+                error: BaseException = caught_error
                 heartbeat_error: BaseException | None = None
                 try:
                     await self._stop_json_session_lease_heartbeat(heartbeat_task)

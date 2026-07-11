@@ -6,7 +6,7 @@ import json
 import pytest
 
 crypto = pytest.importorskip("cryptography")
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 

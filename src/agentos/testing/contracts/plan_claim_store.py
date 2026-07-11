@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from agentos.multi import PlanClaimRecord
-from agentos.multi.planner import PlanClaimStore, PlanClaimSweepStore
+from agentos.multi.planner import PlanClaimStore
 from agentos.testing.contracts._checks import (
     check_equal,
     check_in,
