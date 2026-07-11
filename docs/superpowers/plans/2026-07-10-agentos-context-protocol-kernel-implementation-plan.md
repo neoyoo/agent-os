@@ -14,7 +14,7 @@
 
 - **Phase / Active Specs:** Phase 1；`2026-07-10-agentos-next-generation-sdk-architecture-design.md`、`2026-07-10-agentos-context-protocol-v1-design.md`、`2026-07-10-agentos-context-first-sdk-master-implementation-plan.md`。
 - **Acceptance Items:** `ContextRenderer` 只输出固定顺序可信章节；`ContextSnapshotRenderer` 按九个固定 Slot 排序；动态值经过校验和 XML Escape；相同输入字节级一致；预算只切换完整 Projection Variant；未注册 Slot、Owner 不匹配、重复 Slot、未知 Major、非法 XML 字符确定性失败；Golden、安全、预算和确定性测试通过。
-- **Allowed Files:** `src/agentos/context/models.py`、`registry.py`、`xml.py`、`snapshot.py`、`renderer.py`、`projection.py`、`schema.py`、`runtime.py`、`__init__.py`、`src/agentos/runtime/provider_request_builder.py`（仅 `SystemEnvelope.text` 适配）、`src/agentos/builder.py`（仅停止把 Capability metadata 注入 System Renderer）、本计划列出的 `tests/context/**`、`tests/runtime/test_provider_request_builder.py`、`tests/runtime/test_agent_builder.py`（仅适配断言）和 Golden 文件。
+- **Allowed Files:** `src/agentos/context/models.py`、`registry.py`、`xml_schema.py`、`xml.py`、`snapshot.py`、`renderer.py`、`projection.py`、`schema.py`、`runtime.py`、`__init__.py`、`src/agentos/runtime/provider_request_builder.py`（仅 `SystemEnvelope.text` 适配）、`src/agentos/builder.py`（仅停止把 Capability metadata 注入 System Renderer）、本计划列出的 `tests/context/**`、`tests/runtime/test_provider_request_builder.py`、`tests/runtime/test_agent_builder.py`（仅适配断言）和 Golden 文件。
 - **Forbidden Files:** `src/agentos/messages/**`、`src/agentos/providers/**`、`src/agentos/runtime/query_loop.py`、`async_query_loop.py`、`agent.py`、`src/agentos/attachments/**`、`src/agentos/artifacts/**`、Skill/Plan/Memory 实现、具体 Provider Adapter。
 - **Dependency Boundaries:** `context` 只依赖领域类型、标准库和 `TokenCounter` Protocol；不得导入 Provider、MessageStore、ArtifactStore、Planner Store 或基础设施 Adapter。
 - **Completed In This Work Package:** M1 Context Kernel；可信 System Section、固定 Slot Registry、确定性 XML、安全校验、版本校验和可替换的完整元素预算 Variant。
@@ -27,7 +27,8 @@
 |---|---|
 | `context/models.py` | Context Protocol v1 的不可变公共领域类型和稳定错误。 |
 | `context/registry.py` | 固定 System Section / Context Slot 元数据、顺序和 Owner 校验。 |
-| `context/xml.py` | XML 1.0 字符校验、固定节点模型和确定性序列化。 |
+| `context/xml_schema.py` | `XmlTagSpec` 和完整 `CORE_XML_SCHEMA` 的纯声明；不包含控制流。 |
+| `context/xml.py` | `XmlElement`、XML 1.0 校验、Extension schema 选择、escaping 和确定性序列化；为现有前向导入 re-export `XmlTagSpec`。 |
 | `context/projection.py` | Runtime/ContextState 到类型化 Section/Slot Projection 的纯投影。 |
 | `context/renderer.py` | 只渲染 `SystemEnvelope`，不读取动态 ContextState。 |
 | `context/snapshot.py` | Slot 收集、Registry 校验、预算 Variant 选择和 `ContextSnapshot` 生成。 |
@@ -364,52 +365,133 @@ git commit -m "feat: freeze context protocol registries"
 ### Task 3: 实现安全、确定性的 XML 节点序列化
 
 **Files:**
+- Create: `src/agentos/context/xml_schema.py`
 - Create: `src/agentos/context/xml.py`
 - Test: `tests/context/test_context_protocol_security.py`
 
-- [ ] **Step 1: 写 Escape、控制字符和固定标签 Red 测试**
+- [ ] **Step 1: 写完整 Snapshot Root、Escape 和固定标签 Red 测试**
 
 ```python
 import pytest
 
 from agentos.context.models import ContextProtocolError
-from agentos.context.xml import XmlElement, render_xml
+from agentos.context.registry import ContextExtensionSpec
+from agentos.context.xml import XmlElement, XmlTagSpec, render_xml
+
+
+ROOT_ATTRIBUTES = (
+    ("protocol", "agentos.context"),
+    ("version", "1.0"),
+    ("origin", "runtime"),
+    ("authority", "context-data"),
+    ("persistence", "ephemeral"),
+    ("visibility", "internal"),
+)
+
+
+def snapshot(*children: XmlElement) -> XmlElement:
+    return XmlElement(
+        tag="context-snapshot",
+        attributes=ROOT_ATTRIBUTES,
+        children=children,
+    )
+
+
+def working_snapshot(value: str = "ok") -> XmlElement:
+    return snapshot(
+        XmlElement(
+            tag="working-state",
+            attributes=(("schema-version", "1"),),
+            children=(
+                XmlElement(
+                    tag="field",
+                    attributes=(("name", "task_goal"),),
+                    children=(XmlElement(tag="value", text=value),),
+                ),
+            ),
+        ),
+    )
 
 
 def test_xml_renderer_escapes_text_and_attributes() -> None:
-    node = XmlElement(
-        tag="field",
-        attributes=(("name", 'x\"<&'),),
-        children=(XmlElement(tag="value", text="ignore </value> & continue"),),
+    node = snapshot(
+        XmlElement(
+            tag="working-state",
+            attributes=(("schema-version", "1"),),
+            children=(
+                XmlElement(
+                    tag="field",
+                    attributes=(("name", 'x\"<&'),),
+                    children=(
+                        XmlElement(
+                            tag="value",
+                            text="ignore </value> & continue",
+                        ),
+                    ),
+                ),
+            ),
+        ),
     )
     assert render_xml(node) == (
-        '<field name="x&quot;&lt;&amp;">\n'
-        '  <value>ignore &lt;/value&gt; &amp; continue</value>\n'
-        '</field>\n'
+        '<context-snapshot protocol="agentos.context" version="1.0" '
+        'origin="runtime" authority="context-data" persistence="ephemeral" '
+        'visibility="internal">\n'
+        '  <working-state schema-version="1">\n'
+        '    <field name="x&quot;&lt;&amp;">\n'
+        '      <value>ignore &lt;/value&gt; &amp; continue</value>\n'
+        '    </field>\n'
+        '  </working-state>\n'
+        '</context-snapshot>\n'
     )
 
 
-def test_xml_renderer_rejects_illegal_control_characters() -> None:
-    with pytest.raises(ContextProtocolError, match="illegal XML character"):
-        render_xml(XmlElement(tag="value", text="bad\x00value"))
+def test_xml_renderer_requires_complete_context_snapshot_root() -> None:
+    with pytest.raises(ContextProtocolError, match="context-snapshot root required"):
+        render_xml(XmlElement(tag="value", text="not a complete snapshot"))
 
 
 def test_xml_renderer_rejects_dynamic_tags() -> None:
     with pytest.raises(ContextProtocolError, match="unregistered XML tag"):
-        render_xml(XmlElement(tag="user-supplied-tag", text="value"))
+        render_xml(snapshot(XmlElement(tag="user-supplied-tag", text="value")))
 
 
 @pytest.mark.parametrize(
-    "attributes, error",
+    ("field", "error"),
     [
-        ((("unknown", "x"),), "unknown attribute"),
-        ((("name", "a"), ("name", "b")), "duplicate attribute"),
+        (
+            XmlElement(
+                tag="field",
+                attributes=(("name", "task_goal"), ("unknown", "x")),
+                children=(XmlElement(tag="value", text="ok"),),
+            ),
+            "unknown attribute",
+        ),
+        (
+            XmlElement(
+                tag="field",
+                attributes=(("name", "a"), ("name", "b")),
+                children=(XmlElement(tag="value", text="ok"),),
+            ),
+            "duplicate attribute",
+        ),
     ],
 )
-def test_xml_renderer_rejects_non_schema_attributes(attributes, error) -> None:
+def test_xml_renderer_rejects_non_schema_attributes(
+    field: XmlElement,
+    error: str,
+) -> None:
+    node = snapshot(
+        XmlElement(
+            tag="working-state",
+            attributes=(("schema-version", "1"),),
+            children=(field,),
+        ),
+    )
     with pytest.raises(ContextProtocolError, match=error):
-        render_xml(XmlElement(tag="field", attributes=attributes))
+        render_xml(node)
 ```
+
+所有负例必须从 `snapshot()` 或同等的完整、其他部分合法的 root fixture 构造，只引入一个目标缺陷。禁止用孤立 `field`、`value`、`item` 或缺少 required attribute 的偶然错误充当目标失败。
 
 - [ ] **Step 2: 运行 Red**
 
@@ -417,19 +499,146 @@ def test_xml_renderer_rejects_non_schema_attributes(attributes, error) -> None:
 python -m pytest tests/context/test_context_protocol_security.py -q
 ```
 
-- [ ] **Step 3: 实现固定节点、属性顺序和 LF 输出**
+Expected: collection FAIL，`agentos.context.xml` 尚不存在；不得因为 fixture 自身缺少 required attribute 得到偶然 Red。
 
-`XmlElement` 必须把 `attributes`、`children` 标准化为 tuple。`xml.py` 定义不可变 `XmlTagSpec(required_attributes, optional_attributes, canonical_order, allow_text, allowed_children)`，以及按**完整节点路径**索引的 `CORE_XML_SCHEMA: Mapping[tuple[str, ...], XmlTagSpec]`。路径从 `context-snapshot` root 开始，例如 `("context-snapshot", "declared-schema", "field")` 与 `("context-snapshot", "working-state", "field")` 是两个不同 schema；`working-state/item` 与 `inherited-state/item` 同理。`render_xml()` 在递归时携带 parent path，逐节点拒绝未知 path、重复/缺失属性、非法 child 和 text/children 组合，并忽略调用者输入顺序，严格按 `canonical_order` 输出属性。两空格缩进，末尾一个 LF。文本可使用标准库 `xml.sax.saxutils.escape`；属性必须由项目 helper 固定双引号 delimiter，并确定性转义 `& < > " '` 及 CR/LF/TAB，禁止使用可能切换 delimiter 的 `quoteattr()`。禁止 CDATA、非法 XML 1.0 控制字符和动态标签。
+- [ ] **Step 3: 声明完整 Core Schema 并冻结文件职责**
 
-固定 schema 必须覆盖 Context Protocol v1 中的结构路径和每个路径的属性顺序，不包含任何 field name、Skill name、Tool name 或 Extension namespace。Extension 子标签只能由 `ContextExtensionRegistry` 提供完整 path schema，并作为本次 `render_xml(..., extension_schema=...)` 的显式输入；未注册 path/attribute 仍直接拒绝。测试至少覆盖 root 六属性 canonical order、declared/working 两种 `field`、working/inherited 两种 `item`、`segment(handle,topic,recallable)`、`artifact(handle,filename,media-type,state)`、`truncated(slot,reason,remaining)`，并把合法节点放到错误父节点下验证拒绝。
+`xml_schema.py` 只定义不可变 `XmlTagSpec` 和只读 `CORE_XML_SCHEMA`，不做递归、escape 或 Extension lookup：
 
-- [ ] **Step 4: Green 和提交**
+```python
+@dataclass(frozen=True, slots=True)
+class XmlTagSpec:
+    required_attributes: tuple[str, ...] = ()
+    optional_attributes: tuple[str, ...] = ()
+    canonical_order: tuple[str, ...] = ()
+    allow_text: bool = False
+    allowed_children: tuple[str, ...] | None = ()
+```
+
+`xml_schema.py` 不执行校验；`xml.py` 在消费 Core 或 Extension spec 时严格验证 `XmlTagSpec`：`required_attributes`、`optional_attributes`、`canonical_order` 必须是非字符串容器的 `tuple[str, ...]`，`allowed_children` 必须是 `tuple[str, ...] | None`，`allow_text` 必须是 strict `bool`；所有 attribute/child name 必须是合法 XML Name，且拒绝 `xmlns` 和 `xmlns:*`；每个 tuple 内不得重复，required/optional 不得重叠；`canonical_order` 必须精确等于 `required_attributes + optional_attributes`。`allowed_children=None` 只允许核心 `<extension>` wrapper 使用，表示其直接子节点由 namespace 对应的 Extension schema 解析；Extension 提供的 `XmlTagSpec` 和其他 Core 节点必须给出固定 child tag tuple。非法 spec 使用稳定错误拒绝，不回显 schema 原值。
+
+`CORE_XML_SCHEMA` 按从 root 开始的完整路径声明以下结构，不允许按 tag name fallback：
+
+| Path | Required attributes | Optional attributes | Text | Children |
+|---|---|---|---|---|
+| `context-snapshot` | `protocol, version, origin, authority, persistence, visibility` | - | no | 九个 Core Slot 加 `truncated` |
+| `context-snapshot/declared-schema` | `version` | - | no | `field` |
+| `.../declared-schema/field` | `name, type, purpose` | - | no | - |
+| `context-snapshot/working-state` | `schema-version` | - | no | `field` |
+| `.../working-state/field` | `name` | - | no | `value, item` |
+| `.../working-state/field/value` | - | `format, null` | yes | - |
+| `.../working-state/field/item` | - | - | yes | - |
+| `context-snapshot/active-plan` | `status` | - | no | `goal, step` |
+| `.../active-plan/goal` | - | - | yes | - |
+| `.../active-plan/step` | `handle, status` | - | yes | - |
+| `context-snapshot/inherited-state` | - | - | no | `item` |
+| `.../inherited-state/item` | `kind` | - | yes | - |
+| `context-snapshot/compressed-history` | - | - | no | `segment` |
+| `.../compressed-history/segment` | `handle, topic, recallable` | - | yes | - |
+| `context-snapshot/memory-context` | - | - | no | `memory` |
+| `.../memory-context/memory` | `handle, kind, category, instructional` | - | yes | - |
+| `context-snapshot/available-skills` | `truncated` | - | no | `skill` |
+| `.../available-skills/skill` | `name, description, loadable, trust` | - | no | - |
+| `context-snapshot/artifact-catalog` | `scope, truncated` | - | no | `artifact` |
+| `.../artifact-catalog/artifact` | `handle, filename, media-type, state` | - | no | - |
+| `context-snapshot/extensions` | - | - | no | `extension` |
+| `.../extensions/extension` | `namespace, version` | - | no | Extension schema delegated |
+| `context-snapshot/truncated` | `slot, reason, remaining` | - | no | - |
+
+每个 path 的 `canonical_order` 按表中 required 后 optional 的顺序固定。`xml.py` 必须 `from .xml_schema import XmlTagSpec` 并 re-export `XmlTagSpec`，以保持 `models.py`、`registry.py` 已冻结的前向导入路径兼容。两个生产文件都以低于 300 行为目标；`xml_schema.py` 即使触发 300 行职责审查也只能保留纯声明，达到 500 行前必须重新拆分或登记批准例外。
+
+- [ ] **Step 4: 实现完整 Root 校验、Extension 选择和确定性序列化**
+
+`XmlElement` 必须把 `attributes`、`children` 防御性复制为 tuple，并区分 `text is None` 与 `text == ""`。`__post_init__` 要求 `tag` 是 strict `str`，拒绝把 `str`/`bytes` 当序列容器，拒绝非二元字符串 attribute、非 `XmlElement` child 和非 `str | None` text；错误只描述结构类别，不回显输入。唯一公共入口冻结为：
+
+```python
+def render_xml(
+    node: XmlElement,
+    *,
+    extension_specs: Mapping[str, ContextExtensionSpec] | None = None,
+) -> str: ...
+```
+
+`render_xml()` 要求 `extension_specs` 为 `Mapping[str, ContextExtensionSpec] | None`，非 Mapping 容器稳定拒绝；只接受 tag 为 `context-snapshot` 的完整 root，任何 subtree 输入稳定抛 `context-snapshot root required`。递归时携带完整 Core path；同名 `field`/`item` 只按 parent path 解析，不推断 schema。
+
+遇到核心 `<extension namespace="..." version="...">` 时：
+
+1. 先按 Core schema 校验 wrapper；
+2. 用 `namespace` 从 `extension_specs` 选择 `ContextExtensionSpec`；
+3. 拒绝未注册 namespace、非 `ContextExtensionSpec` value 和 `spec.namespace` 与 key 不一致；
+4. 要求 wrapper `version` 与 `spec.version` 完全相等；
+5. 把 `spec.tag_schemas` path 解释为相对 `<extension>` payload root，例如直接 child 为 `("approval",)`，孙节点为 `("approval", "reason")`；
+6. 每个 `tag_schemas` value 必须是 `XmlTagSpec`，否则稳定拒绝；不得修改或加强 `registry.py`；
+7. 未知 namespace、relative path、attribute 或 child 直接拒绝。不同 namespace 可以声明相同 relative path，互不覆盖。
+
+Serializer 保留调用方 child order。Task 6 的 `ContextSnapshotRenderer` 才负责 root Slot 排序和重复 Slot/重复 Extension namespace 检查；各 Owner Projection 负责 field/item/step 的业务顺序与基数。Task 3 只验证当前 child 是否被 schema 允许，不进行业务排序、去重或基数推断。
+
+每个节点的确定性验证顺序冻结为：root requirement -> schema/path resolution -> duplicate attributes -> missing required attributes -> unknown attributes -> attribute/text XML 1.0 character validation -> text+children rejection -> `allow_text` -> `allowed_children` -> recursive child validation -> serialization。错误不得回显 namespace、attribute value、文本或其他不可信原文。
+
+XML 1.0 合法字符集合精确冻结为 TAB (`#x9`)、LF (`#xA`)、CR (`#xD`)、`#x20-#xD7FF`、`#xE000-#xFFFD` 和 `#x10000-#x10FFFF`；其余 code point 全部拒绝，因此 surrogate、NUL、其他非法控制字符、`#xFFFE` 和 `#xFFFF` 不可进入文本或属性。
+
+序列化规则冻结为：两空格缩进；结构换行只使用 LF；末尾一个 LF；属性忽略调用方顺序并按 `canonical_order` 输出；`text is None` 且无 children 时 self-closing；`text == ""` 时显式 open/close；文本与 children 不能同时存在。文本转义 `& < >`；属性固定双引号并转义 `& < > " '`，其中 CR/LF/TAB 唯一编码为 `&#xD;`、`&#xA;`、`&#x9;`。禁止 `quoteattr()` 和 CDATA。
+
+- [ ] **Step 5: 补齐 XML 1.0、结构和 Extension 安全矩阵**
+
+`tests/context/test_context_protocol_security.py` 必须使用完整 root fixture 覆盖：
+
+- 拒绝 NUL、`\x01`、`\x0b`、`\ufffe`、`\uffff`、孤立 high/low surrogate；
+- 接受 XML 1.0 合法 TAB/LF/CR 和 supplementary character；
+- 属性 CR/LF/TAB 分别输出固定 numeric reference；
+- CDATA-like 文本按普通文本 escape；
+- `allow_text=False` 拒绝文本，`allowed_children` 拒绝错误 parent path，text+children 拒绝；
+- `text is None` 的空元素 self-closing，`text == ""` 显式开闭；
+- root 六属性 canonical order、declared/working 两种 `field`、working/inherited 两种 `item`、`segment`、`artifact`、`truncated`；
+- 两个 namespace 使用相同 relative path 时各自正确渲染；
+- Extension 未注册 namespace、version mismatch、未知 path、未知 attribute、非 `XmlTagSpec` value、字符串冒充 tuple、tuple 内重复、非法 XML Name、`xmlns`/`xmlns:*`、非 bool `allow_text`、`allowed_children=None`、attribute 集合与 `canonical_order` 不一致均确定性失败；另覆盖非字符串 `XmlElement.tag` 和非 Mapping `extension_specs` 的稳定错误。
+
+Extension 正例必须构造两个完整 `<extension>` wrapper，并显式传入：
+
+```python
+extension_specs = {
+    "com.example.hitl": ContextExtensionSpec(
+        namespace="com.example.hitl",
+        owner="HitlRuntime",
+        version="1.0",
+        tag_schemas={
+            ("approval",): XmlTagSpec(
+                required_attributes=("status",),
+                canonical_order=("status",),
+                allow_text=True,
+            ),
+        },
+        max_tokens=512,
+        trim_rank=5,
+    ),
+    "com.example.review": ContextExtensionSpec(
+        namespace="com.example.review",
+        owner="ReviewRuntime",
+        version="2.0",
+        tag_schemas={
+            ("approval",): XmlTagSpec(
+                required_attributes=("decision",),
+                canonical_order=("decision",),
+                allow_text=True,
+            ),
+        },
+        max_tokens=512,
+        trim_rank=6,
+    ),
+}
+```
+
+- [ ] **Step 6: Green、规模检查和精确提交**
 
 ```powershell
 python -m pytest tests/context/test_context_protocol_security.py -q
-git add -- src/agentos/context/xml.py tests/context/test_context_protocol_security.py
+(Get-Content -Encoding utf8 src/agentos/context/xml.py).Count
+(Get-Content -Encoding utf8 src/agentos/context/xml_schema.py).Count
+git add -- src/agentos/context/xml_schema.py src/agentos/context/xml.py tests/context/test_context_protocol_security.py
 git commit -m "feat: add deterministic context xml serializer"
 ```
+
+Expected: tests PASS；`xml.py` 低于 300 行且只拥有校验/序列化控制流；`xml_schema.py` 只包含不可变 schema 声明。
 
 ---
 
@@ -656,9 +865,9 @@ Root 属性和顺序固定为 protocol、version、origin、authority、persiste
 
 - [ ] **Step 4: 写 Full/Minimal Golden 并验证字节一致**
 
-Full Golden 必须用测试 Projection 覆盖九个 Slot 和一个已注册 Extension；这些 Projection 只是 renderer contract fixture，不表示 Planner/Memory/Skill/Artifact Runtime 已实现。Minimal Golden 只包含根节点。
+Full Golden 必须用测试 Projection 覆盖九个 Slot 和一个已注册 Extension；这些 Projection 只是 renderer contract fixture，不表示 Planner/Memory/Skill/Artifact Runtime 已实现。Minimal Golden 只包含 root；空 root 的 self-closing 表达遵守 Task 3 已冻结规则。
 
-同一测试模块还要分别参数化九个单 Slot，验证空 Slot 不输出、顶层 tag 与 Registry 一致；安全测试补充 NUL、`\x01`、`\x0b`、`\ufffe`、`\uffff`、孤立 surrogate、CR/TAB、属性换行、CDATA-like 文本和重复 Extension namespace。属性 serializer 必须手工固定双引号 delimiter，并把 `& < > \" '` 及属性中的 CR/LF/TAB 确定性编码，不能直接依赖会切换 quote delimiter 的 `quoteattr()`。
+同一测试模块还要分别参数化九个单 Slot，验证空 Slot 不输出、顶层 tag 与 Registry 一致，并覆盖重复 Extension namespace。XML 字符合法性、escaping、属性 CR/LF/TAB、CDATA-like 文本、`allow_text`、`allowed_children`、text+children 和空元素行为已归 Task 3，Task 6 不重复拥有或修改 serializer 安全语义。
 
 Phase 1 使用独立 `SensitiveRepresentationValidator` 对 Projection typed value 在 XML/JSON 序列化前递归遍历：string 标量、list/tuple 元素、object key/value 都检查；生成的 `XmlElement` text 和每个 attribute value 在 escape 前再检查一次，形成 defense in depth。命中后抛 `ContextSensitiveDataError`，Owner 必须改为 handle/preview。规则冻结为：
 
