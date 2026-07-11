@@ -14,7 +14,7 @@
 
 - **Phase / Active Specs:** Phase 0；`2026-07-10-agentos-next-generation-sdk-architecture-design.md`、`2026-07-10-agentos-context-protocol-v1-design.md`、`2026-07-10-agentos-context-first-sdk-master-implementation-plan.md`。
 - **Acceptance Items:** 全量 pytest 通过；Ruff `F` 规则通过且无宽泛 suppress；Live Backend 子进程显式获得可导入的 `src` 环境；Release Evidence 普通测试与候选发布强制门禁分离；Public API inventory 与 `__all__` 一致并跨 Python 3.11-3.13 规范化；旧七段式范文不再是规范锚点；生成并校验 300/500/800 行规模基线；记录 `0.2.0a1` API 策略。
-- **Allowed Files:** `AGENTS.md`、`.github/workflows/ci.yml`、`pyproject.toml`、`src/agentos/__init__.py`、`src/agentos/channels/asgi.py`、`src/agentos/channels/a2a_conformance.py`、`src/agentos/channels/a2a_operations.py`、`src/agentos/deployment.py`、`src/agentos/readiness.py`、`src/agentos/runtime/profile.py`、`src/agentos/testing/contracts/plan_claim_store.py`、`tests/channels/test_a2a_jwks_jwt_verifier.py`、`tests/service/test_agent_service_reference.py`、`tests/multi/test_planner_runtime.py`、`tests/deployment/test_live_backend_probe_pack.py`、`tests/architecture/test_public_api.py`、`tests/architecture/test_module_size_baseline.py`、`tests/test_release_evidence.py`、`scripts/generate_public_api_inventory.py`、`scripts/generate_module_size_baseline.py`、`scripts/validate_release_evidence.py`、`docs/public-api-stability.json`、`docs/public-api-inventory.json`、`docs/api-stability.md`、`docs/release-hardening.md`、`docs/design/sdk-architecture.md`、`docs/design/llm-context-only-example.md`、`docs/governance/agentos-module-size-baseline.json`、`docs/superpowers/plans/2026-07-11-agentos-oversized-module-decomposition-plan.md`。
+- **Allowed Files:** `AGENTS.md`、`.gitattributes`、`.github/workflows/ci.yml`、`pyproject.toml`、`src/agentos/__init__.py`、`src/agentos/channels/asgi.py`、`src/agentos/channels/a2a_conformance.py`、`src/agentos/channels/a2a_operations.py`、`src/agentos/deployment.py`、`src/agentos/readiness.py`、`src/agentos/runtime/profile.py`、`src/agentos/testing/contracts/plan_claim_store.py`、`tests/channels/test_a2a_jwks_jwt_verifier.py`、`tests/service/test_agent_service_reference.py`、`tests/multi/test_planner_runtime.py`、`tests/deployment/test_live_backend_probe_pack.py`、`tests/architecture/test_public_api.py`、`tests/architecture/test_module_size_baseline.py`、`tests/test_release_evidence.py`、`scripts/generate_public_api_inventory.py`、`scripts/generate_module_size_baseline.py`、`scripts/validate_release_evidence.py`、`docs/public-api-stability.json`、`docs/public-api-inventory.json`、`docs/api-stability.md`、`docs/release-hardening.md`、`docs/design/sdk-architecture.md`、`docs/design/llm-context-only-example.md`、`docs/governance/agentos-module-size-baseline.json`、`docs/superpowers/plans/2026-07-11-agentos-oversized-module-decomposition-plan.md`。
 - **Forbidden Files:** `src/agentos/context/**`、`src/agentos/messages/**`、`src/agentos/runtime/query_loop.py`、`src/agentos/runtime/async_query_loop.py`、Provider Adapter、Artifact、Memory、Planner 领域实现。
 - **Dependency Boundaries:** Phase 0 可以读取所有 public modules 做反射，但不能新增运行时依赖；基础安装仍保持零第三方依赖。
 - **Completed In This Work Package:** 工程基线修复、治理数据生成、文档取代关系和确定性验证。
@@ -534,12 +534,18 @@ git commit -m "build: make the public API inventory reproducible"
 ### Task 6: 固化文档取代关系和模块规模基线
 
 **Files:**
+- Create: `.gitattributes`
 - Modify: `AGENTS.md`
 - Modify: `docs/design/sdk-architecture.md`
 - Modify: `docs/design/llm-context-only-example.md`
 - Create: `scripts/generate_module_size_baseline.py`
 - Create: `docs/governance/agentos-module-size-baseline.json`
 - Create: `tests/architecture/test_module_size_baseline.py`
+
+生成型治理 JSON 必须通过 `.gitattributes` 固定为 `eol=lf`，避免 Windows
+`core.autocrlf` 让已跟踪基线与生成器输出发生字节漂移。该规则至少覆盖
+`docs/governance/agentos-module-size-baseline.json` 和
+`docs/public-api-inventory.json`。
 
 - [ ] **Step 1: 写规模基线结构测试**
 
@@ -634,7 +640,7 @@ Expected: PASS；活动设计文档不再把旧七段式 system prompt 当作规
 - [ ] **Step 6: Spec Compliance 与 Code Quality Review 通过后精确提交**
 
 ```powershell
-git add -- AGENTS.md docs/design/sdk-architecture.md docs/design/llm-context-only-example.md scripts/generate_module_size_baseline.py docs/governance/agentos-module-size-baseline.json tests/architecture/test_module_size_baseline.py
+git add -- .gitattributes AGENTS.md docs/design/sdk-architecture.md docs/design/llm-context-only-example.md scripts/generate_module_size_baseline.py docs/governance/agentos-module-size-baseline.json tests/architecture/test_module_size_baseline.py
 git commit -m "docs: freeze the AgentOS architecture baseline"
 ```
 
