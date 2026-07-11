@@ -8,9 +8,12 @@ import importlib
 import inspect
 import json
 import re
+import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from types import ModuleType
+from typing import TypedDict
 
 
 _FROZENSET_RE = re.compile(r"frozenset\(\{(?P<items>[^{}]*)\}\)")
@@ -22,6 +25,11 @@ _OBJECT_REPR_ADDRESS_RE = re.compile(
 
 class PolicyError(ValueError):
     """稳定性策略与模块公开面不一致。"""
+
+
+class ModulePolicy(TypedDict):
+    stable: list[str]
+    experimental: list[str]
 
 
 def normalize_signature(signature: str) -> str:
@@ -127,24 +135,54 @@ def _protocol_methods(value: object) -> dict[str, str] | None:
     return methods
 
 
-def load_policy(path: Path) -> dict[str, dict[str, list[str]]]:
+def load_policy(path: Path) -> dict[str, ModulePolicy]:
     """读取稳定性策略，并拒绝策略层的非分类字段。"""
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise PolicyError("policy must be a JSON object")
     if set(payload) != {"schema", "schema_version", "modules"}:
         raise PolicyError("policy must contain only schema, schema_version, and modules")
     if payload["schema"] != "agentos.public_api_stability":
         raise PolicyError("unsupported public API stability policy schema")
-    if payload["schema_version"] != 1:
+    if type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
         raise PolicyError("unsupported public API stability policy schema version")
     modules = payload["modules"]
     if not isinstance(modules, dict) or not modules:
         raise PolicyError("policy modules must be a non-empty object")
-    return modules
+    validated: dict[str, ModulePolicy] = {}
+    for module_name, module_policy in modules.items():
+        if not isinstance(module_name, str) or not module_name.strip():
+            raise PolicyError("policy module names must be non-empty strings")
+        if not isinstance(module_policy, dict):
+            raise PolicyError(f"{module_name} module policy must be an object")
+        if set(module_policy) != {"stable", "experimental"}:
+            raise PolicyError(
+                f"{module_name} policy keys must be stable and experimental",
+            )
+
+        classifications: dict[str, list[str]] = {}
+        for classification in ("stable", "experimental"):
+            entries = module_policy[classification]
+            if not isinstance(entries, list):
+                raise PolicyError(
+                    f"{module_name} {classification} classification must be a list",
+                )
+            if not all(isinstance(entry, str) and entry for entry in entries):
+                raise PolicyError(
+                    f"{module_name} {classification} classification entries "
+                    "must be non-empty strings",
+                )
+            classifications[classification] = list(entries)
+        validated[module_name] = ModulePolicy(
+            stable=classifications["stable"],
+            experimental=classifications["experimental"],
+        )
+    return validated
 
 
 def build_inventory(
-    policy_modules: dict[str, dict[str, list[str]]],
+    policy_modules: dict[str, ModulePolicy],
 ) -> dict[str, object]:
     """从模块公开面与独立稳定性策略构建 inventory。"""
 
@@ -181,10 +219,24 @@ def build_inventory(
 
 
 def write_inventory(payload: dict[str, object], output: Path) -> None:
-    output.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    content = (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=output.parent,
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        temporary.replace(output)
+    except OSError:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
 
 
 def _parse_args() -> argparse.Namespace:
@@ -194,10 +246,43 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = _parse_args()
-    write_inventory(build_inventory(load_policy(args.policy)), args.output)
+    try:
+        policy = load_policy(args.policy)
+    except OSError as error:
+        print(f"error: unable to read policy: {error.strerror or error}", file=sys.stderr)
+        return 2
+    except UnicodeError:
+        print("error: policy is not valid UTF-8", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as error:
+        print(
+            f"error: policy is not valid JSON: {error.msg} "
+            f"at line {error.lineno} column {error.colno}",
+            file=sys.stderr,
+        )
+        return 2
+    except PolicyError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    try:
+        inventory = build_inventory(policy)
+    except PolicyError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    try:
+        write_inventory(inventory, args.output)
+    except OSError as error:
+        print(
+            f"error: unable to write inventory: {error.strerror or error}",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
