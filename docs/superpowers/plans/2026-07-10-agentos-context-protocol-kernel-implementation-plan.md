@@ -333,7 +333,7 @@ class SystemEnvelopeBudgetPolicy:
     workspace_contract: int = 6_000
 ```
 
-这些数值是 SDK 可注入的默认 policy，不是 Context Protocol v1 wire 常量；`ContextRenderer(registry, token_counter, budget_policy=...)` 明确注入 `TokenCounter` 和 policy。Required Section 缺失或超限直接抛 `ContextBudgetExceededError`；Trusted Skill 单项/总量超限时按稳定注册顺序整体卸载后续 item，不截断正文。测试使用确定 FakeTokenCounter 覆盖 required 缺失、每个 cap、总 cap、`0..N`、卸载顺序和自定义 policy。
+这些数值是 SDK 可注入的默认 policy，不是 Context Protocol v1 wire 常量。Task 2 只测试默认值、自定义 policy、正整数校验和不可变性；此时尚无 Renderer/TokenCounter，不伪造预算执行。Task 4 的 `ContextRenderer(registry, token_counter, budget_policy=...)` 负责在 Required Section 缺失或超限时抛 `ContextBudgetExceededError`，以及 Trusted Skill 按稳定注册顺序整体卸载后续 item；Task 4 使用确定 FakeTokenCounter 覆盖 Required Section 缺失、每个 cap、总 cap、`0..N`、卸载顺序和自定义 policy。
 
 同一文件定义并测试 Extension Registry：
 
@@ -348,7 +348,7 @@ class ContextExtensionSpec:
     trim_rank: int
 ```
 
-namespace 必须匹配反向域名式 `[a-z][a-z0-9]*(\.[a-z][a-z0-9-]*)+`；同一 namespace 只能注册一次。`tag_schemas` 非空，key 是从 extension root 开始的完整 tag path tuple，每段必须是合法 XML Name；不得与任意 Core root/Slot tag、`xml`/`xmlns` 保留名冲突，不得有大小写折叠后的重复 path。每个 Extension path 同时冻结属性 allowlist、required/optional 集合与 canonical order；注册时 defensive copy，并包装为 `MappingProxyType`，防止 frozen dataclass 内部 Mapping 漂移。budget 和 trim policy 必须显式提供。测试覆盖非法 XML Name、Core 冲突、保留名、重复 namespace/path、注册后原 dict 修改无效和未知 extension attribute。
+namespace 必须匹配反向域名式 `[a-z][a-z0-9]*(\.[a-z][a-z0-9-]*)+`；同一 namespace 只能注册一次。`tag_schemas` 非空，key 是从 extension root 开始的完整 tag path tuple，每段必须是合法 XML Name；不得与任意 Core root/Slot tag、`xml`/`xmlns` 保留名冲突，不得有大小写折叠后的重复 path。Task 2 把传入 Mapping defensive copy 并包装为 `MappingProxyType`，但只把尚未定义的 `XmlTagSpec` 当作 `TYPE_CHECKING` 前向值，不检查其属性字段。测试覆盖非法 XML Name、Core 冲突、保留名、重复 namespace/path、注册后原 dict 修改无效。Task 3 定义 `XmlTagSpec` 后补齐 required/optional/canonical order 和未知 Extension attribute 拒绝测试。
 
 - [ ] **Step 4: Green、模块验证和提交**
 
