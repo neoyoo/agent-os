@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 
 import agentos
@@ -23,6 +24,23 @@ RELEASE_EVIDENCE_EXAMPLE = ROOT / "docs" / "release-evidence.example.json"
 RELEASE_EVIDENCE_GENERATOR = ROOT / "scripts" / "generate_release_evidence.py"
 RELEASE_EVIDENCE_VALIDATOR = ROOT / "scripts" / "validate_release_evidence.py"
 LOCAL_RELEASE_EVIDENCE_ENV = "AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE"
+TEST_RELEASE_IDENTITY = (
+    "review/agentos-sdk-architecture-20260611",
+    "abc123",
+    "0.1.0rc1",
+)
+
+
+@pytest.fixture
+def fixed_release_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[str, str, str]:
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "current_release_identity",
+        lambda: TEST_RELEASE_IDENTITY,
+    )
+    return TEST_RELEASE_IDENTITY
 
 
 def release_evidence_generator_env(
@@ -91,7 +109,26 @@ def _validate_local_release_evidence_if_requested(
     if not manifest_path.exists():
         pytest.fail(f"release evidence manifest missing: {manifest_path}")
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest_value = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except UnicodeError:
+        pytest.fail(
+            "release evidence manifest unreadable: invalid UTF-8",
+            pytrace=False,
+        )
+    except json.JSONDecodeError:
+        pytest.fail(
+            "release evidence manifest unreadable: invalid JSON",
+            pytrace=False,
+        )
+    except OSError as exc:
+        pytest.fail(f"release evidence manifest unreadable: {exc}", pytrace=False)
+    if not isinstance(manifest_value, Mapping):
+        pytest.fail(
+            "release evidence manifest must be a JSON object",
+            pytrace=False,
+        )
+    manifest = dict(manifest_value)
     branch, commit, version = current_release_identity()
     return validate_release_candidate_evidence_manifest(
         manifest,
@@ -160,6 +197,7 @@ def release_manifest(**overrides: object) -> dict[str, object]:
 
 
 def test_local_release_evidence_is_not_an_implicit_unit_test_input(
+    fixed_release_identity: tuple[str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -171,10 +209,11 @@ def test_local_release_evidence_is_not_an_implicit_unit_test_input(
 
 
 def test_local_release_evidence_validation_accepts_matching_identity_when_enabled(
+    fixed_release_identity: tuple[str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    branch, commit, version = current_release_identity()
+    branch, commit, version = fixed_release_identity
     manifest = tmp_path / "release-evidence.json"
     manifest.write_text(
         json.dumps(
@@ -190,6 +229,7 @@ def test_local_release_evidence_validation_accepts_matching_identity_when_enable
         encoding="utf-8",
     )
     monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+    monkeypatch.setenv("PATH", "")
 
     report = _validate_local_release_evidence_if_requested(manifest)
 
@@ -198,6 +238,7 @@ def test_local_release_evidence_validation_accepts_matching_identity_when_enable
 
 
 def test_local_release_evidence_validation_requires_manifest_when_enabled(
+    fixed_release_identity: tuple[str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -209,11 +250,49 @@ def test_local_release_evidence_validation_requires_manifest_when_enabled(
         )
 
 
+@pytest.mark.parametrize(
+    ("payload", "diagnostic"),
+    [
+        pytest.param(b"\xff", "invalid UTF-8", id="invalid-utf8"),
+        pytest.param(b"{", "invalid JSON", id="invalid-json"),
+    ],
+)
+def test_local_release_evidence_validation_reports_unreadable_input(
+    fixed_release_identity: tuple[str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    payload: bytes,
+    diagnostic: str,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_bytes(payload)
+    monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+
+    with pytest.raises(pytest.fail.Exception, match=diagnostic):
+        _validate_local_release_evidence_if_requested(manifest)
+
+
+@pytest.mark.parametrize("payload", ["null", "[]"])
+def test_local_release_evidence_validation_requires_json_object(
+    fixed_release_identity: tuple[str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    payload: str,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(payload, encoding="utf-8")
+    monkeypatch.setenv(LOCAL_RELEASE_EVIDENCE_ENV, "1")
+
+    with pytest.raises(pytest.fail.Exception, match="must be a JSON object"):
+        _validate_local_release_evidence_if_requested(manifest)
+
+
 def test_local_release_evidence_validation_rejects_identity_drift_when_enabled(
+    fixed_release_identity: tuple[str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    branch, _, version = current_release_identity()
+    branch, _, version = fixed_release_identity
     manifest = tmp_path / "release-evidence.json"
     manifest.write_text(
         json.dumps(
@@ -241,10 +320,11 @@ def test_local_release_evidence_validation_rejects_identity_drift_when_enabled(
 
 
 def test_local_release_evidence_validation_preserves_blocking_gates_when_enabled(
+    fixed_release_identity: tuple[str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    branch, commit, version = current_release_identity()
+    branch, commit, version = fixed_release_identity
     payload = release_manifest(
         release_candidate={
             "branch": branch,
@@ -303,8 +383,58 @@ def test_release_evidence_validator_cli_rejects_missing_manifest(
         version="0.1.0rc1",
     )
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert "release evidence manifest missing" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("payload", "diagnostic"),
+    [
+        pytest.param(b"\xff", "invalid UTF-8", id="invalid-utf8"),
+        pytest.param(b"{", "invalid JSON", id="invalid-json"),
+    ],
+)
+def test_release_evidence_validator_cli_reports_unreadable_input(
+    tmp_path: Path,
+    payload: bytes,
+    diagnostic: str,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_bytes(payload)
+
+    result = run_release_evidence_validator(
+        manifest,
+        branch="review/agentos-sdk-architecture-20260611",
+        commit="abc123",
+        version="0.1.0rc1",
+    )
+
+    assert result.returncode == 2
+    assert diagnostic in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("payload", ["null", "[]"])
+def test_release_evidence_validator_cli_requires_json_object(
+    tmp_path: Path,
+    payload: str,
+) -> None:
+    manifest = tmp_path / "release-evidence.json"
+    manifest.write_text(payload, encoding="utf-8")
+
+    result = run_release_evidence_validator(
+        manifest,
+        branch="review/agentos-sdk-architecture-20260611",
+        commit="abc123",
+        version="0.1.0rc1",
+    )
+
+    assert result.returncode == 2
+    assert "release evidence manifest must be a JSON object" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
 
 
 def test_release_evidence_validator_cli_rejects_identity_drift(
@@ -320,7 +450,7 @@ def test_release_evidence_validator_cli_rejects_identity_drift(
         version="0.1.0rc1",
     )
 
-    assert result.returncode != 0
+    assert result.returncode == 1
     report = json.loads(result.stdout)
     assert report["accepted"] is False
     assert any(
@@ -355,7 +485,7 @@ def test_release_evidence_validator_cli_rejects_pending_independent_review_with_
         version="0.1.0rc1",
     )
 
-    assert result.returncode != 0
+    assert result.returncode == 1
     report = json.loads(result.stdout)
     assert report["blocking_gates"] == ["independent_review"]
     assert report["gate_evidence_findings"] == []

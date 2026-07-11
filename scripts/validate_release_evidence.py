@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from agentos.release import validate_release_candidate_evidence_manifest
@@ -30,10 +31,29 @@ def main() -> int:
         return 2
 
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest_value = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except UnicodeError:
+        print(
+            "release evidence manifest unreadable: invalid UTF-8",
+            file=sys.stderr,
+        )
+        return 2
+    except json.JSONDecodeError:
+        print(
+            "release evidence manifest unreadable: invalid JSON",
+            file=sys.stderr,
+        )
+        return 2
+    except OSError as exc:
         print(f"release evidence manifest unreadable: {exc}", file=sys.stderr)
         return 2
+    if not isinstance(manifest_value, Mapping):
+        print(
+            "release evidence manifest must be a JSON object",
+            file=sys.stderr,
+        )
+        return 2
+    manifest = dict(manifest_value)
 
     report = validate_release_candidate_evidence_manifest(
         manifest,
