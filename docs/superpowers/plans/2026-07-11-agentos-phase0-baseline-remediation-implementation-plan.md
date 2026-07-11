@@ -14,7 +14,7 @@
 
 - **Phase / Active Specs:** Phase 0；`2026-07-10-agentos-next-generation-sdk-architecture-design.md`、`2026-07-10-agentos-context-protocol-v1-design.md`、`2026-07-10-agentos-context-first-sdk-master-implementation-plan.md`。
 - **Acceptance Items:** 全量 pytest 通过；Ruff `F` 规则通过且无宽泛 suppress；Live Backend 子进程显式获得可导入的 `src` 环境；Release Evidence 普通测试与候选发布强制门禁分离；Public API inventory 与 `__all__` 一致并跨 Python 3.11-3.13 规范化；旧七段式范文不再是规范锚点；生成并校验 300/500/800 行规模基线；记录 `0.2.0a1` API 策略。
-- **Allowed Files:** `AGENTS.md`、`.gitattributes`、`.github/workflows/ci.yml`、`pyproject.toml`、`uv.lock`、`src/agentos/__init__.py`、`src/agentos/channels/asgi.py`、`src/agentos/channels/a2a_conformance.py`、`src/agentos/channels/a2a_operations.py`、`src/agentos/deployment.py`、`src/agentos/readiness.py`、`src/agentos/runtime/profile.py`、`src/agentos/testing/contracts/plan_claim_store.py`、`tests/channels/test_a2a_jwks_jwt_verifier.py`、`tests/service/test_agent_service_reference.py`、`tests/multi/test_planner_runtime.py`、`tests/deployment/test_live_backend_probe_pack.py`、`tests/architecture/test_public_api.py`、`tests/architecture/test_public_api_inventory.py`、`tests/architecture/test_module_size_baseline.py`、`tests/docs/test_production_hardening_docs.py`、`tests/_release_evidence_fixtures.py`、`tests/test_release_evidence.py`、`tests/test_release_evidence_local.py`、`tests/test_release_evidence_cli.py`、`scripts/generate_public_api_inventory.py`、`scripts/generate_module_size_baseline.py`、`scripts/validate_release_evidence.py`、`docs/public-api-stability.json`、`docs/public-api-inventory.json`、`docs/api-stability.md`、`docs/release-hardening.md`、`docs/design/sdk-architecture.md`、`docs/design/llm-context-only-example.md`、`docs/governance/agentos-module-size-baseline.json`、`docs/superpowers/plans/2026-07-11-agentos-oversized-module-decomposition-plan.md`、`docs/superpowers/plans/2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md`。
+- **Allowed Files:** `AGENTS.md`、`.gitattributes`、`.github/workflows/ci.yml`、`pyproject.toml`、`uv.lock`、`src/agentos/__init__.py`、`src/agentos/channels/asgi.py`、`src/agentos/channels/a2a_conformance.py`、`src/agentos/channels/a2a_operations.py`、`src/agentos/deployment.py`、`src/agentos/readiness.py`、`src/agentos/runtime/profile.py`、`src/agentos/testing/contracts/plan_claim_store.py`、`tests/channels/test_a2a_jwks_jwt_verifier.py`、`tests/service/test_agent_service_reference.py`、`tests/multi/test_planner_runtime.py`、`tests/deployment/test_live_backend_probe_pack.py`、`tests/architecture/test_public_api.py`、`tests/architecture/test_root_facade_contract.py`、`tests/architecture/test_public_api_inventory.py`、`tests/architecture/test_public_api_inventory_cli.py`、`tests/architecture/test_module_size_baseline.py`、`tests/docs/test_production_hardening_docs.py`、`tests/_release_evidence_fixtures.py`、`tests/test_release_evidence.py`、`tests/test_release_evidence_local.py`、`tests/test_release_evidence_cli.py`、`scripts/generate_public_api_inventory.py`、`scripts/generate_module_size_baseline.py`、`scripts/validate_release_evidence.py`、`docs/public-api-stability.json`、`docs/public-api-inventory.json`、`docs/api-stability.md`、`docs/release-hardening.md`、`docs/design/sdk-architecture.md`、`docs/design/llm-context-only-example.md`、`docs/governance/agentos-module-size-baseline.json`、`docs/superpowers/plans/2026-07-11-agentos-oversized-module-decomposition-plan.md`、`docs/superpowers/plans/2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md`。
 - **Forbidden Files:** `src/agentos/context/**`、`src/agentos/messages/**`、`src/agentos/runtime/query_loop.py`、`src/agentos/runtime/async_query_loop.py`、Provider Adapter、Artifact、Memory、Planner 领域实现。
 - **Dependency Boundaries:** Phase 0 可以读取所有 public modules 做反射，但不能新增运行时依赖；基础安装仍保持零第三方依赖。
 - **Completed In This Work Package:** 工程基线修复、治理数据生成、文档取代关系和确定性验证。
@@ -239,25 +239,26 @@ git commit -m "test: make live backend subprocess imports explicit"
 **Files:**
 - Modify: `src/agentos/__init__.py`
 - Modify: `tests/architecture/test_public_api.py`
+- Create: `tests/architecture/test_root_facade_contract.py`
 - Modify: `docs/public-api-inventory.json`
 
 - [ ] **Step 1: 写 AST 分析 helper 的 mutation 失败测试**
 
-在 `tests/architecture/test_public_api.py` 中先写期望中的 `_root_facade_import_contract_violations(source: str, public_names: set[str])` 调用，不实现 helper。参数化源码分别包含：star import、`if`/`try` 内条件 import、`importlib.import_module()`、`from importlib import import_module` 后动态调用，以及不在 public names 中的普通 import；每个 case 断言精确 violation code。
+在独立的 `tests/architecture/test_root_facade_contract.py` 中先写期望中的 `_root_facade_import_contract_violations(source: str, public_names: set[str])` 调用，不实现 helper。参数化源码必须覆盖 star import、nested import、renamed/undeclared import、`importlib.import_module()`、`__import__()`、`exec()`、`eval()`、模块级 `__getattr__()` 和 `globals()` mutation；每个 case 断言稳定 violation code。该测试模块不得从 `test_public_api.py` import helper。
 
 - [ ] **Step 2: 运行 mutation 测试并确认 helper 缺失**
 
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py -k "root_facade_import_contract_rejects" -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_root_facade_contract.py -k "root_facade_import_contract_rejects" -q
 ```
 
 Expected: FAIL，因为 `_root_facade_import_contract_violations()` 尚不存在。
 
 - [ ] **Step 3: 实现并验证 AST 分析 helper**
 
-只实现测试侧 `_root_facade_import_contract_violations()`：使用 `ast.walk()` 收集所有层级的 import，拒绝 star import、条件/异常分支内 import、两种 `import_module()` 动态导入形式和不在 public names 中的导入。先重新运行 Step 2 命令并确认 mutation tests PASS；此时禁止修改 `src/agentos/__init__.py`。
+只实现测试侧 `_root_facade_import_contract_violations()`，并采用顶层语句 allowlist：只允许模块 docstring、来自 `agentos.*` 的显式 identity re-export、静态字符串 `__all__` 列表和静态字符串 `__version__`。其他 import、动态调用或赋值、函数、类和控制流全部拒绝。先重新运行 Step 2 命令并确认 mutation tests PASS；此时禁止修改 `src/agentos/__init__.py`。
 
 - [ ] **Step 4: 写真实 root facade 契约并观察具体 violation**
 
@@ -277,7 +278,7 @@ def test_root_facade_only_imports_declared_public_exports() -> None:
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py::test_root_facade_only_imports_declared_public_exports -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_root_facade_contract.py::test_root_facade_only_imports_declared_public_exports -q
 ```
 
 Expected: FAIL，失败输出必须列出当前根包导入但未声明在 `__all__` 的具体隐藏名称；若仍因 helper、fixture 或收集错误失败，不得进入 facade 修改。
@@ -308,7 +309,7 @@ from agentos.runtime import QueryLoop as QueryLoop
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_root_facade_contract.py -q
 & (Resolve-Path '.\.venv\Scripts\python.exe') -m ruff check src/agentos/__init__.py
 ```
 
@@ -317,7 +318,7 @@ Expected: Public API 测试和上述 Ruff 命令全部通过，不允许带着�
 - [ ] **Step 8: Spec Compliance 与 Code Quality Review 通过后精确提交**
 
 ```powershell
-git add -- src/agentos/__init__.py tests/architecture/test_public_api.py docs/public-api-inventory.json
+git add -- src/agentos/__init__.py tests/architecture/test_public_api.py tests/architecture/test_root_facade_contract.py docs/public-api-inventory.json
 git commit -m "refactor: narrow the root AgentOS facade"
 ```
 
@@ -427,11 +428,14 @@ git commit -m "test: remove unused baseline bindings"
 - Modify: `docs/api-stability.md`
 - Modify: `tests/architecture/test_public_api.py`
 - Create: `tests/architecture/test_public_api_inventory.py`
+- Create: `tests/architecture/test_public_api_inventory_cli.py`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 
-`tests/architecture/test_public_api.py` 只保留既有 facade、export 和 inventory 消费契约，不再增长。生成器、稳定性策略、签名规范化和 CI mutation 测试必须迁移到独立的 `tests/architecture/test_public_api_inventory.py`，且该独立测试模块保持低于 500 行；两个测试模块不得互相 import。
+`tests/architecture/test_public_api.py` 只保留既有 export 和 inventory 消费契约，不再增长。生成器、稳定性策略、签名规范化和 CI mutation 测试必须迁移到独立的 `tests/architecture/test_public_api_inventory.py`；policy 输入与 CLI 退出语义必须进入独立的 `tests/architecture/test_public_api_inventory_cli.py`。三个测试模块均保持低于 500 行，且不得互相 import。
+
+生成器 CLI 成功返回 0；缺失、不可读、无效 UTF-8/JSON、schema 或 policy 输入错误返回 2，stderr 输出单行诊断且不得出现 traceback。失败不得创建或覆盖 output；成功写入使用同目录临时文件和原子替换。意外的模块执行异常不得被宽泛吞掉。
 
 生成 inventory 不得写入 branch 或 commit 等脆弱 provenance；相关发布来源由独立 Release Evidence 治理。既有 docs 消费测试必须断言 inventory 不含 branch/commit，而不是固定历史分支。
 
@@ -484,7 +488,7 @@ def test_public_api_inventory_ci_covers_supported_python_minors() -> None:
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -k "public_api_inventory" -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py -k "public_api_inventory" -q
 ```
 
 Expected: FAIL，因为生成脚本尚不存在，且 CI 尚无 Python 3.11/3.12/3.13 inventory matrix。
@@ -516,7 +520,7 @@ text = text.replace("pathlib._local.Path", "pathlib.Path")
 # 保留公开模块限定名，不记录对象内存地址或私有实现限定名。
 ```
 
-在 `tests/architecture/test_public_api.py` 增加 3.11/3.13 代表性输入的参数化测试，确保 `pathlib.Path` 与 `pathlib._local.Path` 得到同一结果，`frozenset({'task', 'session'})` 与反序输入得到同一结果。
+在 `tests/architecture/test_public_api_inventory.py` 增加 3.11/3.13 代表性输入的参数化测试，确保 `pathlib.Path` 与 `pathlib._local.Path` 得到同一结果，`frozenset({'task', 'session'})` 与反序输入得到同一结果。
 
 在 `.github/workflows/ci.yml` 增加独立 `public-api-inventory` job，matrix 固定为 `python-version: ["3.11", "3.12", "3.13"]`。每个版本都使用对应 Python 执行生成器输出到临时文件，再用 `git diff --exit-code --no-index docs/public-api-inventory.json <generated>` 比较。任何 minor 版本生成不同结果都必须使 CI 失败；不得只在单一解释器上模拟版本字符串。
 
@@ -538,7 +542,7 @@ Run:
 
 ```powershell
 & (Resolve-Path '.\.venv\Scripts\python.exe') scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py -q
 ```
 
 Expected: PASS；连续运行两次不会产生 diff。
@@ -550,7 +554,7 @@ Expected: PASS；连续运行两次不会产生 diff。
 在 `docs/api-stability.md` 中记录：`0.2.0a1` 的 root facade 只承诺 Level 1 本地 Loop 所需稳定入口；未实现的 ContextSnapshot、Artifact、Durable、Distributed 新类型不提前导出；breaking migration 只在对应阶段和 inventory 更新同时发生。记录生成器命令，然后：
 
 ```powershell
-git add -- .github/workflows/ci.yml pyproject.toml scripts/generate_public_api_inventory.py docs/public-api-stability.json docs/public-api-inventory.json docs/api-stability.md tests/architecture/test_public_api.py
+git add -- .github/workflows/ci.yml pyproject.toml uv.lock scripts/generate_public_api_inventory.py docs/public-api-stability.json docs/public-api-inventory.json docs/api-stability.md tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py
 git commit -m "build: make the public API inventory reproducible"
 ```
 
@@ -679,7 +683,7 @@ git commit -m "docs: freeze the AgentOS architecture baseline"
 - [ ] **Step 1: 运行目标矩阵**
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_module_size_baseline.py tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_root_facade_contract.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py tests/architecture/test_module_size_baseline.py tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs -q
 ```
 
 Expected: PASS。
