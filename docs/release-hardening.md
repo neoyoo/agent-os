@@ -85,7 +85,7 @@ Ordinary unit tests do not read the ignored local
 without enabling local candidate validation:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py -q
 ```
 
 To validate the current worktree's local candidate artifact through pytest,
@@ -93,7 +93,7 @@ enable the explicit gate first:
 
 ```powershell
 $env:AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE='1'
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence_local.py -q
 ```
 
 Release automation must use the non-skippable validator CLI with explicit
@@ -108,7 +108,7 @@ Use these commands as release candidate evidence:
 ```bash
 uv run python scripts/generate_release_evidence.py --output docs/release-evidence.json --branch review/agentos-sdk-architecture-20260611 --commit <current-commit> --version <pyproject-version> --independent-review-status pending
 uv run pytest tests/docs/test_production_hardening_docs.py tests/docs/test_production_readiness_docs.py tests/docs/test_objective_coverage_audit_docs.py -q
-uv run pytest tests/test_release_evidence.py -q
+uv run pytest tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py -q
 python -m json.tool docs/release-evidence.example.json
 python -m json.tool docs/release-evidence.json
 python -m json.tool docs/public-api-inventory.json

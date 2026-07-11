@@ -49,7 +49,8 @@ uv sync --extra dev --extra postgres --extra redis
 
 普通 docs/unit tests 不得读取被 Git 忽略的
 `docs/release-evidence.json` 本地候选文件。候选内容、identity 与 blocking gate
-由 `tests/test_release_evidence.py` 的显式环境变量门禁和不可跳过的 CLI 契约覆盖；
+由 `tests/test_release_evidence_local.py` 的显式环境变量门禁和
+`tests/test_release_evidence_cli.py` 的不可跳过 CLI 契约覆盖；
 普通文档测试只验证文档明确描述了该边界和对应命令。
 
 Release Evidence 测试按执行边界拆分：`tests/test_release_evidence.py`
@@ -75,7 +76,7 @@ git tag agentos-phase0-start-20260711 HEAD
 
 - [ ] **Step 2: 写入默认模式不得读取本地证据的失败测试**
 
-在 `tests/test_release_evidence.py` 中先增加 `import pytest`，然后只写测试，不写 helper。测试通过无效 JSON 证明默认普通测试不会读取候选发布文件：
+在 `tests/test_release_evidence_local.py` 中先增加 `import pytest`，然后只写测试，不写 helper。测试通过无效 JSON 证明默认普通测试不会读取候选发布文件：
 
 ```python
 def test_local_release_evidence_is_not_an_implicit_unit_test_input(
@@ -94,7 +95,7 @@ def test_local_release_evidence_is_not_an_implicit_unit_test_input(
 
 该测试调用真实的文件验证入口；实现若在检查门禁前读取文件，会因无效 JSON 失败。
 
-同时在 Step 2 写入 helper 显式启用路径的测试，不实现任何分支：
+同时在 `tests/test_release_evidence_local.py` 写入 helper 显式启用路径的测试，不实现任何分支：
 
 - `test_local_release_evidence_validation_accepts_matching_identity_when_enabled`：临时 manifest 匹配当前 branch/commit/version，设置门禁后返回 accepted report。
 - `test_local_release_evidence_validation_requires_manifest_when_enabled`：设置门禁但文件不存在，断言 `pytest.fail()` 的明确诊断。
@@ -103,7 +104,7 @@ def test_local_release_evidence_is_not_an_implicit_unit_test_input(
 
 这些测试名称统一包含 `local_release_evidence`，必须被 Step 3 的 Red 命令选中。
 
-同一步先定义 `RELEASE_EVIDENCE_VALIDATOR = ROOT / "scripts" / "validate_release_evidence.py"` 和只负责执行 CLI 的测试 helper，再写以下四个测试，不创建脚本：
+同一步在 `tests/test_release_evidence_cli.py` 先定义 `RELEASE_EVIDENCE_VALIDATOR = ROOT / "scripts" / "validate_release_evidence.py"` 和只负责执行 CLI 的测试 helper，再写以下四个测试，不创建脚本：
 
 - `test_release_evidence_validator_cli_accepts_matching_manifest`：把 `release_manifest()` 写入临时文件，传入匹配的 branch/commit/version，断言 exit code 0 且输出报告为 accepted。
 - `test_release_evidence_validator_cli_rejects_missing_manifest`：传入不存在的路径，断言 exit code 非 0 且 stderr 明确包含 manifest missing 诊断。
@@ -117,7 +118,7 @@ def test_local_release_evidence_is_not_an_implicit_unit_test_input(
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py -k "local_release_evidence or release_evidence_validator_cli" -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence_local.py tests/test_release_evidence_cli.py -k "local_release_evidence or release_evidence_validator_cli" -q
 ```
 
 Expected: FAIL；默认入口测试因 `_validate_local_release_evidence_if_requested()` 尚不存在而失败，CLI 测试因 `scripts/validate_release_evidence.py` 尚不存在且没有预期领域诊断而失败。
@@ -140,7 +141,7 @@ def test_generated_release_evidence_artifact_is_validated_when_present() -> None
 
 ```powershell
 $env:AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE='1'
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence_local.py -q
 ```
 
 实现 `scripts/validate_release_evidence.py` 作为候选发布不可静默跳过的 CLI。它必须要求 `--manifest`、`--branch`、`--commit`、`--version`，文件缺失、identity 不一致或任何 blocking gate 时返回非零；仅 accepted report 返回 0。实现必须让 Step 2 已写入的成功、缺文件、旧 commit 和 identity 匹配但 independent review pending 四种测试从 Red 变为 Green，不得修改断言来适配实现。
@@ -150,7 +151,7 @@ $env:AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE='1'
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py tests/docs/test_production_hardening_docs.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs/test_production_hardening_docs.py -q
 ```
 
 Expected: PASS；默认测试不读取陈旧本地候选证据，显式候选校验仍严格绑定 identity。
@@ -158,7 +159,7 @@ Expected: PASS；默认测试不读取陈旧本地候选证据，显式候选校
 再单独运行 identity 完全匹配、仅 independent review pending 的强制候选门禁路径：
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence.py::test_release_evidence_validator_cli_rejects_pending_independent_review_with_matching_identity -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/test_release_evidence_cli.py::test_release_evidence_validator_cli_rejects_pending_independent_review_with_matching_identity -q
 ```
 
 Expected: PASS；被测 CLI 自身 exit code 非 0 的原因只能是 `independent_review` blocking gate，不允许由 branch/commit/version drift 代替该证据。
@@ -166,8 +167,8 @@ Expected: PASS；被测 CLI 自身 exit code 非 0 的原因只能是 `independe
 - [ ] **Step 6: Spec Compliance 与 Code Quality Review 通过后精确提交**
 
 ```powershell
-git add -- tests/test_release_evidence.py scripts/validate_release_evidence.py docs/release-hardening.md
-git commit -m "test: isolate local release evidence validation"
+git add -- tests/_release_evidence_fixtures.py tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs/test_production_hardening_docs.py scripts/validate_release_evidence.py docs/release-hardening.md
+git commit -m "test: isolate local release evidence contracts"
 ```
 
 ---
@@ -672,7 +673,7 @@ git commit -m "docs: freeze the AgentOS architecture baseline"
 - [ ] **Step 1: 运行目标矩阵**
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_module_size_baseline.py tests/test_release_evidence.py tests/docs -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_module_size_baseline.py tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs -q
 ```
 
 Expected: PASS。

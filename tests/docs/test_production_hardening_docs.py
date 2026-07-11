@@ -212,6 +212,41 @@ def test_release_evidence_docs_separate_ignored_candidate_from_ordinary_tests() 
         assert_phrase(release_hardening, expected)
 
 
+def test_release_evidence_docs_reference_split_test_commands() -> None:
+    release_hardening = (ROOT / "docs" / "release-hardening.md").read_text(
+        encoding="utf-8",
+    )
+    phase0_plan = (
+        ROOT
+        / "docs"
+        / "superpowers"
+        / "plans"
+        / "2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md"
+    ).read_text(encoding="utf-8")
+    normal_matrix = (
+        "tests/test_release_evidence.py "
+        "tests/test_release_evidence_local.py "
+        "tests/test_release_evidence_cli.py"
+    )
+    local_command = "-m pytest tests/test_release_evidence_local.py -q"
+    pending_cli_node = (
+        "tests/test_release_evidence_cli.py::"
+        "test_release_evidence_validator_cli_rejects_pending_"
+        "independent_review_with_matching_identity"
+    )
+
+    assert normal_matrix in release_hardening
+    assert local_command in release_hardening
+    assert normal_matrix in phase0_plan
+    assert local_command in phase0_plan
+    assert pending_cli_node in phase0_plan
+    assert (
+        "tests/test_release_evidence.py::"
+        "test_release_evidence_validator_cli_rejects_pending_"
+        "independent_review_with_matching_identity"
+    ) not in phase0_plan
+
+
 def test_public_api_inventory_manifest_is_machine_readable_release_evidence() -> None:
     inventory_path = ROOT / "docs" / "public-api-inventory.json"
     release_hardening = (ROOT / "docs" / "release-hardening.md").read_text(
