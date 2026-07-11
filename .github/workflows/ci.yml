@@ -5,6 +5,31 @@ on:
   pull_request:
 
 jobs:
+  public-api-inventory:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v4
+      - name: Install development dependencies
+        run: uv sync --python ${{ matrix.python-version }} --extra dev
+      - name: Generate public API inventory
+        run: >-
+          uv run --python ${{ matrix.python-version }} python
+          scripts/generate_public_api_inventory.py
+          --policy docs/public-api-stability.json
+          --output "${RUNNER_TEMP}/public-api-inventory.json"
+      - name: Verify public API inventory
+        run: >-
+          git diff --exit-code --no-index --
+          docs/public-api-inventory.json
+          "${RUNNER_TEMP}/public-api-inventory.json"
+
   test:
     runs-on: ubuntu-latest
     steps:

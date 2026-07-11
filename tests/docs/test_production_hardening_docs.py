@@ -260,7 +260,7 @@ def test_public_api_inventory_manifest_is_machine_readable_release_evidence() ->
 
     assert inventory["schema"] == "agentos.public_api_inventory"
     assert inventory["schema_version"] == 1
-    assert inventory["branch"] == "review/agentos-sdk-architecture-20260611"
+    assert {"branch", "commit"}.isdisjoint(inventory)
     assert inventory["signature_format"] == (
         "normalized inspect.signature string or non-callable"
     )
