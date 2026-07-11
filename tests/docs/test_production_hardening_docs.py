@@ -192,49 +192,24 @@ def test_release_evidence_manifest_example_is_machine_readable_and_non_certifyin
     assert "non-certifying SDK evidence" in release_hardening
 
 
-def test_release_evidence_manifest_records_current_candidate_without_placeholders() -> None:
-    manifest_path = ROOT / "docs" / "release-evidence.json"
+def test_release_evidence_docs_separate_ignored_candidate_from_ordinary_tests() -> None:
     release_hardening = (ROOT / "docs" / "release-hardening.md").read_text(
         encoding="utf-8",
     )
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-
-    assert manifest["schema"] == "agentos.release_evidence"
-    assert manifest["schema_version"] == 1
-    assert manifest["certification_claim"] == "sdk-release-candidate-evidence"
-    assert manifest["release_candidate"]["branch"] == (
-        "review/agentos-sdk-architecture-20260611"
-    )
-    assert "<" not in json.dumps(manifest, sort_keys=True)
-    assert manifest["sdk_owned"] is True
-    assert manifest["independent_review"]["status"] in {
-        "pending",
-        "failed",
-        "passed",
-    }
-    gates = manifest["gates"]
-    for name in [
-        "public_api_audit",
-        "full_test_suite",
-        "compileall",
-        "diff_hygiene",
-        "runtime_boundary_scan",
-        "docs_alignment",
-        "migration_index",
-        "api_stability_inventory",
-        "production_reference_honesty",
-        "independent_review",
+    for expected in [
+        "Ordinary unit tests do not read the ignored local",
+        "docs/release-evidence.json",
+        "enable the explicit gate first",
+        "AGENTOS_VALIDATE_LOCAL_RELEASE_EVIDENCE",
+        "Release automation must use the non-skippable validator CLI",
+        "scripts/validate_release_evidence.py",
+        "--manifest docs/release-evidence.json",
+        "--branch <current-branch>",
+        "--commit <current-commit>",
+        "--version <pyproject-version>",
     ]:
-        assert gates[name]["status"] in {"unknown", "pending", "passed", "failed"}
-        assert gates[name]["last_verified_at"] != "<iso8601>"
-        assert gates[name]["evidence_ref"]
-        assert gates[name]["required"] is True
-    assert "docs/release-evidence.json" in release_hardening
-    assert "actual release candidate evidence" in release_hardening
-    assert "validate_release_evidence_manifest" in release_hardening
-    assert "validate_release_candidate_evidence_manifest" in release_hardening
-    assert "scripts/generate_release_evidence.py" in release_hardening
+        assert_phrase(release_hardening, expected)
 
 
 def test_public_api_inventory_manifest_is_machine_readable_release_evidence() -> None:
