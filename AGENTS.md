@@ -21,12 +21,21 @@ This project is a clean rewrite. Do not preserve old neoagent abstractions unles
 Before implementing architecture-level behavior, read these files:
 
 - `docs/governance/agentos-engineering-standard.md`
-- `docs/design/llm-context-only-example.md`
-- `docs/design/sdk-architecture.md`
+- `docs/superpowers/specs/2026-07-10-agentos-next-generation-sdk-architecture-design.md`
+- `docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md`
 
 The engineering standard is the authoritative quality and development contract.
-The context example is the golden target for what the LLM should see. The SDK
-architecture document is the module boundary map.
+The approved next-generation architecture spec defines the SDK boundary map.
+AgentOS Context Protocol v1 is the authoritative contract for all LLM-visible
+context and Provider role mapping.
+
+## Historical Design Inputs
+
+- `docs/design/sdk-architecture.md`
+- `docs/design/llm-context-only-example.md`
+
+These documents preserve earlier design reasoning. They are not protocol or
+architecture authorities and must not override the approved specs above.
 
 ## Mandatory Context Bootstrap
 
@@ -93,19 +102,19 @@ StoredMessage, Compressed History, Tool Result, or the frontend read model.
 
 The SDK must be designed from the LLM-visible context outward.
 
-The default LLM-visible context shape is:
+The default Provider context is split into trusted instructions and dynamic
+context data:
 
 ```text
-Runtime Contract
-Capability Plane
-Context Management Rules
-Declared Working State Schema
-Working State
-Compressed History
-Memory Context
+SystemEnvelope
+  -> trusted runtime, interaction, skill, and workspace instructions
+
+ContextSnapshot
+  -> working state, plan, history, memory, skill metadata, and artifacts
 ```
 
-The SDK exists to maintain and render that context safely.
+The SDK exists to maintain and render both planes safely without promoting
+runtime data into trusted instructions.
 
 ### ai-knowledge Is The Engineering Skeleton
 
@@ -202,8 +211,8 @@ changes:
 
 - `AGENTS.md`
 - `docs/governance/agentos-engineering-standard.md`
-- `docs/design/sdk-architecture.md`
-- `docs/design/llm-context-only-example.md`
+- `docs/superpowers/specs/2026-07-10-agentos-next-generation-sdk-architecture-design.md`
+- `docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md`
 - the active `docs/superpowers/specs/...` or `docs/superpowers/plans/...`
 - relevant `ai-knowledge/wiki/...` pages for the touched module
 
@@ -323,7 +332,9 @@ auto-remove temporary recalled messages after the next request
 
 Context tools are capabilities, but their effects are applied by ContextRuntime.
 
-Skills and MCP belong to the Capability Plane, not to context projection.
+Skills and MCP are runtime capabilities. Provider schemas come from the
+Capability Registry; available Skill metadata is ContextSnapshot data, while
+only verified Trusted Skill Instructions may enter SystemEnvelope.
 
 ### Providers
 
@@ -332,8 +343,8 @@ Skills and MCP belong to the Capability Plane, not to context projection.
 Provider input is:
 
 ```text
-system: rendered context
-messages: active messages
+system: SystemEnvelope
+messages: ContextSnapshot + active ProviderInputItem
 tools: provider tool schemas
 ```
 

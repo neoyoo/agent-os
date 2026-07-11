@@ -9,9 +9,18 @@ relates_to:
   - ideas/2026-05-03-neoagent-llm-context-only-example.md
   - wiki/_index.md
   - docs/superpowers/specs/2026-04-14-neoagent-sdk-skill-design.md
+authoritative_specs:
+  - docs/superpowers/specs/2026-07-10-agentos-next-generation-sdk-architecture-design.md
+  - docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md
 ---
 
 # agentos v3 SDK Architecture
+
+> 本文是早期架构输入。当前架构边界以
+> `docs/superpowers/specs/2026-07-10-agentos-next-generation-sdk-architecture-design.md`
+> 为权威，LLM 可见上下文与 Provider 角色映射以
+> `docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md`
+> 为权威。
 
 ## 1. 椤跺眰鍘熷垯
 
@@ -230,8 +239,8 @@ ContextRuntime.prepare_for_request()
   鈹斺攢 render LLM-visible context
   鈫?
 ProviderRequestBuilder.build()
-  鈹溾攢 system = ContextRuntime.render()
-  鈹溾攢 messages = MessageRuntime.materialize_active()
+  鈹溾攢 system = SystemEnvelope
+  鈹溾攢 messages = ContextSnapshot + active ProviderInputItem
   鈹斺攢 tools = ToolRegistry.provider_tool_specs()
   鈫?
 Provider.complete()
@@ -280,19 +289,22 @@ ContextProjection
 
 ### 6.3 榛樿鍙 context sections
 
-涓?`agentos LLM 鍙涓婁笅鏂囪寖鏂嘸 瀵归綈锛?
+旧的 LLM context 范文不再定义默认结构。当前边界固定为：
 
 ```text
-Runtime Contract
-Capability Plane
-Context Management Rules
-Declared Working State Schema
-Working State
-Compressed History
-Memory Context
+Trusted Instruction Plane
+  SystemEnvelope
+
+Context Data Plane
+  ContextSnapshot
+
+Message Plane
+  Active ProviderInputItem
 ```
 
-璺?chapter 鍦烘櫙鍙互鍦?`Working State` 鍜?`Compressed History` 涔嬮棿棰濆娓叉煋 `Inherited State`銆傛棤 inherited state 鏃朵笉娓叉煋璇ユ锛屼繚鎸侀粯璁や竷娈电粨鏋勩€?
+`SystemEnvelope` 只承载可信指令；Working State、Plan、Inherited State、
+Compressed History、Memory、Skill Metadata 和 Artifact Catalog 都由各自
+Owner 投影到 `ContextSnapshot`，不再维持旧的七段式 System Prompt。
 
 ### 6.4 Context tools
 
@@ -399,7 +411,8 @@ Capability Plane 缁熶竴澹版槑 tools銆乻kills銆丮CP锛沗ToolCallRouter
 
 - 娉ㄥ唽宸ュ叿銆?
 - 鏆撮湶 provider tool schemas銆?
-- 涓?ContextRenderer 鎻愪緵 capability registry 鐨?LLM 鍙鎽樿鎶曞奖锛涢粯璁?prompt 鍙睍绀哄伐鍏峰垎缁勩€丮CP server 鎽樿鍜?skill frontmatter/when-to-use锛屼笉灞曠ず瀹屾暣 input schema銆?
+- Provider Tool Schema 和执行路由来自同一 Capability Registry；Skill Metadata
+  由 SkillRuntime 投影到 ContextSnapshot，MCP/Tool Schema 通过 `tools` 提供。
 - 閫氳繃 `ToolCallRouter` 璺敱 tool calls銆?
 - 閫氳繃 `ToolExecutor` 鎵ц澶栭儴宸ュ叿銆?
 - 搴旂敤 tool policy 鍜?security policy銆?
@@ -418,13 +431,14 @@ Subagent tool      # 娲惧彂瀛?agent
 
 ### 9.3 Skills
 
-Skills 灞炰簬 capability plane锛屼笉灞炰簬 context projection銆?
+Skills 属于 Capability Plane，但其 Metadata 可以进入 ContextSnapshot；只有
+经过验证的 Trusted Skill Instructions 可以进入 SystemEnvelope。
 
 鍙傝€?Claude Code 鐨勬柟鍚戯細
 
-- system 涓彧鍒?skill 鎽樿銆?
-- 閫氳繃 `Skill` tool 鍔犺浇鍏蜂綋 skill銆?
-- 鍔犺浇鍚庣殑 skill 鍐呭浣滀负 meta message 娉ㄥ叆銆?
+- ContextSnapshot 只列有界 Skill Metadata。
+- 通过 `Skill` tool 按需加载具体 Skill。
+- 只有通过 Trust Policy 的 Skill Instructions 才能进入 SystemEnvelope。
 
 ---
 
@@ -436,8 +450,8 @@ Skills 灞炰簬 capability plane锛屼笉灞炰簬 context projection銆?
 
 ```text
 ProviderRequest
-  system: rendered context
-  messages: active messages
+  system: SystemEnvelope
+  messages: ContextSnapshot + active ProviderInputItem
   tools: provider tool schemas
 ```
 
