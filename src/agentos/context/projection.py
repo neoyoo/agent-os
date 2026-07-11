@@ -1,7 +1,24 @@
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import cast
 
-from agentos.context.models import RuntimeContract
+from agentos.context.models import (
+    ContextProtocolError,
+    ContextSlotProjection,
+    ContextSlotName,
+    ProjectionVariant,
+    RuntimeContract,
+)
 from agentos.context.registry import SystemSectionRegistry
+from agentos.context.schema import (
+    WorkingStateField,
+    json_compatible_value,
+    validate_working_state_fields,
+    validate_working_state_value,
+)
+from agentos.context.state import ContextState
+from agentos.context.xml import XmlElement
 
 
 DEFAULT_IDENTITY = "\n".join(
@@ -72,6 +89,141 @@ def default_system_section_registry() -> SystemSectionRegistry:
         runtime_contract=runtime_policy,
         interaction_protocol=runtime_policy,
         context_management_rules=_DefaultContextProtocolProvider(),
+    )
+
+
+def project_context_state(
+    snapshot: ContextState,
+) -> tuple[ContextSlotProjection, ...]:
+    """投影 ContextRuntime 自有的 declared-schema 与 working-state。"""
+
+    if not isinstance(snapshot, ContextState):
+        raise ContextProtocolError("context state snapshot is invalid")
+    fields = validate_working_state_fields(
+        snapshot.working_state_schema.fields,
+        allow_empty=True,
+    )
+    declared = {item.name: item for item in fields}
+    working_state = snapshot.working_state
+    for name, value in working_state.items():
+        if type(name) is not str or name not in declared:
+            raise ContextProtocolError("working state field not declared")
+        validate_working_state_value(declared[name].type, value)
+    if not fields:
+        return ()
+
+    projections = [_slot_projection("declared-schema", _declared_schema(fields))]
+    if working_state:
+        projections.append(
+            _slot_projection(
+                "working-state",
+                _working_state(fields, working_state),
+            ),
+        )
+    return tuple(projections)
+
+
+def _slot_projection(
+    slot: ContextSlotName,
+    element: XmlElement,
+) -> ContextSlotProjection:
+    return ContextSlotProjection(
+        slot=slot,
+        owner="ContextRuntime",
+        variants=(ProjectionVariant(element=element),),
+    )
+
+
+def _declared_schema(fields: tuple[WorkingStateField, ...]) -> XmlElement:
+    return XmlElement(
+        tag="declared-schema",
+        attributes=(("version", "1"),),
+        children=tuple(
+            XmlElement(
+                tag="field",
+                attributes=(
+                    ("name", item.name),
+                    ("type", item.type),
+                    ("purpose", item.purpose),
+                ),
+            )
+            for item in fields
+        ),
+    )
+
+
+def _working_state(
+    fields: tuple[WorkingStateField, ...],
+    values: Mapping[str, object],
+) -> XmlElement:
+    return XmlElement(
+        tag="working-state",
+        attributes=(("schema-version", "1"),),
+        children=tuple(
+            _working_state_field(item, values[item.name])
+            for item in fields
+            if item.name in values
+        ),
+    )
+
+
+def _working_state_field(field: WorkingStateField, value: object) -> XmlElement:
+    if field.type.startswith("list["):
+        items = cast(list[object] | tuple[object, ...], value)
+        children = tuple(
+            XmlElement(tag="item", text=_list_item_text(field.type, item))
+            for item in items
+        )
+    elif field.type == "object":
+        children = (
+            XmlElement(
+                tag="value",
+                attributes=(("format", "json"),),
+                text=_json_text(value),
+            ),
+        )
+    elif field.type == "null":
+        children = (
+            XmlElement(
+                tag="value",
+                attributes=(("null", "true"),),
+                text="",
+            ),
+        )
+    else:
+        children = (XmlElement(tag="value", text=_scalar_text(value)),)
+    return XmlElement(
+        tag="field",
+        attributes=(("name", field.name),),
+        children=children,
+    )
+
+
+def _list_item_text(field_type: str, value: object) -> str:
+    if field_type == "list[object]":
+        return _json_text(value)
+    return _scalar_text(value)
+
+
+def _scalar_text(value: object) -> str:
+    if type(value) is str:
+        return value
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(
+        json_compatible_value(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
     )
 
 
