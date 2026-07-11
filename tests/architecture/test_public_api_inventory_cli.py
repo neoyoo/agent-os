@@ -73,7 +73,12 @@ def test_inventory_cli_generates_current_inventory(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
     assert completed.stderr == ""
-    assert output.read_bytes() == PUBLIC_API_INVENTORY.read_bytes()
+    assert json.loads(output.read_text(encoding="utf-8")) == json.loads(
+        PUBLIC_API_INVENTORY.read_text(encoding="utf-8"),
+    )
+    generated = output.read_bytes()
+    assert b"\r\n" not in generated
+    assert generated.endswith(b"\n")
 
 
 def test_inventory_cli_rejects_missing_policy_without_creating_output(
