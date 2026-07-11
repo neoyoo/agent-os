@@ -1,6 +1,6 @@
 # AgentOS Level 1 并行工具调用设计
 
-> 状态：待用户复核
+> 状态：已批准，进入实施规划
 >
 > 日期：2026-07-11
 >
@@ -133,12 +133,41 @@ class ToolConcurrencyPolicy(str, Enum):
 class RegisteredTool:
     name: str
     description: str
-    parameters: dict[str, object]
+    parameters: Mapping[str, FrozenJsonValue]
     handler: ToolHandler | AsyncToolHandler
     kind: ToolKind = "external"
     concurrency_policy: ToolConcurrencyPolicy = ToolConcurrencyPolicy.EXCLUSIVE
-    metadata: dict[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, FrozenJsonValue] = field(default_factory=frozen_mapping)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameters", freeze_json_mapping(self.parameters))
+        object.__setattr__(self, "metadata", freeze_json_mapping(self.metadata))
 ```
+
+`FrozenJsonValue` 只允许 JSON 标量、递归只读 `Mapping` 和不可变 `tuple`。`freeze_json_mapping()` 必须 defensive-copy 整个嵌套结构：输入 dict 的后续修改不能改变注册结果，嵌套 list 转为 tuple，嵌套 mapping 复制后只读暴露。Provider Adapter 在序列化边界按需物化新的 JSON dict/list，不得把内部只读对象反向暴露给调用方。
+
+canonical helper 的 Owner 固定为叶子模块 `agentos.providers.json_values`，该模块只依赖 Python 标准库，导出内部使用的 `FrozenJsonValue`、`freeze_json_value()`、`freeze_json_mapping()` 和 `thaw_json_value()`。`agentos.capabilities` 与 `agentos.providers.messages` 可以共同依赖该叶子模块；`providers` 不得反向依赖 `capabilities`。
+
+Provider 工具 Schema 必须保持同一递归不可变边界：
+
+```python
+@dataclass(frozen=True, slots=True)
+class ProviderFunctionSpec:
+    name: str
+    description: str
+    parameters: Mapping[str, FrozenJsonValue] = field(default_factory=frozen_mapping)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameters", freeze_json_mapping(self.parameters))
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderToolSpec:
+    function: ProviderFunctionSpec
+    type: Literal["function"] = "function"
+```
+
+`RegisteredTool.provider_spec()` 把已冻结 schema 交给 `ProviderFunctionSpec`，不得调用浅层 `dict(self.parameters)` 提前 thaw。`provider_tool_spec_to_dict()` 以及各 Adapter payload builder 是唯一允许调用 `thaw_json_value()` 的边界；每次调用都必须递归生成全新的 dict/list，任何一次 payload 修改不得影响 ProviderRequest、RegisteredTool 或下一次序列化结果。
 
 规则：
 
@@ -148,6 +177,7 @@ class RegisteredTool:
 - 该承诺表示工具可以与任意其他 `PARALLEL_SAFE` 工具重叠，而不只是与同名工具重叠；
 - 如果工具依赖共享可变状态、当前工作目录、非线程安全客户端、隐式事务或全局环境变量，应保持 `EXCLUSIVE`；
 - 幂等工具不一定可并发，可并发工具也不一定幂等。
+- `parameters` 和 `metadata` 在构造时递归复制并冻结；`frozen=True` 不能只冻结字段绑定而保留可变 dict 内容。
 
 示例：
 
@@ -476,10 +506,12 @@ Tool Result token budget 在每个调用离开 Tool 执行边界、进入 Stream
 @dataclass(frozen=True, slots=True)
 class ProviderRequest:
     system: str
-    messages: list[ProviderMessage]
-    tools: list[ProviderToolSpec] = field(default_factory=list)
+    messages: tuple[ProviderInputItem, ...]
+    tools: tuple[ProviderToolSpec, ...] = ()
     parallel_tool_calls: bool | None = None
 ```
+
+该定义扩展总体计划已冻结的不可变 Provider 边界，不得重新引入 `ProviderMessage` 平面模型或可变 `list`。`parallel_tool_calls` 只增加 Provider 意图，不改变 `ProviderInputItem`、ContextSnapshot 或 Tool Pair 的协议。
 
 语义：
 
@@ -519,10 +551,12 @@ Anthropic 可以在一个 assistant message 中返回多个 tool-use block，但
 
 ### 10.5 MCP
 
-MCP 默认策略为 `EXCLUSIVE`。只有满足以下任一显式条件时，MCP Tool 才映射为 `PARALLEL_SAFE`：
+MCP 默认策略为 `EXCLUSIVE`。只有同时满足以下两个显式条件时，MCP Tool 才映射为 `PARALLEL_SAFE`：
 
-- Tool annotation 的 `readOnlyHint=true`；
+- Tool 注册信息显式声明 `parallel_safe=true`；
 - `MCPServerRegistration.supports_parallel_tool_calls=true`。
+
+MCP `readOnlyHint=true` 只能作为工具作者判断副作用范围的辅助信息，不能单独或自动提升并发策略。
 
 为承载该信息，第一阶段在 MCP 类型中增加：
 
@@ -531,6 +565,7 @@ MCP 默认策略为 `EXCLUSIVE`。只有满足以下任一显式条件时，MCP 
 class MCPToolInfo:
     ...
     read_only_hint: bool = False
+    parallel_safe: bool = False
 
 @dataclass(frozen=True, slots=True)
 class MCPServerRegistration:
@@ -540,10 +575,10 @@ class MCPServerRegistration:
 
 规则：
 
-- 缺少 annotation 视为 `False`；
+- 缺少 tool-level `parallel_safe` 或 Server opt-in 任一项时均保持 `EXCLUSIVE`；
 - Server opt-in 是部署方对 MCP client/server 并发安全的承诺；
-- Tool read-only hint 只提升该 Tool，不提升同 Server 的其他 Tool；
-- `readOnlyHint` 不能推导幂等或无外部读取成本；
+- Tool-level `parallel_safe` 是工具注册方对该 Tool 协程/线程安全和副作用隔离的承诺，不提升同 Server 的其他 Tool；
+- `readOnlyHint` 不能推导并发安全、幂等或无外部读取成本；
 - MCP Adapter 必须保证 client 调用边界并发安全；底层 client 不支持并发时，Adapter 使用 per-server lock 保守串行化；
 - 如果实际 MCP client 或 server 不能安全处理并发，注册方不得开启 Server opt-in；
 - MCP 名称、Schema、Sandbox 和 Security Policy 继续由现有 Adapter/Router 校验。
@@ -648,10 +683,15 @@ SDK 不能通过静态分析证明这些条件。默认 `EXCLUSIVE` 是保守安
 - `RegisteredTool` 默认是 `EXCLUSIVE`；
 - 显式 `PARALLEL_SAFE` 可以被 Registry/Router 查询；
 - metadata 中的非正式并发值不生效；
+- 构造后修改原始 `parameters`/`metadata` 及其嵌套 dict/list 不会改变 `RegisteredTool`；
+- 注册对象的嵌套 schema 和 metadata 不能原地修改，Provider 序列化得到独立可变副本；
+- `ProviderFunctionSpec` 和 `ProviderRequest.tools` 继续保持递归冻结，不能在 `RegisteredTool.provider_spec()` 中提前 thaw；
+- 连续两次 `provider_tool_spec_to_dict()` 返回互不共享嵌套容器的 payload，修改第一次结果不影响第二次结果或 canonical schema；
 - Context Tool 固定独占；
 - 未知 Tool 保守独占并在执行时报原有错误；
 - MCP 默认独占；
-- MCP read-only hint 和 Server opt-in 的映射正确。
+- MCP `readOnlyHint` 单独、Server opt-in 单独、Tool `parallel_safe` 单独均保持 `EXCLUSIVE`；
+- 只有 Tool `parallel_safe=true` 与 Server `supports_parallel_tool_calls=true` 同时成立时才映射为 `PARALLEL_SAFE`。
 
 ### 15.2 Scheduler 单元测试
 

@@ -12,7 +12,7 @@
 
 ## 1. 计划状态与范围契约
 
-- 状态：总体计划，待用户复核；复核通过后再生成各工作包的详细 TDD 实施计划。
+- 状态：已批准，进入分阶段实施；各工作包必须先生成详细 TDD 实施计划并通过 Scope Contract 门禁。
 - 基线分支：`review/agentos-sdk-architecture-20260611`。
 - 基线提交：`32bacab`。
 - 协议基线：[AgentOS Context Protocol v1](../specs/2026-07-10-agentos-context-protocol-v1-design.md)。
@@ -646,9 +646,9 @@ Wave 2 不再并行修改 QueryLoop。主集成分支先合并 Provider，再合
 -> 最小实现
 -> 运行目标测试
 -> 运行模块测试
--> 提交
 -> Spec Compliance Review
 -> Code Quality Review
+-> 提交
 ```
 
 Review 分两层：
@@ -766,7 +766,7 @@ rg -n "system: rendered context|AttachmentLifecycle|ProviderMessage|class Messag
 
 本总体计划批准后，按以下顺序生成可直接执行的详细计划：
 
-1. `2026-07-10-agentos-phase0-governance-baseline-implementation-plan.md`
+1. `2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md`
 2. `2026-07-10-agentos-context-protocol-kernel-implementation-plan.md`
 3. `2026-07-10-agentos-message-provider-boundary-implementation-plan.md`
 4. `2026-07-10-agentos-artifact-vertical-slice-implementation-plan.md`
