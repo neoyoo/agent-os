@@ -14,7 +14,7 @@
 
 - **Phase / Active Specs:** Phase 0；`2026-07-10-agentos-next-generation-sdk-architecture-design.md`、`2026-07-10-agentos-context-protocol-v1-design.md`、`2026-07-10-agentos-context-first-sdk-master-implementation-plan.md`。
 - **Acceptance Items:** 全量 pytest 通过；Ruff `F` 规则通过且无宽泛 suppress；Live Backend 子进程显式获得可导入的 `src` 环境；Release Evidence 普通测试与候选发布强制门禁分离；Public API inventory 与 `__all__` 一致并跨 Python 3.11-3.13 规范化；旧七段式范文不再是规范锚点；生成并校验 300/500/800 行规模基线；记录 `0.2.0a1` API 策略。
-- **Allowed Files:** `AGENTS.md`、`.gitattributes`、`.github/workflows/ci.yml`、`pyproject.toml`、`src/agentos/__init__.py`、`src/agentos/channels/asgi.py`、`src/agentos/channels/a2a_conformance.py`、`src/agentos/channels/a2a_operations.py`、`src/agentos/deployment.py`、`src/agentos/readiness.py`、`src/agentos/runtime/profile.py`、`src/agentos/testing/contracts/plan_claim_store.py`、`tests/channels/test_a2a_jwks_jwt_verifier.py`、`tests/service/test_agent_service_reference.py`、`tests/multi/test_planner_runtime.py`、`tests/deployment/test_live_backend_probe_pack.py`、`tests/architecture/test_public_api.py`、`tests/architecture/test_module_size_baseline.py`、`tests/docs/test_production_hardening_docs.py`、`tests/test_release_evidence.py`、`scripts/generate_public_api_inventory.py`、`scripts/generate_module_size_baseline.py`、`scripts/validate_release_evidence.py`、`docs/public-api-stability.json`、`docs/public-api-inventory.json`、`docs/api-stability.md`、`docs/release-hardening.md`、`docs/design/sdk-architecture.md`、`docs/design/llm-context-only-example.md`、`docs/governance/agentos-module-size-baseline.json`、`docs/superpowers/plans/2026-07-11-agentos-oversized-module-decomposition-plan.md`。
+- **Allowed Files:** `AGENTS.md`、`.gitattributes`、`.github/workflows/ci.yml`、`pyproject.toml`、`src/agentos/__init__.py`、`src/agentos/channels/asgi.py`、`src/agentos/channels/a2a_conformance.py`、`src/agentos/channels/a2a_operations.py`、`src/agentos/deployment.py`、`src/agentos/readiness.py`、`src/agentos/runtime/profile.py`、`src/agentos/testing/contracts/plan_claim_store.py`、`tests/channels/test_a2a_jwks_jwt_verifier.py`、`tests/service/test_agent_service_reference.py`、`tests/multi/test_planner_runtime.py`、`tests/deployment/test_live_backend_probe_pack.py`、`tests/architecture/test_public_api.py`、`tests/architecture/test_module_size_baseline.py`、`tests/docs/test_production_hardening_docs.py`、`tests/_release_evidence_fixtures.py`、`tests/test_release_evidence.py`、`tests/test_release_evidence_cli.py`、`scripts/generate_public_api_inventory.py`、`scripts/generate_module_size_baseline.py`、`scripts/validate_release_evidence.py`、`docs/public-api-stability.json`、`docs/public-api-inventory.json`、`docs/api-stability.md`、`docs/release-hardening.md`、`docs/design/sdk-architecture.md`、`docs/design/llm-context-only-example.md`、`docs/governance/agentos-module-size-baseline.json`、`docs/superpowers/plans/2026-07-11-agentos-oversized-module-decomposition-plan.md`。
 - **Forbidden Files:** `src/agentos/context/**`、`src/agentos/messages/**`、`src/agentos/runtime/query_loop.py`、`src/agentos/runtime/async_query_loop.py`、Provider Adapter、Artifact、Memory、Planner 领域实现。
 - **Dependency Boundaries:** Phase 0 可以读取所有 public modules 做反射，但不能新增运行时依赖；基础安装仍保持零第三方依赖。
 - **Completed In This Work Package:** 工程基线修复、治理数据生成、文档取代关系和确定性验证。
@@ -39,7 +39,9 @@ uv sync --extra dev --extra postgres --extra redis
 ### Task 1: 隔离本地 Release Evidence 与普通测试基线
 
 **Files:**
+- Create: `tests/_release_evidence_fixtures.py`
 - Modify: `tests/test_release_evidence.py`
+- Create: `tests/test_release_evidence_cli.py`
 - Modify: `tests/docs/test_production_hardening_docs.py`
 - Modify: `docs/release-hardening.md`
 - Create: `scripts/validate_release_evidence.py`
@@ -48,6 +50,14 @@ uv sync --extra dev --extra postgres --extra redis
 `docs/release-evidence.json` 本地候选文件。候选内容、identity 与 blocking gate
 由 `tests/test_release_evidence.py` 的显式环境变量门禁和不可跳过的 CLI 契约覆盖；
 普通文档测试只验证文档明确描述了该边界和对应命令。
+
+Release Evidence 测试按执行边界拆分：`tests/test_release_evidence.py`
+只保留领域 validator、local env gate、版本和模板契约；
+`tests/test_release_evidence_cli.py` 独立拥有 validator CLI 与 generator
+CLI/subprocess 契约；`tests/_release_evidence_fixtures.py` 只提供无副作用的纯
+manifest builder。两个测试模块不得相互 import，只能显式依赖共享纯 helper。
+拆分后原测试文件必须低于 800 行，新测试文件必须低于 500 行，测试名称、数量
+和语义不得丢失。
 
 - [ ] **Step 1: 固定不可移动的 Phase 0 起点**
 
