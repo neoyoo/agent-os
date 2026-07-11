@@ -484,7 +484,7 @@ def test_public_api_inventory_ci_covers_supported_python_minors() -> None:
 Run:
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py -k "public_api_inventory" -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -k "public_api_inventory" -q
 ```
 
 Expected: FAIL，因为生成脚本尚不存在，且 CI 尚无 Python 3.11/3.12/3.13 inventory matrix。
@@ -538,7 +538,7 @@ Run:
 
 ```powershell
 & (Resolve-Path '.\.venv\Scripts\python.exe') scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
 ```
 
 Expected: PASS；连续运行两次不会产生 diff。
@@ -679,7 +679,7 @@ git commit -m "docs: freeze the AgentOS architecture baseline"
 - [ ] **Step 1: 运行目标矩阵**
 
 ```powershell
-& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_module_size_baseline.py tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs -q
+& (Resolve-Path '.\.venv\Scripts\python.exe') -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_module_size_baseline.py tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py tests/docs -q
 ```
 
 Expected: PASS。
