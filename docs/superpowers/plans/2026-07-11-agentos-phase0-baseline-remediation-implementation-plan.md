@@ -433,6 +433,8 @@ git commit -m "test: remove unused baseline bindings"
 
 `tests/architecture/test_public_api.py` 只保留既有 facade、export 和 inventory 消费契约，不再增长。生成器、稳定性策略、签名规范化和 CI mutation 测试必须迁移到独立的 `tests/architecture/test_public_api_inventory.py`，且该独立测试模块保持低于 500 行；两个测试模块不得互相 import。
 
+生成 inventory 不得写入 branch 或 commit 等脆弱 provenance；相关发布来源由独立 Release Evidence 治理。既有 docs 消费测试必须断言 inventory 不含 branch/commit，而不是固定历史分支。
+
 - [ ] **Step 1: 建立结构化 CI 测试依赖并写失败测试**
 
 先在 `pyproject.toml` 的 `dev` extra 增加 `pyyaml>=6.0`，然后在当前 worktree 重新运行 `uv sync --extra dev --extra postgres --extra redis`。同步产生的 `uv.lock` 变更只反映该 dev extra，必须与 `pyproject.toml` 一同维护；PyYAML 只用于解析 CI 测试，不得进入 `[project].dependencies` 或 AgentOS 运行时代码。
