@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import shlex
 import subprocess
@@ -7,10 +8,10 @@ from types import ModuleType
 
 import pytest
 import yaml
-from scripts import generate_public_api_inventory as inventory_generator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+INVENTORY_GENERATOR = PROJECT_ROOT / "scripts" / "generate_public_api_inventory.py"
 PUBLIC_API_INVENTORY = PROJECT_ROOT / "docs" / "public-api-inventory.json"
 PUBLIC_API_STABILITY = PROJECT_ROOT / "docs" / "public-api-stability.json"
 API_STABILITY_DOC = PROJECT_ROOT / "docs" / "api-stability.md"
@@ -21,6 +22,20 @@ PHASE0_PLAN = (
     / "plans"
     / "2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md"
 )
+
+
+def _load_inventory_generator() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "generate_public_api_inventory",
+        INVENTORY_GENERATOR,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+inventory_generator = _load_inventory_generator()
 
 
 def _load_public_api_inventory() -> dict[str, object]:
