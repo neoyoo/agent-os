@@ -7,7 +7,7 @@ name = "agent-os"
 version = "0.1.0rc1"
 description = "Context-first Python agent runtime SDK."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["markdown-it-py>=4.0,<5.0"]
 
 [project.scripts]
 agent-os-small-agent = "agentos.examples.small_openai_agent:main"
