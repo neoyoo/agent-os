@@ -14,12 +14,12 @@
 
 - **Phase / Active Specs:** Phase 1；`2026-07-10-agentos-next-generation-sdk-architecture-design.md`、`2026-07-10-agentos-context-protocol-v1-design.md`、`2026-07-10-agentos-context-first-sdk-master-implementation-plan.md`。
 - **Acceptance Items:** `ContextRenderer` 只输出固定顺序可信章节；`ContextSnapshotRenderer` 按九个固定 Slot 排序；动态值经过校验和 XML Escape；相同输入字节级一致；预算只切换完整 Projection Variant；未注册 Slot、Owner 不匹配、重复 Slot、未知 Major、非法 XML 字符确定性失败；Golden、安全、预算和确定性测试通过。
-- **Allowed Files:** `src/agentos/context/models.py`、`registry.py`、`xml_schema.py`、`xml.py`、`snapshot.py`、`renderer.py`、`projection.py`、`schema.py`、`runtime.py`、`__init__.py`、`src/agentos/runtime/provider_request_builder.py`（仅 `SystemEnvelope.text` 适配）、`src/agentos/builder.py`（仅停止把 Capability metadata 注入 System Renderer）、本计划列出的 `tests/context/**`、`tests/runtime/test_provider_request_builder.py`、`tests/runtime/test_agent_builder.py`（仅适配断言）和 Golden 文件。
+- **Allowed Files:** `src/agentos/context/models.py`、`registry.py`、`xml_schema.py`、`xml.py`、`snapshot.py`、`renderer.py`、`projection.py`、`schema.py`、`runtime.py`、`__init__.py`、`src/agentos/runtime/provider_request_builder.py`（仅 `SystemEnvelope.text` 适配）、`src/agentos/builder.py`（仅停止把 Capability metadata 注入 System Renderer）、`docs/public-api-inventory.json`（仅由现有 generator 刷新公开签名）、本计划列出的 `tests/context/**`、`tests/runtime/test_provider_request_builder.py`、`tests/runtime/test_agent_builder.py`（仅适配断言）和 Golden 文件。
 - **Forbidden Files:** `src/agentos/messages/**`、`src/agentos/providers/**`、`src/agentos/runtime/query_loop.py`、`async_query_loop.py`、`agent.py`、`src/agentos/attachments/**`、`src/agentos/artifacts/**`、Skill/Plan/Memory 实现、具体 Provider Adapter。
 - **Dependency Boundaries:** `context` 只依赖领域类型、标准库和 `TokenCounter` Protocol；不得导入 Provider、MessageStore、ArtifactStore、Planner Store 或基础设施 Adapter。
 - **Completed In This Work Package:** M1 Context Kernel；可信 System Section、固定 Slot Registry、确定性 XML、安全校验、版本校验和可替换的完整元素预算 Variant。
 - **Explicit Deferrals:** Snapshot 进入 Provider messages、`StoredMessage`/`ProviderInputItem`、每次调用重组装和前端 Read Model进入 Phase 2；Artifact/Skill/Plan/Memory 的真实 Owner Projection 分别进入 Phase 3A/3C；Provider payload 映射进入 Phase 3B。
-- **Verification Commands:** 各任务定向 pytest；`python -m pytest tests/context tests/runtime/test_provider_request_builder.py -q`；`python -m pytest -q`；`python -m compileall -q src tests`；`python -m ruff check src tests`；协议 drift scan；`git diff --check`。
+- **Verification Commands:** 各任务定向 pytest；`python -m pytest tests/context tests/runtime/test_provider_request_builder.py -q`；public API inventory generator 与 `tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py`；`python -m pytest -q`；`python -m compileall -q src tests`；`python -m ruff check src tests`；协议 drift scan；`git diff --check`。
 
 ## File Responsibility Map
 
@@ -34,7 +34,7 @@
 | `context/snapshot.py` | Slot 收集、Registry 校验、预算 Variant 选择和 `ContextSnapshot` 生成。 |
 | `runtime/provider_request_builder.py` | Phase 1 仅把 `SystemEnvelope.text` 交给现有请求；Phase 2 再接 Snapshot。 |
 
-`renderer.py` 当前 419 行并混合五类责任。本阶段必须把它收缩到 300 行以下；动态 Slot、Capability、附件和状态序列化不能继续留在该文件。
+`renderer.py` 在 Task 1 开始前为 419 行并混合五类责任；本阶段已将其收缩到 294 行。动态 Slot、Capability、附件和状态序列化不能重新进入该文件。
 
 ## Mandatory Execution Bootstrap And Review Gate
 
@@ -899,7 +899,16 @@ git commit -m "feat: render budgeted context snapshots"
 
 ---
 
-### Task 7: 导出内核并完成 Phase 1 集成适配
+### Task 7A: 导出内核、收口 Builder/RequestBuilder 并通过目标集
+
+> **完成边界：** Task 7A 只完成本节列出的核心导出、`AgentBuilder`、
+> `ProviderRequestBuilder` 和目标测试集适配。当前工作树证据为目标文件集合
+> 至少 `418 passed`；最终数量以 Task 7A 提交后的 fresh collection 和目标集运行
+> 为准，这不是整个 Task 7 或 Phase 1 全仓完成声明。全仓调用点迁移、
+> 模块尺寸基线、隔离 subprocess 环境契约和 Phase 1 全量门禁属于 Task 7B，
+> 必须按
+> `docs/superpowers/plans/2026-07-12-agentos-phase1-task7b-callsite-migration-implementation-plan.md`
+> 独立实施和验收。
 
 **Files:**
 - Modify: `src/agentos/context/__init__.py`
@@ -908,18 +917,30 @@ git commit -m "feat: render budgeted context snapshots"
 - Modify: `tests/runtime/test_provider_request_builder.py`
 - Modify: `tests/runtime/test_agent_builder.py`
 - Replace: `tests/context/test_renderer.py`
+- Modify: `tests/context/test_debug_projection.py`
+- Delete: `tests/context/test_capability_plane_phase5.py`
 - Delete: `tests/context/goldens/default_context.md`
+- Modify: `docs/public-api-inventory.json`
 
 - [ ] **Step 1: 写 Public import 和动态数据不进 System 的失败测试**
 
 ```python
-from agentos.context import ContextRenderer, ContextSnapshotRenderer, SystemEnvelope
+import agentos
+
+from agentos.context import (
+    ContextRenderer,
+    ContextSnapshot,
+    ContextSnapshotRenderer,
+    SystemEnvelope,
+)
 
 
 def test_context_kernel_public_types_are_importable() -> None:
     assert ContextRenderer is not None
+    assert ContextSnapshot is not None
     assert ContextSnapshotRenderer is not None
     assert SystemEnvelope is not None
+    assert not hasattr(agentos, "ContextSnapshot")
 
 
 def test_provider_request_system_contains_no_working_state() -> None:
@@ -937,46 +958,99 @@ python -m pytest tests/runtime/test_provider_request_builder.py tests/context/te
 
 - [ ] **Step 3: 完成最小集成适配**
 
-`ProviderRequestBuilder` 本阶段构造签名改为 `ProviderRequestBuilder(context_renderer: ContextRenderer, message_runtime: MessageRuntime, ...)`，`build(context_runtime)` 暂时保留动态参数供 Phase 2 使用，但 System 路径固定调用无参 `self.context_renderer.render().text`，绝不把 `ContextState` 传给 renderer。它不能在此任务创建 synthetic message、ProviderInputItem、Read Model 或 Attachment Mount；Phase 2 将一次性接入 Snapshot。
+`ProviderRequestBuilder` 本阶段公开构造签名改为 `ProviderRequestBuilder(context_renderer: SystemEnvelopeRenderer, message_runtime: MessageRuntime, ...)`，`build(context_runtime: ContextRuntime)` 暂时保留动态参数供 Phase 2 使用，但 System 路径固定调用无参 `self.context_renderer.render().text`，绝不把 `ContextState` 传给 renderer。它不能在此任务创建 synthetic message、ProviderInputItem、Read Model 或 Attachment Mount；Phase 2 将一次性接入 Snapshot。
 
 `AgentBuilder._default_renderer()` 不再读取 ToolRegistry 生成 Capability Plane，而是通过 `SystemSectionRegistry.from_trusted_providers(...)` 注入 SDK 自有的 owner 专属默认 providers，并构造 `ContextRenderer(registry=..., token_counter=...)`。自定义 renderer 继续通过现有 `AgentBuilder.context_renderer(renderer)` 注入且必须实现同一无参 `render() -> SystemEnvelope` 契约。现有 Tool schema 继续只通过 `ProviderRequest.tools` 提供；available skill/tool metadata 的新 Snapshot Projection 进入 Phase 3C。该修改属于 Builder 的组装职责，不新增第二个 truth source。
 
-删除旧 Golden 和旧“动态 state 在 system”断言。保留 ContextRuntime 行为测试，但默认 Prompt 契约只由新的 System/Snapshot Golden 拥有。`context.__init__` 显式导出 Phase 1 稳定类型，root `agentos` 不增加导出。
+删除旧 Golden 和旧“动态 state 在 system”断言。保留 ContextRuntime 行为测试，但默认 Prompt 契约只由新的 System/Snapshot Golden 拥有。`context.__init__` 必须显式导出 `ContextRenderer`、`ContextSnapshot`、`ContextSnapshotRenderer`、`SystemEnvelope` 和本阶段既有稳定类型；root `agentos` 不导出 `ContextSnapshot`，也不为本任务新增其他 Context Kernel facade 导出。
 
-- [ ] **Step 4: 模块与全量验证**
+`AgentBuilder`/`ProviderRequestBuilder` 的公开签名改为
+`SystemEnvelopeRenderer`/`ContextRuntime` 后，必须用现有 generator 刷新
+`docs/public-api-inventory.json`。该生成物属于 Task 7A 同一原子提交；不得把 3 个
+public API inventory 漂移失败留给 Task 7B。
+
+- [ ] **Step 4: Task 7A 目标集验证与全仓失败清单冻结**
 
 ```powershell
 python -m pytest tests/context tests/runtime/test_provider_request_builder.py tests/runtime/test_agent_builder.py -q
-python -m pytest -q
+python scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
+python -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
 python -m compileall -q src tests
 python -m ruff check src tests
-rg -n "system: rendered context|CapabilityPlane|render\(context_state\)|# Capability Plane|# Runtime Notice|data:.*base64|X-Amz-Signature|provider_file_id|<task_goal>|<constraints>" src tests
+python -m pytest --collect-only -q
+python -m pytest -q --tb=no
+rg -n "system: rendered context|render\(context_state\)|data:.*base64|X-Amz-Signature|provider_file_id|<task_goal>|<constraints>" src tests
 git diff --check
 ```
 
-Expected: 全部 PASS；drift 只允许命中明确历史文档或迁移说明。
+Expected: 当前证据显示 Task 7A 目标集合至少 `418 passed`；不得把该数量写成
+验收常量。本步骤只提供提交前证据，最终 passed/collected 数量必须来自 Step 8
+对已提交 Task 7A SHA 的 fresh run。
+public API inventory 必须由 generator 刷新且 architecture inventory tests 通过。
+质量修复后、inventory 刷新前的 provisional full-suite 证据为
+`197 failed, 1747 passed, 15 skipped`，其中新增 3 项只来自公开签名 inventory
+漂移；inventory 刷新后的最新 provisional baseline 为 `1957 collected`、约 `194`
+项迁移失败，但最终数量仍以 fresh JUnit
+为准。compileall、Ruff 和 diff check 通过；全量 pytest 在 7B 前允许保留已登记的调用点迁移失败，但必须冻结失败
+nodeid 集合，禁止只记录失败数量。`CapabilityPlane`、`# Runtime Notice` 和旧
+`ContextRenderer()` 调用点由 7B 分类迁移，因此本步骤不得通过恢复旧 API 让全量
+伪 Green。
 
-- [ ] **Step 5: Spec Compliance Review**
+- [ ] **Step 5: Task 7A Spec Compliance Review**
 
-Reviewer 必须逐项确认：System/Data authority 分离；Core Slot 唯一 Owner；ContextState 不是 Snapshot 真值；XML/版本/预算契约；无 Phase 2/3 偷跑；无未声明 deferred。
+Reviewer 必须逐项确认：System/Data authority 分离；Core Slot 唯一 Owner；ContextState 不是 Snapshot 真值；XML/版本/预算契约；无 Phase 2/3 偷跑；无未声明 deferred；并明确写出“Task 7A 目标集通过，不代表 Task 7 完成”。
 
 - [ ] **Step 6: Code Quality Review**
 
 Reviewer 必须确认：`renderer.py` 少于 300 行且单一职责；没有自由 `dict[str, object]` 公共边界；错误稳定；Golden 不复制实现；预算测试确定；没有对最终 XML 字符串截断。
 
-- [ ] **Step 7: 精确提交 Phase 1 集成**
+- [ ] **Step 7: 精确提交 Task 7A 核心集成**
 
 ```powershell
-git add -- src/agentos/context/__init__.py src/agentos/runtime/provider_request_builder.py src/agentos/builder.py tests/runtime/test_provider_request_builder.py tests/runtime/test_agent_builder.py tests/context/test_renderer.py tests/context/goldens/default_context.md
+git add -- src/agentos/context/__init__.py src/agentos/runtime/provider_request_builder.py src/agentos/builder.py tests/runtime/test_provider_request_builder.py tests/runtime/test_agent_builder.py tests/context/test_renderer.py tests/context/test_debug_projection.py tests/context/test_capability_plane_phase5.py tests/context/goldens/default_context.md docs/public-api-inventory.json
 git commit -m "refactor: adopt context protocol kernel"
 ```
+
+记录该提交的 SHA。该提交必须包含本任务 `Files` 列出的全部 Task 7A 修改/删除，
+包括生成后的 `docs/public-api-inventory.json`。
+
+- [ ] **Step 8: 在已提交 Task 7A SHA 上 fresh collect 并记录最终目标集数量**
+
+```powershell
+$task7ASha = (git rev-parse HEAD).Trim()
+python -m pytest --collect-only -q
+python -m pytest tests/context tests/runtime/test_provider_request_builder.py tests/runtime/test_agent_builder.py -q
+```
+
+Expected: both commands run against clean committed `$task7ASha`；记录 fresh collected 和
+passed 数量而不与任何旧常量比较。Task 7B 的 `AGENTOS_TASK7B_BASE` 必须精确指向
+这个 SHA；不得从未提交、部分提交或仅用工作树冻结的状态启动 Task 7B。
+
+---
+
+### Task 7B: 迁移全仓调用点并执行 Phase 1 全量门禁
+
+**Execution Plan:**
+`docs/superpowers/plans/2026-07-12-agentos-phase1-task7b-callsite-migration-implementation-plan.md`
+
+Task 7B 只迁移已提交 Task 7A SHA 之后的消费者和测试契约；其 base 必须是上节
+记录的、包含全部 Task 7A 文件的精确提交。它不得修改
+`src/agentos/builder.py`、`src/agentos/context/**`、
+`src/agentos/runtime/provider_request_builder.py` 或 Task 7A 已修改的目标测试；
+不得恢复 `ContextRenderer()` 默认构造、`render(ContextState)` 或
+`capability_plane=`。机械迁移、语义迁移、模块尺寸 baseline 和 subprocess
+依赖诊断必须按独立 Owner 分组，所有并行流合并后再执行全量 pytest、
+compileall、Ruff、drift scan、JUnit zero-failure gate、诊断 nodeid/JUnit cardinality
+cross-check 和双层 Review。
+
+只有 Task 7A 与 Task 7B 均满足各自 DoD，整个 Task 7 才允许声明完成。
 
 ---
 
 ## Self-Review Result
 
-- **Spec coverage:** SystemEnvelope、固定 System Section、九 Slot Registry、XML tag/attribute schema、Escape、安全校验、协议版本、确定性、预算完整元素裁剪、Golden 和 Authority 边界均有任务；ProviderInputItem、Artifact Store、Extension 业务 Projection 和 Adapter 映射均明确延期到已批准后续阶段。
+- **Spec coverage:** SystemEnvelope、固定 System Section、九 Slot Registry、XML tag/attribute schema、Escape、安全校验、协议版本、确定性、预算完整元素裁剪、Golden 和 Authority 边界均有任务；Task 7A 只负责核心导出/Builder/RequestBuilder/目标集，Task 7B 负责全仓调用点和 Phase 1 全量门禁；ProviderInputItem、Artifact Store、Extension 业务 Projection 和 Adapter 映射均明确延期到已批准后续阶段。
 - **Plan completeness audit:** 已逐步检查，所有行为步骤均含具体输入、实现边界、命令和预期结果。
 - **Type consistency:** `ContextRenderer(registry, token_counter, budget_policy).render() -> SystemEnvelope`；`ContextSnapshotRenderer.render() -> ContextSnapshot`；`ContextSlotProjection` 始终由 registry 校验 owner；`ProviderRequest.system` 在 Phase 1 仅接收 `SystemEnvelope.text`。
-- **File-size review:** `context/renderer.py`（419 行）必须拆分并降至 300 行以下；`builder.py`（301 行）只删除旧 Capability Plane 组装，不增加新职责或净增长；不触碰 500/800 行以上项目文件。
-- **Rollback boundary:** 每个提交对应一个可验证领域行为；Phase 1 集成提交可以整体回滚，不影响 Phase 0 治理基线。
+- **File-size review:** 当前事实为 `context/renderer.py` 294 行、`builder.py` 287 行；两者均低于 300 行 review threshold，职责已收口且本任务不得重新引入 Capability Plane 组装、新 Owner 或第二 truth source；不触碰 500/800 行以上项目文件。
+- **Rollback boundary:** 每个提交对应一个可验证领域行为；Task 7A 核心集成提交和 Task 7B 各调用点迁移提交可分别回滚。模块尺寸 baseline 只在所有迁移提交合并后串行生成，不能混入任一并行工作流。
