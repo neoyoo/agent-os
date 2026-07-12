@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agentos.channels import InMemorySseEventBuffer, RedisSseEventBuffer
+from agentos.channels import InMemorySseEventBuffer, RedisSseEventBuffer, SseReplayWindow
 
 
 class FakeRedis:
@@ -111,6 +111,35 @@ def test_in_memory_sse_buffer_bounds_old_events() -> None:
     asyncio.run(run())
 
 
+def test_in_memory_sse_buffer_describes_replay_window_gaps() -> None:
+    async def run() -> None:
+        buffer = InMemorySseEventBuffer(max_events_per_stream=1)
+
+        assert await buffer.replay_window("session_1:turn_1") == SseReplayWindow(
+            exists=False,
+            terminal=False,
+            first_sequence=None,
+            last_sequence=None,
+        )
+
+        await buffer.append("session_1:turn_1", 1, "one")
+        await buffer.append("session_1:turn_1", 2, "two")
+        await buffer.mark_terminal("session_1:turn_1")
+
+        window = await buffer.replay_window("session_1:turn_1")
+
+        assert window == SseReplayWindow(
+            exists=True,
+            terminal=True,
+            first_sequence=2,
+            last_sequence=2,
+        )
+        assert window.has_gap_after(0)
+        assert not window.has_gap_after(1)
+
+    asyncio.run(run())
+
+
 def test_redis_sse_buffer_replays_events_after_sequence() -> None:
     async def run() -> None:
         client = FakeRedis()
@@ -171,6 +200,39 @@ def test_redis_sse_buffer_terminal_marker_does_not_evict_last_event() -> None:
         await buffer.mark_terminal("session_1:turn_1")
 
         assert await buffer.replay_since("session_1:turn_1", 0) == [(1, "one")]
+
+    asyncio.run(run())
+
+
+def test_redis_sse_buffer_describes_replay_window_gaps() -> None:
+    async def run() -> None:
+        buffer = RedisSseEventBuffer(
+            "redis://unused",
+            client=FakeRedis(),
+            max_stream_length=1,
+        )
+
+        assert await buffer.replay_window("session_1:turn_1") == SseReplayWindow(
+            exists=False,
+            terminal=False,
+            first_sequence=None,
+            last_sequence=None,
+        )
+
+        await buffer.append("session_1:turn_1", 1, "one")
+        await buffer.append("session_1:turn_1", 2, "two")
+        await buffer.mark_terminal("session_1:turn_1")
+
+        window = await buffer.replay_window("session_1:turn_1")
+
+        assert window == SseReplayWindow(
+            exists=True,
+            terminal=True,
+            first_sequence=2,
+            last_sequence=2,
+        )
+        assert window.has_gap_after(0)
+        assert not window.has_gap_after(1)
 
     asyncio.run(run())
 

@@ -2,13 +2,19 @@
 name: agentos llm context only example
 description: agentos v3 的 LLM 可见上下文范文。只展示 prompt 中应该出现的内容，不展示 SDK 内部对象或 runtime metadata。
 type: design-demo
-status: inbox
+status: superseded
+superseded_by:
+  - docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md
 date: 2026-05-03
 relates_to:
   - ideas/2026-05-02-neoagent-context-protocol-v3.md
 ---
 
 # agentos LLM 可见上下文范文
+
+> 本文仅作为早期设计输入保留。当前协议以 AgentOS Context Protocol v1
+> 为唯一权威；本文不再约束 `SystemEnvelope`、`ContextSnapshot`、
+> `Slot Registry` 或 `Provider 角色映射`。
 
 下面是一段长任务中段真正可以传给 LLM 的上下文范文。
 

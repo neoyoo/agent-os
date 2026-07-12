@@ -1,129 +1,109 @@
-﻿# agent-os
+# agent-os
 
-Production-grade agent runtime SDK. Provides the harness 鈥?you configure and extend it.
+Production-grade agent runtime SDK and development guidance skill.
 
 ## What This Is
 
-agent-os is a **runtime SDK for building AI agents**. It handles the hard parts (query loop, context management, compression, tool routing, multi-agent coordination, persistence, channels) so you focus on your agent's unique capabilities.
+AgentOS is a company-level SDK for building agents. It provides stable
+protocols, runtime profiles, context/message management, tool routing,
+channels, multi-agent primitives, workspace boundaries, readiness evidence, and
+reference compositions. You configure and extend it; you do not subclass a
+framework.
 
-It is **not** a chatbot wrapper. It is **not** a framework you subclass. It's a composable set of runtime modules with Protocol-based boundaries.
+AgentOS is not an AgentScope-style all-in-one platform. It does not create real
+Nacos, Redis, Postgres, Kubernetes, systemd, tenant directory, CI/CD,
+credential, autoscaling, or sandbox isolation infrastructure.
+
+## First Production SDK Release
+
+The first production SDK release supports:
+
+- terminal agent and trusted internal tools
+- single-node web agent with ASGI/SSE
+- distributed web agent with durable session hydration primitives
+- team/planner/A2A primitive composition
+- production state plane boundaries
+- readiness evidence and audit evidence
+- internal service orchestration
+
+Sandbox / Docker / E2B / microVM / enterprise runner adapter work is a
+non-blocking future adapter. This release does not promise physical isolation
+for untrusted code execution. Production specs must choose one sandbox posture:
+`trusted tools only`, `deployment-owned isolation`, or `future adapter`.
 
 ## Quickstart
 
 ```python
 from agentos import AgentBuilder
-from agentos.providers import AnthropicProvider
+from agentos.providers import FakeProvider
 
-agent = (
-    AgentBuilder()
-    .provider(AnthropicProvider(api_key="...", model="claude-sonnet-4-6"))
-    .build()
-)
+agent = AgentBuilder().provider(FakeProvider(["hello"])).build()
 
-result = agent.run("What is Python?")
+result = agent.run("Say hello")
 print(result.content)
 ```
+
+See `docs/quickstart.md` for terminal, web, distributed web, state plane,
+readiness, and release gate entry points.
+
+Phase 101: Production Reference Example adds a production reference web agent
+at `src/agentos/examples/production_reference_web_agent.py`. The example shows
+`AgentServiceReference`, `DistributedWebRuntimeProfile`, a
+Nacos/Redis/Postgres state plane, a readiness endpoint, backend verification,
+`ProductionReadinessEvidenceBundle`, `ReferenceStatePlaneStack`,
+`ReferenceLiveBackendProbePack`, and a planner primitive in one copyable
+composition. It does not create backend clients; Nacos/Redis/Postgres,
+credentials, migrations, CI/CD, process supervision, and sandbox isolation are
+deployment-owned real infrastructure.
 
 ## Install
 
 ```bash
-# Core
 pip install -e .
-
-# With Redis hot store
 pip install -e ".[redis]"
-
-# With Postgres durable store
 pip install -e ".[postgres]"
 ```
 
 ## Architecture
 
-```
+```text
 AgentBuilder
-    鈹?
-    鈹溾攢鈹€ Provider (Anthropic / OpenAI / custom)
-    鈹溾攢鈹€ ToolCallRouter
-    鈹?      鈹溾攢鈹€ Context Protocol Tools (built-in: declare_schema, update_state, etc.)
-    鈹?      鈹溾攢鈹€ External Tools (your RegisteredTool handlers)
-    鈹?      鈹斺攢鈹€ MCP Tools (optional)
-    鈹溾攢鈹€ ContextRuntime 鈫?working state, chapters, inherited state
-    鈹溾攢鈹€ MessageRuntime 鈫?active message window
-    鈹溾攢鈹€ CompressionRuntime 鈫?long session context management
-    鈹溾攢鈹€ HookManager 鈫?lifecycle interception
-    鈹斺攢鈹€ EventBus 鈫?typed observation events
+  -> Provider
+  -> ToolCallRouter
+  -> ContextRuntime
+  -> MessageRuntime
+  -> CompressionRuntime
+  -> HookManager
+  -> EventBus
 
-Channels (ASGI / A2A) 鈫?HTTP access
-Persistence (Redis + Postgres) 鈫?multi-node session state
-Multi-agent (TaskStore + AgentMessageQueue + Coordinator / A2A) 鈫?agent orchestration
+Channels -> AsgiAgentApp, HTTP/SSE, A2A primitives
+Persistence -> SessionSnapshot, SQLite/Postgres, Redis leases
+Multi-agent -> AgentCoordinator, TeamRuntime, PlannerRuntime
+State plane -> registry, queue, task/plan stores, worker evidence, snapshots
+Readiness -> ProductionReadinessEvidenceBundle and backend verification records
 ```
 
-## Modules
+`QueryLoop` and `AsyncQueryLoop` remain turn execution loops. Planner, A2A,
+team, worker, state-plane, readiness, sandbox, and release-hardening concerns
+stay in their own modules and profiles.
 
-| Module | Purpose | Key Types |
-|--------|---------|-----------|
-| `runtime/` | Agent facade + QueryLoop | `Agent`, `QueryLoop`, `AsyncQueryLoop` |
-| `providers/` | LLM adapters | `AnthropicProvider`, `OpenAIProvider`, `ProviderRequest`, `ProviderResponse` |
-| `context/` | Cognitive state management | `ContextRuntime`, `ContextRenderer`, `WorkingStateSchema` |
-| `messages/` | Message store + windowing | `MessageRuntime`, `Message`, `MessageRef` |
-| `capabilities/` | Tool routing + execution | `ToolCallRouter`, `ToolRegistry`, `RegisteredTool` |
-| `compression/` | Long-context compression | `CompressionRuntime`, `RuleBasedCompressor`, `LlmCompressor` |
-| `hooks/` | Lifecycle hooks | `HookManager`, `HookRegistry` |
-| `channels/` | HTTP/SSE/A2A serving | `AsgiAgentApp`, `A2AServer` |
-| `multi/` | Multi-agent coordination | `AgentCoordinator`, `TaskStore`, `AgentMessageQueue`, A2A dispatch |
-| `memory/` | Hot + durable state stores | `RedisHotSessionStore`, `MemoryRuntime` |
-| `persistence/` | Session snapshots | `SessionSnapshot`, `SQLitePersistence`, `PostgresDurableSessionStore` |
-| `observability/` | Tracing + events | `TraceContext`, W3C propagation, `EventRecord` |
+## Release References
 
-## Usage Guide
+- `docs/release-scope.md`: first production SDK release boundary
+- `docs/production-readiness.md`: readiness matrix and production ownership
+- `docs/agentos-objective-coverage-audit.md`: objective coverage ledger
+- `docs/release-hardening.md`: Phase 100 release hardening gate
+- `docs/api-stability.md`: stable API and experimental API classification
+- `docs/migrations/README.md`: migration index
+- `CHANGELOG.md`: current release-line changes
+- `.claude/skills/agent-os`: SDK development guidance skill
 
-The full usage guide lives in `.claude/skills/agent-os/`:
+## Examples
 
-```
-.claude/skills/agent-os/
-鈹溾攢鈹€ SKILL.md                     鈫?Entry point + module map
-鈹溾攢鈹€ flow/
-鈹?  鈹溾攢鈹€ 01-requirements.md       鈫?Requirements gathering (6 dimensions)
-鈹?  鈹溾攢鈹€ 02-spec-generation.md    鈫?Spec blueprint schema
-鈹?  鈹斺攢鈹€ 03-implementation.md     鈫?Project scaffold + parallel dev
-鈹斺攢鈹€ modules/
-    鈹溾攢鈹€ quick-start.md           鈫?Copy-paste code patterns (8 scenarios)
-    鈹溾攢鈹€ architecture.md          鈫?Data flow + boundaries + extension points
-    鈹溾攢鈹€ persistence.md           鈫?Redis/Postgres multi-node state
-    鈹溾攢鈹€ multi-agent.md           鈫?Local spawn + A2A distributed
-    鈹溾攢鈹€ testing.md               鈫?FakeProvider + testing patterns
-    鈹斺攢鈹€ anti-patterns.md         鈫?10 common mistakes to avoid
-```
-
-This guide doubles as a **Claude Code / Codex skill** 鈥?when loaded into an AI coding assistant, it provides interactive guidance for building agents with this SDK.
-
-## Scenarios
-
-| Scenario | What you need |
-|----------|---------------|
-| CLI tool / script | `AgentBuilder` + `agent.run()` |
-| HTTP API | `AgentBuilder` + `AsgiAgentApp` |
-| Streaming UI | `agent.stream()` or `agent.async_stream()` |
-| Long sessions | `.with_compression()` |
-| Multi-node deploy | `RedisHotSessionStore` + `PostgresDurableSessionStore` |
-| Sub-agent orchestration | `AgentCoordinator` + `TaskStore`/`AgentMessageQueue`; A2A for endpoint-backed agents |
-| Custom tools | `RegisteredTool(name, description, parameters, handler)` |
-| Lifecycle hooks | `HookRegistry.register("before_tool_call", handler)` |
-
-## Context Protocol
-
-Every agent built with agent-os has access to 7 built-in context tools that the model uses to manage its own cognitive state:
-
-| Tool | Purpose |
-|------|---------|
-| `declare_schema` | Declare working state fields for the current chapter |
-| `update_state` | Update a working state field value |
-| `extend_schema` | Add fields when current schema is insufficient |
-| `start_chapter` | Start new chapter when task changes substantially |
-| `recall_context` | Retrieve compressed history segments by handle or query |
-| `load_attachment` | Load an uploaded attachment into the rest of the current turn for inspection |
-
-These are automatically wired by `AgentBuilder` 鈥?you don't need to register them.
+Runnable examples live under `src/agentos/examples/`, including streaming,
+multi-agent dispatch, MCP, persistent sessions, planner patterns, and the live
+backend probe example. The production reference web agent lives at
+`src/agentos/examples/production_reference_web_agent.py`.
 
 ## Tests
 
@@ -131,7 +111,9 @@ These are automatically wired by `AgentBuilder` 鈥?you don't need to register t
 uv run pytest -q
 ```
 
+For release hardening evidence, also run the commands listed in
+`docs/release-hardening.md`.
+
 ## License
 
 Private.
-

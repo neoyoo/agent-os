@@ -1,0 +1,216 @@
+{
+  "schema": "agentos.module_size_baseline",
+  "schema_version": 1,
+  "thresholds": {
+    "responsibility_review": 300,
+    "split_or_exception": 500,
+    "no_new_responsibility": 800
+  },
+  "modules": [
+    {
+      "path": "src/agentos/multi/planner.py",
+      "lines": 4859,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/channels/a2a_operations.py",
+      "lines": 4646,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/channels/a2a.py",
+      "lines": 2592,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/channels/asgi.py",
+      "lines": 2200,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/multi/team.py",
+      "lines": 2036,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/channels/a2a_conformance.py",
+      "lines": 1836,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/deployment.py",
+      "lines": 1460,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/observability/instrumented.py",
+      "lines": 1271,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/readiness.py",
+      "lines": 1125,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/multi/postgres_team.py",
+      "lines": 1042,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/multi/postgres_tasks.py",
+      "lines": 1008,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/examples/production_reference_web_agent.py",
+      "lines": 932,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/providers/openai_compatible.py",
+      "lines": 891,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 884,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/multi/serializers.py",
+      "lines": 823,
+      "gate": "no_new_responsibility"
+    },
+    {
+      "path": "src/agentos/runtime/profile.py",
+      "lines": 795,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/multi/postgres_plan.py",
+      "lines": 734,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/persistence/postgres.py",
+      "lines": 730,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/multi/coordinator.py",
+      "lines": 720,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/capabilities/skills.py",
+      "lines": 660,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/workspace.py",
+      "lines": 640,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/channels/durable_session.py",
+      "lines": 639,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/runtime/async_query_loop.py",
+      "lines": 570,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/multi/redis_queue.py",
+      "lines": 529,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/release.py",
+      "lines": 524,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/registry/nacos.py",
+      "lines": 506,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/multi/tasks.py",
+      "lines": 495,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/context/registry.py",
+      "lines": 479,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/state_plane.py",
+      "lines": 455,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/examples/small_openai_agent.py",
+      "lines": 441,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/runtime/agent.py",
+      "lines": 416,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/channels/__init__.py",
+      "lines": 407,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/multi/__init__.py",
+      "lines": 372,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/service.py",
+      "lines": 371,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/channels/sse_buffer.py",
+      "lines": 362,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/providers/messages.py",
+      "lines": 353,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/channels/sse_turn_control.py",
+      "lines": 348,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/testing/contracts/plan_claim_store.py",
+      "lines": 338,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/observability/tracer.py",
+      "lines": 331,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/testing/contracts/plan_store.py",
+      "lines": 324,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/probes.py",
+      "lines": 312,
+      "gate": "responsibility_review"
+    }
+  ]
+}

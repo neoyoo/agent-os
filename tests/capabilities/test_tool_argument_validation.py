@@ -53,3 +53,33 @@ def test_tool_executor_redacts_sensitive_arguments_from_validation_errors() -> N
         )
 
     assert "sk-secret" not in str(error.value)
+
+
+def test_tool_executor_redacts_secret_named_arguments_from_validation_errors() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="login",
+            description="Login.",
+            parameters={
+                "type": "object",
+                "properties": {"password": {"type": "string"}},
+            },
+            handler=lambda arguments: "ok",
+        ),
+    )
+    router = ToolCallRouter(tool_registry=registry)
+
+    with pytest.raises(ToolExecutionError) as error:
+        router.execute_tool_call(
+            ProviderToolCall(
+                id="call_1",
+                name="login",
+                arguments={"password": 123456},
+            ),
+        )
+
+    message = str(error.value)
+    assert "password" in message
+    assert "123456" not in message
+    assert "[REDACTED]" in message

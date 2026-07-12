@@ -195,7 +195,8 @@ channels/       → AsgiAgentApp, InMemoryAgentSessionProvider
 ### 5.2 最小 ASGI 部署
 
 ```python
-from agentos import AsgiAgentApp, InMemoryAgentSessionProvider
+from agentos import AsgiAgentApp
+from agentos.channels import InMemoryAgentSessionProvider
 
 sessions = InMemoryAgentSessionProvider(agent_factory=make_agent)
 app = AsgiAgentApp(sessions=sessions)
@@ -264,14 +265,9 @@ Client → Load Balancer → N × ASGI instances
 ### 6.4 Production Agent 组装示例
 
 ```python
-from agentos import (
-    AgentBuilder,
-    AsgiAgentApp,
-    MemoryRuntime,
-    QdrantRecallIndex,
-    RedisHotSessionStore,
-    PostgresDurableSessionStore,
-)
+from agentos import AgentBuilder, AsgiAgentApp
+from agentos.memory import MemoryRuntime, QdrantRecallIndex, RedisHotSessionStore
+from agentos.persistence import PostgresDurableSessionStore
 
 hot_store = RedisHotSessionStore(url="redis://...", ttl_seconds=3600)
 durable_store = PostgresDurableSessionStore(dsn="postgresql://...")

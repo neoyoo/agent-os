@@ -194,7 +194,7 @@ def test_security_policy_denies_context_tools_before_state_mutation() -> None:
         [
             WorkingStateField(
                 name="task_goal",
-                type="str",
+                type="string",
                 purpose="当前任务目标和完成标准",
             ),
         ],
@@ -226,7 +226,7 @@ def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None
         [
             WorkingStateField(
                 name="task_goal",
-                type="str",
+                type="string",
                 purpose="当前任务目标和完成标准",
             ),
         ],
@@ -355,7 +355,7 @@ def test_update_state_tool_accepts_nested_json_value() -> None:
         [
             WorkingStateField(
                 name="config",
-                type="obj",
+                type="object",
                 purpose="嵌套配置对象",
             ),
         ],

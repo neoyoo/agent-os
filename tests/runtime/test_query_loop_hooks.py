@@ -1,7 +1,7 @@
 import pytest
 
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.hooks import HookContext, HookManager, HookRegistry, HookResult
 from agentos.messages import MessageRuntime
 from agentos.providers import (
@@ -13,6 +13,7 @@ from agentos.providers import (
     provider_message_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def build_loop(
@@ -27,7 +28,7 @@ def build_loop(
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs() if router is not None else [],
         ),

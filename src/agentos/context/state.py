@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping, Sequence, TypeAlias
 
+from agentos.context.models import ContextProtocolError
 from agentos.context.schema import WorkingStateSchema
 
 
@@ -124,7 +125,19 @@ class ContextState:
     ) -> None:
         """由 ContextRuntime 写入单个 working state 字段。"""
 
-        self._working_state[field_name] = self._coerce_working_state_value(value)
+        _validate_working_state_field_name(field_name)
+        frozen = freeze_working_state_value(value)
+        self._working_state[field_name] = frozen
+
+    def _set_frozen_working_state_value(
+        self,
+        field_name: str,
+        value: FrozenWorkingStateValue,
+    ) -> None:
+        """写入已冻结且已校验的 working state 字段值。"""
+
+        _validate_working_state_field_name(field_name)
+        self._working_state[field_name] = value
 
     def clear_working_state(self) -> None:
         """由 ContextRuntime 清空当前 chapter 的 working state。"""
@@ -156,25 +169,6 @@ class ContextState:
 
         self._runtime_notices.clear()
 
-    def _coerce_working_state_value(
-        self,
-        value: WorkingStateValue,
-    ) -> FrozenWorkingStateValue:
-        """复制并冻结 working state 字段值。"""
-
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, Mapping):
-            return FrozenMapping(
-                {
-                    str(key): self._coerce_working_state_value(item)
-                    for key, item in value.items()
-                },
-            )
-        if isinstance(value, (list, tuple)):
-            return tuple(self._coerce_working_state_value(item) for item in value)
-        raise TypeError("working state value must be JSON-compatible")
-
     @property
     def working_state_schema(self) -> WorkingStateSchema:
         """返回当前 chapter 的不可替换 working state schema。"""
@@ -185,6 +179,66 @@ class ContextState:
         """由 ContextRuntime 替换当前 chapter schema。"""
 
         self._working_state_schema = schema
+
+
+def freeze_working_state_value(value: object) -> FrozenWorkingStateValue:
+    """复制并冻结 working state 值，同时校验结构安全性。"""
+
+    return _freeze_working_state_value(value, set())
+
+
+def _freeze_working_state_value(
+    value: object,
+    ancestors: set[int],
+) -> FrozenWorkingStateValue:
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    if isinstance(value, Mapping):
+        return _freeze_working_state_mapping(value, ancestors)
+    if isinstance(value, (list, tuple)):
+        return _freeze_working_state_sequence(value, ancestors)
+    raise ContextProtocolError("working state value must be JSON-compatible")
+
+
+def _freeze_working_state_mapping(
+    value: Mapping[object, object],
+    ancestors: set[int],
+) -> FrozenMapping:
+    identity = id(value)
+    if identity in ancestors:
+        raise ContextProtocolError("working state value must not contain cycles")
+    ancestors.add(identity)
+    try:
+        frozen: dict[str, object] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ContextProtocolError(
+                    "working state value must be JSON-compatible; "
+                    "object keys must be strings",
+                )
+            frozen[key] = _freeze_working_state_value(item, ancestors)
+        return FrozenMapping(frozen)
+    finally:
+        ancestors.remove(identity)
+
+
+def _freeze_working_state_sequence(
+    value: list[object] | tuple[object, ...],
+    ancestors: set[int],
+) -> tuple[object, ...]:
+    identity = id(value)
+    if identity in ancestors:
+        raise ContextProtocolError("working state value must not contain cycles")
+    ancestors.add(identity)
+    try:
+        return tuple(_freeze_working_state_value(item, ancestors) for item in value)
+    finally:
+        ancestors.remove(identity)
+
+
+def _validate_working_state_field_name(field_name: object) -> None:
+    if type(field_name) is not str:
+        raise ContextProtocolError("working state field name must be a string")
 
 
 def working_state_value_to_json(value: object) -> object:

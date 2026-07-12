@@ -4,11 +4,12 @@ import json
 import logging
 from io import StringIO
 
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.observability import CapturePolicy, ObservabilityConfig, StructuredLogFormatter, configure_structured_logger
 from agentos.providers import FakeProvider
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 class DummyTracer:
@@ -41,7 +42,7 @@ def test_query_loop_writes_structured_logs_when_enabled() -> None:
         context_runtime=ContextRuntime(),
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
         ),
         provider=FakeProvider(["done"]),

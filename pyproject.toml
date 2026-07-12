@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-os"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Context-first Python agent runtime SDK."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["markdown-it-py>=4.0,<5.0"]
 
 [project.scripts]
 agent-os-small-agent = "agentos.examples.small_openai_agent:main"
@@ -15,6 +15,7 @@ agent-os = "agentos.cli:main"
 
 [project.optional-dependencies]
 dev = [
+    "pyyaml>=6.0",
     "pytest>=8.0",
     "ruff>=0.8",
 ]
@@ -43,6 +44,9 @@ production-memory = [
     "redis>=5.0",
     "qdrant-client>=1.9",
     "psycopg[binary]>=3.1",
+]
+security = [
+    "cryptography>=42.0",
 ]
 
 [tool.hatch.build.targets.wheel]

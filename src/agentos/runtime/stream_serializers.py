@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 import json
 
 from agentos.runtime.stream_events import (
     AssistantContentDelta,
     AssistantThinkingDelta,
+    ContextLoaded,
+    FinalResult,
+    PlanUpdated,
+    SkillLoaded,
+    StatusUpdate,
     ToolStreamCompleted,
     ToolStreamFailed,
     ToolStreamStarted,
@@ -20,6 +25,16 @@ def event_type(event: object) -> str:
         return "content_delta"
     if isinstance(event, AssistantThinkingDelta):
         return "thinking_delta"
+    if isinstance(event, StatusUpdate):
+        return "status_update"
+    if isinstance(event, ContextLoaded):
+        return "context_loaded"
+    if isinstance(event, SkillLoaded):
+        return "skill_loaded"
+    if isinstance(event, PlanUpdated):
+        return "plan_updated"
+    if isinstance(event, FinalResult):
+        return "final_result"
     if isinstance(event, ToolStreamStarted):
         return "tool_started"
     if isinstance(event, ToolStreamCompleted):
@@ -37,7 +52,9 @@ def event_payload(event: object) -> dict[str, object]:
     if not is_dataclass(event):
         return {}
     payload: dict[str, object] = {}
-    for key, value in asdict(event).items():
+    for field in fields(event):
+        key = field.name
+        value = getattr(event, key)
         if isinstance(value, BaseException):
             payload[key] = str(value)
         elif isinstance(value, (str, int, float, bool, type(None), list, dict)):

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import (
@@ -12,6 +12,7 @@ from agentos.runtime import (
     ToolStreamStarted,
     TurnStreamCompleted,
 )
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_streaming_query_loop_executes_tool_and_continues(tmp_path: Path) -> None:
@@ -40,7 +41,7 @@ def test_streaming_query_loop_executes_tool_and_continues(tmp_path: Path) -> Non
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
         ),

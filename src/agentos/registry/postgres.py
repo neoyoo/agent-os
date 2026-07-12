@@ -39,7 +39,7 @@ class PostgresAgentRegistryStore:
     def save_record(self, record: AgentRegistryRecord) -> None:
         """保存 agent 注册记录。"""
 
-        self._execute(
+        self._write(
             """
             INSERT INTO agentos_agent_registry (agent_id, card, heartbeat_at)
             VALUES (%s, %s::jsonb, %s)
@@ -54,19 +54,17 @@ class PostgresAgentRegistryStore:
                 record.heartbeat_at,
             ),
         )
-        self._commit()
 
     def delete_record(self, agent_id: str) -> None:
         """删除 agent 注册记录。"""
 
-        self._execute(
+        self._write(
             """
             DELETE FROM agentos_agent_registry
             WHERE agent_id = %s
             """,
             (agent_id,),
         )
-        self._commit()
 
     def load_record(self, agent_id: str) -> AgentRegistryRecord | None:
         """读取 agent 注册记录。"""
@@ -95,7 +93,7 @@ class PostgresAgentRegistryStore:
     def save_affinity(self, affinity: SessionAffinity) -> None:
         """保存 session affinity。"""
 
-        self._execute(
+        self._write(
             """
             INSERT INTO agentos_agent_session_affinity
                 (session_id, agent_id, expires_at)
@@ -107,7 +105,6 @@ class PostgresAgentRegistryStore:
             """,
             (affinity.session_id, affinity.agent_id, affinity.expires_at),
         )
-        self._commit()
 
     def load_affinity(self, session_id: str) -> SessionAffinity | None:
         """读取 session affinity。"""
@@ -132,14 +129,13 @@ class PostgresAgentRegistryStore:
     def delete_affinity(self, session_id: str) -> None:
         """删除 session affinity。"""
 
-        self._execute(
+        self._write(
             """
             DELETE FROM agentos_agent_session_affinity
             WHERE session_id = %s
             """,
             (session_id,),
         )
-        self._commit()
 
     def _record_from_row(self, row: tuple[object, ...]) -> AgentRegistryRecord:
         return AgentRegistryRecord(
@@ -155,10 +151,27 @@ class PostgresAgentRegistryStore:
         connection = cast(PostgresConnection, self._connection)
         return connection.execute(sql, params or ())
 
+    def _write(
+        self,
+        sql: str,
+        params: tuple[object, ...] | None = None,
+    ) -> None:
+        try:
+            self._execute(sql, params)
+            self._commit()
+        except Exception:
+            self._rollback()
+            raise
+
     def _commit(self) -> None:
         commit = getattr(self._connection, "commit", None)
         if commit is not None:
             commit()
+
+    def _rollback(self) -> None:
+        rollback = getattr(self._connection, "rollback", None)
+        if rollback is not None:
+            rollback()
 
     def _json_value(self, value: object) -> dict[str, object]:
         if isinstance(value, str):

@@ -1,402 +1,294 @@
-import json
-from collections.abc import Mapping
-from typing import Sequence
+"""可信 SystemEnvelope 的固定 Markdown 渲染器。"""
 
-from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_DEFINITIONS
-from agentos.context.projection import (
-    CapabilityPlane,
+from __future__ import annotations
+
+from agentos.context.markdown_security import (
+    generated_h1_is_safe,
+    normalize_markdown_text,
+    validate_no_h1,
+)
+from agentos.context.models import (
+    AllowedContentPartKind,
+    ContextBudgetExceededError,
+    ContextProtocolError,
     RuntimeContract,
-    SkillDeclaration,
-    ToolDeclaration,
-    ToolGroup,
+    RuntimeDirective,
+    RuntimeDirectiveKind,
+    SystemEnvelope,
+    TrustedSkillInstruction,
 )
-from agentos.context.state import (
-    CompressedSegment,
-    ContextState,
-    FrozenMapping,
-    WorkingStateValue,
-    working_state_value_to_json,
+from agentos.context.registry import (
+    SystemEnvelopeBudgetPolicy,
+    SystemSectionRegistry,
 )
+from agentos.tokens import TokenCounter
 
-
-DEFAULT_TOOL_GROUPS = [
-    ToolGroup(
-        name="Context protocol",
-        tools=[
-            ToolDeclaration(
-                name=definition.name,
-                description=definition.description,
-            )
-            for definition in CONTEXT_PROTOCOL_TOOL_DEFINITIONS
-        ],
-    ),
-]
-
+_DIRECTIVE_TEMPLATES: dict[RuntimeDirectiveKind, str] = {
+    RuntimeDirectiveKind.BACKGROUND_TOOL_RUNNING: "后台 Tool 正在执行；不要轮询或重复发起同一操作。",
+    RuntimeDirectiveKind.AWAITING_APPROVAL: "当前操作正在等待人工审批；在审批结果返回前不要继续该操作。",
+}
+_INVALID_DIRECTIVE = "runtime directive provider returned invalid DTO"
+_INVALID_RUNTIME = "runtime contract provider returned invalid DTO"
+_INVALID_SKILL = "trusted skill provider returned invalid DTO"
+_INVALID_WORKSPACE = "workspace contract provider returned invalid DTO"
+_REQUIRED_MISSING = "required system section is missing"
 
 class ContextRenderer:
-    """渲染默认 LLM 可见上下文投影。"""
+    """从可信 Section Registry 确定性生成 SystemEnvelope。"""
+
+    __slots__ = ("_budget_policy", "_registry", "_token_counter")
 
     def __init__(
         self,
-        runtime_contract: RuntimeContract | None = None,
-        capability_plane: CapabilityPlane | None = None,
+        *,
+        registry: SystemSectionRegistry,
+        token_counter: TokenCounter,
+        budget_policy: SystemEnvelopeBudgetPolicy | None = None,
     ) -> None:
-        """创建 renderer，并接收项目级 Runtime Contract 与 Capability Plane。"""
+        """注入可信 Registry、TokenCounter 和不可变预算策略。"""
 
-        self._runtime_contract_config = runtime_contract or RuntimeContract()
-        self._capability_plane_config = capability_plane or CapabilityPlane()
+        if not isinstance(registry, SystemSectionRegistry):
+            raise ContextProtocolError("system section registry is invalid")
+        if budget_policy is not None and not isinstance(
+            budget_policy,
+            SystemEnvelopeBudgetPolicy,
+        ):
+            raise ContextProtocolError("system envelope budget policy is invalid")
+        self._registry = registry
+        self._token_counter = token_counter
+        self._budget_policy = budget_policy or SystemEnvelopeBudgetPolicy()
 
-    def render(self, state: ContextState) -> str:
-        """把 ContextState 渲染成 provider system 字符串。"""
+    def render(self) -> SystemEnvelope:
+        """按协议固定顺序收集并渲染可信章节。"""
 
         sections = [
             self._runtime_contract(),
-            self._capability_plane(),
-            self._context_management_rules(),
+            self._required_text_section(
+                provider=self._registry.interaction_protocol_provider,
+                method_name="interaction_protocol",
+                title="Interaction Protocol",
+                invalid_message="interaction protocol provider returned invalid DTO",
+                budget=self._budget_policy.interaction_protocol,
+            ),
+            self._required_text_section(
+                provider=self._registry.context_management_rules_provider,
+                method_name="context_management_rules",
+                title="Context Management Rules",
+                invalid_message="context management provider returned invalid DTO",
+                budget=self._budget_policy.context_management_rules,
+            ),
         ]
-        if state.working_state_schema.fields:
-            sections.append(self._declared_schema(state))
-        if state.working_state_schema.fields or state.working_state:
-            sections.append(self._working_state(state))
-        if state.inherited_state:
-            sections.append(self._inherited_state(state.inherited_state))
-        sections.extend(
-            [
-                self._compressed_history(state.compressed_history),
-                self._memory_context(state.memory_context),
-            ],
-        )
-        if state.runtime_notices:
-            sections.append(self._runtime_notices(state.runtime_notices))
-        return "\n\n".join(sections) + "\n"
+        directives = self._runtime_directives()
+        if directives is not None:
+            sections.append(directives)
+        sections.extend(self._trusted_skills())
+        workspace = self._workspace_contract()
+        if workspace is not None:
+            sections.append(workspace)
+        return SystemEnvelope(text="\n\n".join(sections) + "\n")
 
     def _runtime_contract(self) -> str:
-        """渲染身份与安全约束。"""
-
-        lines = [
-            "# Runtime Contract",
-            "",
-            "## Identity",
-            "",
-            *self._runtime_contract_config.identity.splitlines(),
-            "",
-            "## Security Guardrails",
-            "",
-            "以下约束是绝对规则：",
-            "",
-        ]
-        lines.extend(
-            f"- {guardrail}" for guardrail in self._runtime_contract_config.guardrails()
-        )
-        return "\n".join(lines)
-
-    def _capability_plane(self) -> str:
-        """渲染当前 session 注册能力的摘要。"""
-
-        lines = [
-            "# Capability Plane",
-            "",
-            "## Tools available",
-            "",
-            "完整工具 schema 由 runtime 通过 provider `tools` 参数提供；本段只描述何时、为什么使用。",
-            "",
-            *self._tool_group_lines(),
-            "",
-            "## MCP servers connected",
-            "",
-            *self._mcp_server_lines(),
-            "",
-            "## Available skills",
-            "",
-            *self._skill_lines(),
-        ]
-        return "\n".join(lines)
-
-    def _context_management_rules(self) -> str:
-        """渲染上下文管理协议规则。"""
-
-        tool_names = self._context_protocol_tool_names()
-        update_state_tool = tool_names["update_state"]
-        extend_schema_tool = tool_names["extend_schema"]
-        start_chapter_tool = tool_names["start_chapter"]
-        recall_context_tool = tool_names["recall_context"]
-        load_attachment_tool = tool_names["load_attachment"]
-        return "\n".join(
+        provider = self._registry.runtime_contract_provider
+        if provider is None:
+            raise ContextBudgetExceededError(_REQUIRED_MISSING)
+        value = self._provider_value(provider, "runtime_contract", _INVALID_RUNTIME)
+        if type(value) is not RuntimeContract:
+            raise ContextProtocolError(_INVALID_RUNTIME)
+        identity = _normalize_text(value.identity, _INVALID_RUNTIME)
+        guardrails = _normalize_rules(value.security_guardrails)
+        additional_rules = _normalize_rules(value.additional_rules)
+        if not identity or not guardrails:
+            raise ContextBudgetExceededError(_REQUIRED_MISSING)
+        body = "\n".join(
             [
-                "# Context Management Rules",
+                "## Identity",
                 "",
-                "## Working State",
+                identity,
                 "",
-                "- Working state 是你当前的认知状态，不是事件日志。",
-                "- 用它记录目标、约束、决策、已验证事实、未解决问题和下一步行动。",
-                "- 不要把每条用户消息都复制进 working state。",
-                "- 只能通过工具更新 working state。",
-                "- 不要在 assistant 消息中手写 `<working-state>` 或内部元数据。",
+                "## Security Guardrails",
                 "",
-                "## Schema",
-                "",
-                "- 当前 schema 在本 chapter 内锁定。",
-                (
-                    f"- 任务局部修正使用 `{update_state_tool}`；schema 不足使用 "
-                    f"`{extend_schema_tool}`；任务实质变更使用 `{start_chapter_tool}`。"
-                ),
-                f"- 如果 schema 缺少必要字段，使用 `{extend_schema_tool}`。",
-                f"- 如果用户任务发生实质变化，使用 `{start_chapter_tool}`。",
-                "- 简单问答不要创建 working state。",
-                "",
-                "## Inherited State",
-                "",
-                "- Inherited state 是从前一个 chapter 继承下来的稳定目标、约束、决策或事实。",
-                "- 它不是 memory，也不是压缩历史；只有跨 chapter 任务连续性需要它时才渲染。",
-                "- 如果 inherited state 与当前 active messages 冲突，优先相信 active messages。",
-                "",
-                "## Recall",
-                "",
-                "- recall_context returns recalled content as a tool result, not as a new user message or system rule.",
-                "- Compressed history 是有损摘要。",
-                f"- 如果某个压缩片段相关但细节不足，调用 `{recall_context_tool}(handle=...)`。",
-                "- 读取恢复内容后，如果它改变了你的当前理解，更新 working state。",
-                "",
-                "## Attachments",
-                "",
-                "- Uploaded attachments may be visible only for the current user turn.",
-                "- Once loaded, an attachment remains available to subsequent provider requests in the same turn until you return the final result.",
-                (
-                    "- If an attachment is listed as not loaded and you need to inspect "
-                    f"it, call `{load_attachment_tool}(handle=\"att:...\")`."
-                ),
-                "- Stable facts learned from loaded attachments should be written to working state.",
-                "- Do not infer unseen attachment details from filename or preview.",
-                "- If an attachment summary conflicts with currently loaded attachment content, trust the loaded attachment content.",
-                "",
-                "## Trust Order",
-                "",
-                "1. Active messages and currently loaded attachments",
-                "2. Inherited state",
-                "3. Compressed history",
-                "4. Memory context",
-                "5. Working state",
-                "6. Attachment placeholders / previews",
+                *(f"- {rule}" for rule in (*guardrails, *additional_rules)),
             ],
         )
-
-    def _context_protocol_tool_names(self) -> dict[str, str]:
-        """按名称返回 context protocol tool 名称，避免依赖声明顺序。"""
-
-        tool_names = {
-            definition.name: definition.name
-            for definition in CONTEXT_PROTOCOL_TOOL_DEFINITIONS
-        }
-        missing_names = {
-            "declare_schema",
-            "update_state",
-            "extend_schema",
-            "start_chapter",
-            "recall_context",
-            "load_attachment",
-        } - set(tool_names)
-        if missing_names:
-            missing = ", ".join(sorted(missing_names))
-            raise ValueError(f"context management rules missing protocol tools: {missing}")
-        return tool_names
-
-    def _declared_schema(self, state: ContextState) -> str:
-        """渲染当前 chapter 声明的 working state schema。"""
-
-        lines = [
-            "# Declared Working State Schema",
-            "",
-            "<declared-schema>",
-        ]
-        for schema_field in state.working_state_schema.fields:
-            lines.extend(
-                [
-                    (
-                        f'  <field name="{schema_field.name}" '
-                        f'type="{schema_field.type}"'
-                    ),
-                    f'         purpose="{schema_field.purpose}"/>',
-                ],
-            )
-        lines.append("</declared-schema>")
-        return "\n".join(lines)
-
-    def _working_state(self, state: ContextState) -> str:
-        """渲染当前 working state。"""
-
-        lines = [
-            "# Working State",
-            "",
-            "<working-state>",
-        ]
-        for key, value in state.working_state.items():
-            lines.extend(self._render_working_state_field(key, value))
-        lines.append("</working-state>")
-        return "\n".join(lines)
-
-    def _render_working_state_field(
-        self,
-        key: str,
-        value: WorkingStateValue,
-    ) -> list[str]:
-        """渲染单个 working state 字段。"""
-
-        if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
-            tag = self._list_item_tag(key)
-            lines = [f"  <{key}>"]
-            lines.extend(f"    <{tag}>{item}</{tag}>" for item in value)
-            lines.append(f"  </{key}>")
-            return lines
-        if isinstance(value, (FrozenMapping, Mapping, list, tuple)):
-            return self._render_json_working_state_field(key, value)
-        if value is not None and not isinstance(value, str):
-            return self._render_json_working_state_field(key, value)
-
-        return [
-            f"  <{key}>",
-            f"    {value}",
-            f"  </{key}>",
-        ]
-
-    def _render_json_working_state_field(
-        self,
-        key: str,
-        value: object,
-    ) -> list[str]:
-        """用 JSON 渲染结构化 working state 字段。"""
-
-        rendered = json.dumps(
-            working_state_value_to_json(value),
-            ensure_ascii=False,
-            indent=2,
+        return self._checked_section(
+            _section("Runtime Contract", body),
+            self._budget_policy.runtime_contract,
+            identity,
+            *guardrails,
+            *additional_rules,
         )
-        return [
-            f"  <{key}>",
-            *[f"    {line}" for line in rendered.splitlines()],
-            f"  </{key}>",
-        ]
 
-    def _inherited_state(self, inherited_state: Sequence[str]) -> str:
-        """渲染跨 chapter 继承状态。"""
-
-        lines = [
-            "# Inherited State",
-            "",
-            "<inherited-state>",
-        ]
-        lines.extend(f"  <item>{item}</item>" for item in inherited_state)
-        lines.append("</inherited-state>")
-        return "\n".join(lines)
-
-    def _compressed_history(
+    def _required_text_section(
         self,
-        compressed_history: Sequence[CompressedSegment],
+        *,
+        provider: object | None,
+        method_name: str,
+        title: str,
+        invalid_message: str,
+        budget: int,
     ) -> str:
-        """渲染压缩历史段。"""
+        if provider is None:
+            raise ContextBudgetExceededError(_REQUIRED_MISSING)
+        value = self._provider_value(provider, method_name, invalid_message)
+        body = _normalize_text(value, invalid_message)
+        if not body:
+            raise ContextBudgetExceededError(_REQUIRED_MISSING)
+        return self._checked_section(_section(title, body), budget, body)
 
-        lines = [
-            "# Compressed History",
-            "",
-            "<compressed-history>",
-        ]
-        for segment in compressed_history:
-            lines.extend(
-                [
-                    f'  <segment id="{segment.id}" topic="{segment.topic}">',
-                    f"    {segment.summary}",
-                    "  </segment>",
-                ],
+    def _runtime_directives(self) -> str | None:
+        provider = self._registry.runtime_directives_provider
+        if provider is None:
+            return None
+        value = self._provider_value(
+            provider,
+            "runtime_directives",
+            _INVALID_DIRECTIVE,
+        )
+        if type(value) is not tuple:
+            raise ContextProtocolError(_INVALID_DIRECTIVE)
+        lines = [self._directive_text(item) for item in value]
+        if not lines:
+            return None
+        section = _section("Runtime Directives", "\n".join(f"- {x}" for x in lines))
+        return self._checked_section(
+            section,
+            self._budget_policy.runtime_directives,
+        )
+
+    def _directive_text(self, value: object) -> str:
+        if type(value) is not RuntimeDirective:
+            raise ContextProtocolError(_INVALID_DIRECTIVE)
+        kind = value.kind
+        part = value.content_part_kind
+        if type(kind) is not RuntimeDirectiveKind:
+            raise ContextProtocolError(_INVALID_DIRECTIVE)
+        if kind is RuntimeDirectiveKind.UNSUPPORTED_CONTENT_PART:
+            if type(part) is not AllowedContentPartKind:
+                raise ContextProtocolError(_INVALID_DIRECTIVE)
+            return (
+                f"当前 Provider 不支持 `{part.value}` ContentPart；"
+                "不要声称已读取或处理该内容。"
             )
-        lines.append("</compressed-history>")
-        return "\n".join(lines)
+        if part is not None:
+            raise ContextProtocolError(_INVALID_DIRECTIVE)
+        return _DIRECTIVE_TEMPLATES[kind]
 
-    def _memory_context(self, memory_context: Sequence[str]) -> str:
-        """渲染跨 session memory context。"""
+    def _trusted_skills(self) -> list[str]:
+        provider = self._registry.trusted_skill_instructions_provider
+        if provider is None:
+            return []
+        value = self._provider_value(provider, "items", _INVALID_SKILL)
+        if type(value) is not tuple:
+            raise ContextProtocolError(_INVALID_SKILL)
+        selected: list[str] = []
+        total = 0
+        for item in value:
+            section, title, body = self._trusted_skill_candidate(item)
+            count = self._count_tokens(section)
+            if (
+                count > self._budget_policy.trusted_skill_per_item
+                or total + count > self._budget_policy.trusted_skill_total
+            ):
+                break
+            if not generated_h1_is_safe(title):
+                raise ContextProtocolError("system section body contains reserved heading")
+            validate_no_h1(body)
+            selected.append(section)
+            total += count
+        return selected
 
-        lines = [
-            "# Memory Context",
-            "",
-            "<memory-context>",
-        ]
-        lines.extend(f"  <fact>{fact}</fact>" for fact in memory_context)
-        lines.append("</memory-context>")
-        return "\n".join(lines)
+    def _trusted_skill_candidate(self, value: object) -> tuple[str, str, str]:
+        if type(value) is not TrustedSkillInstruction:
+            raise ContextProtocolError(_INVALID_SKILL)
+        skill_id = value.skill_id
+        if type(skill_id) is not str:
+            raise ContextProtocolError(_INVALID_SKILL)
+        skill_id = normalize_markdown_text(skill_id)
+        if not skill_id or len(skill_id.splitlines()) != 1:
+            raise ContextProtocolError(_INVALID_SKILL)
+        body = _normalize_text(value.text, _INVALID_SKILL)
+        if not body:
+            raise ContextProtocolError(_INVALID_SKILL)
+        title = f"Trusted Skill: {skill_id}"
+        return _section(title, body), title, body
 
-    def _runtime_notices(self, runtime_notices: Sequence[str]) -> str:
-        """渲染本轮一次性 runtime notices。"""
+    def _workspace_contract(self) -> str | None:
+        provider = self._registry.workspace_contract_provider
+        if provider is None:
+            return None
+        value = self._provider_value(
+            provider,
+            "workspace_contract",
+            _INVALID_WORKSPACE,
+        )
+        body = _normalize_text(value, _INVALID_WORKSPACE)
+        if not body:
+            return None
+        return self._checked_section(
+            _section("Workspace Contract", body),
+            self._budget_policy.workspace_contract,
+            body,
+        )
 
-        lines = [
-            "# Runtime Notice",
-            "",
-            "<runtime-notices>",
-        ]
-        lines.extend(f"  <notice>{notice}</notice>" for notice in runtime_notices)
-        lines.append("</runtime-notices>")
-        return "\n".join(lines)
+    def _checked_section(
+        self,
+        section: str,
+        budget: int,
+        *provider_fragments: str,
+    ) -> str:
+        if self._count_tokens(section) > budget:
+            raise ContextBudgetExceededError("system section exceeds token budget")
+        for fragment in provider_fragments:
+            validate_no_h1(fragment)
+        return section
 
-    def _list_item_tag(self, key: str) -> str:
-        """返回列表型 working state 字段的默认 item 标签。"""
+    def _count_tokens(self, section: str) -> int:
+        failed = False
+        try:
+            count = self._token_counter.count_text(section)
+        except Exception:
+            failed = True
+            count = None
+        if failed:
+            raise ContextProtocolError("token counter failed")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ContextProtocolError("token counter returned invalid count")
+        return count
 
-        tags = {
-            "constraints": "c",
-            "key_decisions": "d",
-            "verified_facts": "f",
-            "open_questions": "q",
-            "next_steps": "n",
-        }
-        return tags.get(key, "item")
+    def _provider_value(
+        self,
+        provider: object,
+        method_name: str,
+        invalid_message: str,
+    ) -> object:
+        failed = False
+        try:
+            value = getattr(provider, method_name)()
+        except Exception:
+            failed = True
+            value = None
+        if failed:
+            raise ContextProtocolError(invalid_message)
+        return value
 
-    def _tool_group_lines(self) -> list[str]:
-        """渲染默认工具组和项目注入工具组。"""
 
-        lines: list[str] = []
-        for group in [*DEFAULT_TOOL_GROUPS, *self._capability_plane_config.tool_groups]:
-            lines.extend(self._tool_group_summary_lines(group))
-        return lines
+def _section(title: str, body: str) -> str:
+    return f"# {title}\n\n{body}"
 
-    def _tool_group_summary_lines(self, group: ToolGroup) -> list[str]:
-        """以扁平 bullet 渲染工具组摘要。"""
 
-        if not group.tools:
-            return [f"- {group.name}: None."]
-        return [
-            f"- {group.name}: `{tool.name}` — {tool.description}"
-            for tool in group.tools
-        ]
+def _normalize_text(value: object, invalid_message: str) -> str:
+    if type(value) is not str:
+        raise ContextProtocolError(invalid_message)
+    return normalize_markdown_text(value)
 
-    def _mcp_server_lines(self) -> list[str]:
-        """渲染已连接 MCP server 摘要。"""
 
-        servers = self._capability_plane_config.mcp_servers
-        if not servers:
-            return ["None."]
-
-        lines = ["以下 MCP server 已连接；其工具命名遵循 `mcp__<server>__<tool>` 前缀。"]
-        for server in servers:
-            title = server.rendered_title()
-            prefix = server.rendered_tool_prefix()
-            lines.append(
-                f"- `{title}` (`{prefix}`) — {server.description}",
-            )
-        return lines
-
-    def _skill_lines(self) -> list[str]:
-        """渲染已加载 skill 的 frontmatter 摘要。"""
-
-        skills = self._capability_plane_config.skills
-        if not skills:
-            return ["None."]
-
-        lines = [
-            "以下 skills 只是可用摘要，完整规范尚未进入上下文。"
-            "当任务匹配某个 skill 时，必须先调用 `load_skill` 按 skill name 加载；"
-            "需要阶段文件或参考资料时继续调用 `load_skill_resource`。"
-        ]
-        for skill in skills:
-            lines.append(self._skill_summary(skill))
-        return lines
-
-    def _skill_summary(self, skill: SkillDeclaration) -> str:
-        """渲染单个 skill 的摘要。"""
-
-        return f"- `{skill.name}` — {skill.when_to_use}"
+def _normalize_rules(values: object) -> tuple[str, ...]:
+    if type(values) is not tuple:
+        raise ContextProtocolError(_INVALID_RUNTIME)
+    normalized: list[str] = []
+    for value in values:
+        rule = _normalize_text(value, _INVALID_RUNTIME)
+        if not rule or len(rule.splitlines()) != 1:
+            raise ContextProtocolError(_INVALID_RUNTIME)
+        normalized.append(rule)
+    return tuple(normalized)

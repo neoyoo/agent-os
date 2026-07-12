@@ -3,7 +3,7 @@ import pytest
 from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionRuntime
-from agentos.context import ContextRenderer, ContextRuntime, WorkingStateField
+from agentos.context import ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     FakeProvider,
@@ -15,6 +15,7 @@ from agentos.providers import (
 from agentos.policies import BudgetPolicy
 from agentos.recall import RecallRuntime
 from agentos.runtime import QueryLoop, ProviderRequestBuilder
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_query_loop_runs_one_user_to_assistant_turn() -> None:
@@ -23,7 +24,7 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
         [
             WorkingStateField(
                 name="task_goal",
-                type="str",
+                type="string",
                 purpose="当前任务目标和完成标准",
             ),
         ],
@@ -32,7 +33,7 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
     messages = MessageRuntime()
     provider = FakeProvider(["Fake assistant response."])
     request_builder = ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[],
     )
@@ -57,7 +58,8 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
     assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
         {"role": "user", "content": "Hello"},
     ]
-    assert "Run a fake provider loop." in provider.requests[0].system
+    assert context.snapshot().working_state["task_goal"] == "Run a fake provider loop."
+    assert "Run a fake provider loop." not in provider.requests[0].system
 
 
 def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
@@ -74,7 +76,7 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             attachment_runtime=attachments,
         ),
@@ -133,7 +135,7 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
             attachment_runtime=attachments,
@@ -191,7 +193,7 @@ def test_query_loop_loads_image_through_load_attachment_tool() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
             attachment_runtime=attachments,
@@ -217,7 +219,7 @@ def test_query_loop_allows_update_state_batched_with_load_attachment() -> None:
         [
             WorkingStateField(
                 name="drawing_info",
-                type="dict",
+                type="object",
                 purpose="图纸事实",
             ),
         ],
@@ -260,7 +262,7 @@ def test_query_loop_allows_update_state_batched_with_load_attachment() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
             attachment_runtime=attachments,
@@ -325,7 +327,7 @@ def test_duplicate_tool_call_returns_suppression_result() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
         ),
@@ -387,7 +389,7 @@ def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
         ),
@@ -416,7 +418,7 @@ def test_query_loop_rejects_truncated_provider_final_response() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=[],
         ),
@@ -433,7 +435,7 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         [
             WorkingStateField(
                 name="task_goal",
-                type="str",
+                type="string",
                 purpose="当前任务目标和完成标准",
             ),
         ],
@@ -447,7 +449,7 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         ],
     )
     request_builder = ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[],
     )
@@ -473,7 +475,10 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
     assert [provider_message_to_dict(message) for message in provider.requests[1].messages] == [
         {"role": "user", "content": "Current task"},
     ]
-    assert '<segment id="seg_1"' in provider.requests[1].system
+    assert [
+        segment.id for segment in context.snapshot().compressed_history
+    ] == ["seg_1"]
+    assert "seg_1" not in provider.requests[1].system
 
     RecallRuntime(
         compression_index=compression.index,

@@ -55,13 +55,23 @@ class A2AServerAdapter:
         with use_incoming_trace_headers(headers):
             try:
                 request = self._parse_request(payload)
+            except ValueError as error:
+                return self._result_to_dict(
+                    TaskResult(
+                        task_id=str(payload.get("task_id", "")),
+                        status="failed",
+                        summary="task failed",
+                        error=str(error),
+                    ),
+                )
+            try:
                 result = self._runner.run_task(request)
-            except Exception as error:
+            except Exception:
                 result = TaskResult(
                     task_id=str(payload.get("task_id", "")),
                     status="failed",
                     summary="task failed",
-                    error=str(error),
+                    error="internal error",
                 )
         return self._result_to_dict(result)
 
@@ -77,6 +87,9 @@ class A2AServerAdapter:
         instruction = payload.get("instruction")
         if not isinstance(instruction, str) or not instruction.strip():
             raise ValueError("instruction is required")
+        required_capabilities = payload.get("required_capabilities", [])
+        if not isinstance(required_capabilities, list):
+            raise ValueError("required_capabilities must be a list")
         allowed_tool_names = payload.get("allowed_tool_names", [])
         if not isinstance(allowed_tool_names, list):
             raise ValueError("allowed_tool_names must be a list")
@@ -84,6 +97,7 @@ class A2AServerAdapter:
         return TaskRequest(
             task_id=task_id,
             instruction=instruction,
+            required_capabilities=tuple(str(name) for name in required_capabilities),
             allowed_tool_names=tuple(str(name) for name in allowed_tool_names),
             timeout_seconds=float(timeout_seconds),
         )

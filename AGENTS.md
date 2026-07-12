@@ -20,10 +20,81 @@ This project is a clean rewrite. Do not preserve old neoagent abstractions unles
 
 Before implementing architecture-level behavior, read these files:
 
-- `docs/design/llm-context-only-example.md`
-- `docs/design/sdk-architecture.md`
+- `docs/governance/agentos-engineering-standard.md`
+- `docs/superpowers/specs/2026-07-10-agentos-next-generation-sdk-architecture-design.md`
+- `docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md`
 
-The context example is the golden target for what the LLM should see. The SDK architecture document is the module boundary map.
+The engineering standard is the authoritative quality and development contract.
+The approved next-generation architecture spec defines the SDK boundary map.
+AgentOS Context Protocol v1 is the authoritative contract for all LLM-visible
+context and Provider role mapping.
+
+## Historical Design Inputs
+
+- `docs/design/sdk-architecture.md`
+- `docs/design/llm-context-only-example.md`
+
+These documents preserve earlier design reasoning. They are not protocol or
+architecture authorities and must not override the approved specs above.
+
+## Mandatory Context Bootstrap
+
+Before any architecture-level code edit, load the following context in order:
+
+1. `AGENTS.md`.
+2. `docs/governance/agentos-engineering-standard.md`.
+3. The active total architecture spec.
+4. The active subsystem spec.
+5. The active implementation plan.
+6. The source, neighboring modules, and tests for the touched boundary.
+
+If a task changes public behavior, cross-module contracts, lifecycle semantics,
+or architecture and no approved spec exists, stop implementation and write the
+spec first. Multi-step implementation also requires a written plan.
+
+At the start of implementation, publish a Scope Contract that names:
+
+- phase and active specs;
+- acceptance items;
+- allowed and forbidden files;
+- dependency boundaries;
+- behaviors completed in this task;
+- explicit deferrals and their target phase;
+- exact verification commands.
+
+After context compaction, task handoff, process restart, or agent replacement,
+repeat this bootstrap. Do not continue core edits from a conversation summary
+alone.
+
+## Engineering Contract
+
+These rules must remain in the development context:
+
+- Context is a projection from authoritative state, not the truth source.
+- Kernel depends on domain protocols, never concrete infrastructure adapters.
+- QueryLoop coordinates; it does not build prompts, execute concrete tools, or
+  own persistence.
+- Router dispatches one call, Executor runs one call, Scheduler owns a batch.
+- EventBus observes facts; HookManager owns interception policy.
+- Public APIs require typed contracts, explicit errors, lifecycle, cancellation,
+  and compatibility tests.
+- Tool concurrency is bounded and opt-in; hidden dependencies are not inferred.
+- Project Python files at 300 lines require responsibility review. Files at 500
+  lines require a split or recorded exception. Project code at 800 lines must
+  not grow without an approved split plan.
+- Responsibility overrides line count: a smaller file with multiple owners or
+  truth sources must still be split.
+- Use TDD for behavior changes and perform separate Spec Compliance and Code
+  Quality reviews.
+- No phase is complete with undeclared deferrals or missing verification.
+
+The full rules, exception format, Definition of Ready, and Definition of Done
+are defined in `docs/governance/agentos-engineering-standard.md`.
+
+For a future AgentOS-based development agent, render the compact engineering
+contract through the trusted `SystemEnvelope -> Workspace Contract` slot on
+every Provider request. Do not place it in ContextSnapshot, Memory,
+StoredMessage, Compressed History, Tool Result, or the frontend read model.
 
 ## Architecture Rules
 
@@ -31,19 +102,19 @@ The context example is the golden target for what the LLM should see. The SDK ar
 
 The SDK must be designed from the LLM-visible context outward.
 
-The default LLM-visible context shape is:
+The default Provider context is split into trusted instructions and dynamic
+context data:
 
 ```text
-Runtime Contract
-Capability Plane
-Context Management Rules
-Declared Working State Schema
-Working State
-Compressed History
-Memory Context
+SystemEnvelope
+  -> trusted runtime, interaction, skill, and workspace instructions
+
+ContextSnapshot
+  -> working state, plan, history, memory, skill metadata, and artifacts
 ```
 
-The SDK exists to maintain and render that context safely.
+The SDK exists to maintain and render both planes safely without promoting
+runtime data into trusted instructions.
 
 ### ai-knowledge Is The Engineering Skeleton
 
@@ -116,14 +187,9 @@ Do not treat a runnable MVP as a finished phase. A phase is complete only when
 its design/spec acceptance items, naming rules, module boundaries, and tests are
 all satisfied.
 
-Before implementing non-trivial SDK behavior, write a short Scope Contract in
-the working notes or user-facing update:
-
-1. Which phase/spec this task belongs to.
-2. Which acceptance items apply.
-3. Which items this change will complete.
-4. Which items are intentionally deferred, and to which later phase.
-5. Any design rule that would be violated if the implementation is simplified.
+Before implementing non-trivial SDK behavior, write the seven-item Scope
+Contract required by Mandatory Context Bootstrap in the working notes or a
+user-facing update. The complete format is defined in the engineering standard.
 
 Silent deferral is not allowed. If implementation is below the design target,
 say so explicitly and mark the missing item as deferred. Do not claim that a
@@ -144,8 +210,9 @@ Architecture-level work must re-read or inspect these references before code
 changes:
 
 - `AGENTS.md`
-- `docs/design/sdk-architecture.md`
-- `docs/design/llm-context-only-example.md`
+- `docs/governance/agentos-engineering-standard.md`
+- `docs/superpowers/specs/2026-07-10-agentos-next-generation-sdk-architecture-design.md`
+- `docs/superpowers/specs/2026-07-10-agentos-context-protocol-v1-design.md`
 - the active `docs/superpowers/specs/...` or `docs/superpowers/plans/...`
 - relevant `ai-knowledge/wiki/...` pages for the touched module
 
@@ -265,7 +332,9 @@ auto-remove temporary recalled messages after the next request
 
 Context tools are capabilities, but their effects are applied by ContextRuntime.
 
-Skills and MCP belong to the Capability Plane, not to context projection.
+Skills and MCP are runtime capabilities. Provider schemas come from the
+Capability Registry; available Skill metadata is ContextSnapshot data, while
+only verified Trusted Skill Instructions may enter SystemEnvelope.
 
 ### Providers
 
@@ -274,8 +343,8 @@ Skills and MCP belong to the Capability Plane, not to context projection.
 Provider input is:
 
 ```text
-system: rendered context
-messages: active messages
+system: SystemEnvelope
+messages: ContextSnapshot + active ProviderInputItem
 tools: provider tool schemas
 ```
 

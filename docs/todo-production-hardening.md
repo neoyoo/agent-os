@@ -113,6 +113,7 @@ SDK 核心引擎已达 production-grade 架构质量（Protocol 边界、CAS 状
 - [x] `examples/multi_agent_dispatch.py` — expert dispatch 完整示例
 - [x] `examples/mcp_agent.py` — 连接 MCP server
 - [x] `examples/persistent_agent.py` — session 持久化 + 恢复
+- [x] `examples/planner_patterns.py` — intent-router + plan-and-execute patterns
 - [x] 每个 example 可独立运行，有 `if __name__ == "__main__"` 入口
 
 **文件**：
@@ -217,7 +218,7 @@ SDK 核心引擎已达 production-grade 架构质量（Protocol 边界、CAS 状
 
 ### 14. Redis Pending / Retry (XPENDING + XCLAIM)
 
-**现状**：RedisAgentMessageQueue 支持 delivery/ack，但 worker crash 后 pending message 不会被重新领取。
+**现状**：RedisAgentMessageQueue 支持 delivery/ack，且已通过 `reclaim_pending()` 使用 XPENDING/XCLAIM 在 worker crash 后重领 idle pending message。
 **要求**：
 - [x] 定期调用 `XPENDING` 检查 idle 超过阈值的 message
 - [x] 用 `XCLAIM` 重新分配给当前 consumer

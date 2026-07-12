@@ -7,7 +7,7 @@ from agentos.capabilities.skills import (
     SkillRegistry,
     register_skill_loader_tools,
 )
-from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.observability import (
     CapturePolicy,
@@ -17,7 +17,12 @@ from agentos.observability import (
 )
 from agentos.observability.instrument import instrument_query_loop
 from agentos.observability.instrumented import InstrumentedQueryLoop
-from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
+from agentos.providers import (
+    FakeProvider,
+    ProviderRequest,
+    ProviderResponse,
+    ProviderToolCall,
+)
 from agentos.runtime import (
     AssistantContentDelta,
     AsyncQueryLoop,
@@ -26,6 +31,7 @@ from agentos.runtime import (
     SessionState,
     TurnStreamCompleted,
 )
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 class NoOpCompressionRuntime:
@@ -73,11 +79,7 @@ def _build_loop(tmp_path: Path) -> tuple[QueryLoop, FakeProvider, NoOpCompressio
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(
-                capability_plane=CapabilityPlane(
-                    tool_groups=[registry.capability_tool_group("Registered tools")],
-                ),
-            ),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
         ),
@@ -133,6 +135,11 @@ def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> No
     generation_span = tracer.records[3]
     assert generation_span.attributes["langfuse.observation.type"] == "generation"
     assert generation_span.attributes["agentos.provider.tool_call_count"] == 1
+    for request in provider.requests:
+        tool_names = [tool["function"]["name"] for tool in request.tools]
+        assert "read_file" in tool_names
+        assert "Registered tools" not in request.system
+        assert "read_file" not in request.system
 
 
 def test_instrument_query_loop_records_streaming_turn_span_tree(
@@ -194,38 +201,35 @@ def test_instrument_query_loop_records_native_async_skill_stream(
         encoding="utf-8",
     )
 
-    async def collect() -> tuple[list[object], list[str]]:
+    async def collect() -> tuple[list[object], list[str], list[ProviderRequest]]:
         skill_registry = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
         tool_registry = ToolRegistry()
         register_skill_loader_tools(tool_registry, skill_registry)
         router = ToolCallRouter(tool_registry=tool_registry)
         messages = MessageRuntime()
+        provider = FakeProvider(
+            [
+                ProviderResponse(
+                    tool_calls=[
+                        ProviderToolCall(
+                            id="call_skill",
+                            name="load_skill",
+                            arguments={"skill_name": "code-review"},
+                        ),
+                    ],
+                ),
+                ProviderResponse(content="reviewed"),
+            ],
+        )
         loop = AsyncQueryLoop(
             context_runtime=ContextRuntime(),
             message_runtime=messages,
             request_builder=ProviderRequestBuilder(
-                context_renderer=ContextRenderer(
-                    capability_plane=CapabilityPlane(
-                        skills=skill_registry.capability_declarations(),
-                    ),
-                ),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=router.tool_specs(),
             ),
-            provider=FakeProvider(
-                [
-                    ProviderResponse(
-                        tool_calls=[
-                            ProviderToolCall(
-                                id="call_skill",
-                                name="load_skill",
-                                arguments={"skill_name": "code-review"},
-                            ),
-                        ],
-                    ),
-                    ProviderResponse(content="reviewed"),
-                ],
-            ),
+            provider=provider,
             tool_call_router=router,
             session_state=SessionState(id="s1"),
         )
@@ -239,9 +243,9 @@ def test_instrument_query_loop_records_native_async_skill_stream(
         )
 
         events = [event async for event in instrumented.run_turn_stream("review")]
-        return events, [record.name for record in tracer.records]
+        return events, [record.name for record in tracer.records], provider.requests
 
-    events, record_names = asyncio.run(collect())
+    events, record_names, provider_requests = asyncio.run(collect())
 
     assert isinstance(events[-1], TurnStreamCompleted)
     assert events[-1].content == "reviewed"
@@ -253,6 +257,10 @@ def test_instrument_query_loop_records_native_async_skill_stream(
         "provider.request.build",
         "provider.stream",
     ]
+    for request in provider_requests:
+        tool_names = [tool["function"]["name"] for tool in request.tools]
+        assert "load_skill" in tool_names
+        assert "code-review" not in request.system
 
 
 def test_instrumented_query_loop_keeps_attachment_runtime_accessible(

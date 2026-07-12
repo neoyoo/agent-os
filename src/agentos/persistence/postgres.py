@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Sequence, cast
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
+from json import JSONDecodeError
+from typing import Callable, Sequence, TypeVar, cast
 
 from agentos.context import CompressedSegment
 from agentos.memory.serializers import (
@@ -14,15 +19,450 @@ from agentos.memory.serializers import (
 )
 from agentos.memory.types import CompressedSegmentPackage
 from agentos.messages import Message, MessageRef
+from agentos.persistence.base import (
+    SessionSnapshot,
+    SessionSnapshotRecord,
+    SnapshotConflictError,
+    SnapshotLoadError,
+    SnapshotVersionError,
+)
 from agentos.persistence.protocols import PostgresConnection, PostgresCursor
+from agentos.persistence.serializers import (
+    session_snapshot_from_dict,
+    session_snapshot_to_dict,
+)
 from agentos.runtime.session import SessionState
+
+
+_F = TypeVar("_F", bound=Callable[..., object])
 
 
 class BackendUnavailableError(RuntimeError):
     """生产后端连接不可用。"""
 
 
-class PostgresDurableSessionStore:
+class _PostgresConnectionLeaseMixin:
+    _active_connection: ContextVar[object | None]
+    _connection: object | None
+    _dsn: str
+    _owns_pool: bool
+    _pool: object | None
+
+    def _configure_connection_boundary(
+        self,
+        *,
+        dsn: str,
+        connection: object | None,
+        pool: object | None,
+        dependency_message: str,
+    ) -> None:
+        self._active_connection = ContextVar(
+            f"{self.__class__.__name__}.active_connection",
+            default=None,
+        )
+        self._connection = None
+        self._pool = pool
+        self._owns_pool = False
+        self._dsn = dsn
+        if connection is not None:
+            self._connection = connection
+            return
+        if pool is not None:
+            self._ensure_pool_supported(pool)
+            return
+        try:
+            import psycopg
+        except ImportError as error:
+            raise RuntimeError(dependency_message) from error
+        self._connection = psycopg.connect(dsn)
+
+    def _ensure_pool_supported(self, pool: object) -> None:
+        getconn = getattr(pool, "getconn", None)
+        connection_method = getattr(pool, "connection", None)
+        if callable(getconn) or callable(connection_method):
+            return
+        raise RuntimeError("Postgres pool must provide getconn() or connection()")
+
+    @contextmanager
+    def _connection_scope(self) -> Iterator[object]:
+        active_connection = self._active_connection.get()
+        if self._connection is not None:
+            if active_connection is not None:
+                yield active_connection
+                return
+            token = self._active_connection.set(self._connection)
+            try:
+                yield self._connection
+            finally:
+                self._active_connection.reset(token)
+            return
+        pool = self._pool
+        if pool is None:
+            raise BackendUnavailableError("Postgres connection is not configured")
+        connection, context = self._borrow_pool_connection(pool)
+        token = self._active_connection.set(connection)
+        try:
+            yield connection
+        finally:
+            self._active_connection.reset(token)
+            self._return_pool_connection(pool, connection, context)
+
+    def _borrow_pool_connection(self, pool: object) -> tuple[object, object | None]:
+        getconn = getattr(pool, "getconn", None)
+        if callable(getconn):
+            return getconn(), None
+        connection_method = getattr(pool, "connection", None)
+        if callable(connection_method):
+            context = connection_method()
+            return context.__enter__(), context
+        raise RuntimeError("Postgres pool must provide getconn() or connection()")
+
+    def _return_pool_connection(
+        self,
+        pool: object,
+        connection: object,
+        context: object | None,
+    ) -> None:
+        if context is not None:
+            context.__exit__(None, None, None)
+            return
+        putconn = getattr(pool, "putconn", None)
+        if callable(putconn):
+            putconn(connection)
+            return
+        close = getattr(connection, "close", None)
+        if callable(close):
+            close()
+
+    def _execute(
+        self,
+        sql: str,
+        params: tuple[object, ...] | None = None,
+    ) -> PostgresCursor:
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        try:
+            return cast(PostgresConnection, connection).execute(sql, params or ())
+        except Exception as error:
+            raise BackendUnavailableError("Postgres backend unavailable") from error
+
+    def _commit(self) -> None:
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        commit = getattr(connection, "commit", None)
+        if commit is not None:
+            commit()
+
+    def _rollback(self) -> None:
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        rollback = getattr(connection, "rollback", None)
+        if callable(rollback):
+            rollback()
+
+    def close(self) -> None:
+        """Close owned direct connections or owned pools."""
+
+        if self._connection is not None:
+            close = getattr(self._connection, "close", None)
+            if callable(close):
+                close()
+            return
+        if self._owns_pool and self._pool is not None:
+            close = getattr(self._pool, "close", None)
+            if callable(close):
+                close()
+
+
+class PostgresSessionSnapshotPersistence(_PostgresConnectionLeaseMixin):
+    """Postgres-backed SessionPersistence adapter for full snapshots."""
+
+    def __init__(
+        self,
+        dsn: str,
+        connection: object | None = None,
+        pool: object | None = None,
+    ) -> None:
+        """Create Postgres snapshot persistence."""
+
+        self._configure_connection_boundary(
+            dsn=dsn,
+            connection=connection,
+            pool=pool,
+            dependency_message=(
+                "PostgresSessionSnapshotPersistence requires the optional "
+                "dependency `agentos[postgres]`."
+            ),
+        )
+
+    @classmethod
+    def from_pool(
+        cls,
+        dsn: str,
+        pool: object | None = None,
+    ) -> "PostgresSessionSnapshotPersistence":
+        """Create snapshot persistence from a psycopg pool."""
+
+        if pool is None:
+            try:
+                from psycopg_pool import ConnectionPool
+            except ImportError as error:
+                raise RuntimeError(
+                    "Postgres pool support requires the optional dependency "
+                    "`agentos[postgres]`.",
+                ) from error
+            pool = ConnectionPool(dsn)
+        return cls(dsn, pool=pool)
+
+    @property
+    def backend_dsn(self) -> str:
+        """Return the Postgres DSN."""
+
+        return self._dsn
+
+    def save(self, snapshot: SessionSnapshot) -> None:
+        """Save the latest full session snapshot."""
+
+        with self._connection_scope():
+            self._save(snapshot)
+
+    def load(self, session_id: str) -> SessionSnapshot:
+        """Load one full session snapshot."""
+
+        with self._connection_scope():
+            row = self._execute(
+                """
+                SELECT payload FROM agentos_session_snapshots
+                WHERE session_id = %s
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(session_id)
+            try:
+                return session_snapshot_from_dict(self._json_value(row[0]))
+            except SnapshotVersionError:
+                raise
+            except (JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                raise SnapshotLoadError(
+                    f"failed to load snapshot {session_id!r}: {error}",
+                ) from error
+
+    def load_record(self, session_id: str) -> SessionSnapshotRecord:
+        """Load one full session snapshot with backend mutation revision."""
+
+        with self._connection_scope():
+            row = self._execute(
+                """
+                SELECT revision, payload, lease_fence FROM agentos_session_snapshots
+                WHERE session_id = %s
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(session_id)
+            try:
+                return SessionSnapshotRecord(
+                    snapshot=session_snapshot_from_dict(self._json_value(row[1])),
+                    revision=int(row[0]),
+                    lease_fence=int(row[2]),
+                )
+            except SnapshotVersionError:
+                raise
+            except (JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                raise SnapshotLoadError(
+                    f"failed to load snapshot {session_id!r}: {error}",
+                ) from error
+
+    def save_if_unchanged(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+    ) -> SessionSnapshotRecord:
+        """Save snapshot only if the backend revision still matches."""
+
+        if expected_revision < 0:
+            raise ValueError("expected_revision must be non-negative")
+        with self._connection_scope():
+            return self._save(snapshot, expected_revision=expected_revision)
+
+    def save_if_lease_owned(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int,
+        lease: object,
+        lease_store: object,
+    ) -> SessionSnapshotRecord:
+        """Save with revision CAS/fence checks and verify lease after write."""
+
+        session_id = snapshot.session_state.id
+        lease_session_id = getattr(lease, "session_id", None)
+        if lease_session_id != session_id:
+            from agentos.channels.durable_session import SessionLeaseError
+
+            raise SessionLeaseError(
+                f"session lease mismatch: {lease_session_id!r} != {session_id!r}",
+            )
+        if expected_revision < 0:
+            raise ValueError("expected_revision must be non-negative")
+        ensure_owned = getattr(lease_store, "ensure_owned", None)
+        if not callable(ensure_owned):
+            raise BackendUnavailableError("session lease store cannot verify ownership")
+        with self._connection_scope():
+            try:
+                ensure_owned(lease)
+                record = self._save(
+                    snapshot,
+                    expected_revision=expected_revision,
+                    lease_fence=int(getattr(lease, "fence", 0)),
+                    commit=False,
+                )
+                ensure_owned(lease)
+            except Exception:
+                self._rollback()
+                raise
+            self._commit()
+            return record
+
+    def list_ids(self) -> list[str]:
+        """List saved session ids."""
+
+        with self._connection_scope():
+            rows = self._execute(
+                """
+                SELECT session_id FROM agentos_session_snapshots
+                ORDER BY session_id
+                """,
+            ).fetchall()
+            return [str(row[0]) for row in rows]
+
+    def delete(self, session_id: str) -> None:
+        """Delete one full session snapshot."""
+
+        with self._connection_scope():
+            self._execute(
+                """
+                DELETE FROM agentos_session_snapshots
+                WHERE session_id = %s
+                """,
+                (session_id,),
+            )
+            self._commit()
+
+    def _save(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        expected_revision: int | None = None,
+        lease_fence: int | None = None,
+        commit: bool = True,
+    ) -> SessionSnapshotRecord:
+        payload = session_snapshot_to_dict(snapshot)
+        if expected_revision is None:
+            row = self._execute(
+                """
+                INSERT INTO agentos_session_snapshots
+                    (session_id, version, revision, payload, lease_fence)
+                VALUES (%s, %s, 1, %s::jsonb, COALESCE(%s, 0))
+                ON CONFLICT (session_id) DO UPDATE SET
+                    version = EXCLUDED.version,
+                    revision = agentos_session_snapshots.revision + 1,
+                    payload = EXCLUDED.payload,
+                    lease_fence = GREATEST(
+                        agentos_session_snapshots.lease_fence,
+                        EXCLUDED.lease_fence
+                    ),
+                    updated_at = now()
+                RETURNING revision, lease_fence
+                """,
+                (
+                    snapshot.session_state.id,
+                    snapshot.version,
+                    json.dumps(payload, ensure_ascii=False),
+                    lease_fence,
+                ),
+            ).fetchone()
+        elif expected_revision == 0:
+            row = self._execute(
+                """
+                INSERT INTO agentos_session_snapshots
+                    (session_id, version, revision, payload, lease_fence)
+                VALUES (%s, %s, 1, %s::jsonb, COALESCE(%s, 0))
+                ON CONFLICT (session_id) DO NOTHING
+                RETURNING revision, lease_fence
+                """,
+                (
+                    snapshot.session_state.id,
+                    snapshot.version,
+                    json.dumps(payload, ensure_ascii=False),
+                    lease_fence,
+                ),
+            ).fetchone()
+        else:
+            row = self._execute(
+                """
+                UPDATE agentos_session_snapshots
+                SET
+                    version = %s,
+                    revision = revision + 1,
+                    payload = %s::jsonb,
+                    lease_fence = GREATEST(lease_fence, COALESCE(%s, lease_fence)),
+                    updated_at = now()
+                WHERE session_id = %s
+                  AND revision = %s
+                  AND COALESCE(%s, lease_fence) >= lease_fence
+                RETURNING revision, lease_fence
+                """,
+                (
+                    snapshot.version,
+                    json.dumps(payload, ensure_ascii=False),
+                    lease_fence,
+                    snapshot.session_state.id,
+                    expected_revision,
+                    lease_fence,
+                ),
+            ).fetchone()
+        if row is None:
+            raise SnapshotConflictError(
+                f"snapshot revision conflict: {snapshot.session_state.id}",
+            )
+        if commit:
+            self._commit()
+        return SessionSnapshotRecord(
+            snapshot=snapshot,
+            revision=int(row[0]),
+            lease_fence=int(row[1]) if len(row) > 1 else 0,
+        )
+
+    def _json_value(self, value: object) -> dict[str, object]:
+        if isinstance(value, str):
+            loaded = json.loads(value)
+        else:
+            loaded = value
+        if not isinstance(loaded, dict):
+            raise TypeError("snapshot payload must be an object")
+        return loaded
+
+
+def _with_postgres_connection_scope(method: _F) -> _F:
+    @wraps(method)
+    def wrapper(
+        self: _PostgresConnectionLeaseMixin,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        with self._connection_scope():
+            return method(self, *args, **kwargs)
+
+    return cast(_F, wrapper)
+
+
+class PostgresDurableSessionStore(_PostgresConnectionLeaseMixin):
     """Postgres-backed DurableSessionStore adapter。"""
 
     def __init__(
@@ -33,33 +473,15 @@ class PostgresDurableSessionStore:
     ) -> None:
         """创建 Postgres durable store；未安装 postgres extra 时给出清晰错误。"""
 
-        self._pool = pool
-        if connection is not None:
-            self._connection = connection
-            self._dsn = dsn
-            return
-        if pool is not None:
-            getconn = getattr(pool, "getconn", None)
-            connection_method = getattr(pool, "connection", None)
-            if callable(getconn):
-                self._connection = getconn()
-            elif callable(connection_method):
-                context = connection_method()
-                self._connection = context.__enter__()
-                self._pool_context = context
-            else:
-                raise RuntimeError("Postgres pool must provide getconn() or connection()")
-            self._dsn = dsn
-            return
-        try:
-            import psycopg
-        except ImportError as error:
-            raise RuntimeError(
+        self._configure_connection_boundary(
+            dsn=dsn,
+            connection=connection,
+            pool=pool,
+            dependency_message=(
                 "PostgresDurableSessionStore requires the optional dependency "
-                "`agentos[postgres]`.",
-            ) from error
-        self._connection = psycopg.connect(dsn)
-        self._dsn = dsn
+                "`agentos[postgres]`."
+            ),
+        )
 
     @classmethod
     def from_pool(cls, dsn: str, pool: object | None = None) -> "PostgresDurableSessionStore":
@@ -74,8 +496,12 @@ class PostgresDurableSessionStore:
                     "`agentos[postgres]`.",
                 ) from error
             pool = ConnectionPool(dsn)
+            store = cls(dsn, pool=pool)
+            store._owns_pool = True
+            return store
         return cls(dsn, pool=pool)
 
+    @_with_postgres_connection_scope
     def save_session(self, session: SessionState) -> None:
         """保存 session state。"""
 
@@ -92,6 +518,7 @@ class PostgresDurableSessionStore:
         )
         self._commit()
 
+    @_with_postgres_connection_scope
     def load_session(self, session_id: str) -> SessionState:
         """读取 session state。"""
 
@@ -110,6 +537,7 @@ class PostgresDurableSessionStore:
             next_turn_number=int(row[1]),
         )
 
+    @_with_postgres_connection_scope
     def append_message(self, session_id: str, message: Message) -> None:
         """追加原始消息。"""
 
@@ -129,6 +557,7 @@ class PostgresDurableSessionStore:
         )
         self._commit()
 
+    @_with_postgres_connection_scope
     def get_messages(
         self,
         session_id: str,
@@ -159,6 +588,7 @@ class PostgresDurableSessionStore:
             )
         return messages
 
+    @_with_postgres_connection_scope
     def save_active_refs(
         self,
         session_id: str,
@@ -184,6 +614,7 @@ class PostgresDurableSessionStore:
         )
         self._commit()
 
+    @_with_postgres_connection_scope
     def load_active_refs(self, session_id: str) -> tuple[MessageRef, ...]:
         """读取 active refs checkpoint。"""
 
@@ -198,6 +629,7 @@ class PostgresDurableSessionStore:
             return ()
         return tuple(message_ref_from_dict(ref) for ref in self._json_value(row[0]))
 
+    @_with_postgres_connection_scope
     def save_compressed_segment(
         self,
         session_id: str,
@@ -224,6 +656,7 @@ class PostgresDurableSessionStore:
         )
         self._commit()
 
+    @_with_postgres_connection_scope
     def get_segment_refs(self, session_id: str, segment_id: str) -> tuple[str, ...]:
         """读取 durable segment refs。"""
 
@@ -238,6 +671,7 @@ class PostgresDurableSessionStore:
             raise KeyError(segment_id)
         return tuple(str(ref) for ref in self._json_value(row[0]))
 
+    @_with_postgres_connection_scope
     def list_compressed_segments(
         self,
         session_id: str,
@@ -259,29 +693,30 @@ class PostgresDurableSessionStore:
         sql: str,
         params: tuple[object, ...] | None = None,
     ) -> PostgresCursor:
-        connection = cast(PostgresConnection, self._connection)
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
         try:
-            return connection.execute(sql, params or ())
+            return cast(PostgresConnection, connection).execute(sql, params or ())
         except Exception as error:
             raise BackendUnavailableError("Postgres backend unavailable") from error
 
     def _commit(self) -> None:
-        commit = getattr(self._connection, "commit", None)
+        connection = self._active_connection.get()
+        if connection is None:
+            raise BackendUnavailableError("Postgres operation has no connection lease")
+        commit = getattr(connection, "commit", None)
         if commit is not None:
             commit()
 
     def close(self) -> None:
         """关闭或归还当前 Postgres connection。"""
 
-        pool = getattr(self, "_pool", None)
-        if pool is not None:
-            putconn = getattr(pool, "putconn", None)
-            if callable(putconn):
-                putconn(self._connection)
-                return
-        context = getattr(self, "_pool_context", None)
-        if context is not None:
-            context.__exit__(None, None, None)
+        if self._connection is None:
+            if self._owns_pool and self._pool is not None:
+                close = getattr(self._pool, "close", None)
+                if callable(close):
+                    close()
             return
         close = getattr(self._connection, "close", None)
         if callable(close):

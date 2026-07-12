@@ -45,7 +45,7 @@ def test_context_compression_and_recall_emit_traceable_events() -> None:
         [
             WorkingStateField(
                 name="task_goal",
-                type="str",
+                type="string",
                 purpose="当前任务目标和完成标准",
             ),
         ],

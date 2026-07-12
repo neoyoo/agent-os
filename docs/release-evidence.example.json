@@ -1,0 +1,170 @@
+{
+  "schema": "agentos.release_evidence",
+  "schema_version": 1,
+  "certification_claim": "non-certifying-sdk-evidence",
+  "sdk_owned": true,
+  "release_candidate": {
+    "branch": "review/agentos-sdk-architecture-20260611",
+    "generated_at": "<iso8601>",
+    "commit": "<git-sha>",
+    "version": "<pep440-release-candidate-version>"
+  },
+  "generator": {
+    "source_path": "scripts/generate_release_evidence.py",
+    "review_policy": "does_not_mark_independent_review_passed"
+  },
+  "deployment_owned": [
+    "CI/CD execution",
+    "artifact signing",
+    "publishing",
+    "deployment approval",
+    "rollout and rollback"
+  ],
+  "independent_review": {
+    "status": "unknown",
+    "evidence_ref": "<fresh-independent-review-artifact-or-log-ref>",
+    "ready_for_release_candidate": false
+  },
+  "gates": {
+    "public_api_audit": {
+      "status": "unknown",
+      "command": "uv run pytest tests/architecture/test_public_api.py -q",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "full_test_suite": {
+      "status": "unknown",
+      "command": "uv run pytest -q",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "compileall": {
+      "status": "unknown",
+      "command": "uv run python -m compileall -q src tests",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "diff_hygiene": {
+      "status": "unknown",
+      "command": "git diff --check",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "runtime_boundary_scan": {
+      "status": "unknown",
+      "command": "rg -n \"ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|worker supervisor|production_design_constraints|release hardening|production reference\" src/agentos/runtime/query_loop.py src/agentos/runtime/async_query_loop.py",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>",
+        "matches": "<match-count>"
+      }
+    },
+    "docs_alignment": {
+      "status": "unknown",
+      "command": "uv run pytest tests/docs/test_production_hardening_docs.py tests/docs/test_production_readiness_docs.py tests/docs/test_objective_coverage_audit_docs.py -q",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "migration_index": {
+      "status": "unknown",
+      "command": "manual review: docs/migrations/README.md",
+      "evidence_ref": "docs/migrations/README.md",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "api_stability_inventory": {
+      "status": "unknown",
+      "command": "manual review: docs/api-stability.md",
+      "evidence_ref": "docs/api-stability.md",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "production_reference_honesty": {
+      "status": "unknown",
+      "command": "uv run pytest tests/examples/test_production_reference_web_agent.py -q",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "planner_plan_store_concurrency": {
+      "status": "unknown",
+      "command": "uv run pytest tests/multi/test_planner_runtime.py tests/multi/test_postgres_plan_store.py tests/multi/test_postgres_plan_claim_store.py tests/multi/test_planner_claimed_scheduler_daemon.py tests/multi/test_planner_scheduler_daemon.py -q",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "workspace_security_policy": {
+      "status": "unknown",
+      "command": "uv run pytest tests/test_workspace.py tests/capabilities/test_tool_sandbox_policy.py tests/capabilities/test_mcp.py tests/capabilities/test_execution_backend.py tests/capabilities/test_tool_argument_validation.py -q",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    },
+    "independent_review": {
+      "status": "unknown",
+      "command": "fresh subagent review with objective rubric and no score-target disclosure",
+      "evidence_ref": "<artifact-or-log-ref>",
+      "required": true,
+      "last_verified_at": "<iso8601>",
+      "result": {
+        "exit_code": "<exit-code>"
+      }
+    }
+  },
+  "notes": [
+    "This manifest records SDK-side release evidence only.",
+    "It is not a production certification, deployment approval, or signing record.",
+    "Live backend evidence must be imported from deployment-owned checks."
+  ],
+  "live_backend_verification": {
+    "status": "not_certified_by_sdk_rc",
+    "sdk_rc_claim": "boundary_only",
+    "required_before_production_deployment": true,
+    "required_backends": [
+      "agent_registry",
+      "message_queue",
+      "task_store",
+      "plan_store",
+      "worker_process_supervisor",
+      "session_snapshot_persistence"
+    ],
+    "evidence_ref": "docs/production-readiness.md#live-backend-verification-evidence-boundary"
+  }
+}

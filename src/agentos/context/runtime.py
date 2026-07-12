@@ -3,17 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from agentos.context.schema import WorkingStateField, WorkingStateSchema
-from agentos.context.state import CompressedSegment, ContextState, WorkingStateValue
+from agentos.context.models import ContextProtocolError
+from agentos.context.schema import (
+    WorkingStateField,
+    WorkingStateSchema,
+    validate_working_state_fields,
+    validate_working_state_value,
+)
+from agentos.context.state import (
+    CompressedSegment,
+    ContextState,
+    WorkingStateValue,
+    freeze_working_state_value,
+)
 
 if TYPE_CHECKING:
     from agentos.runtime.event_bus import EventBus
 else:
     EventBus = object
-
-
-class ContextProtocolError(ValueError):
-    """上下文协议工具调用不合法。"""
 
 
 @dataclass(slots=True)
@@ -48,12 +55,14 @@ class ContextRuntime:
     def update_state(self, field_name: str, value: WorkingStateValue) -> None:
         """更新一个已声明的 working state 字段。"""
 
-        declared_names = self._declared_field_names()
-        if not declared_names:
+        declared_fields = self._declared_fields()
+        if not declared_fields:
             raise ContextProtocolError("declare schema before updating working state")
-        if field_name not in declared_names:
-            raise ContextProtocolError(f"working state field not declared: {field_name}")
-        self.state.set_working_state_value(field_name, value)
+        if type(field_name) is not str or field_name not in declared_fields:
+            raise ContextProtocolError("working state field not declared")
+        frozen = freeze_working_state_value(value)
+        validate_working_state_value(declared_fields[field_name].type, frozen)
+        self.state._set_frozen_working_state_value(field_name, frozen)
         from agentos.runtime.event_bus import WorkingStateUpdatedEvent
 
         self._emit(
@@ -170,10 +179,14 @@ class ContextRuntime:
             runtime_notices=list(self.state.runtime_notices),
         )
 
-    def _declared_field_names(self) -> set[str]:
-        """返回当前 schema 中已声明的字段名。"""
+    def _declared_fields(self) -> dict[str, WorkingStateField]:
+        """返回已通过协议校验的字段名称映射。"""
 
-        return {item.name for item in self.state.working_state_schema.fields}
+        fields = validate_working_state_fields(
+            self.state.working_state_schema.fields,
+            allow_empty=True,
+        )
+        return {item.name: item for item in fields}
 
     def _emit(self, event: object) -> None:
         """向 EventBus 写入 context event。"""
@@ -192,23 +205,7 @@ class ContextRuntime:
     def _validate_fields(
         self,
         fields: list[WorkingStateField],
-    ) -> list[WorkingStateField]:
+    ) -> tuple[WorkingStateField, ...]:
         """校验 schema 字段并保留输入顺序。"""
 
-        if not fields:
-            raise ContextProtocolError("schema declaration requires at least one field")
-
-        seen: set[str] = set()
-        validated: list[WorkingStateField] = []
-        for item in fields:
-            if not item.name or not item.type or not item.purpose:
-                raise ContextProtocolError(
-                    "working state field requires name, type, and purpose",
-                )
-            if item.name in seen:
-                raise ContextProtocolError(
-                    f"duplicate field in schema declaration: {item.name}",
-                )
-            seen.add(item.name)
-            validated.append(item)
-        return validated
+        return validate_working_state_fields(fields)

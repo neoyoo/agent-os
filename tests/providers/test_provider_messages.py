@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
     AssistantMessage,
@@ -20,6 +20,7 @@ from agentos.providers import (
     provider_tool_spec_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_provider_messages_are_frozen_slotted_dataclasses() -> None:
@@ -31,14 +32,14 @@ def test_provider_messages_are_frozen_slotted_dataclasses() -> None:
     assert not hasattr(message, "__dict__")
 
 
-def test_provider_message_types_are_importable_from_agentos_root() -> None:
-    from agentos import AssistantMessage as RootAssistantMessage
-    from agentos import ProviderToolSpec as RootProviderToolSpec
-    from agentos import UserMessage as RootUserMessage
+def test_provider_message_types_are_importable_from_provider_namespace() -> None:
+    from agentos.providers import AssistantMessage as NamespaceAssistantMessage
+    from agentos.providers import ProviderToolSpec as NamespaceProviderToolSpec
+    from agentos.providers import UserMessage as NamespaceUserMessage
 
-    assert RootUserMessage is UserMessage
-    assert RootAssistantMessage is AssistantMessage
-    assert RootProviderToolSpec is ProviderToolSpec
+    assert NamespaceUserMessage is UserMessage
+    assert NamespaceAssistantMessage is AssistantMessage
+    assert NamespaceProviderToolSpec is ProviderToolSpec
 
 
 def test_provider_message_round_trips_openai_style_dicts() -> None:
@@ -266,7 +267,7 @@ def test_provider_request_builder_returns_strong_typed_messages() -> None:
     )
 
     request = ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[],
     ).build(context)

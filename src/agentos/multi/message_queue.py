@@ -3,34 +3,42 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from agentos.multi.types import AgentEnvelope
+from agentos.multi.types import AgentEnvelope, AgentEnvelopeType
 
 
 @dataclass(frozen=True, slots=True)
 class QueueDelivery:
-    """message queue 返回的 envelope delivery。"""
+    """Envelope delivery returned by a message queue."""
 
     delivery_id: str
     envelope: AgentEnvelope
 
 
 class AgentMessageQueue(Protocol):
-    """分布式 agent 点对点消息和通知投递边界。"""
+    """Boundary for distributed agent point-to-point message delivery."""
 
     def create_inbox(self, agent_id: str) -> None:
-        """创建目标 inbox。"""
+        """Create a target inbox."""
 
     def remove_inbox(self, agent_id: str) -> None:
-        """移除目标 inbox。"""
+        """Remove a target inbox."""
 
     def send(self, envelope: AgentEnvelope) -> str:
-        """发送 envelope，并返回 delivery id。"""
+        """Send an envelope and return the delivery id."""
 
-    def collect(self, agent_id: str) -> list[QueueDelivery]:
-        """读取当前可处理 deliveries。"""
+    def collect(
+        self,
+        agent_id: str,
+        *,
+        envelope_types: tuple[AgentEnvelopeType, ...] | None = None,
+    ) -> list[QueueDelivery]:
+        """Return currently deliverable messages."""
 
     def wait(self, agent_id: str, timeout: float | None = None) -> bool:
-        """等待 inbox 出现可处理消息。"""
+        """Wait until an inbox has deliverable messages."""
 
     def ack(self, agent_id: str, delivery_id: str) -> bool:
-        """确认 delivery 已处理。"""
+        """Acknowledge that a delivery has been processed."""
+
+    def requeue(self, agent_id: str, delivery: QueueDelivery) -> None:
+        """Return an unhandled delivery to the queue or leave it pending."""

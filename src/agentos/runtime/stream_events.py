@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from agentos.providers import ProviderResponse
 
@@ -19,6 +19,40 @@ class TurnStreamStarted:
     """agent turn stream 已开始。"""
 
     user_message: str
+
+
+@dataclass(frozen=True, slots=True)
+class StatusUpdate:
+    """用户可见的 agent 运行状态更新。"""
+
+    stage: str
+    message: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextLoaded:
+    """本轮 provider 请求上下文已装载。"""
+
+    source: Literal["runtime", "memory", "session", "attachment"] = "runtime"
+    summary: str = "上下文已装载。"
+
+
+@dataclass(frozen=True, slots=True)
+class SkillLoaded:
+    """skill 或 skill 资源已进入上下文。"""
+
+    skill_name: str
+    resource: str | None = None
+    summary: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanUpdated:
+    """agent 计划或执行状态发生用户可见变化。"""
+
+    summary: str
+    status: Literal["created", "updated", "completed"] = "updated"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +76,13 @@ class AssistantCompleted:
     """assistant 最终响应已完成。"""
 
     response: ProviderResponse
+
+
+@dataclass(frozen=True, slots=True)
+class FinalResult:
+    """agent 最终可见结果已形成。"""
+
+    content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +134,14 @@ class TurnStreamCancelled:
 
 TurnStreamEvent: TypeAlias = (
     TurnStreamStarted
+    | StatusUpdate
+    | ContextLoaded
+    | SkillLoaded
+    | PlanUpdated
     | AssistantContentDelta
     | AssistantThinkingDelta
     | AssistantCompleted
+    | FinalResult
     | ToolStreamStarted
     | ToolStreamCompleted
     | ToolStreamFailed

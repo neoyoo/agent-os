@@ -34,23 +34,34 @@ class _AgentAsyncStream:
         self,
         agent: "Agent",
         stream: AsyncIterator[TurnStreamEvent],
+        turn_lock: asyncio.Lock,
     ) -> None:
         self._agent = agent
         self._stream = stream
+        self._turn_lock = turn_lock
+        self._turn_lock_acquired = False
         self._task: asyncio.Task[object] | None = None
 
     def __aiter__(self) -> "_AgentAsyncStream":
         return self
 
     async def __anext__(self) -> TurnStreamEvent:
+        await self._acquire_turn_lock()
         self._set_current_task()
         try:
             return await self._stream.__anext__()
         except StopAsyncIteration:
             self._clear_current_task()
+            self._release_turn_lock()
             raise
         except asyncio.CancelledError:
             self._agent.query_loop.request_interrupt()
+            self._clear_current_task()
+            self._release_turn_lock()
+            raise
+        except BaseException:
+            self._clear_current_task()
+            self._release_turn_lock()
             raise
 
     async def aclose(self) -> None:
@@ -61,6 +72,17 @@ class _AgentAsyncStream:
                 await aclose()
         finally:
             self._clear_current_task()
+            self._release_turn_lock()
+
+    async def _acquire_turn_lock(self) -> None:
+        if not self._turn_lock_acquired:
+            await self._turn_lock.acquire()
+            self._turn_lock_acquired = True
+
+    def _release_turn_lock(self) -> None:
+        if self._turn_lock_acquired:
+            self._turn_lock.release()
+            self._turn_lock_acquired = False
 
     def _set_current_task(self) -> None:
         self._task = asyncio.current_task()
@@ -77,6 +99,7 @@ class Agent:
 
     query_loop: QueryLoop
     _turn_lock: RLock
+    _async_turn_lock: asyncio.Lock
     _current_async_task: asyncio.Task[object] | None = field(
         default=None,
         init=False,
@@ -91,6 +114,7 @@ class Agent:
         """从 QueryLoop 或 QueryLoop kwargs 创建 Agent。"""
 
         self._turn_lock = RLock()
+        self._async_turn_lock = asyncio.Lock()
         self._current_async_task = None
         if query_loop is None and query_loop_kwargs is None:
             raise ValueError("query_loop or query_loop_kwargs is required")
@@ -205,7 +229,11 @@ class Agent:
                     attachments=attachments,
                 )
             if hasattr(maybe_async_stream, "__aiter__"):
-                return _AgentAsyncStream(self, maybe_async_stream)
+                return _AgentAsyncStream(
+                    self,
+                    maybe_async_stream,
+                    self._async_turn_lock,
+                )
 
         return _AgentAsyncStream(
             self,
@@ -217,6 +245,7 @@ class Agent:
                     show_thinking=show_thinking,
                 ),
             ),
+            self._async_turn_lock,
         )
 
     def _stream_sync_in_executor(
@@ -255,13 +284,19 @@ class Agent:
         with self._turn_lock:
             run_options = RunOptions(thinking=thinking, show_thinking=show_thinking)
             if attachments is None:
-                yield from self.query_loop.run_turn_stream(user_message, run_options)
+                stream = self.query_loop.run_turn_stream(user_message, run_options)
             else:
-                yield from self.query_loop.run_turn_stream(
+                stream = self.query_loop.run_turn_stream(
                     user_message,
                     run_options,
                     attachments=attachments,
                 )
+            if hasattr(stream, "__aiter__"):
+                raise RuntimeError(
+                    "Agent is using an async query loop; use async_run() or "
+                    "async_stream() instead of the synchronous run()/stream() API.",
+                )
+            yield from stream
 
     def run_continuation(
         self,
@@ -289,9 +324,16 @@ class Agent:
         """运行 runtime continuation turn，不追加 user 消息。"""
 
         with self._turn_lock:
-            yield from self.query_loop.run_continuation_stream(
+            stream = self.query_loop.run_continuation_stream(
                 RunOptions(thinking=thinking, show_thinking=show_thinking),
             )
+            if hasattr(stream, "__aiter__"):
+                raise RuntimeError(
+                    "Agent is using an async query loop; use async_stream() "
+                    "for user turns. Synchronous continuation turns require "
+                    "a sync QueryLoop.",
+                )
+            yield from stream
 
     def stream_jsonl(
         self,

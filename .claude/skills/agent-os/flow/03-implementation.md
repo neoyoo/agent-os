@@ -9,6 +9,17 @@ description: Execute agent implementation from spec — generates project skelet
 
 - `specs/agent-spec.yaml` exists and is confirmed by user
 - Target project directory is decided
+- For production-bound specs, `deployment.production_design_constraints`
+  exists. Phase 99: SDK Skill / Spec Generator Finalization makes
+  implementation a spec generator finalization enforcement point: the skill is
+  a production agent design constraint generator, and the
+  `production_design_constraints` SDK-owned constraint template must explicitly
+  choose agent form, runtime profile, state plane components, persistence
+  backend, registry backend, queue backend, worker supervisor, A2A exposure,
+  planner/team mode, production readiness checklist, and sandbox posture:
+  trusted tools only | deployment-owned isolation | future adapter. If the
+  block is missing, stop before skeleton generation because the SDK does not
+  create deployment-owned infrastructure.
 
 ## Process
 
@@ -155,18 +166,47 @@ TOOLS: list[RegisteredTool] = [
 
 ## Multi-Node Wiring (if deployment.mode == multi-node)
 
-Replace `InMemoryAgentSessionProvider` with a stateless provider that loads/saves from Redis:
+Current SDK status: multi-node web session support is primitives-ready. `WebRuntimeProfile` can assemble the channel, but production arbitrary-node routing still requires an application-owned provider that:
+
+1. acquires a session lock or lease,
+2. loads `SessionSnapshot` or an app-defined hot projection,
+3. rebuilds `ContextRuntime`, `MessageRuntime`, `CompressionRuntime`, and `Agent`,
+4. runs the turn,
+5. saves the updated state,
+6. releases the lock.
 
 ```python
-from agentos.memory import RedisHotSessionStore, MemoryRuntime
-from agentos.persistence import PostgresDurableSessionStore
+from agentos.channels.session import AgentSessionProvider
+from agentos.runtime import Agent
 
-hot_store = RedisHotSessionStore(url=config.redis_url, ttl_seconds=3600)
-durable_store = PostgresDurableSessionStore(dsn=config.postgres_dsn)
 
-# AgentSessionProvider that loads from hot_store before each turn
-# and saves back after each turn — implementation pattern in modules/persistence.md
+class DurableSessionProvider(AgentSessionProvider):
+    """App-owned multi-node provider injected through WebRuntimeProfile."""
+
+    def __init__(self, locks, persistence, agent_factory):
+        self._locks = locks
+        self._persistence = persistence
+        self._agent_factory = agent_factory
+        self._leases = {}
+
+    def get_agent(self, session_id: str) -> Agent:
+        lease = self._locks.acquire(session_id)
+        self._leases[session_id] = lease
+        try:
+            snapshot = self._persistence.load(session_id)
+        except KeyError:
+            snapshot = None
+        return self._agent_factory(session_id, snapshot)
+
+    def release_agent(self, session_id: str, agent: Agent) -> None:
+        try:
+            snapshot = build_snapshot_from_agent(session_id, agent)
+            self._persistence.save(snapshot)
+        finally:
+            self._locks.release(self._leases.pop(session_id))
 ```
+
+Do not call this production-complete without tests for cross-node hydrate/save, same-session concurrency, turn failure policy, and lock expiry/recovery.
 
 ## Multi-Agent Wiring (if multi_agent.mode != single)
 
@@ -189,7 +229,7 @@ coordinator = AgentCoordinator(
 )
 ```
 
-For endpoint-backed A2A dispatch:
+For endpoint-backed internal task bridge dispatch:
 ```python
 from agentos.multi import AgentCard, AgentCoordinator, RemoteTaskExecutor
 
@@ -206,7 +246,7 @@ registry.register(
     AgentCard(
         agent_id="remote-reviewer",
         name="Remote Reviewer",
-        description="Reviews code over A2A.",
+        description="Reviews code over the agent-os internal task bridge.",
         capabilities=("code-review",),
         endpoint="http://other-agent:8000",
     ),
@@ -222,3 +262,5 @@ handle = coordinator.dispatch(
 For cross-process task state and delivery, replace `TaskTable` with `PostgresTaskStore` and `AgentInbox` with `RedisAgentMessageQueue`.
 
 Source: `src/agentos/multi/coordinator.py`, `src/agentos/multi/remote.py`, `tests/multi/test_coordinator_distributed_boundaries.py`, `tests/multi/test_remote_dispatch.py`.
+
+Boundary: `A2AAdapter` / `A2AServerAdapter` currently speak an agent-os task JSON shape over `/a2a/tasks`. They are not full A2A protocol compliance.

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.builtin import read_file_tool
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.providers import (
@@ -27,6 +27,7 @@ from agentos.runtime import (
     UserMessageAppendedEvent,
     SessionState,
 )
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_small_agent_reads_project_file_with_tool_call_loop() -> None:
@@ -57,7 +58,7 @@ def test_small_agent_reads_project_file_with_tool_call_loop() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=capabilities.tool_specs(),
         ),
@@ -137,7 +138,7 @@ def test_query_loop_rolls_back_active_assistant_tool_call_when_tool_is_denied(tm
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=capabilities.tool_specs(),
         ),

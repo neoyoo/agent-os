@@ -4,7 +4,7 @@ import pytest
 
 from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.context import WorkingStateField
 from agentos.messages import MessageRuntime
 from agentos.providers import (
@@ -17,6 +17,7 @@ from agentos.providers import (
     UserMessage,
 )
 from agentos.runtime import AsyncQueryLoop, ProviderRequestBuilder, QueryLoop
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_load_attachment_projects_to_rest_of_turn_provider_requests() -> None:
@@ -65,7 +66,7 @@ def test_load_attachment_projects_to_rest_of_turn_provider_requests() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
             attachment_runtime=attachments,
@@ -93,7 +94,7 @@ def test_async_load_attachment_projects_to_rest_of_turn_provider_requests() -> N
             [
                 WorkingStateField(
                     name="drawing_info",
-                    type="dict",
+                    type="object",
                     purpose="鍥剧焊浜嬪疄",
                 ),
             ],
@@ -136,7 +137,7 @@ def test_async_load_attachment_projects_to_rest_of_turn_provider_requests() -> N
             context_runtime=context,
             message_runtime=messages,
             request_builder=ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=router.tool_specs(),
                 attachment_runtime=attachments,
@@ -200,7 +201,7 @@ def test_next_turn_requires_explicit_load_attachment() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
             attachment_runtime=attachments,
@@ -244,7 +245,7 @@ def test_continuation_turn_also_clears_loaded_attachments() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             attachment_runtime=attachments,
         ),
@@ -294,7 +295,7 @@ def test_async_cancel_still_clears_loaded_attachments() -> None:
             context_runtime=context,
             message_runtime=messages,
             request_builder=ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 attachment_runtime=attachments,
             ),

@@ -257,6 +257,20 @@ class FakePostgresConnection:
         self.commits += 1
 
 
+class FakePostgresPool:
+    def __init__(self, connection: FakePostgresConnection) -> None:
+        self.connection = connection
+        self.gets = 0
+        self.puts: list[FakePostgresConnection] = []
+
+    def getconn(self) -> FakePostgresConnection:
+        self.gets += 1
+        return self.connection
+
+    def putconn(self, connection: FakePostgresConnection) -> None:
+        self.puts.append(connection)
+
+
 def build_package() -> CompressedSegmentPackage:
     segment = CompressedSegment(id="seg_1", topic="project metadata", summary="agent-os")
     return CompressedSegmentPackage(
@@ -299,6 +313,31 @@ def test_postgres_durable_session_store_round_trips_protocol_state() -> None:
     assert store.get_segment_refs("session_1", "seg_1") == ("msg_1", "msg_2")
     assert store.list_compressed_segments("session_1") == (build_package().segment,)
     assert connection.commits > 0
+
+
+def test_postgres_durable_session_store_from_pool_borrows_per_operation() -> None:
+    from agentos.persistence.postgres import PostgresDurableSessionStore
+
+    connection = FakePostgresConnection()
+    pool = FakePostgresPool(connection)
+    store = PostgresDurableSessionStore.from_pool(
+        dsn="postgresql://unused",
+        pool=pool,
+    )
+    session = SessionState(id="session_1")
+
+    assert pool.gets == 0
+
+    store.save_session(session)
+    assert pool.gets == 1
+    assert pool.puts == [connection]
+
+    assert store.load_session("session_1") == session
+    assert pool.gets == 2
+    assert pool.puts == [connection, connection]
+
+    store.close()
+    assert pool.puts == [connection, connection]
 
 
 def test_postgres_durable_session_store_does_not_create_tables_at_runtime() -> None:

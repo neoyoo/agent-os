@@ -251,7 +251,8 @@ agent = (
 `AsgiAgentApp` 鏄棤妗嗘灦缁戝畾鐨?ASGI HTTP app銆傚畠渚濊禆 `AgentSessionProvider` 閫氳繃 `session_id` 鍙栧洖 agent锛屽苟鏀寔 auth policy銆佽姹備綋澶у皬闄愬埗銆丣SON turn銆丼SE turn銆佹樉寮?interrupt銆丼SE heartbeat銆乭ealth/readiness銆佸彲娉ㄥ叆 rate limiter銆丄SGI lifespan shutdown handlers 鍜屽彲閫?A2A server銆?
 
 ```python
-from agentos import AsgiAgentApp, InMemoryAgentSessionProvider
+from agentos import AsgiAgentApp
+from agentos.channels import InMemoryAgentSessionProvider
 
 sessions = InMemoryAgentSessionProvider(agent_factory=make_agent)
 app = AsgiAgentApp(sessions=sessions)

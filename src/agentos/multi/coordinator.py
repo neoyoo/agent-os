@@ -21,11 +21,12 @@ from agentos.multi.continuation import ContinuationTrigger
 from agentos.multi.message_queue import AgentMessageQueue
 from agentos.multi.registry import AgentRegistry
 from agentos.multi.spawn import SpawnExecutor
-from agentos.multi.task_store import TaskStore
+from agentos.multi.task_store import TaskClaim, TaskStore
 from agentos.multi.types import (
     AgentCard,
     AgentEnvelope,
     SubagentInitRequest,
+    TaskAlreadySubmittedError,
     TaskHandle,
     TaskRecord,
     TaskRequest,
@@ -103,6 +104,8 @@ class AgentCoordinator:
         allowed_tool_names: tuple[str, ...] = (),
         parent_agent_id: str,
         timeout_seconds: float = 300,
+        task_id: str | None = None,
+        child_agent_id: str | None = None,
     ) -> TaskHandle:
         """创建 ephemeral subagent 并在线程池中执行。"""
 
@@ -110,8 +113,8 @@ class AgentCoordinator:
             raise KeyError(parent_agent_id)
 
         created_at = time.time()
-        task_id = f"task_{uuid4().hex}"
-        child_agent_id = f"subagent_{uuid4().hex}"
+        task_id = task_id or f"task_{uuid4().hex}"
+        child_agent_id = child_agent_id or f"subagent_{uuid4().hex}"
         request = TaskRequest(
             task_id=task_id,
             instruction=instruction,
@@ -129,7 +132,7 @@ class AgentCoordinator:
             created_at=created_at,
             deadline_at=created_at + timeout_seconds,
         )
-        handle = self.task_table.create(record)
+        handle = self._create_task_or_raise_already_submitted(record)
 
         init_request = SubagentInitRequest(
             parent_agent_id=parent_agent_id,
@@ -172,7 +175,10 @@ class AgentCoordinator:
         """drain inbox，并从 TaskTable 返回未消费的终态 results。"""
 
         self._mark_due_timeouts()
-        for delivery in self.inbox.collect(agent_id):
+        for delivery in self.inbox.collect(
+            agent_id,
+            envelope_types=("task_result",),
+        ):
             self.inbox.ack(agent_id, delivery.delivery_id)
         return self.task_table.consume_results_for_agent(agent_id)
 
@@ -182,15 +188,20 @@ class AgentCoordinator:
         instruction: str,
         required_capabilities: tuple[str, ...],
         parent_agent_id: str,
+        target_agent_id: str | None = None,
         allowed_tool_names: tuple[str, ...] = (),
         timeout_seconds: float = 300,
+        task_id: str | None = None,
     ) -> TaskHandle:
         """按 capability 发现本地 expert 并派发任务。"""
 
         self._mark_due_timeouts()
         if self.registry.resolve(parent_agent_id) is None:
             raise KeyError(parent_agent_id)
-        target = self._select_available_expert(required_capabilities)
+        target = self._select_available_expert(
+            required_capabilities,
+            target_agent_id=target_agent_id,
+        )
         if target is None:
             raise RuntimeError("no available agent")
         if target.endpoint is not None and self.remote_task_executor is None:
@@ -199,10 +210,11 @@ class AgentCoordinator:
             )
 
         created_at = time.time()
-        task_id = f"task_{uuid4().hex}"
+        task_id = task_id or f"task_{uuid4().hex}"
         request = TaskRequest(
             task_id=task_id,
             instruction=instruction,
+            required_capabilities=tuple(required_capabilities),
             allowed_tool_names=tuple(allowed_tool_names),
             timeout_seconds=timeout_seconds,
             trace_context=self._trace_context(),
@@ -217,7 +229,7 @@ class AgentCoordinator:
             created_at=created_at,
             deadline_at=created_at + timeout_seconds,
         )
-        handle = self.task_table.create(record)
+        handle = self._create_task_or_raise_already_submitted(record)
         if target.endpoint is not None:
             if self.task_table.mark_running(task_id):
                 self._submit_remote_task(target, record, request)
@@ -248,6 +260,17 @@ class AgentCoordinator:
             ),
         )
         return handle
+
+    def _create_task_or_raise_already_submitted(
+        self,
+        record: TaskRecord,
+    ) -> TaskHandle:
+        try:
+            return self.task_table.create(record)
+        except ValueError as error:
+            if self.task_table.get(record.task_id) is not None:
+                raise TaskAlreadySubmittedError(record.task_id) from error
+            raise
 
     def _submit_remote_task(
         self,
@@ -322,6 +345,8 @@ class AgentCoordinator:
         self,
         record: TaskRecord,
         result: TaskResult,
+        *,
+        claim: TaskClaim | None = None,
     ) -> bool:
         current = self.task_table.get(record.task_id)
         if current is None or current.cancel_requested_at is None:
@@ -331,6 +356,8 @@ class AgentCoordinator:
                 record.task_id,
                 result,
                 now=time.time(),
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
             )
         else:
             cancelled = TaskResult(
@@ -338,7 +365,12 @@ class AgentCoordinator:
                 status="cancelled",
                 summary="task cancelled",
             )
-            changed = self.task_table.mark_cancelled(record.task_id, cancelled)
+            changed = self.task_table.mark_cancelled(
+                record.task_id,
+                cancelled,
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
+            )
         if changed:
             self._emit(
                 AgentTaskCancelledEvent(
@@ -398,7 +430,12 @@ class AgentCoordinator:
             "timeout",
         }
 
-    def execute_expert_envelope(self, envelope: AgentEnvelope) -> TaskResult | None:
+    def execute_expert_envelope(
+        self,
+        envelope: AgentEnvelope,
+        *,
+        claim: TaskClaim | None = None,
+    ) -> TaskResult | None:
         """执行 expert inbox 中的一条 task_request envelope。"""
 
         if envelope.type != "task_request" or not isinstance(
@@ -415,12 +452,14 @@ class AgentCoordinator:
                 summary="task missing",
                 error="task missing",
             )
+        if envelope.to_agent_id != record.target_agent_id:
+            return None
         agent = self._agents.get(record.target_agent_id)
         started_at = time.time()
         try:
             if agent is None:
                 raise RuntimeError(f"missing local agent: {record.target_agent_id}")
-            if not self.task_table.mark_running(request.task_id):
+            if claim is None and not self.task_table.mark_running(request.task_id):
                 current = self.task_table.get(request.task_id)
                 return current.result if current is not None else None
             agent_result = agent.run(request.instruction)
@@ -430,9 +469,18 @@ class AgentCoordinator:
                 summary=agent_result.content,
                 elapsed_seconds=time.time() - started_at,
             )
-            if self._handle_result_after_cancel_requested(record, result):
+            if self._handle_result_after_cancel_requested(
+                record,
+                result,
+                claim=claim,
+            ):
                 return result
-            if self.task_table.mark_completed(request.task_id, result):
+            if self.task_table.mark_completed(
+                request.task_id,
+                result,
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
+            ):
                 self._emit(
                     AgentTaskCompletedEvent(
                         agent_id=record.target_agent_id,
@@ -458,9 +506,18 @@ class AgentCoordinator:
                 error=str(error),
                 elapsed_seconds=time.time() - started_at,
             )
-            if self._handle_result_after_cancel_requested(record, result):
+            if self._handle_result_after_cancel_requested(
+                record,
+                result,
+                claim=claim,
+            ):
                 return result
-            if self.task_table.mark_failed(request.task_id, result):
+            if self.task_table.mark_failed(
+                request.task_id,
+                result,
+                worker_id=None if claim is None else claim.worker_id,
+                attempt=None if claim is None else claim.attempt,
+            ):
                 self._emit(
                     AgentTaskFailedEvent(
                         agent_id=record.target_agent_id,
@@ -622,13 +679,19 @@ class AgentCoordinator:
     def _select_available_expert(
         self,
         required_capabilities: tuple[str, ...],
+        *,
+        target_agent_id: str | None = None,
     ) -> AgentCard | None:
-        candidates = [
-            card
-            for card in self.registry.discover(tuple(required_capabilities))
-            if card.lifecycle == "persistent" and card.status != "offline"
-        ]
+        if target_agent_id is None:
+            candidates = self.registry.discover(tuple(required_capabilities))
+        else:
+            target = self.registry.resolve(target_agent_id)
+            candidates = [] if target is None else [target]
         for card in candidates:
+            if card.lifecycle != "persistent" or card.status == "offline":
+                continue
+            if not set(required_capabilities).issubset(set(card.capabilities)):
+                continue
             active_count = self.task_table.active_count_for_target(card.agent_id)
             if active_count < card.max_concurrent_tasks:
                 return card

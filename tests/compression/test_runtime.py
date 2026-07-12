@@ -4,9 +4,10 @@ import pytest
 
 from agentos.compression import CompressionRuntime, Compressor
 from agentos.compression.runtime import CompressionContextBoundary
-from agentos.context import CompressedSegment, ContextRenderer, ContextRuntime
+from agentos.context import CompressedSegment, ContextRuntime
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.policies import BudgetPolicy
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 class RecordingCompressionContext:
@@ -71,10 +72,13 @@ def test_compression_runtime_keeps_default_prompt_free_of_runtime_metadata() -> 
     )
 
     runtime.maybe_compress()
-    rendered = ContextRenderer().render(context_runtime.state)
+    snapshot = context_runtime.snapshot()
+    rendered = default_context_renderer().render().text
 
-    assert '<segment id="seg_1"' in rendered
-    for forbidden_term in ["source", "message_id", "compression_id"]:
+    assert [segment.id for segment in snapshot.compressed_history] == ["seg_1"]
+    assert snapshot.compressed_history[0].summary
+    assert "Old detail" not in rendered
+    for forbidden_term in ["source_refs", "message_id", "compression_id"]:
         assert forbidden_term not in rendered
 
 

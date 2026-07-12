@@ -1,19 +1,23 @@
 from agentos.multi import TaskRecord, TaskRequest, TaskResult, TaskTable
+from agentos.testing.contracts.task_store import run_task_store_contract
 
 
 def record(
     task_id: str = "task_1",
     *,
+    target_agent_id: str = "code-worker",
+    required_capabilities: tuple[str, ...] = ("code",),
     allowed_tool_names: tuple[str, ...] = ("code",),
 ) -> TaskRecord:
     return TaskRecord(
         task_id=task_id,
         mode="dispatch",
         parent_agent_id="parent",
-        target_agent_id="code-worker",
+        target_agent_id=target_agent_id,
         request=TaskRequest(
             task_id=task_id,
             instruction="Do work",
+            required_capabilities=required_capabilities,
             allowed_tool_names=allowed_tool_names,
         ),
         status="queued",
@@ -28,6 +32,10 @@ def result(task_id: str = "task_1", status: str = "completed") -> TaskResult:
         status=status,  # type: ignore[arg-type]
         summary=f"{status} result",
     )
+
+
+def test_task_table_satisfies_reusable_task_store_contract() -> None:
+    run_task_store_contract(lambda: TaskTable())
 
 
 def test_task_table_claims_queued_task_with_worker_lease() -> None:
@@ -51,6 +59,171 @@ def test_task_table_claims_queued_task_with_worker_lease() -> None:
     assert claimed.attempt == 1
     assert claimed.updated_at == 2.0
     assert claimed.version == 1
+
+
+def test_task_table_claim_queued_can_be_constrained_to_target_agent() -> None:
+    store = TaskTable()
+    other = record("task_1", target_agent_id="other-worker")
+    target = record("task_2", target_agent_id="code-worker")
+    store.create(other)
+    store.create(target)
+
+    claims = store.claim_queued(
+        worker_id="worker-instance-1",
+        target_agent_id="code-worker",
+        capabilities=("code",),
+        limit=2,
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert [claim.task_id for claim in claims] == ["task_2"]
+    assert store.get("task_1") == other
+    claimed = store.get("task_2")
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-instance-1"
+
+
+def test_task_table_claims_exact_queued_task_with_worker_lease() -> None:
+    store = TaskTable()
+    store.create(record("task_1"))
+    store.create(record("task_2"))
+
+    claim = store.claim_task(
+        "task_2",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is not None
+    assert claim.task_id == "task_2"
+    assert claim.worker_id == "worker-instance-1"
+    assert claim.attempt == 1
+    assert store.get("task_1") == record("task_1")
+    claimed = store.get("task_2")
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-instance-1"
+    assert claimed.lease_expires_at == 20.0
+    assert claimed.updated_at == 2.0
+    assert claimed.version == 1
+
+
+def test_task_table_exact_claim_can_be_constrained_to_target_agent() -> None:
+    store = TaskTable()
+    original = record("task_1", target_agent_id="expert")
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="wrong-worker-instance",
+        target_agent_id="other_expert",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
+
+
+def test_task_table_exact_claim_rejects_wrong_capabilities() -> None:
+    store = TaskTable()
+    original = record("task_1", required_capabilities=("code", "web"))
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
+
+
+def test_task_table_claims_by_required_capabilities_not_allowed_tools() -> None:
+    store = TaskTable()
+    store.create(
+        record(
+            "task_1",
+            required_capabilities=("architecture-review",),
+            allowed_tool_names=("read_file",),
+        ),
+    )
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("architecture-review",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is not None
+    stored = store.get("task_1")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.request.allowed_tool_names == ("read_file",)
+
+
+def test_task_table_does_not_treat_allowed_tools_as_worker_capabilities() -> None:
+    store = TaskTable()
+    original = record(
+        "task_1",
+        required_capabilities=("architecture-review",),
+        allowed_tool_names=("read_file",),
+    )
+    store.create(original)
+
+    claim = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("read_file",),
+        lease_expires_at=20.0,
+        now=2.0,
+    )
+
+    assert claim is None
+    assert store.get("task_1") == original
+
+
+def test_task_table_exact_claim_reclaims_expired_running_lease() -> None:
+    store = TaskTable()
+    store.create(record())
+    first = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-1",
+        capabilities=("code",),
+        lease_expires_at=3.0,
+        now=2.0,
+    )
+
+    second = store.claim_task(
+        "task_1",
+        worker_id="worker-instance-2",
+        capabilities=("code",),
+        lease_expires_at=8.0,
+        now=4.0,
+    )
+
+    assert first is not None
+    assert second is not None
+    assert second.worker_id == "worker-instance-2"
+    assert second.attempt == 2
+    claimed = store.get("task_1")
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-instance-2"
+    assert claimed.lease_expires_at == 8.0
+    assert claimed.attempt == 2
+    assert claimed.updated_at == 4.0
+    assert claimed.version == 2
 
 
 def test_task_table_reclaims_expired_running_lease() -> None:
@@ -87,7 +260,7 @@ def test_task_table_reclaims_expired_running_lease() -> None:
 
 def test_task_table_does_not_claim_when_capabilities_do_not_match() -> None:
     store = TaskTable()
-    store.create(record(allowed_tool_names=("code", "web")))
+    store.create(record(required_capabilities=("code", "web")))
 
     claims = store.claim_queued(
         worker_id="worker-instance-1",
@@ -98,7 +271,7 @@ def test_task_table_does_not_claim_when_capabilities_do_not_match() -> None:
     )
 
     assert claims == []
-    assert store.get("task_1") == record(allowed_tool_names=("code", "web"))
+    assert store.get("task_1") == record(required_capabilities=("code", "web"))
 
 
 def test_task_table_rejects_stale_worker_completion_after_reclaim() -> None:

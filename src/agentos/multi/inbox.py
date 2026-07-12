@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from queue import Empty, Queue
 from threading import Event, RLock
+from typing import Callable
 
 from agentos.events import AgentInboxBackpressureEvent, EventBus
 from agentos.multi.message_queue import QueueDelivery
-from agentos.multi.types import AgentEnvelope
+from agentos.multi.types import AgentEnvelope, AgentEnvelopeType
 
 
 class AgentInboxError(RuntimeError):
@@ -75,25 +76,110 @@ class AgentInbox:
             self._events[envelope.to_agent_id].set()
         return delivery_id
 
-    def collect(self, agent_id: str) -> list[QueueDelivery]:
+    def collect(
+        self,
+        agent_id: str,
+        *,
+        envelope_types: tuple[AgentEnvelopeType, ...] | None = None,
+    ) -> list[QueueDelivery]:
         """Drain 并返回当前 inbox 中所有 deliveries。"""
 
         with self._lock:
             queue = self._queue_for(agent_id)
             deliveries: list[QueueDelivery] = []
+            retained: list[QueueDelivery] = []
+            allowed_types = None if envelope_types is None else set(envelope_types)
             while True:
                 try:
-                    deliveries.append(queue.get_nowait())
+                    delivery = queue.get_nowait()
                 except Empty:
                     break
+                if (
+                    allowed_types is None
+                    or delivery.envelope.type in allowed_types
+                ):
+                    deliveries.append(delivery)
+                else:
+                    retained.append(delivery)
+            for delivery in retained:
+                queue.put(delivery)
             if queue.empty():
                 self._events[agent_id].clear()
+            else:
+                self._events[agent_id].set()
             return deliveries
 
-    def collect_envelopes(self, agent_id: str) -> list[AgentEnvelope]:
+    def collect_matching(
+        self,
+        agent_id: str,
+        *,
+        envelope_types: tuple[AgentEnvelopeType, ...] | None = None,
+        predicate: Callable[[QueueDelivery], bool] | None = None,
+    ) -> list[QueueDelivery]:
+        """Drain deliveries matching type and predicate, retaining the rest."""
+
+        with self._lock:
+            queue = self._queue_for(agent_id)
+            deliveries: list[QueueDelivery] = []
+            retained: list[QueueDelivery] = []
+            allowed_types = None if envelope_types is None else set(envelope_types)
+            while True:
+                try:
+                    delivery = queue.get_nowait()
+                except Empty:
+                    break
+                if (
+                    allowed_types is None
+                    or delivery.envelope.type in allowed_types
+                ):
+                    if predicate is None or predicate(delivery):
+                        deliveries.append(delivery)
+                    else:
+                        retained.append(delivery)
+                else:
+                    retained.append(delivery)
+            for delivery in retained:
+                queue.put(delivery)
+            if queue.empty():
+                self._events[agent_id].clear()
+            else:
+                self._events[agent_id].set()
+            return deliveries
+
+    def collect_team_messages(
+        self,
+        agent_id: str,
+        *,
+        team_id: str,
+    ) -> list[QueueDelivery]:
+        """Collect team-message deliveries for one team, retaining others."""
+
+        from agentos.multi.team import TeamMessage
+
+        return self.collect_matching(
+            agent_id,
+            envelope_types=("team_message",),
+            predicate=lambda delivery: (
+                isinstance(delivery.envelope.payload, TeamMessage)
+                and delivery.envelope.payload.team_id == team_id
+            ),
+        )
+
+    def collect_envelopes(
+        self,
+        agent_id: str,
+        *,
+        envelope_types: tuple[AgentEnvelopeType, ...] | None = None,
+    ) -> list[AgentEnvelope]:
         """兼容旧调用方：只返回 envelopes。"""
 
-        return [delivery.envelope for delivery in self.collect(agent_id)]
+        return [
+            delivery.envelope
+            for delivery in self.collect(
+                agent_id,
+                envelope_types=envelope_types,
+            )
+        ]
 
     def ack(self, agent_id: str, delivery_id: str) -> bool:
         """in-memory delivery drain 后即可视为已处理；ack 只做幂等记录。"""
@@ -105,6 +191,14 @@ class AgentInbox:
                 return False
             self._acked_delivery_ids.add(key)
             return True
+
+    def requeue(self, agent_id: str, delivery: QueueDelivery) -> None:
+        """Put an unhandled in-memory delivery back for a later runner attempt."""
+
+        with self._lock:
+            queue = self._queue_for(agent_id)
+            queue.put(delivery)
+            self._events[agent_id].set()
 
     def wait(self, agent_id: str, timeout: float | None = None) -> bool:
         """阻塞等待 inbox 中出现消息。"""

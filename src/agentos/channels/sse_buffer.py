@@ -9,6 +9,21 @@ from typing import Protocol
 from agentos.persistence import BackendUnavailableError
 
 
+@dataclass(frozen=True, slots=True)
+class SseReplayWindow:
+    """Observable replay window for a buffered SSE stream."""
+
+    exists: bool
+    terminal: bool
+    first_sequence: int | None
+    last_sequence: int | None
+
+    def has_gap_after(self, last_sequence: int) -> bool:
+        """Return True when required events have fallen out of the buffer."""
+
+        return self.first_sequence is not None and self.first_sequence > last_sequence + 1
+
+
 class SseEventBuffer(Protocol):
     """SSE 事件 replay + tail 边界。"""
 
@@ -17,6 +32,9 @@ class SseEventBuffer(Protocol):
 
     async def replay_since(self, stream_key: str, last_sequence: int) -> list[tuple[int, str]]:
         """返回 sequence 大于 last_sequence 的已缓存事件。"""
+
+    async def replay_window(self, stream_key: str) -> SseReplayWindow:
+        """Describe retained sequence bounds without creating a missing stream."""
 
     async def follow(
         self,
@@ -72,6 +90,24 @@ class InMemorySseEventBuffer:
                 for sequence, chunk in stream.events
                 if sequence > last_sequence
             ]
+
+    async def replay_window(self, stream_key: str) -> SseReplayWindow:
+        stream = self._streams.get(stream_key)
+        if stream is None:
+            return SseReplayWindow(
+                exists=False,
+                terminal=False,
+                first_sequence=None,
+                last_sequence=None,
+            )
+        async with stream.condition:
+            sequences = [sequence for sequence, _chunk in stream.events]
+            return SseReplayWindow(
+                exists=True,
+                terminal=stream.terminal,
+                first_sequence=sequences[0] if sequences else None,
+                last_sequence=sequences[-1] if sequences else None,
+            )
 
     async def follow(
         self,
@@ -197,6 +233,32 @@ class RedisSseEventBuffer:
             if sequence > last_sequence:
                 events.append((sequence, chunk))
         return events
+
+    async def replay_window(self, stream_key: str) -> SseReplayWindow:
+        key = self._redis_key(stream_key)
+        messages = await self._redis_call(self._client.xrange, key, min="-", max="+")
+        if not messages:
+            return SseReplayWindow(
+                exists=False,
+                terminal=False,
+                first_sequence=None,
+                last_sequence=None,
+            )
+        sequences: list[int] = []
+        terminal = False
+        for _message_id, fields in messages:
+            if self._field(fields, "type") == "terminal":
+                terminal = True
+                continue
+            parsed = self._parse_event_fields(fields)
+            if parsed is not None:
+                sequences.append(parsed[0])
+        return SseReplayWindow(
+            exists=True,
+            terminal=terminal,
+            first_sequence=sequences[0] if sequences else None,
+            last_sequence=sequences[-1] if sequences else None,
+        )
 
     async def follow(
         self,

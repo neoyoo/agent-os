@@ -39,7 +39,7 @@ request = ProviderRequest(
 )
 ```
 
-## 3. Creating Agent per request in multi-node
+## 3. Creating Agent per request without restoring session state
 
 ```python
 # BAD — builds fresh agent each request, loses all session state
@@ -48,11 +48,13 @@ async def chat(message: str, session_id: str):
     agent = AgentBuilder().provider(provider).build()  # fresh every time!
     return agent.run(message).content
 
-# GOOD — use AgentSessionProvider that loads state from Redis
+# GOOD — use AgentSessionProvider that owns load/lock/save
 app = AsgiAgentApp(
-    sessions=StatelessSessionProvider(hot_store, agent_factory),
+    sessions=DurableSessionProvider(locks, persistence, agent_factory),
 )
 ```
+
+Do not treat `RedisHotSessionStore` as complete session recovery by itself. It stores a hot active-session projection, not a full `SessionSnapshot`. A production multi-node provider must define locking, hydration, save-back, and failure policy.
 
 ## 4. Blocking the event loop in ASGI
 
