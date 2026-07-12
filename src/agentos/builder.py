@@ -5,13 +5,18 @@ from dataclasses import dataclass
 from agentos.attachments import AttachmentRuntime
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
-from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
+from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context.projection import default_system_section_registry
 from agentos.events import EventBus
 from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
 from agentos.recall import RecallRuntime
-from agentos.runtime import Agent, AsyncQueryLoop, ProviderRequestBuilder
+from agentos.runtime import Agent, AsyncQueryLoop
+from agentos.runtime.provider_request_builder import (
+    ProviderRequestBuilder,
+    SystemEnvelopeRenderer,
+)
 from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
@@ -30,7 +35,7 @@ class AgentBuilder:
     _tools: list[RegisteredTool] | None = None
     _context_runtime: ContextRuntime | None = None
     _message_runtime: MessageRuntime | None = None
-    _context_renderer: ContextRenderer | None = None
+    _context_renderer: SystemEnvelopeRenderer | None = None
     _compression_runtime: CompressionRuntime | None = None
     _event_bus: EventBus | None = None
     _tool_call_router: ToolCallRouter | None = None
@@ -80,7 +85,7 @@ class AgentBuilder:
         self._message_runtime = runtime
         return self
 
-    def context_renderer(self, renderer: ContextRenderer) -> "AgentBuilder":
+    def context_renderer(self, renderer: SystemEnvelopeRenderer) -> "AgentBuilder":
         """覆盖默认 context renderer。"""
 
         if self._context_renderer is not None:
@@ -221,7 +226,6 @@ class AgentBuilder:
                 "Choose one tool setup.",
             )
         tool_router = self._tool_call_router
-        provider_tools = []
         if self._tools is not None:
             tool_router = ToolCallRouter(
                 tool_registry=tool_registry,
@@ -229,23 +233,17 @@ class AgentBuilder:
                 recall_runtime=recall_runtime,
                 attachment_runtime=attachments,
             )
-            provider_tools = tool_router.tool_specs()
-        elif tool_router is not None:
-            if getattr(tool_router, "attachment_runtime", None) is None:
-                tool_router.attachment_runtime = attachments
-            provider_tools = tool_router.tool_specs()
-        else:
+        elif tool_router is None:
             tool_router = ToolCallRouter(
                 tool_registry=tool_registry,
                 context_runtime=context,
                 recall_runtime=recall_runtime,
                 attachment_runtime=attachments,
             )
-            provider_tools = tool_router.tool_specs()
-        renderer = self._context_renderer or self._default_renderer(
-            tool_registry=tool_registry,
-            tool_router=tool_router,
-        )
+        elif getattr(tool_router, "attachment_runtime", None) is None:
+            tool_router.attachment_runtime = attachments
+        provider_tools = tool_router.tool_specs()
+        renderer = self._context_renderer or self._default_renderer()
         request_builder = ProviderRequestBuilder(
             context_renderer=renderer,
             message_runtime=messages,
@@ -260,8 +258,7 @@ class AgentBuilder:
             "tool_result_budget": self._tool_result_budget or ToolResultBudget(),
             "token_counter": self._token_counter or HeuristicTokenCounter(),
         }
-        if tool_router is not None:
-            kwargs["tool_call_router"] = tool_router
+        kwargs["tool_call_router"] = tool_router
         if compression_runtime is not None:
             kwargs["compression_runtime"] = compression_runtime
         if self._event_bus is not None:
@@ -283,19 +280,8 @@ class AgentBuilder:
             static_overhead_tokens=self._compression_static_overhead_tokens,
         )
 
-    def _default_renderer(
-        self,
-        *,
-        tool_registry: ToolRegistry,
-        tool_router: ToolCallRouter | None,
-    ) -> ContextRenderer:
-        tool_groups = []
-        if self._tools:
-            tool_groups.append(tool_registry.capability_tool_group("Registered tools"))
-        elif tool_router is not None:
-            tool_groups.append(
-                tool_router.tool_registry.capability_tool_group("Registered tools"),
-            )
+    def _default_renderer(self) -> ContextRenderer:
         return ContextRenderer(
-            capability_plane=CapabilityPlane(tool_groups=tool_groups),
+            registry=default_system_section_registry(),
+            token_counter=self._token_counter or HeuristicTokenCounter(),
         )

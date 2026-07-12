@@ -5,7 +5,8 @@ import pytest
 from agentos import Agent, AgentBuilder
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionRuntime, RuleBasedCompressor
-from agentos.context import ContextRenderer, ContextRuntime, RuntimeContract
+from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context.models import SystemEnvelope
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy
@@ -14,6 +15,14 @@ from agentos.providers import ProviderResponse, ProviderToolCall
 from agentos.providers import provider_message_to_dict
 from agentos.providers import provider_tool_spec_to_dict
 from agentos.runtime import EventBus, TurnStartedEvent
+
+
+class StructuralContextRendererStub:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def render(self) -> SystemEnvelope:
+        return SystemEnvelope(text=self.text)
 
 
 def test_agent_builder_creates_runnable_standard_agent() -> None:
@@ -42,7 +51,7 @@ def test_agent_builder_wires_attachment_runtime() -> None:
     assert attachment.handle.startswith("att_")
 
 
-def test_agent_builder_tools_are_visible_and_executable() -> None:
+def test_agent_builder_tools_are_available_only_through_provider_tools() -> None:
     tool = RegisteredTool(
         name="lookup_status",
         description="Lookup task status.",
@@ -68,7 +77,7 @@ def test_agent_builder_tools_are_visible_and_executable() -> None:
     result = agent.run("Use lookup_status.")
 
     assert result.content == "Tool result was handled."
-    assert "lookup_status" in provider.requests[0].system
+    assert "lookup_status" not in provider.requests[0].system
     assert provider_message_to_dict(provider.requests[1].messages[2]) == {
         "role": "tool",
         "content": "tool status: green",
@@ -79,6 +88,33 @@ def test_agent_builder_tools_are_visible_and_executable() -> None:
         == "lookup_status"
         for spec in provider.requests[0].tools
     )
+
+
+def test_agent_builder_default_system_owns_only_required_sections() -> None:
+    tool = RegisteredTool(
+        name="tool_metadata_marker",
+        description="Available metadata must remain outside SystemEnvelope.",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda arguments: "unused",
+    )
+    provider = FakeProvider(["ok"])
+
+    agent = AgentBuilder().provider(provider).tools([tool]).build()
+    agent.run("Inspect the default system wiring.")
+
+    request = provider.requests[0]
+    assert [
+        line for line in request.system.splitlines() if line.startswith("# ")
+    ] == [
+        "# Runtime Contract",
+        "# Interaction Protocol",
+        "# Context Management Rules",
+    ]
+    assert "# Runtime Directives" not in request.system
+    assert "# Trusted Skill:" not in request.system
+    assert "# Workspace Contract" not in request.system
+    assert "tool_metadata_marker" not in request.system
+    assert {spec.function.name for spec in request.tools} >= {"tool_metadata_marker"}
 
 
 def test_agent_builder_build_async_runs_async_tool_handler() -> None:
@@ -145,7 +181,7 @@ def test_agent_builder_default_path_includes_context_protocol_tools() -> None:
                             "fields": [
                                 {
                                     "name": "task_goal",
-                                    "type": "str",
+                                    "type": "string",
                                     "purpose": "Current task goal.",
                                 },
                             ],
@@ -255,10 +291,10 @@ def test_agent_builder_with_compression_can_use_token_budget_policy() -> None:
 def test_agent_builder_uses_component_overrides() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
-    renderer = ContextRenderer(
-        runtime_contract=RuntimeContract(identity="custom builder identity"),
-    )
+    renderer = StructuralContextRendererStub("custom builder identity")
     bus = EventBus()
+
+    assert not isinstance(renderer, ContextRenderer)
 
     agent = (
         AgentBuilder()
@@ -338,7 +374,7 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
 
     assert result.content == "router done"
     assert agent.query_loop.tool_call_router is router
-    assert "router_tool" in provider.requests[0].system
+    assert "router_tool" not in provider.requests[0].system
     assert (
         provider_message_to_dict(provider.requests[1].messages[2])["content"]
         == "router tool result"

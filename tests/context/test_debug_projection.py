@@ -3,9 +3,11 @@ import pytest
 from agentos.compression import CompressionIndex
 from agentos.context import ContextRenderer, ContextState
 from agentos.context.debug_projection import render_debug_projection
+from agentos.context.projection import default_system_section_registry
 from agentos.messages import MessageRuntime
 from agentos.observability.events import EventLog
 from agentos.runtime import EventBus, TurnStartedEvent
+from agentos.tokens import HeuristicTokenCounter
 
 
 def test_debug_projection_exposes_runtime_metadata_explicitly() -> None:
@@ -37,9 +39,10 @@ def test_debug_projection_exposes_runtime_metadata_explicitly() -> None:
 
 
 def test_default_renderer_does_not_call_debug_projection() -> None:
-    rendered = ContextRenderer().render(
-        ContextState(working_state={"task_goal": "Debug."}),
-    )
+    rendered = ContextRenderer(
+        registry=default_system_section_registry(),
+        token_counter=HeuristicTokenCounter(),
+    ).render().text
 
     assert "session_id" not in rendered
     assert "message_id" not in rendered
