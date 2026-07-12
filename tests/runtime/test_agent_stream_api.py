@@ -3,10 +3,11 @@ from threading import Event, Thread
 
 from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
 from agentos import Agent
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse
 from agentos.runtime import EventBus, ProviderRequestBuilder, TurnStartedEvent
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def build_agent(provider: FakeProvider) -> Agent:
@@ -17,7 +18,7 @@ def build_agent(provider: FakeProvider) -> Agent:
             "context_runtime": context,
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=[],
             ),
@@ -35,7 +36,7 @@ def build_agent_with_attachments(provider: FakeProvider) -> Agent:
             "context_runtime": context,
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=[],
                 attachment_runtime=attachments,
@@ -84,7 +85,7 @@ def build_agent_with_context(
             "context_runtime": context,
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=[],
             ),
@@ -233,8 +234,8 @@ def test_agent_continuation_injects_notice_without_user_message() -> None:
 
     assert result.content == "checked"
     assert provider.requests[0].messages == []
-    assert "# Runtime Notice" in provider.requests[0].system
-    assert "Task task_1 completed." in provider.requests[0].system
+    assert "# Runtime Notice" not in provider.requests[0].system
+    assert "Task task_1 completed." not in provider.requests[0].system
     assert context.snapshot().runtime_notices == ()
     assert notice_provider.calls == 1
 
@@ -283,6 +284,7 @@ def test_agent_continuation_clears_notice_when_stream_closes_before_request() ->
 
     assert type(first_event).__name__ == "TurnStreamStarted"
     assert context.snapshot().runtime_notices == ()
+    assert notice_provider.calls == 1
 
     result = agent.run("hello")
 

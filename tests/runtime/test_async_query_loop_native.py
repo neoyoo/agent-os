@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     ProviderContentDelta,
@@ -22,6 +22,7 @@ from agentos.runtime import (
     RetryPolicy,
     TurnStreamCompleted,
 )
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def _request_builder(
@@ -29,7 +30,7 @@ def _request_builder(
     router: ToolCallRouter | None = None,
 ) -> ProviderRequestBuilder:
     return ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[] if router is None else router.tool_specs(),
     )

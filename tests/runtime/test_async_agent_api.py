@@ -4,7 +4,7 @@ import threading
 import pytest
 
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderToolCall
 from agentos.providers.base import ProviderRequest, ProviderResponse
@@ -20,7 +20,23 @@ from agentos.runtime import (
     TurnStreamCompleted,
     TurnStreamStarted,
 )
-from tests.multi.helpers import build_agent_with_response
+from tests._context_protocol_fixtures import default_context_renderer
+
+
+def build_agent_with_response(content: str) -> Agent:
+    messages = MessageRuntime()
+    return Agent(
+        query_loop_kwargs={
+            "context_runtime": ContextRuntime(),
+            "message_runtime": messages,
+            "request_builder": ProviderRequestBuilder(
+                context_renderer=default_context_renderer(),
+                message_runtime=messages,
+                tools=[],
+            ),
+            "provider": FakeProvider([ProviderResponse(content=content)]),
+        },
+    )
 
 
 def test_agent_async_run_returns_agent_result() -> None:
@@ -50,7 +66,7 @@ def test_async_query_loop_runs_sync_provider_without_blocking_event_loop() -> No
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=[],
         ),
@@ -103,7 +119,7 @@ def test_agent_can_use_explicit_async_query_loop() -> None:
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=[],
         ),
@@ -238,7 +254,7 @@ def test_agent_async_stream_cancels_running_async_provider_task() -> None:
                 context_runtime=context,
                 message_runtime=messages,
                 request_builder=ProviderRequestBuilder(
-                    context_renderer=ContextRenderer(),
+                    context_renderer=default_context_renderer(),
                     message_runtime=messages,
                     tools=[],
                 ),
@@ -298,7 +314,7 @@ def test_agent_async_stream_uses_async_complete_when_stream_is_unavailable() -> 
                 context_runtime=context,
                 message_runtime=messages,
                 request_builder=ProviderRequestBuilder(
-                    context_renderer=ContextRenderer(),
+                    context_renderer=default_context_renderer(),
                     message_runtime=messages,
                     tools=[],
                 ),
@@ -361,7 +377,7 @@ def test_agent_async_run_serializes_native_async_turns() -> None:
                 context_runtime=context,
                 message_runtime=messages,
                 request_builder=ProviderRequestBuilder(
-                    context_renderer=ContextRenderer(),
+                    context_renderer=default_context_renderer(),
                     message_runtime=messages,
                     tools=[],
                 ),

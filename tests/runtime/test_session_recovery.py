@@ -1,5 +1,5 @@
 from agentos.compression import CompressionRuntime
-from agentos.context import ContextRenderer, ContextRuntime, WorkingStateField
+from agentos.context import ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
 from agentos.observability.events import EventLog
 from agentos.persistence import MemoryPersistence, SessionSnapshot
@@ -7,6 +7,7 @@ from agentos.policies import BudgetPolicy
 from agentos.providers import FakeProvider
 from agentos.recall import RecallRuntime
 from agentos.runtime import EventBus, ProviderRequestBuilder, QueryLoop, SessionState
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_session_snapshot_restores_context_messages_compression_and_recall() -> None:
@@ -17,7 +18,7 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
         [
             WorkingStateField(
                 name="task_goal",
-                type="str",
+                type="string",
                 purpose="当前任务目标和完成标准",
             ),
         ],
@@ -36,7 +37,7 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=[],
         ),
@@ -48,7 +49,7 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
     loop.run_turn("old detail")
     loop.run_turn("current task")
     rendered_before_save = ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[],
     ).build(context).system
@@ -79,12 +80,14 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
     ).recall_context("seg_1")
 
     request = ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=restored_messages,
         tools=[],
     ).build(restored_context)
 
+    assert restored_context.snapshot().working_state["task_goal"] == "Recover session."
     assert request.system == rendered_before_save
+    assert "Recover session." not in request.system
     assert [message.content for message in recalled] == ["old detail", "first answer"]
     assert request.messages[0]["content"] == "current task"
     assert request.messages[-1]["content"] == "second answer"

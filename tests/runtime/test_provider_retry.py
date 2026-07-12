@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.events import EventBus, ProviderRetryEvent
 from agentos.messages import MessageRuntime
 from agentos.providers import ProviderRequest, ProviderResponse
 from agentos.runtime import ProviderRequestBuilder, QueryLoop, RetryPolicy
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 class FlakyProvider:
@@ -35,7 +36,7 @@ def _loop(provider: object, *, retry_policy: RetryPolicy, event_bus: EventBus | 
         context_runtime=ContextRuntime(),
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=messages,
         ),
         provider=provider,  # type: ignore[arg-type]

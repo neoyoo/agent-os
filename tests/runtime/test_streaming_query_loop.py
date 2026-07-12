@@ -1,6 +1,6 @@
 import pytest
 
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     FakeProvider,
@@ -25,6 +25,7 @@ from agentos.runtime import (
     TurnStreamStarted,
 )
 from agentos.runtime.retry import RetryPolicy
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def build_loop(
@@ -37,7 +38,7 @@ def build_loop(
         context_runtime=context,
         message_runtime=message_runtime,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(),
+            context_renderer=default_context_renderer(),
             message_runtime=message_runtime,
             tools=[],
         ),
