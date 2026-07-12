@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from agentos.attachments.store import AttachmentStore
@@ -9,10 +9,9 @@ from agentos.attachments.types import (
     AttachmentError,
     BytesSource,
 )
+from agentos.providers.input import ImagePart, ProviderInputItem, TextPart
 from agentos.providers.messages import (
-    ImagePart,
     ProviderMessage,
-    TextPart,
     UserMessage,
 )
 
@@ -140,31 +139,84 @@ class AttachmentRuntime:
         """把待展开附件投影进 provider request。"""
 
         user_handles, user_text = self._consume_user_handles()
-        attachment_handles = [
-            handle
-            for handle in dict.fromkeys(self._turn_loaded_attachment_handles)
-            if handle not in set(user_handles)
-        ]
+        attachment_handles = self._loaded_handles_excluding(user_handles)
         projected = list(messages)
         if user_handles:
             projected = self._project_user_handles(projected, user_handles, user_text)
         if attachment_handles:
             projected.append(
                 UserMessage(
-                    content=(
-                        TextPart(
-                            "Loaded attachment "
-                            + ", ".join(attachment_handles)
-                            + " for inspection.",
-                        ),
-                        *[
-                            self._content_part_for_attachment(self.store.get(handle))
-                            for handle in attachment_handles
-                        ],
-                    ),
+                    content=self._loaded_attachment_content(attachment_handles),
                 ),
             )
         return projected
+
+    def _project_provider_inputs_compat(
+        self,
+        items: tuple[ProviderInputItem, ...],
+    ) -> tuple[ProviderInputItem, ...]:
+        """在 Phase 3A 前保留现有图片附件的 ProviderInput 投影。"""
+
+        user_handles, user_text = self._consume_user_handles()
+        loaded_handles = self._loaded_handles_excluding(user_handles)
+        projected = list(items)
+        if user_handles:
+            projected = self._project_user_input_handles(
+                projected,
+                user_handles,
+                user_text,
+            )
+        if loaded_handles:
+            projected.append(
+                ProviderInputItem.context_mount(
+                    self._loaded_attachment_content(loaded_handles),
+                ),
+            )
+        return tuple(projected)
+
+    def _loaded_handles_excluding(self, excluded: list[str]) -> list[str]:
+        excluded_handles = set(excluded)
+        return [
+            handle for handle in dict.fromkeys(self._turn_loaded_attachment_handles)
+            if handle not in excluded_handles
+        ]
+
+    def _loaded_attachment_content(
+        self, handles: list[str]
+    ) -> tuple[TextPart | ImagePart, ...]:
+        return (
+            TextPart(f"Loaded attachment {', '.join(handles)} for inspection."),
+            *[
+                self._content_part_for_attachment(self.store.get(handle))
+                for handle in handles
+            ],
+        )
+
+    def _project_user_input_handles(
+        self,
+        items: list[ProviderInputItem],
+        handles: list[str],
+        user_text: str | None,
+    ) -> list[ProviderInputItem]:
+        """把首次上传图片展开到对应的业务 user item。"""
+
+        for index in range(len(items) - 1, -1, -1):
+            item = items[index]
+            if item.role != "user" or item.kind != "business_message":
+                continue
+            text = user_text if user_text is not None else ""
+            items[index] = replace(
+                item,
+                content=(
+                    TextPart(text),
+                    *[
+                        self._content_part_for_attachment(self.store.get(handle))
+                        for handle in handles
+                    ],
+                ),
+            )
+            return items
+        raise AttachmentError("cannot expand attachments without a user message")
 
     def _project_user_handles(
         self,

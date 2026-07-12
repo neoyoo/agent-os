@@ -603,6 +603,8 @@ git commit -m "feat: add explicit conversation read model"
 ### Task 5: 让 ProviderRequestBuilder 每次构建双平面请求
 
 **Files:**
+- Modify: `docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md`
+- Modify: `docs/public-api-inventory.json`
 - Modify: `src/agentos/attachments/runtime.py`
 - Create: `src/agentos/runtime/message_projection.py`
 - Modify: `src/agentos/runtime/provider_request_builder.py`
@@ -738,7 +740,9 @@ Task 5 提交必须运行现有 QueryLoop 测试，证明加法迁移桥保持 G
 
 ```powershell
 python -m pytest tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_query_loop.py tests/runtime/test_async_query_loop_native.py -q
-git add -- src/agentos/attachments/runtime.py src/agentos/runtime/message_projection.py src/agentos/runtime/provider_request_builder.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_query_loop.py
+python scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
+python -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py -q
+git add -- docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md docs/public-api-inventory.json src/agentos/attachments/runtime.py src/agentos/runtime/message_projection.py src/agentos/runtime/provider_request_builder.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_query_loop.py
 git commit -m "feat: rebuild dual plane provider requests"
 ```
 
