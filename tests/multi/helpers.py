@@ -1,7 +1,8 @@
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse
 from agentos.runtime import Agent, ProviderRequestBuilder
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def build_agent_with_response(content: str) -> Agent:
@@ -13,7 +14,7 @@ def build_agent_with_response(content: str) -> Agent:
             "context_runtime": ContextRuntime(),
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=[],
             ),

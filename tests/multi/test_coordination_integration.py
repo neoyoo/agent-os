@@ -1,7 +1,7 @@
 import time
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.multi import (
     AgentCard,
@@ -15,6 +15,7 @@ from agentos.multi import (
 )
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import Agent, ProviderRequestBuilder
+from tests._context_protocol_fixtures import default_context_renderer
 from tests.multi.helpers import build_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
@@ -35,7 +36,7 @@ def build_parent_agent(
             "context_runtime": ContextRuntime(),
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=router.tool_specs(),
             ),

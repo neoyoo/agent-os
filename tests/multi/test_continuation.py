@@ -2,7 +2,7 @@ import time
 from threading import Event, Thread
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.events import AgentContinuationFailedEvent, EventBus
 from agentos.messages import MessageRuntime
 from agentos.multi import (
@@ -20,6 +20,7 @@ from agentos.multi import (
 from agentos.multi import AgentCoordinationTools
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import Agent, ProviderRequestBuilder
+from tests._context_protocol_fixtures import default_context_renderer
 from tests.multi.helpers import build_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
@@ -92,7 +93,7 @@ def build_parent_agent(provider, notice_store: AgentTaskNoticeStore) -> Agent:
             "context_runtime": ContextRuntime(),
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=[],
             ),
@@ -120,7 +121,7 @@ def build_parent_agent_with_coordination_tools(
             "context_runtime": context,
             "message_runtime": messages,
             "request_builder": ProviderRequestBuilder(
-                context_renderer=ContextRenderer(),
+                context_renderer=default_context_renderer(),
                 message_runtime=messages,
                 tools=router.tool_specs(),
             ),
@@ -195,8 +196,9 @@ def test_local_continuation_trigger_runs_parent_continuation_when_idle() -> None
     assert trigger.wait_idle("parent", timeout=1)
 
     request = parent.query_loop.provider.requests[0]  # type: ignore[attr-defined]
-    assert "# Runtime Notice" in request.system
-    assert "task_1" in request.system
+    assert "# Runtime Notice" not in request.system
+    assert "task_1" not in request.system
+    assert notice_store.consume_notices("parent") == ()
 
     trigger.shutdown()
 
@@ -363,8 +365,9 @@ def test_local_continuation_trigger_queues_while_user_turn_is_running() -> None:
 
     assert len(provider.requests) == 2
     assert provider.requests[0].messages == [{"role": "user", "content": "hello"}]
-    assert "# Runtime Notice" in provider.requests[1].system
-    assert "task_1" in provider.requests[1].system
+    assert "# Runtime Notice" not in provider.requests[1].system
+    assert "task_1" not in provider.requests[1].system
+    assert notice_store.consume_notices("parent") == ()
 
     trigger.shutdown()
 
@@ -406,8 +409,9 @@ def test_spawn_completion_triggers_continuation_and_result_collection_e2e() -> N
     assert trigger.wait_idle("parent", timeout=1)
 
     assert result.content == "spawned"
-    assert "# Runtime Notice" in provider.requests[2].system
-    assert "Call check_agent_tasks to retrieve results." in provider.requests[2].system
+    assert "# Runtime Notice" not in provider.requests[2].system
+    assert "Call check_agent_tasks to retrieve results." not in provider.requests[2].system
+    assert notice_store.consume_notices("parent") == ()
     check_request_messages = provider.requests[3].messages
     assert any(
         message["role"] == "tool" and "child result" in str(message["content"])
