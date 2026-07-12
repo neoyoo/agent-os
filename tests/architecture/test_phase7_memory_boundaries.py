@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from agentos.context import ContextRenderer, ContextState
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +36,7 @@ def test_context_renderer_does_not_import_memory_package() -> None:
 
 
 def test_default_prompt_does_not_expose_memory_storage_metadata() -> None:
-    rendered = ContextRenderer().render(ContextState())
+    rendered = default_context_renderer().render().text.lower()
 
     for forbidden in [
         "message_id",
@@ -47,4 +47,4 @@ def test_default_prompt_does_not_expose_memory_storage_metadata() -> None:
         "postgres",
         "embedding score",
     ]:
-        assert forbidden not in rendered.lower()
+        assert forbidden not in rendered

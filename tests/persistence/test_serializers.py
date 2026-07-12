@@ -29,7 +29,7 @@ def test_context_state_round_trips_without_exposing_mutable_lists() -> None:
             fields=[
                 WorkingStateField(
                     name="task_goal",
-                    type="str",
+                    type="string",
                     purpose="当前任务目标和完成标准",
                 ),
             ],
@@ -56,7 +56,7 @@ def test_context_state_round_trips_json_working_state_values() -> None:
             fields=[
                 WorkingStateField(
                     name="candidate",
-                    type="obj",
+                    type="object",
                     purpose="当前候选方案",
                 ),
             ],

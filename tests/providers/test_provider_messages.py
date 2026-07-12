@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
     AssistantMessage,
@@ -20,6 +20,7 @@ from agentos.providers import (
     provider_tool_spec_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 def test_provider_messages_are_frozen_slotted_dataclasses() -> None:
@@ -266,7 +267,7 @@ def test_provider_request_builder_returns_strong_typed_messages() -> None:
     )
 
     request = ProviderRequestBuilder(
-        context_renderer=ContextRenderer(),
+        context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[],
     ).build(context)
