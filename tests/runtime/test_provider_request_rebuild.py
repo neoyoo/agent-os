@@ -71,9 +71,9 @@ def test_builder_places_fresh_snapshot_before_active_messages() -> None:
     messages.append_user("hello")
     builder = configured_builder(messages, projections)
 
-    first = builder.build_with_receipt()
+    first = builder.build()
     projections.goal = "second"
-    second = builder.build_with_receipt()
+    second = builder.build()
 
     assert first is not second
     assert first.request is not second.request
@@ -96,9 +96,9 @@ def test_builder_renders_fresh_system_envelope_for_each_build() -> None:
         context_projections=MutableProjectionProvider(goal="stable"),
     )
 
-    first = builder.build_with_receipt()
+    first = builder.build()
     renderer.text = "second system"
-    second = builder.build_with_receipt()
+    second = builder.build()
 
     assert first.request.system == "first system"
     assert second.request.system == "second system"
@@ -115,7 +115,7 @@ def test_snapshot_never_interrupts_tool_pair() -> None:
     build = configured_builder(
         messages,
         MutableProjectionProvider(goal="pair"),
-    ).build_with_receipt()
+    ).build()
 
     assert [item.kind for item in build.request.messages] == [
         "context_snapshot",
@@ -136,8 +136,8 @@ def test_build_does_not_consume_temporary_recall() -> None:
         MutableProjectionProvider(goal="recall"),
     )
 
-    first = builder.build_with_receipt()
-    second = builder.build_with_receipt()
+    first = builder.build()
+    second = builder.build()
 
     assert first.receipt.temporary_message_ids == ("msg_recalled",)
     assert second.receipt.temporary_message_ids == ("msg_recalled",)
@@ -229,7 +229,7 @@ def test_initial_uploaded_image_extends_the_business_user_item() -> None:
         messages,
         MutableProjectionProvider(goal="image"),
         attachments,
-    ).build_with_receipt()
+    ).build()
 
     user_item = build.request.messages[1]
     assert user_item.kind == "business_message"
@@ -255,8 +255,8 @@ def test_uploaded_image_remains_mounted_on_later_builds_in_the_turn() -> None:
         attachments,
     )
 
-    builder.build_with_receipt()
-    second = builder.build_with_receipt()
+    builder.build()
+    second = builder.build()
 
     assert [item.kind for item in second.request.messages] == [
         "context_snapshot",
@@ -284,7 +284,7 @@ def test_loaded_image_is_appended_as_context_mount() -> None:
         messages,
         MutableProjectionProvider(goal="mount"),
         attachments,
-    ).build_with_receipt()
+    ).build()
 
     mount = build.request.messages[-1]
     assert mount.kind == "context_mount"

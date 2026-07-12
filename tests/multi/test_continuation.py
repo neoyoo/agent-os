@@ -22,7 +22,6 @@ from agentos.providers import (
     FakeProvider,
     ProviderResponse,
     ProviderToolCall,
-    UserMessage,
 )
 from agentos.runtime import Agent, ProviderRequestBuilder
 from tests._context_protocol_fixtures import default_context_renderer
@@ -369,7 +368,7 @@ def test_local_continuation_trigger_queues_while_user_turn_is_running() -> None:
     assert trigger.wait_idle("parent", timeout=1)
 
     assert len(provider.requests) == 2
-    assert provider.requests[0].messages == (UserMessage(content="hello"),)
+    assert provider.requests[0].messages[1].content[0].text == "hello"  # type: ignore[union-attr]
     assert "# Runtime Notice" not in provider.requests[1].system
     assert "task_1" not in provider.requests[1].system
     assert notice_store.consume_notices("parent") == ()
@@ -419,13 +418,15 @@ def test_spawn_completion_triggers_continuation_and_result_collection_e2e() -> N
     assert notice_store.consume_notices("parent") == ()
     check_request_messages = provider.requests[3].messages
     assert any(
-        message["role"] == "tool" and "child result" in str(message["content"])
+        message.role == "tool"
+        and "child result" in message.content[0].text  # type: ignore[union-attr]
         for message in check_request_messages
     )
-    assert parent.query_loop.message_runtime.materialize_provider_messages()[-1] == {
-        "role": "assistant",
-        "content": "collected child result",
-    }
+    last_message = parent.query_loop.message_runtime.materialize_active()[-1]
+    assert (last_message.role, last_message.content) == (
+        "assistant",
+        "collected child result",
+    )
 
     trigger.shutdown()
     coordinator.spawn_executor.shutdown()

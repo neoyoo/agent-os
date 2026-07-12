@@ -1,9 +1,5 @@
 from dataclasses import dataclass, field
 
-from agentos.messages._migration import (
-    _LegacyProviderMessage,
-    materialize_provider_messages,
-)
 from agentos.messages.store import MessageStore
 from agentos.messages.types import MessageRef, MessageRole, StoredMessage, ToolCall
 from agentos.messages.window import ActiveWindow
@@ -77,11 +73,6 @@ class MessageRuntime:
         """返回 active window 中的原始消息。"""
 
         return [message for _, message in self.snapshot_active_with_refs()]
-
-    def materialize_provider_messages(self) -> list[_LegacyProviderMessage]:
-        """返回 provider request 可直接使用的 active messages。"""
-
-        return materialize_provider_messages(self.materialize_active())
 
     @classmethod
     def from_parts(

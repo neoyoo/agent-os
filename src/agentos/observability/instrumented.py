@@ -73,6 +73,7 @@ from agentos.providers import (
     complete_response_to_stream_events,
 )
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime.provider_request_builder import ProviderRequestBuild
 from agentos.runtime.stream_events import (
     RunOptions,
     TurnStreamCompleted,
@@ -666,7 +667,7 @@ class InstrumentedProviderRequestBuilder:
 
         return getattr(self._inner, name)
 
-    def build(self, context_runtime: object) -> ProviderRequest:
+    def build(self) -> ProviderRequestBuild:
         """构造 provider request，并记录 provider.request.build span。"""
 
         with self._tracer.start_span(
@@ -678,7 +679,8 @@ class InstrumentedProviderRequestBuilder:
                 tracer=self._tracer,
                 capture_policy=self._capture_policy,
             )
-            request = self._inner.build(context_runtime)  # type: ignore[arg-type]
+            build = self._inner.build()
+            request = build.request
             snapshot = build_provider_request_snapshot(request, self._capture_policy)
             self.latest_request_snapshot = snapshot
             span.set_attributes(
@@ -698,7 +700,7 @@ class InstrumentedProviderRequestBuilder:
                     policy=self._capture_policy,
                 ),
             )
-            return request
+            return build
 
     def _request_payload(self, snapshot: ProviderRequestSnapshot) -> dict[str, object]:
         """返回 request build span input payload。"""

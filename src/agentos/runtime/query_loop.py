@@ -1,13 +1,10 @@
 import asyncio
-import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agentos._frozen_json import thaw_json
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionRuntime
-from agentos.context import ContextState
 from agentos.hooks import HookManager, HookResult
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.policies import ToolResultBudget
@@ -18,13 +15,10 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderRequest,
     ProviderResponse,
-    ProviderStreamCancelled,
     ProviderStreamCompleted,
     ProviderStreamEvent,
-    ProviderStreamFailed,
     ProviderStreamOptions,
     ProviderThinkingDelta,
-    complete_response_to_stream_events,
 )
 from agentos.runtime.event_bus import (
     AssistantMessageAppendedEvent,
@@ -43,11 +37,24 @@ from agentos.runtime.event_bus import (
     TurnStartedEvent,
     UserMessageAppendedEvent,
 )
-from agentos.runtime._async_provider_bridge import (
-    complete_async_provider_from_thread,
-    stream_async_provider_from_thread,
+from agentos.runtime.provider_attempt import (
+    ProviderAttemptRunner,
+    ensure_provider_response_usable,
+    provider_stream_events,
 )
-from agentos.runtime.provider_request_builder import ProviderRequestBuilder
+from agentos.runtime.provider_request_builder import (
+    ProviderRequestBuild,
+    ProviderRequestBuilder,
+)
+from agentos.runtime.query_loop_support import (
+    ContextRuntimeBoundary as _ContextRuntimeBoundary,
+    StructuredLoggerBoundary as _StructuredLoggerBoundary,
+    ToolCallRouterBoundary as _ToolCallRouterBoundary,
+    TurnNoticeProvider as _TurnNoticeProvider,
+    duplicate_tool_call_result,
+    skill_loaded_event,
+    tool_call_signature,
+)
 from agentos.runtime.retry import RetryPolicy
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
@@ -57,7 +64,6 @@ from agentos.runtime.stream_events import (
     ContextLoaded,
     FinalResult,
     PlanUpdated,
-    SkillLoaded,
     StatusUpdate,
     RunOptions,
     ToolStreamCompleted,
@@ -72,38 +78,20 @@ from agentos.runtime.turn import TurnState
 from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
-class ContextRuntimeBoundary(Protocol):
-    """QueryLoop 依赖的 context runtime 边界。"""
-
-    def snapshot(self) -> ContextState:
-        """返回可渲染的 context snapshot。"""
-
-    def set_runtime_notices(self, notices: tuple[str, ...]) -> None:
-        """设置本轮 provider request 可见的一次性 runtime notice。"""
-
-    def clear_runtime_notices(self) -> None:
-        """清空一次性 runtime notice。"""
+class ContextRuntimeBoundary(_ContextRuntimeBoundary, Protocol):
+    pass
 
 
-class TurnNoticeProvider(Protocol):
-    """QueryLoop 依赖的一次性 turn notice 边界。"""
-
-    def consume_notices(self) -> tuple[str, ...]:
-        """返回并消费本轮 runtime notices。"""
+class TurnNoticeProvider(_TurnNoticeProvider, Protocol):
+    pass
 
 
-class ToolCallRouterBoundary(Protocol):
-    """QueryLoop 依赖的 tool call router 边界。"""
-
-    def execute_tool_call(self, tool_call: object) -> object:
-        """执行 provider tool call。"""
+class ToolCallRouterBoundary(_ToolCallRouterBoundary, Protocol):
+    pass
 
 
-class StructuredLoggerBoundary(Protocol):
-    """QueryLoop 依赖的结构化日志边界。"""
-
-    def log(self, event: str, **fields: object) -> None:
-        """记录一个结构化 runtime 事件。"""
+class StructuredLoggerBoundary(_StructuredLoggerBoundary, Protocol):
+    pass
 
 
 @dataclass(slots=True)
@@ -132,6 +120,14 @@ class QueryLoop:
         init=False,
         repr=False,
     )
+
+    def __post_init__(self) -> None:
+        """把 context 投影依赖绑定到 request builder。"""
+
+        self.request_builder._bind_context_source(
+            self.context_runtime,
+            self.token_counter,
+        )
 
     @property
     def interrupted(self) -> bool:
@@ -165,10 +161,15 @@ class QueryLoop:
     def build_request(self) -> ProviderRequest:
         """构建下一次 provider request，并在请求前执行窗口压缩。"""
 
+        return self._build_request().request
+
+    def _build_request(self) -> ProviderRequestBuild:
+        """构建带 temporary receipt 的下一次 provider request。"""
+
         if self.compression_runtime is not None:
             self.compression_runtime.maybe_compress()
         try:
-            return self.request_builder.build(self.context_runtime)
+            return self.request_builder.build()
         finally:
             self._clear_runtime_notices()
 
@@ -348,29 +349,20 @@ class QueryLoop:
                 stage="context",
                 message="正在装载会话上下文、工作状态和可用能力。",
             )
-            request = self.build_request()
-            yield ContextLoaded(
-                source="runtime",
-                summary=(
-                    f"已装载 {len(request.messages)} 条消息和 "
-                    f"{len(request.tools)} 个工具声明。"
-                ),
-            )
-            request = self._before_provider_call(request)
-            self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
-            self._log(
-                "provider_call",
-                message_count=len(request.messages),
-                tool_count=len(request.tools),
-            )
-            yield StatusUpdate(
-                stage="model",
-                message="正在请求模型生成下一步响应。",
-            )
-            response = yield from self._consume_provider_stream(request, options)
-            response = self._after_provider_call(request, response)
+            response: ProviderResponse | None = None
+            for event in self._provider_attempt_events(options, turn):
+                if isinstance(event, ProviderContentDelta):
+                    yield AssistantContentDelta(index=event.index, text=event.text)
+                elif isinstance(event, ProviderThinkingDelta):
+                    if options.show_thinking:
+                        yield AssistantThinkingDelta(index=event.index, text=event.text)
+                elif isinstance(event, ProviderStreamCompleted):
+                    response = event.response
+                elif isinstance(event, (ContextLoaded, StatusUpdate)):
+                    yield event
+            if response is None:
+                raise RuntimeError("provider stream ended without completion event")
             self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
-            self._ensure_provider_response_usable(response)
             tool_calls = [
                 ToolCall(
                     id=tool_call.id,
@@ -434,7 +426,7 @@ class QueryLoop:
                     ),
                 )
                 try:
-                    duplicate_result = self._duplicate_tool_call_result(
+                    duplicate_result = duplicate_tool_call_result(
                         tool_call,
                         applied_tool_signatures,
                     )
@@ -447,9 +439,7 @@ class QueryLoop:
                         else:
                             result = self.tool_call_router.execute_tool_call(tool_call)
                         result = self._after_tool_call(tool_call, result)
-                        applied_tool_signatures.add(
-                            self._tool_call_signature(tool_call),
-                        )
+                        applied_tool_signatures.add(tool_call_signature(tool_call))
                 except Exception as error:
                     self.message_runtime.active_window.remove_refs(
                         appended_message_ids,
@@ -487,7 +477,7 @@ class QueryLoop:
                     tool_call_id=tool_call.id,
                     content=result.content,
                 )
-                skill_event = self._skill_loaded_event(tool_call, result)
+                skill_event = skill_loaded_event(tool_call, result)
                 if skill_event is not None:
                     yield skill_event
                 yield StatusUpdate(
@@ -495,31 +485,6 @@ class QueryLoop:
                     message=f"已读取 `{tool_call.name}` 的结果，继续推理。",
                     detail=tool_call.id,
                 )
-
-    def _skill_loaded_event(
-        self,
-        tool_call: ProviderToolCall,
-        result: ToolExecutionResult,
-    ) -> SkillLoaded | None:
-        """把 skill loader 工具结果提升为用户可见事件。"""
-
-        if tool_call.name not in {"load_skill", "load_skill_resource"}:
-            return None
-        skill_name = str(
-            tool_call.arguments.get("skill_name")
-            or tool_call.arguments.get("name")
-            or tool_call.arguments.get("skill")
-            or "unknown",
-        )
-        resource = tool_call.arguments.get("resource")
-        if resource is None:
-            resource = tool_call.arguments.get("path")
-        summary = result.content.strip().splitlines()[0] if result.content.strip() else None
-        return SkillLoaded(
-            skill_name=skill_name,
-            resource=None if resource is None else str(resource),
-            summary=summary,
-        )
 
     def _cap_tool_result(
         self,
@@ -549,107 +514,98 @@ class QueryLoop:
             content=capped.content,
         )
 
-    def _duplicate_tool_call_result(
+    def _provider_attempt_events(
         self,
-        tool_call: ProviderToolCall,
-        applied_tool_signatures: set[str],
-    ) -> ToolExecutionResult | None:
-        signature = self._tool_call_signature(tool_call)
-        if signature not in applied_tool_signatures:
-            return None
-        return ToolExecutionResult(
-            tool_call_id=tool_call.id,
-            content=(
-                f"duplicate tool call ignored: {tool_call.name} with identical "
-                "arguments was already applied in this turn; continue with the "
-                "next step or return the final answer"
+        options: RunOptions,
+        turn: TurnState | None,
+    ) -> Iterator[ProviderStreamEvent | ContextLoaded | StatusUpdate]:
+        """运行一次可 retry 的 Provider attempt 序列。"""
+
+        prepared_request: ProviderRequest | None = None
+
+        def prepare(request: ProviderRequest) -> ProviderRequest:
+            nonlocal prepared_request
+            prepared_request = self._prepare_provider_call(request, turn)
+            return prepared_request
+
+        runner = ProviderAttemptRunner(
+            request_factory=self._build_request,
+            stream_provider=lambda request, stream_options: provider_stream_events(
+                self.provider,
+                request,
+                stream_options,
+                async_event_loop=self._async_provider_event_loop,
+                request_id_factory=self._next_provider_stream_request_id,
+                cancel_requested=lambda: self._interrupted,
+            ),
+            before_call=prepare,
+            after_call=self._after_provider_call,
+            ensure_usable=ensure_provider_response_usable,
+            consume_temporary=self.message_runtime.consume_temporary_refs,
+            retry_policy=self.retry_policy,
+            on_retry=self._on_provider_retry,
+        )
+        events = runner.run_stream(
+            ProviderStreamOptions(
+                thinking=options.thinking,
+                show_thinking=options.show_thinking,
             ),
         )
-
-    def _tool_call_signature(self, tool_call: ProviderToolCall) -> str:
-        return json.dumps(
-            {
-                "name": tool_call.name,
-                "arguments": thaw_json(tool_call.arguments),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-
-    def _consume_provider_stream(
-        self,
-        request: ProviderRequest,
-        options: RunOptions,
-    ) -> Iterator[TurnStreamEvent]:
-        """消费 provider stream 并返回最终 ProviderResponse。"""
-
-        provider_options = ProviderStreamOptions(
-            thinking=options.thinking,
-            show_thinking=options.show_thinking,
-        )
-        policy = self.retry_policy
-        if policy is not None:
-            policy.raise_if_open()
-        attempt = 0
-        response: ProviderResponse | None = None
-        while True:
-            emitted_visible_delta = False
-            try:
-                stream_events = self._provider_stream_events(request, provider_options)
-                for event in stream_events:
-                    if isinstance(event, ProviderContentDelta):
-                        emitted_visible_delta = True
-                        yield AssistantContentDelta(index=event.index, text=event.text)
-                    elif isinstance(event, ProviderThinkingDelta):
-                        if options.show_thinking:
-                            emitted_visible_delta = True
-                            yield AssistantThinkingDelta(
-                                index=event.index,
-                                text=event.text,
-                            )
-                    elif isinstance(event, ProviderStreamCompleted):
-                        response = event.response
-                    elif isinstance(event, ProviderStreamFailed):
-                        raise event.error
-                    elif isinstance(event, ProviderStreamCancelled):
-                        raise RuntimeError(
-                            event.reason or "provider stream was cancelled",
-                        )
-                if policy is not None:
-                    policy.record_success()
-                break
-            except Exception as error:
-                attempt += 1
-                if (
-                    emitted_visible_delta
-                    or policy is None
-                    or not policy.should_retry(error, attempt)
-                ):
-                    if policy is not None:
-                        policy.record_failure()
-                    raise
-                delay = policy.delay_for_attempt(attempt)
-                self._emit(
-                    ProviderRetryEvent(
-                        attempt=attempt,
-                        max_retries=policy.max_retries,
-                        error=str(error),
-                        delay_seconds=delay,
-                        **self._event_context(None),
+        announced = False
+        for event in events:
+            if not announced:
+                if prepared_request is None:
+                    raise RuntimeError("provider attempt did not prepare a request")
+                yield ContextLoaded(
+                    source="runtime",
+                    summary=(
+                        f"已装载 {len(prepared_request.messages)} 条消息和 "
+                        f"{len(prepared_request.tools)} 个工具声明。"
                     ),
                 )
-                self._log(
-                    "provider_retry",
-                    attempt=attempt,
-                    max_retries=policy.max_retries,
-                    error=str(error),
-                    delay_seconds=delay,
+                yield StatusUpdate(
+                    stage="model",
+                    message="正在请求模型生成下一步响应。",
                 )
-                policy.sleep(delay)
-        if response is None:
-            raise RuntimeError("provider stream ended without completion event")
-        return response
+                announced = True
+            yield event
+
+    def _prepare_provider_call(
+        self,
+        request: ProviderRequest,
+        turn: TurnState | None,
+    ) -> ProviderRequest:
+        request = self._before_provider_call(request)
+        self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
+        self._log(
+            "provider_call",
+            message_count=len(request.messages),
+            tool_count=len(request.tools),
+        )
+        return request
+
+    def _on_provider_retry(self, attempt: int, error: Exception) -> None:
+        policy = self.retry_policy
+        if policy is None:
+            raise RuntimeError("provider retry policy is missing")
+        delay = policy.delay_for_attempt(attempt)
+        self._emit(
+            ProviderRetryEvent(
+                attempt=attempt,
+                max_retries=policy.max_retries,
+                error=str(error),
+                delay_seconds=delay,
+                **self._event_context(None),
+            ),
+        )
+        self._log(
+            "provider_retry",
+            attempt=attempt,
+            max_retries=policy.max_retries,
+            error=str(error),
+            delay_seconds=delay,
+        )
+        policy.sleep(delay)
 
     def _before_provider_call(self, request: ProviderRequest) -> ProviderRequest:
         """执行 before_provider_call hook，可 deny 或替换 request。"""
@@ -778,62 +734,11 @@ class QueryLoop:
             raise RuntimeError("context runtime does not support runtime notices")
         set_runtime_notices(notices)
 
-    def _provider_stream_events(
-        self,
-        request: ProviderRequest,
-        options: ProviderStreamOptions,
-    ) -> Iterator[ProviderStreamEvent]:
-        """返回 provider stream events，必要时使用 complete fallback。"""
-
-        if self._async_provider_event_loop is not None:
-            async_stream = getattr(self.provider, "async_stream", None)
-            if callable(async_stream):
-                yield from stream_async_provider_from_thread(
-                    loop=self._async_provider_event_loop,
-                    async_stream_factory=lambda: async_stream(request, options),
-                    cancel_requested=lambda: self._interrupted,
-                )
-                return
-
-            async_complete = getattr(self.provider, "async_complete", None)
-            if callable(async_complete):
-                yield from complete_async_provider_from_thread(
-                    loop=self._async_provider_event_loop,
-                    async_complete_factory=lambda: async_complete(request),
-                    request_id=self._next_provider_stream_request_id(),
-                    options=options,
-                    cancel_requested=lambda: self._interrupted,
-                )
-                return
-
-        stream = getattr(self.provider, "stream", None)
-        if callable(stream):
-            yield from stream(request, options)
-            return
-
-        response = self.provider.complete(request)
-        yield from complete_response_to_stream_events(
-            request_id=self._next_provider_stream_request_id(),
-            response=response,
-            options=options,
-        )
-
     def _next_provider_stream_request_id(self) -> str:
         """生成 QueryLoop fallback provider stream request id。"""
 
         self._provider_stream_counter += 1
         return f"provider_{self._provider_stream_counter}"
-
-    def _ensure_provider_response_usable(self, response: ProviderResponse) -> None:
-        """拒绝被 provider 截断或拦截的响应，避免伪装成最终答案。"""
-
-        stop_reason = response.stop_reason
-        if stop_reason in {"length", "max_tokens"}:
-            raise RuntimeError(
-                f"provider response was truncated before final answer: {stop_reason}",
-            )
-        if stop_reason == "content_filter":
-            raise RuntimeError("provider response was blocked by content filter")
 
     def _start_turn(
         self,

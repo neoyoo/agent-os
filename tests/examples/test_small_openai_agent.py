@@ -12,7 +12,6 @@ from agentos.providers import (
     FakeProvider,
     ProviderResponse,
     ProviderToolCall,
-    provider_message_to_dict,
 )
 
 
@@ -45,9 +44,9 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
         "recall_context",
     ]
     assert "read_file" in tool_names
-    tool_result = provider_message_to_dict(provider.requests[1].messages[-1])
-    assert tool_result["role"] == "tool"
-    assert 'name = "agent-os"' in str(tool_result["content"])
+    tool_result = provider.requests[1].messages[-1]
+    assert tool_result.role == "tool"
+    assert 'name = "agent-os"' in tool_result.content[0].text  # type: ignore[union-attr]
 
 
 def test_build_agent_exposes_registered_tools_only_through_request_tools() -> None:

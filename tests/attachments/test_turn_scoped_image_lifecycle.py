@@ -77,14 +77,12 @@ def test_load_attachment_projects_to_rest_of_turn_provider_requests() -> None:
 
     assert loop.run_turn("inspect") == "done"
 
-    loaded = UserMessage(
-        content=(
-            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
-        ),
+    loaded = (
+        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+        ImagePart(attachment),
     )
-    assert provider.requests[1].messages[-1] == loaded
-    assert provider.requests[2].messages[-1] == loaded
+    assert provider.requests[1].messages[-1].content == loaded
+    assert provider.requests[2].messages[-1].content == loaded
 
 
 def test_async_load_attachment_projects_to_rest_of_turn_provider_requests() -> None:
@@ -152,20 +150,18 @@ def test_async_load_attachment_projects_to_rest_of_turn_provider_requests() -> N
     context, provider, attachment = asyncio.run(run())
 
     assert context.snapshot().working_state == {"drawing_info": {"material": "C45"}}
-    loaded = UserMessage(
-        content=(
-            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
-        ),
+    loaded = (
+        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+        ImagePart(attachment),
     )
-    assert provider.requests[1].messages[-1] == loaded
+    assert provider.requests[1].messages[-1].content == loaded
     applied = [
         message
         for message in provider.requests[1].messages
         if getattr(message, "tool_call_id", "") == "call_update"
     ]
     assert len(applied) == 1
-    assert applied[0]["content"] == "context tool update_state applied"
+    assert applied[0].content[0].text == "context tool update_state applied"  # type: ignore[union-attr]
 
 
 def test_next_turn_requires_explicit_load_attachment() -> None:

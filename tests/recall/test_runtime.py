@@ -25,13 +25,13 @@ def test_recall_context_returns_original_messages_without_injecting_window() -> 
         message_runtime=message_runtime,
     ).recall_context("seg_1")
 
-    request = message_runtime.materialize_provider_messages()
+    request = message_runtime.materialize_active()
 
     assert [message.content for message in recalled] == [
         "Original detail",
         "Original answer",
     ]
-    assert [message["content"] for message in request] == ["Current question"]
+    assert [message.content for message in request] == ["Current question"]
     assert message_runtime.store.get(old_user.id).content == "Original detail"
 
 
@@ -54,7 +54,7 @@ def test_recall_context_can_return_same_segment_repeatedly() -> None:
 
     first = recall.recall_context("seg_1")
     second = recall.recall_context("seg_1")
-    request = message_runtime.materialize_provider_messages()
+    request = message_runtime.materialize_active()
 
     assert [message.content for message in first] == [
         "Original detail",
@@ -64,7 +64,7 @@ def test_recall_context_can_return_same_segment_repeatedly() -> None:
         "Original detail",
         "Original answer",
     ]
-    assert [message["content"] for message in request] == ["Current question"]
+    assert [message.content for message in request] == ["Current question"]
 
 
 def test_recall_context_returns_tool_use_and_tool_result_pair() -> None:

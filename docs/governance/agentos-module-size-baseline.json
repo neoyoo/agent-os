@@ -44,7 +44,7 @@
     },
     {
       "path": "src/agentos/observability/instrumented.py",
-      "lines": 1271,
+      "lines": 1273,
       "gate": "no_new_responsibility"
     },
     {
@@ -73,11 +73,6 @@
       "gate": "no_new_responsibility"
     },
     {
-      "path": "src/agentos/runtime/query_loop.py",
-      "lines": 885,
-      "gate": "no_new_responsibility"
-    },
-    {
       "path": "src/agentos/multi/serializers.py",
       "lines": 823,
       "gate": "no_new_responsibility"
@@ -85,6 +80,11 @@
     {
       "path": "src/agentos/runtime/profile.py",
       "lines": 795,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 790,
       "gate": "split_or_exception"
     },
     {
@@ -118,11 +118,6 @@
       "gate": "split_or_exception"
     },
     {
-      "path": "src/agentos/runtime/async_query_loop.py",
-      "lines": 570,
-      "gate": "split_or_exception"
-    },
-    {
       "path": "src/agentos/multi/redis_queue.py",
       "lines": 529,
       "gate": "split_or_exception"
@@ -136,6 +131,11 @@
       "path": "src/agentos/registry/nacos.py",
       "lines": 506,
       "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/runtime/async_query_loop.py",
+      "lines": 496,
+      "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/multi/tasks.py",
@@ -154,7 +154,7 @@
     },
     {
       "path": "src/agentos/examples/small_openai_agent.py",
-      "lines": 441,
+      "lines": 445,
       "gate": "responsibility_review"
     },
     {

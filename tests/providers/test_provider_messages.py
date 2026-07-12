@@ -3,7 +3,8 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
-from agentos.context import ContextRuntime
+from agentos.context import ContextRuntime, ContextSnapshotRenderer
+from agentos.context.projection import project_context_state
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
     AssistantMessage,
@@ -20,6 +21,7 @@ from agentos.providers import (
     provider_tool_spec_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder
+from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -280,7 +282,7 @@ def test_provider_request_bridge_copies_mutable_message_inputs() -> None:
     )
 
 
-def test_provider_request_builder_returns_strong_typed_messages() -> None:
+def test_provider_request_builder_returns_provider_input_items() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
     messages.append_user("hello")
@@ -299,18 +301,24 @@ def test_provider_request_builder_returns_strong_typed_messages() -> None:
         context_renderer=default_context_renderer(),
         message_runtime=messages,
         tools=[],
-    ).build(context)
+        snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
+        context_projections=type(
+            "RuntimeProjectionProvider",
+            (),
+            {"projections": lambda self: project_context_state(context.snapshot())},
+        )(),
+    ).build().request
 
-    assert request.messages == (
-        UserMessage(content="hello"),
-        AssistantMessage(
-            content="need tool",
-            tool_calls=(
-                ProviderToolCall(
-                    id="call_1",
-                    name="read_file",
-                    arguments={"path": "README.md"},
-                ),
-            ),
+    assert [message.kind for message in request.messages] == [
+        "context_snapshot",
+        "business_message",
+        "business_message",
+    ]
+    assert request.messages[1].content[0].text == "hello"  # type: ignore[union-attr]
+    assert request.messages[2].tool_calls == (
+        ProviderToolCall(
+            id="call_1",
+            name="read_file",
+            arguments={"path": "README.md"},
         ),
     )

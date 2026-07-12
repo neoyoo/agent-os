@@ -12,7 +12,6 @@ from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy
 from agentos.providers import FakeProvider
 from agentos.providers import ProviderResponse, ProviderToolCall
-from agentos.providers import provider_message_to_dict
 from agentos.providers import provider_tool_spec_to_dict
 from agentos.runtime import EventBus, TurnStartedEvent
 
@@ -33,9 +32,11 @@ def test_agent_builder_creates_runnable_standard_agent() -> None:
 
     assert isinstance(agent, Agent)
     assert result.content == "Built response."
-    assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
-        {"role": "user", "content": "Build an agent."},
+    assert [message.kind for message in provider.requests[0].messages] == [
+        "context_snapshot",
+        "business_message",
     ]
+    assert provider.requests[0].messages[1].content[0].text == "Build an agent."  # type: ignore[union-attr]
 
 
 def test_agent_builder_wires_attachment_runtime() -> None:
@@ -78,11 +79,9 @@ def test_agent_builder_tools_are_available_only_through_provider_tools() -> None
 
     assert result.content == "Tool result was handled."
     assert "lookup_status" not in provider.requests[0].system
-    assert provider_message_to_dict(provider.requests[1].messages[2]) == {
-        "role": "tool",
-        "content": "tool status: green",
-        "tool_call_id": "call_lookup",
-    }
+    tool_result = provider.requests[1].messages[-1]
+    assert (tool_result.role, tool_result.tool_call_id) == ("tool", "call_lookup")
+    assert tool_result.content[0].text == "tool status: green"  # type: ignore[union-attr]
     assert any(
         provider_tool_spec_to_dict(spec).get("function", {}).get("name")
         == "lookup_status"
@@ -148,11 +147,12 @@ def test_agent_builder_build_async_runs_async_tool_handler() -> None:
 
     assert result.content == "Async tool result was handled."
     assert type(agent.query_loop).__name__ == "AsyncQueryLoop"
-    assert provider_message_to_dict(provider.requests[1].messages[2]) == {
-        "role": "tool",
-        "content": "async tool status: green",
-        "tool_call_id": "call_async_lookup",
-    }
+    tool_result = provider.requests[1].messages[-1]
+    assert (tool_result.role, tool_result.tool_call_id) == (
+        "tool",
+        "call_async_lookup",
+    )
+    assert tool_result.content[0].text == "async tool status: green"  # type: ignore[union-attr]
 
 
 def test_agent_builder_build_async_rejects_sync_run_with_clear_error() -> None:
@@ -240,20 +240,17 @@ def test_agent_builder_wires_recall_context_to_compression_index() -> None:
     result = agent.run("Current task")
 
     assert result.content == "recalled done"
-    assert provider_message_to_dict(provider.requests[2].messages[0]) == {
-        "role": "user",
-        "content": "Current task",
-    }
-    tool_message = provider_message_to_dict(provider.requests[2].messages[-1])
-    assert tool_message == {
-        "role": "tool",
-        "content": tool_message["content"],
-        "tool_call_id": "call_recall",
-    }
-    assert '<recalled-context source="compressed_history" handle="seg_1">' in str(
-        tool_message["content"],
+    assert provider.requests[2].messages[1].content[0].text == "Current task"  # type: ignore[union-attr]
+    tool_message = provider.requests[2].messages[-1]
+    assert (tool_message.role, tool_message.tool_call_id) == (
+        "tool",
+        "call_recall",
     )
-    assert "First detail" in str(tool_message["content"])
+    tool_content = tool_message.content[0].text  # type: ignore[union-attr]
+    assert '<recalled-context source="compressed_history" handle="seg_1">' in str(
+        tool_content,
+    )
+    assert "First detail" in tool_content
 
 
 def test_agent_builder_with_compression_creates_compression_runtime() -> None:
@@ -375,10 +372,7 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
     assert result.content == "router done"
     assert agent.query_loop.tool_call_router is router
     assert "router_tool" not in provider.requests[0].system
-    assert (
-        provider_message_to_dict(provider.requests[1].messages[2])["content"]
-        == "router tool result"
-    )
+    assert provider.requests[1].messages[-1].content[0].text == "router tool result"  # type: ignore[union-attr]
     assert router.attachment_runtime is agent.attachments
 
 

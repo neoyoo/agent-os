@@ -130,7 +130,7 @@ def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> No
     )
     request_span = tracer.records[2]
     assert request_span.attributes["langfuse.observation.type"] == "span"
-    assert request_span.attributes["agentos.provider_request.messages.count"] == 1
+    assert request_span.attributes["agentos.provider_request.messages.count"] == 2
     assert request_span.attributes["agentos.provider_request.tools.count"] >= 1
     generation_span = tracer.records[3]
     assert generation_span.attributes["langfuse.observation.type"] == "generation"

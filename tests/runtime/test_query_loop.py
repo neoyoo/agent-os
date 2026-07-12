@@ -9,8 +9,6 @@ from agentos.providers import (
     FakeProvider,
     ProviderToolCall,
     ProviderResponse,
-    UserMessage,
-    provider_message_to_dict,
 )
 from agentos.policies import BudgetPolicy
 from agentos.recall import RecallRuntime
@@ -49,15 +47,16 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
 
     assert response == "Fake assistant response."
     assert [
-        provider_message_to_dict(message)
-        for message in messages.materialize_provider_messages()
+        (message.role, message.content) for message in messages.materialize_active()
     ] == [
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Fake assistant response."},
+        ("user", "Hello"),
+        ("assistant", "Fake assistant response."),
     ]
-    assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
-        {"role": "user", "content": "Hello"},
+    assert [message.kind for message in provider.requests[0].messages] == [
+        "context_snapshot",
+        "business_message",
     ]
+    assert provider.requests[0].messages[1].content[0].text == "Hello"  # type: ignore[union-attr]
     assert context.snapshot().working_state["task_goal"] == "Run a fake provider loop."
     assert "Run a fake provider loop." not in provider.requests[0].system
 
@@ -86,16 +85,13 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
     loop.run_turn("分析图片", attachments=[attachment])
     loop.run_turn("继续")
 
-    first_user = provider.requests[0].messages[0]
-    second_user = provider.requests[1].messages[0]
-    assert first_user == UserMessage(
-        content=(
-            TextPart("分析图片"),
-            ImagePart(attachment),
-        ),
+    first_user = provider.requests[0].messages[1]
+    second_user = provider.requests[1].messages[1]
+    assert first_user.content == (
+        TextPart("分析图片"),
+        ImagePart(attachment),
     )
-    assert isinstance(second_user.content, str)
-    assert "Attachment att_1" in second_user.content
+    assert "Attachment att_1" in second_user.content[0].text  # type: ignore[union-attr]
 
 
 def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> None:
@@ -147,17 +143,13 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
     result = loop.run_turn("分析图片", attachments=[attachment])
 
     assert result == "inspected"
-    assert provider.requests[0].messages[0] == UserMessage(
-        content=(
-            TextPart("分析图片"),
-            ImagePart(attachment),
-        ),
+    assert provider.requests[0].messages[1].content == (
+        TextPart("分析图片"),
+        ImagePart(attachment),
     )
-    assert provider.requests[1].messages[-1] == UserMessage(
-        content=(
-            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
-        ),
+    assert provider.requests[1].messages[-1].content == (
+        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+        ImagePart(attachment),
     )
 
 
@@ -205,11 +197,9 @@ def test_query_loop_loads_image_through_load_attachment_tool() -> None:
     result = loop.run_turn("再看一下附件")
 
     assert result == "inspected"
-    assert provider.requests[1].messages[-1] == UserMessage(
-        content=(
-            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
-        ),
+    assert provider.requests[1].messages[-1].content == (
+        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+        ImagePart(attachment),
     )
 
 
@@ -275,19 +265,15 @@ def test_query_loop_allows_update_state_batched_with_load_attachment() -> None:
 
     assert result == "inspected"
     assert context.snapshot().working_state == {"drawing_info": {"material": "C45"}}
-    assert provider.requests[1].messages[-1] == UserMessage(
-        content=(
-            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
-        ),
+    assert provider.requests[1].messages[-1].content == (
+        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+        ImagePart(attachment),
     )
-    provider_messages = [
-        provider_message_to_dict(message) for message in provider.requests[1].messages
-    ]
-    assert provider_messages[-3]["tool_call_id"] == "call_load_attachment"
-    assert "rest of the current turn" in str(provider_messages[-3]["content"])
-    assert provider_messages[-2]["tool_call_id"] == "call_update"
-    assert provider_messages[-2]["content"] == "context tool update_state applied"
+    provider_messages = provider.requests[1].messages
+    assert provider_messages[-3].tool_call_id == "call_load_attachment"
+    assert "rest of the current turn" in provider_messages[-3].content[0].text  # type: ignore[union-attr]
+    assert provider_messages[-2].tool_call_id == "call_update"
+    assert provider_messages[-2].content[0].text == "context tool update_state applied"  # type: ignore[union-attr]
 
 
 def test_duplicate_tool_call_returns_suppression_result() -> None:
@@ -339,17 +325,13 @@ def test_duplicate_tool_call_returns_suppression_result() -> None:
 
     assert result == "done"
     assert calls == [{"value": "same"}]
-    provider_messages = [
-        provider_message_to_dict(message) for message in provider.requests[1].messages
-    ]
-    assert provider_messages[-2] == {
-        "role": "tool",
-        "tool_call_id": "call_1",
-        "content": "recorded",
-    }
-    assert provider_messages[-1]["role"] == "tool"
-    assert provider_messages[-1]["tool_call_id"] == "call_2"
-    assert "duplicate tool call ignored" in str(provider_messages[-1]["content"])
+    provider_messages = provider.requests[1].messages
+    assert provider_messages[-2].role == "tool"
+    assert provider_messages[-2].tool_call_id == "call_1"
+    assert provider_messages[-2].content[0].text == "recorded"  # type: ignore[union-attr]
+    assert provider_messages[-1].role == "tool"
+    assert provider_messages[-1].tool_call_id == "call_2"
+    assert "duplicate tool call ignored" in provider_messages[-1].content[0].text  # type: ignore[union-attr]
 
 
 def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
@@ -469,12 +451,8 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
     loop.run_turn("First detail")
     loop.run_turn("Current task")
 
-    assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
-        {"role": "user", "content": "First detail"},
-    ]
-    assert [provider_message_to_dict(message) for message in provider.requests[1].messages] == [
-        {"role": "user", "content": "Current task"},
-    ]
+    assert provider.requests[0].messages[1].content[0].text == "First detail"  # type: ignore[union-attr]
+    assert provider.requests[1].messages[1].content[0].text == "Current task"  # type: ignore[union-attr]
     assert [
         segment.id for segment in context.snapshot().compressed_history
     ] == ["seg_1"]
@@ -487,18 +465,12 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
     recalled_request = loop.build_request()
     next_request = loop.build_request()
 
+    assert [item.kind for item in recalled_request.messages][0] == "context_snapshot"
+    assert [item.kind for item in next_request.messages][0] == "context_snapshot"
     assert [
-        provider_message_to_dict(message)["content"]
-        for message in recalled_request.messages
-    ] == [
-        "Current task",
-        "Second answer.",
-    ]
+        item.content[0].text for item in recalled_request.messages[1:]  # type: ignore[union-attr]
+    ] == ["Current task", "Second answer."]
     assert [
-        provider_message_to_dict(message)["content"]
-        for message in next_request.messages
-    ] == [
-        "Current task",
-        "Second answer.",
-    ]
+        item.content[0].text for item in next_request.messages[1:]  # type: ignore[union-attr]
+    ] == ["Current task", "Second answer."]
 

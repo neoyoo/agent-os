@@ -1,13 +1,48 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import Future
 import threading
 from typing import Generic, TypeVar
 
 
 T = TypeVar("T")
+
+
+async def _await_cleanup_preserving_cancellation(
+    cleanup_factory: Callable[[], Awaitable[None]],
+) -> None:
+    """Finish tracked cleanup before restoring all task cancellations."""
+
+    task = asyncio.current_task()
+    uncancel = getattr(task, "uncancel", None)
+    pending_cancels = 0
+
+    def drain_cancellations() -> None:
+        nonlocal pending_cancels
+        while task is not None and task.cancelling():
+            pending_cancels += 1
+            if callable(uncancel):
+                uncancel()
+            else:
+                break
+
+    cleanup_task = asyncio.create_task(cleanup_factory())
+    try:
+        while not cleanup_task.done():
+            drain_cancellations()
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                continue
+        drain_cancellations()
+        cleanup_task.result()
+    finally:
+        drain_cancellations()
+        if task is not None:
+            for _ in range(pending_cancels):
+                task.cancel()
 
 
 class SyncIteratorAsyncBridge(Generic[T]):
@@ -88,13 +123,20 @@ class SyncIteratorAsyncBridge(Generic[T]):
         future.result()
 
     def _worker(self) -> None:
+        iterator: Iterator[T] | None = None
         try:
-            for event in self._factory():
-                if self._stop_requested.is_set():
-                    break
-                self._put(event)
-                if self._stop_requested.is_set():
-                    break
+            try:
+                iterator = self._factory()
+                for event in iterator:
+                    if self._stop_requested.is_set():
+                        break
+                    self._put(event)
+                    if self._stop_requested.is_set():
+                        break
+            finally:
+                close = getattr(iterator, "close", None)
+                if callable(close):
+                    close()
         except BaseException as error:
             if not self._stop_requested.is_set():
                 self._put(error)
@@ -108,21 +150,9 @@ class SyncIteratorAsyncBridge(Generic[T]):
             await asyncio.shield(self._future)
 
     async def _aclose_from_cancelled_task(self) -> None:
-        """Run close cleanup even though the current task has been cancelled."""
+        """Wait for cooperative worker cleanup despite repeated cancellation."""
 
-        task = asyncio.current_task()
-        uncancel = getattr(task, "uncancel", None)
-        pending_cancels = 0
-        if callable(uncancel):
-            while task is not None and task.cancelling():
-                pending_cancels += 1
-                uncancel()
-        try:
-            await self.aclose()
-        finally:
-            if task is not None:
-                for _ in range(pending_cancels):
-                    task.cancel()
+        await _await_cleanup_preserving_cancellation(self.aclose)
 
 
 def iterate_sync_in_executor(
@@ -131,7 +161,7 @@ def iterate_sync_in_executor(
     on_cancel: Callable[[], None] | None = None,
     before_start: Callable[[asyncio.AbstractEventLoop], None] | None = None,
     after_worker: Callable[[], None] | None = None,
-) -> AsyncIterator[T]:
+) -> SyncIteratorAsyncBridge[T]:
     """在线程池中消费同步 iterator；取消或关闭时等待 worker 收口。"""
 
     return SyncIteratorAsyncBridge(

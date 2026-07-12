@@ -60,7 +60,7 @@ def test_recall_context_query_hydrates_messages_without_injecting_window() -> No
 
     assert [message.id for message in recalled] == ["msg_1", "msg_2"]
     assert messages.store.get("msg_1").content == "读取 pyproject.toml"
-    assert messages.materialize_provider_messages() == []
+    assert messages.materialize_active() == []
 
 
 def test_recall_context_rejects_handle_and_query_together() -> None:

@@ -10,7 +10,6 @@ from agentos.providers import (
     ProviderResponse,
     ProviderToolCall,
     UserMessage,
-    provider_message_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
 from tests._context_protocol_fixtures import default_context_renderer
@@ -122,16 +121,12 @@ def test_before_tool_call_hook_can_deny_tool_execution_and_write_result() -> Non
 
     result = loop.run_turn("use lookup")
 
-    second_request_messages = [
-        provider_message_to_dict(message) for message in provider.requests[1].messages
-    ]
+    second_request_messages = provider.requests[1].messages
     assert result == "final after denied tool"
     assert called == []
-    assert second_request_messages[2] == {
-        "role": "tool",
-        "content": "tool call denied by hook: tool blocked",
-        "tool_call_id": "call_lookup",
-    }
+    tool_result = second_request_messages[-1]
+    assert (tool_result.role, tool_result.tool_call_id) == ("tool", "call_lookup")
+    assert tool_result.content[0].text == "tool call denied by hook: tool blocked"  # type: ignore[union-attr]
 
 
 def test_after_tool_call_hook_observes_result() -> None:

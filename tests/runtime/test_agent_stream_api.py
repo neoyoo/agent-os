@@ -5,7 +5,7 @@ from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
 from agentos import Agent
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderResponse, UserMessage
+from agentos.providers import FakeProvider, ProviderResponse
 from agentos.runtime import EventBus, ProviderRequestBuilder, TurnStartedEvent
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -116,7 +116,7 @@ def test_agent_run_accepts_uploaded_attachments() -> None:
     result = agent.run("分析图片", attachments=[attachment])
 
     assert result.content == "ok"
-    assert provider.requests[0].messages[0].content == (
+    assert provider.requests[0].messages[1].content == (
         TextPart("分析图片"),
         ImagePart(attachment),
     )
@@ -182,7 +182,7 @@ def test_agent_callbacks_accept_uploaded_attachments() -> None:
     result = agent.run_with_callbacks("分析图片", attachments=[attachment])
 
     assert result.content == "ok"
-    assert provider.requests[0].messages[0].content == (
+    assert provider.requests[0].messages[1].content == (
         TextPart("分析图片"),
         ImagePart(attachment),
     )
@@ -233,7 +233,10 @@ def test_agent_continuation_injects_notice_without_user_message() -> None:
     result = agent.run_continuation()
 
     assert result.content == "checked"
-    assert provider.requests[0].messages == ()
+    assert [message.kind for message in provider.requests[0].messages] == [
+        "context_snapshot",
+    ]
+    assert "Task task_1 completed." not in provider.requests[0].messages[0].content[0].text  # type: ignore[union-attr]
     assert "# Runtime Notice" not in provider.requests[0].system
     assert "Task task_1 completed." not in provider.requests[0].system
     assert context.snapshot().runtime_notices == ()
@@ -321,5 +324,7 @@ def test_agent_user_turn_and_continuation_are_serialized() -> None:
 
     assert continuation_result == ["first"]
     assert user_result == ["second"]
-    assert provider.requests[0].messages == ()
-    assert provider.requests[1].messages[-1] == UserMessage(content="hello")
+    assert [message.kind for message in provider.requests[0].messages] == [
+        "context_snapshot",
+    ]
+    assert provider.requests[1].messages[-1].content[0].text == "hello"  # type: ignore[union-attr]

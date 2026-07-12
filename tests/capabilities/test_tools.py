@@ -312,7 +312,7 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     assert '<recalled-context source="compressed_history" handle="seg_1">' in result.content
     assert '<message role="user"' in result.content
     assert "Original detail" in result.content
-    assert [message["content"] for message in messages.materialize_provider_messages()] == [
+    assert [message.content for message in messages.materialize_active()] == [
         "Current task",
     ]
 
@@ -459,5 +459,5 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
     assert result.tool_call_id == "call_recall"
     assert '<recalled-context source="semantic_recall"' in result.content
     assert "pyproject.toml" in result.content
-    assert messages.materialize_provider_messages() == []
+    assert messages.materialize_active() == []
 

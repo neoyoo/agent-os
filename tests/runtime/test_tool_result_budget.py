@@ -5,7 +5,6 @@ from agentos.capabilities import RegisteredTool
 from agentos.events import EventBus, ToolResultCappedEvent
 from agentos.policies import ToolResultBudget
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
-from agentos.providers import provider_message_to_dict
 from agentos.tokens import HeuristicTokenCounter
 
 
@@ -51,12 +50,13 @@ def test_query_loop_caps_oversized_tool_result_before_appending_message() -> Non
     result = agent.run("Use read_large_file.")
 
     assert result.content == "handled capped result"
-    tool_message = provider_message_to_dict(provider.requests[1].messages[2])
-    assert tool_message["role"] == "tool"
-    assert tool_message["tool_call_id"] == "call_read"
-    assert "tool result omitted" in str(tool_message["content"])
-    assert "read_large_file" in str(tool_message["content"])
-    assert "xxxxx" not in str(tool_message["content"])
+    tool_message = provider.requests[1].messages[-1]
+    assert tool_message.role == "tool"
+    assert tool_message.tool_call_id == "call_read"
+    content = tool_message.content[0].text  # type: ignore[union-attr]
+    assert "tool result omitted" in content
+    assert "read_large_file" in content
+    assert "xxxxx" not in content
     assert any(
         isinstance(event, ToolResultCappedEvent)
         and event.tool_name == "read_large_file"
@@ -80,6 +80,7 @@ def test_async_query_loop_caps_oversized_tool_result_before_appending_message() 
     result = asyncio.run(agent.async_run("Use read_large_file."))
 
     assert result.content == "handled capped result"
-    tool_message = provider_message_to_dict(provider.requests[1].messages[2])
-    assert "tool result omitted" in str(tool_message["content"])
-    assert "xxxxx" not in str(tool_message["content"])
+    tool_message = provider.requests[1].messages[-1]
+    content = tool_message.content[0].text  # type: ignore[union-attr]
+    assert "tool result omitted" in content
+    assert "xxxxx" not in content

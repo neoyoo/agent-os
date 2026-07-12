@@ -55,15 +55,15 @@ def test_active_window_enforces_unique_message_ids_at_every_entry() -> None:
         )
 
 
-def test_provider_projection_does_not_consume_temporary_refs() -> None:
+def test_active_snapshot_does_not_consume_temporary_refs() -> None:
     runtime = MessageRuntime()
     recalled = _hydrate_temporary(runtime, "msg_1")
 
-    first = runtime.materialize_provider_messages()
-    second = runtime.materialize_provider_messages()
+    first = runtime.snapshot_active_with_refs()
+    second = runtime.snapshot_active_with_refs()
 
-    assert [message.content for message in first] == [recalled.content]
-    assert [message.content for message in second] == [recalled.content]
+    assert [message.content for _, message in first] == [recalled.content]
+    assert [message.content for _, message in second] == [recalled.content]
     assert runtime.has_temporary_recalled()
 
 

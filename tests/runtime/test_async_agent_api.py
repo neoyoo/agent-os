@@ -347,7 +347,7 @@ def test_agent_async_run_serializes_native_async_turns() -> None:
             request: ProviderRequest,
             options: ProviderStreamOptions,
         ):
-            user_message = str(request.messages[-1].content)
+            user_message = request.messages[-1].content[0].text
             self.active += 1
             self.max_active = max(self.max_active, self.active)
             try:

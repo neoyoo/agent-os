@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from functools import partial
 
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionRuntime
@@ -13,19 +14,19 @@ from agentos.providers import (
     ProviderContentDelta,
     ProviderRequest,
     ProviderResponse,
-    ProviderStreamCancelled,
     ProviderStreamCompleted,
     ProviderStreamEvent,
-    ProviderStreamFailed,
     ProviderStreamOptions,
     ProviderThinkingDelta,
-    complete_response_to_stream_events,
 )
-from agentos.runtime._async_bridge import iterate_sync_in_executor
+from agentos.runtime.async_provider_attempt import (
+    AsyncProviderAttemptRunner,
+    async_provider_stream_events,
+)
+from agentos.runtime.provider_attempt import ensure_provider_response_usable
 from agentos.runtime.event_bus import (
     AssistantMessageAppendedEvent,
     EventBus,
-    ProviderRequestBuiltEvent,
     ProviderResponseReceivedEvent,
     ProviderRetryEvent,
     ToolCallRequestedEvent,
@@ -43,6 +44,7 @@ from agentos.runtime.query_loop import (
     ToolCallRouterBoundary,
     TurnNoticeProvider,
 )
+import agentos.runtime.query_loop_support as query_loop_support
 from agentos.runtime.retry import RetryPolicy
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
@@ -52,7 +54,6 @@ from agentos.runtime.stream_events import (
     ContextLoaded,
     FinalResult,
     PlanUpdated,
-    SkillLoaded,
     RunOptions,
     StatusUpdate,
     ToolStreamCompleted,
@@ -261,40 +262,22 @@ class AsyncQueryLoop:
                 stage="context",
                 message="正在装载会话上下文、工作状态和可用能力。",
             )
-            request = self.sync_loop.build_request()
-            yield ContextLoaded(
-                source="runtime",
-                summary=(
-                    f"已装载 {len(request.messages)} 条消息和 "
-                    f"{len(request.tools)} 个工具声明。"
-                ),
-            )
-            request = self.sync_loop._before_provider_call(request)
-            self.sync_loop._emit(
-                ProviderRequestBuiltEvent(**self.sync_loop._event_context(turn)),
-            )
-            self.sync_loop._log(
-                "provider_call",
-                message_count=len(request.messages),
-                tool_count=len(request.tools),
-            )
-            yield StatusUpdate(
-                stage="model",
-                message="正在请求模型生成下一步响应。",
-            )
             response: ProviderResponse | None = None
-            async for event in self._consume_provider_stream(request, options):
-                if isinstance(event, ProviderResponse):
-                    response = event
-                else:
+            async for event in self._provider_attempt_events(options, turn):
+                if isinstance(event, ProviderContentDelta):
+                    yield AssistantContentDelta(index=event.index, text=event.text)
+                elif isinstance(event, ProviderThinkingDelta):
+                    if options.show_thinking:
+                        yield AssistantThinkingDelta(index=event.index, text=event.text)
+                elif isinstance(event, ProviderStreamCompleted):
+                    response = event.response
+                elif isinstance(event, (ContextLoaded, StatusUpdate)):
                     yield event
             if response is None:
                 raise RuntimeError("provider stream ended without completion event")
-            response = self.sync_loop._after_provider_call(request, response)
             self.sync_loop._emit(
                 ProviderResponseReceivedEvent(**self.sync_loop._event_context(turn)),
             )
-            self.sync_loop._ensure_provider_response_usable(response)
             tool_calls = [
                 ToolCall(
                     id=tool_call.id,
@@ -359,7 +342,7 @@ class AsyncQueryLoop:
                     ),
                 )
                 try:
-                    duplicate_result = self.sync_loop._duplicate_tool_call_result(
+                    duplicate_result = query_loop_support.duplicate_tool_call_result(
                         tool_call,
                         applied_tool_signatures,
                     )
@@ -373,7 +356,7 @@ class AsyncQueryLoop:
                             result = await self._execute_tool_call(tool_call)
                         result = self.sync_loop._after_tool_call(tool_call, result)
                         applied_tool_signatures.add(
-                            self.sync_loop._tool_call_signature(tool_call),
+                            query_loop_support.tool_call_signature(tool_call),
                         )
                 except Exception as error:
                     self.message_runtime.active_window.remove_refs(
@@ -412,7 +395,7 @@ class AsyncQueryLoop:
                     tool_call_id=tool_call.id,
                     content=result.content,
                 )
-                skill_event = self._skill_loaded_event(tool_call, result)
+                skill_event = query_loop_support.skill_loaded_event(tool_call, result)
                 if skill_event is not None:
                     yield skill_event
                 yield StatusUpdate(
@@ -420,33 +403,6 @@ class AsyncQueryLoop:
                     message=f"已读取 `{tool_call.name}` 的结果，继续推理。",
                     detail=tool_call.id,
                 )
-
-    def _skill_loaded_event(
-        self,
-        tool_call: object,
-        result: ToolExecutionResult,
-    ) -> SkillLoaded | None:
-        """把 skill loader 工具结果提升为用户可见事件。"""
-
-        tool_name = str(getattr(tool_call, "name", ""))
-        if tool_name not in {"load_skill", "load_skill_resource"}:
-            return None
-        arguments = getattr(tool_call, "arguments", {})
-        skill_name = str(
-            arguments.get("skill_name")
-            or arguments.get("name")
-            or arguments.get("skill")
-            or "unknown",
-        )
-        resource = arguments.get("resource")
-        if resource is None:
-            resource = arguments.get("path")
-        summary = result.content.strip().splitlines()[0] if result.content.strip() else None
-        return SkillLoaded(
-            skill_name=skill_name,
-            resource=None if resource is None else str(resource),
-            summary=summary,
-        )
 
     async def _execute_tool_call(self, tool_call: object) -> ToolExecutionResult:
         if self.tool_call_router is None:
@@ -459,111 +415,81 @@ class AsyncQueryLoop:
             return await asyncio.to_thread(execute, tool_call)
         raise RuntimeError("tool call router must define execute_tool_call()")
 
-    async def _consume_provider_stream(
+    async def _provider_attempt_events(
         self,
-        request: ProviderRequest,
         options: RunOptions,
-    ) -> AsyncIterator[TurnStreamEvent | ProviderResponse]:
-        provider_options = ProviderStreamOptions(
-            thinking=options.thinking,
-            show_thinking=options.show_thinking,
+        turn: TurnState | None,
+    ) -> AsyncIterator[ProviderStreamEvent | ContextLoaded | StatusUpdate]:
+        """运行一次可 retry 的异步 Provider attempt 序列。"""
+
+        prepared_request: ProviderRequest | None = None
+
+        def prepare(request: ProviderRequest) -> ProviderRequest:
+            nonlocal prepared_request
+            prepared_request = self.sync_loop._prepare_provider_call(request, turn)
+            return prepared_request
+
+        runner = AsyncProviderAttemptRunner(
+            request_factory=self.sync_loop._build_request,
+            stream_provider=partial(
+                async_provider_stream_events,
+                self.provider,
+                request_id_factory=self.sync_loop._next_provider_stream_request_id,
+            ),
+            before_call=prepare,
+            after_call=self.sync_loop._after_provider_call,
+            ensure_usable=ensure_provider_response_usable,
+            consume_temporary=self.message_runtime.consume_temporary_refs,
+            retry_policy=self.retry_policy,
+            on_retry=self._on_provider_retry,
         )
-        policy = self.retry_policy
-        if policy is not None:
-            policy.raise_if_open()
-        attempt = 0
-        while True:
-            emitted_visible_delta = False
-            try:
-                async for event in self._provider_stream_events(
-                    request,
-                    provider_options,
-                ):
-                    if isinstance(event, ProviderContentDelta):
-                        emitted_visible_delta = True
-                        yield AssistantContentDelta(index=event.index, text=event.text)
-                    elif isinstance(event, ProviderThinkingDelta):
-                        if options.show_thinking:
-                            emitted_visible_delta = True
-                            yield AssistantThinkingDelta(
-                                index=event.index,
-                                text=event.text,
-                            )
-                    elif isinstance(event, ProviderStreamCompleted):
-                        yield event.response
-                    elif isinstance(event, ProviderStreamFailed):
-                        raise event.error
-                    elif isinstance(event, ProviderStreamCancelled):
-                        raise RuntimeError(
-                            event.reason or "provider stream was cancelled",
-                        )
-                if policy is not None:
-                    policy.record_success()
-                break
-            except Exception as error:
-                attempt += 1
-                if (
-                    emitted_visible_delta
-                    or policy is None
-                    or not policy.should_retry(error, attempt)
-                ):
-                    if policy is not None:
-                        policy.record_failure()
-                    raise
-                delay = policy.delay_for_attempt(attempt)
-                self.sync_loop._emit(
-                    ProviderRetryEvent(
-                        attempt=attempt,
-                        max_retries=policy.max_retries,
-                        error=str(error),
-                        delay_seconds=delay,
-                        **self.sync_loop._event_context(None),
+        events = runner.run_stream(
+            ProviderStreamOptions(
+                thinking=options.thinking,
+                show_thinking=options.show_thinking,
+            ),
+        )
+        announced = False
+        async for event in events:
+            if not announced:
+                if prepared_request is None:
+                    raise RuntimeError("provider attempt did not prepare a request")
+                yield ContextLoaded(
+                    source="runtime",
+                    summary=(
+                        f"已装载 {len(prepared_request.messages)} 条消息和 "
+                        f"{len(prepared_request.tools)} 个工具声明。"
                     ),
                 )
-                self.sync_loop._log(
-                    "provider_retry",
-                    attempt=attempt,
-                    max_retries=policy.max_retries,
-                    error=str(error),
-                    delay_seconds=delay,
+                yield StatusUpdate(
+                    stage="model",
+                    message="正在请求模型生成下一步响应。",
                 )
-                await asyncio.to_thread(policy.sleep, delay)
-
-    async def _provider_stream_events(
-        self,
-        request: ProviderRequest,
-        options: ProviderStreamOptions,
-    ) -> AsyncIterator[ProviderStreamEvent]:
-        async_stream = getattr(self.provider, "async_stream", None)
-        if callable(async_stream):
-            async for event in async_stream(request, options):
-                yield event
-            return
-
-        async_complete = getattr(self.provider, "async_complete", None)
-        if callable(async_complete):
-            response = await async_complete(request)
-            for event in complete_response_to_stream_events(
-                request_id=self.sync_loop._next_provider_stream_request_id(),
-                response=response,
-                options=options,
-            ):
-                yield event
-            return
-
-        stream = getattr(self.provider, "stream", None)
-        if callable(stream):
-            async for event in iterate_sync_in_executor(lambda: stream(request, options)):
-                yield event
-            return
-
-        response = await asyncio.to_thread(self.provider.complete, request)
-        for event in complete_response_to_stream_events(
-            request_id=self.sync_loop._next_provider_stream_request_id(),
-            response=response,
-            options=options,
-        ):
+                announced = True
             yield event
+
+    async def _on_provider_retry(self, attempt: int, error: Exception) -> None:
+        policy = self.retry_policy
+        if policy is None:
+            raise RuntimeError("provider retry policy is missing")
+        delay = policy.delay_for_attempt(attempt)
+        self.sync_loop._emit(
+            ProviderRetryEvent(
+                attempt=attempt,
+                max_retries=policy.max_retries,
+                error=str(error),
+                delay_seconds=delay,
+                **self.sync_loop._event_context(None),
+            ),
+        )
+        self.sync_loop._log(
+            "provider_retry",
+            attempt=attempt,
+            max_retries=policy.max_retries,
+            error=str(error),
+            delay_seconds=delay,
+        )
+        await asyncio.to_thread(policy.sleep, delay)
 
     def _raise_if_interrupted(self) -> None:
         if self._interrupted:

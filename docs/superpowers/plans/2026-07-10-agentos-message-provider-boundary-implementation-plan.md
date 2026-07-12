@@ -795,6 +795,50 @@ git commit -m "refactor: accept provider input items in adapters"
 - Create: `tests/runtime/test_provider_attempt_rebuild.py`
 - Create: `tests/runtime/test_async_provider_attempt_rebuild.py`
 
+#### 2026-07-12 Execution Amendment: build consumers and resource ownership
+
+Task 7 的原子切换要求现有 Request Builder 消费者保持 Green，并在 async Loop 使用同步 Provider fallback 时建立确定的 iterator 资源所有权。除上述核心文件外，本任务扩展为以下精确范围：
+
+- Create: `src/agentos/runtime/provider_attempt_state.py`
+- Create: `src/agentos/runtime/query_loop_support.py`
+- Modify: `src/agentos/runtime/_async_bridge.py`
+- Create: `src/agentos/providers/input_serialization.py`
+- Modify: `src/agentos/observability/instrumented.py`
+- Modify: `src/agentos/observability/snapshots.py`
+- Modify: `src/agentos/examples/small_openai_agent.py`
+- Modify: `docs/governance/agentos-module-size-baseline.json`
+- Modify: `tests/attachments/test_turn_scoped_image_lifecycle.py`
+- Modify: `tests/capabilities/test_tools.py`
+- Modify: `tests/examples/test_small_openai_agent.py`
+- Modify: `tests/messages/test_temporary_recall_lifecycle.py`
+- Modify: `tests/multi/test_continuation.py`
+- Modify: `tests/observability/test_query_loop_instrumentation.py`
+- Modify: `tests/providers/test_provider_messages.py`
+- Modify: `tests/recall/test_query_recall.py`
+- Modify: `tests/recall/test_runtime.py`
+- Modify: `tests/runtime/test_agent_builder.py`
+- Modify: `tests/runtime/test_agent_stream_api.py`
+- Modify: `tests/runtime/test_async_agent_api.py`
+- Modify: `tests/runtime/test_async_bridge_nested_cancel.py`
+- Modify: `tests/runtime/test_async_query_loop_native.py`
+- Modify: `tests/runtime/test_provider_request_builder.py`
+- Modify: `tests/runtime/test_provider_request_rebuild.py`
+- Modify: `tests/runtime/test_query_loop.py`
+- Modify: `tests/runtime/test_query_loop_boundaries.py`
+- Modify: `tests/runtime/test_query_loop_hooks.py`
+- Modify: `tests/runtime/test_session_recovery.py`
+- Modify: `tests/runtime/test_skill_mcp_tool_loop.py`
+- Modify: `tests/runtime/test_streaming_query_loop.py`
+- Modify: `tests/runtime/test_streaming_tool_loop.py`
+- Modify: `tests/runtime/test_tool_loop.py`
+- Modify: `tests/runtime/test_tool_result_budget.py`
+
+`input_serialization.py` 只承接 `ProviderInputItem` 的 JSON-safe 观测序列化，Observability 和 example 只做新 build contract 的消费适配；不得把 capture policy、业务消息真值或 Provider payload 组装迁入该模块。治理基线只记录本任务经批准的模块拆分结果。外围测试只允许机械适配不可变 Request、ProviderInputItem 和 attempt 时序，不改变 Attachment、Capability、Continuation、Recall 或 Tool 的业务语义。
+
+`_async_bridge.py` 是同步 iterator factory 返回值的唯一资源 Owner：early exit、late-event error 和 cancellation 都必须等待 worker 在 `next()`/`close()` 安全点收口并执行 iterator `close()`/generator `finally`。同步阻塞 Provider 使用 cooperative cancellation；Runtime 不阻塞 event loop，但在 Provider 到达安全点前也不得让 worker 后台逃逸。同步 bridge cleanup 与 native async stream `aclose()` 共享同一个 cancellation-preserving tracked cleanup 原语；重复 cancellation 必须由 cleanup task 吸收，cleanup 完成后再恢复原 cancellation count。
+
+本 amendment 不授权新增领域能力或 Public API，只补齐原子 build contract 迁移所需的消费者适配、模块规模治理和资源生命周期责任。任何超出上述路径或责任的修改必须拆分到后续任务。
+
 - [ ] **Step 1: 写 retry fresh request 和 temporary 成功消费 Red 测试**
 
 ```python
@@ -895,13 +939,14 @@ class AsyncProviderAttemptRunner:
 
 ```powershell
 python -m pytest tests/runtime/test_provider_attempt_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py tests/runtime/test_provider_retry.py tests/runtime/test_streaming_query_loop.py tests/runtime/test_async_query_loop_native.py tests/runtime/test_query_loop.py -q
+python -m pytest tests/runtime/test_async_bridge_nested_cancel.py tests/runtime/test_async_agent_api.py tests/observability/test_instrumented_provider.py tests/examples/test_small_openai_agent.py tests/architecture/test_module_size_baseline.py -q
 Get-ChildItem src/agentos/runtime/query_loop.py,src/agentos/runtime/async_query_loop.py | ForEach-Object { "{0}: {1}" -f $_.Name,(Get-Content -Encoding utf8 $_).Count }
 ```
 
 - [ ] **Step 5: 提交**
 
 ```powershell
-git add -- src/agentos/runtime/provider_attempt.py src/agentos/runtime/async_provider_attempt.py src/agentos/runtime/provider_request_builder.py src/agentos/runtime/query_loop.py src/agentos/runtime/async_query_loop.py src/agentos/messages/runtime.py src/agentos/messages/_migration.py tests/messages/test_runtime.py tests/runtime/test_provider_attempt_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py
+git add -- docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md docs/governance/agentos-module-size-baseline.json src/agentos/runtime/_async_bridge.py src/agentos/runtime/provider_attempt.py src/agentos/runtime/async_provider_attempt.py src/agentos/runtime/provider_attempt_state.py src/agentos/runtime/provider_request_builder.py src/agentos/runtime/query_loop_support.py src/agentos/runtime/query_loop.py src/agentos/runtime/async_query_loop.py src/agentos/providers/input_serialization.py src/agentos/observability/instrumented.py src/agentos/observability/snapshots.py src/agentos/examples/small_openai_agent.py src/agentos/messages/runtime.py src/agentos/messages/_migration.py tests/attachments/test_turn_scoped_image_lifecycle.py tests/capabilities/test_tools.py tests/examples/test_small_openai_agent.py tests/messages/test_runtime.py tests/messages/test_temporary_recall_lifecycle.py tests/multi/test_continuation.py tests/observability/test_query_loop_instrumentation.py tests/providers/test_provider_messages.py tests/recall/test_query_recall.py tests/recall/test_runtime.py tests/runtime/test_agent_builder.py tests/runtime/test_agent_stream_api.py tests/runtime/test_async_agent_api.py tests/runtime/test_async_bridge_nested_cancel.py tests/runtime/test_async_query_loop_native.py tests/runtime/test_provider_attempt_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_query_loop.py tests/runtime/test_query_loop_boundaries.py tests/runtime/test_query_loop_hooks.py tests/runtime/test_session_recovery.py tests/runtime/test_skill_mcp_tool_loop.py tests/runtime/test_streaming_query_loop.py tests/runtime/test_streaming_tool_loop.py tests/runtime/test_tool_loop.py tests/runtime/test_tool_result_budget.py
 git commit -m "refactor: rebuild requests for every provider attempt"
 ```
 

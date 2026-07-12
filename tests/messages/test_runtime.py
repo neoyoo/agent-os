@@ -8,7 +8,6 @@ from agentos.messages import (
     ToolCall,
     ToolPairWindowError,
 )
-from agentos.providers import provider_message_to_dict
 
 
 def test_message_runtime_appends_original_messages_and_active_refs() -> None:
@@ -25,18 +24,14 @@ def test_message_runtime_appends_original_messages_and_active_refs() -> None:
     ]
 
 
-def test_active_messages_materialize_provider_shape() -> None:
+def test_active_messages_materialize_stored_truth() -> None:
     runtime = MessageRuntime()
     runtime.append_user("Hello")
     runtime.append_assistant("Hi")
 
     assert [
-        provider_message_to_dict(message)
-        for message in runtime.materialize_provider_messages()
-    ] == [
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi"},
-    ]
+        (message.role, message.content) for message in runtime.materialize_active()
+    ] == [("user", "Hello"), ("assistant", "Hi")]
 
 
 def test_message_store_public_operations_use_stored_message_truth() -> None:
@@ -60,7 +55,7 @@ def test_tool_call_provider_dict_deep_copies_arguments() -> None:
     assert provider_dict["arguments"] == {"path": {"value": "pyproject.toml"}}
 
 
-def test_provider_projection_keeps_nested_tool_arguments_frozen() -> None:
+def test_message_runtime_keeps_nested_tool_arguments_frozen() -> None:
     runtime = MessageRuntime()
     runtime.append_assistant(
         "",
@@ -73,8 +68,7 @@ def test_provider_projection_keeps_nested_tool_arguments_frozen() -> None:
         ],
     )
 
-    projected = runtime.materialize_provider_messages()
-    arguments = projected[0].tool_calls[0].arguments
+    arguments = runtime.materialize_active()[0].tool_calls[0].arguments
 
     assert isinstance(arguments, FrozenJsonObject)
     assert thaw_json(arguments) == {"filters": {"tags": ["phase2"]}}

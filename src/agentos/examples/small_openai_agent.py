@@ -29,6 +29,8 @@ from agentos.providers import (
     provider_message_to_dict,
     provider_tool_spec_to_dict,
 )
+from agentos.providers.input import ProviderInputItem
+from agentos.providers.input_serialization import provider_input_to_dict
 from agentos.runtime import (
     AssistantContentDelta,
     EventBus,
@@ -271,6 +273,8 @@ def _json_default(value: object) -> object:
 
     if isinstance(value, ProviderToolSpec):
         return provider_tool_spec_to_dict(value)
+    if isinstance(value, ProviderInputItem):
+        return provider_input_to_dict(value)
     try:
         return provider_message_to_dict(value)  # type: ignore[arg-type]
     except TypeError:

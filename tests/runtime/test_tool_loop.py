@@ -9,7 +9,6 @@ from agentos.providers import (
     FakeProvider,
     ProviderResponse,
     ProviderToolCall,
-    provider_message_to_dict,
 )
 from agentos.runtime import (
     AssistantMessageAppendedEvent,
@@ -72,26 +71,21 @@ def test_small_agent_reads_project_file_with_tool_call_loop() -> None:
 
     assert answer == "项目名是 agent-os。"
     assert provider.requests[0].tools == tuple(capabilities.tool_specs())
-    assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
-        {"role": "user", "content": "读取 pyproject.toml 里的项目名"},
-    ]
-    second_request_messages = [
-        provider_message_to_dict(message) for message in provider.requests[1].messages
-    ]
-    assert second_request_messages[0] == {
-        "role": "user",
-        "content": "读取 pyproject.toml 里的项目名",
-    }
-    assert second_request_messages[1]["tool_calls"] == [
-        {
-            "id": "call_read",
-            "name": "read_file",
-            "arguments": {"path": "pyproject.toml"},
-        },
-    ]
-    assert second_request_messages[2]["role"] == "tool"
-    assert second_request_messages[2]["tool_call_id"] == "call_read"
-    assert 'name = "agent-os"' in str(second_request_messages[2]["content"])
+    assert provider.requests[0].messages[1].content[0].text == (  # type: ignore[union-attr]
+        "读取 pyproject.toml 里的项目名"
+    )
+    second_request_messages = provider.requests[1].messages
+    assert second_request_messages[1].content[0].text == (  # type: ignore[union-attr]
+        "读取 pyproject.toml 里的项目名"
+    )
+    assert second_request_messages[2].tool_calls[0] == ProviderToolCall(
+        id="call_read",
+        name="read_file",
+        arguments={"path": "pyproject.toml"},
+    )
+    assert second_request_messages[3].role == "tool"
+    assert second_request_messages[3].tool_call_id == "call_read"
+    assert 'name = "agent-os"' in second_request_messages[3].content[0].text  # type: ignore[union-attr]
 
     event_classes = [event.__class__ for event in event_bus.events]
     assert event_classes == [
@@ -155,8 +149,5 @@ def test_query_loop_rolls_back_active_assistant_tool_call_when_tool_is_denied(tm
         raise AssertionError("Expected SecurityPolicyError")
 
     assert [
-        provider_message_to_dict(message)
-        for message in messages.materialize_provider_messages()
-    ] == [
-        {"role": "user", "content": "读取 pyproject.toml"},
-    ]
+        (message.role, message.content) for message in messages.materialize_active()
+    ] == [("user", "读取 pyproject.toml")]

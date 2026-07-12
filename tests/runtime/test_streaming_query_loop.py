@@ -75,10 +75,9 @@ def test_query_loop_streams_content_and_completes_turn() -> None:
     assert isinstance(events[7], AssistantCompleted)
     assert events[8] == FinalResult(content="hello")
     assert isinstance(events[-1], TurnStreamCompleted)
-    assert messages.materialize_provider_messages() == [
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": "hello"},
-    ]
+    assert [
+        (message.role, message.content) for message in messages.materialize_active()
+    ] == [("user", "hi"), ("assistant", "hello")]
 
 
 class LiveDeltaProvider:
@@ -92,6 +91,21 @@ class LiveDeltaProvider:
         yield ProviderStreamCompleted(
             request_id="live",
             response=ProviderResponse(content="hel", stop_reason="stop"),
+            stop_reason="stop",
+        )
+
+
+class RecordsFirstRequestProvider:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def stream(self, request, options=None):
+        del options
+        self.requests.append(request)
+        yield ProviderStreamStarted(request_id="recorded")
+        yield ProviderStreamCompleted(
+            request_id="recorded",
+            response=ProviderResponse(content="done", stop_reason="stop"),
             stop_reason="stop",
         )
 
@@ -163,6 +177,29 @@ def test_query_loop_yields_content_delta_before_provider_stream_completes() -> N
 
     assert list(events)[-1] == TurnStreamCompleted(content="hel")
     assert provider.resumed_after_content_delta is True
+
+
+def test_first_provider_attempt_build_has_no_external_yield_before_call() -> None:
+    messages = MessageRuntime()
+    provider = RecordsFirstRequestProvider()
+    loop = build_loop(provider, messages)  # type: ignore[arg-type]
+    events = loop.run_turn_stream("hi")
+
+    assert isinstance(next(events), TurnStreamStarted)
+    assert isinstance(next(events), StatusUpdate)
+    assert isinstance(next(events), PlanUpdated)
+    assert isinstance(next(events), StatusUpdate)
+    messages.append_user("state added before the physical call")
+
+    assert isinstance(next(events), ContextLoaded)
+    assert len(provider.requests) == 1
+    assert [
+        item.content[0].text  # type: ignore[union-attr]
+        for item in provider.requests[0].messages
+        if item.kind == "business_message"
+    ] == ["hi", "state added before the physical call"]
+
+    assert list(events)[-1] == TurnStreamCompleted(content="done")
 
 
 def test_query_loop_does_not_retry_after_streaming_visible_delta() -> None:

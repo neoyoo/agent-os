@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agentos.context import ContextRuntime, ContextSnapshotRenderer, SystemEnvelope
+from agentos.context import ContextSnapshotRenderer, ContextState, SystemEnvelope
 from agentos.context.models import ContextSlotProjection
+from agentos.context.projection import project_context_state
 from agentos.messages import MessageRuntime
 from agentos.providers import ProviderInputItem, ProviderRequest, ProviderToolSpec
 from agentos.runtime.message_projection import project_stored_message
+from agentos.tokens import TokenCounter
 
 
 class SystemEnvelopeRenderer(Protocol):
@@ -20,6 +22,21 @@ class ContextProjectionProvider(Protocol):
 
     def projections(self) -> tuple[ContextSlotProjection, ...]:
         """返回当前权威状态生成的不可变投影。"""
+
+
+class ContextStateSource(Protocol):
+    """提供 Provider request 所需的权威 context 快照。"""
+
+    def snapshot(self) -> ContextState:
+        """返回当前不可变 ContextState 快照。"""
+
+
+@dataclass(frozen=True, slots=True)
+class _ContextRuntimeProjectionProvider:
+    source: ContextStateSource
+
+    def projections(self) -> tuple[ContextSlotProjection, ...]:
+        return project_context_state(self.source.snapshot())
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,34 +80,50 @@ class ProviderRequestBuilder:
     attachment_runtime: object | None = None
     snapshot_renderer: ContextSnapshotRenderer | None = None
     context_projections: ContextProjectionProvider | None = None
+    _bound_context_source: ContextStateSource | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _bound_token_counter: TokenCounter | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
-    def build(self, context_runtime: ContextRuntime) -> ProviderRequest:
-        """构造请求；Phase 1 保留参数形状，Phase 2 再消费动态 context。"""
+    def _bind_context_source(
+        self,
+        source: ContextStateSource,
+        token_counter: TokenCounter,
+    ) -> None:
+        """Task 13 前为未接线 builder 绑定唯一的 context 投影来源。"""
 
-        messages = self.message_runtime.materialize_provider_messages()
-        if self.attachment_runtime is not None:
-            project_provider_messages = getattr(
-                self.attachment_runtime,
-                "project_provider_messages",
-                None,
-            )
-            if not callable(project_provider_messages):
+        if self._bound_context_source is not None:
+            if (
+                self._bound_context_source is not source
+                or self._bound_token_counter is not token_counter
+            ):
                 raise RuntimeError(
-                    "attachment_runtime must define project_provider_messages()",
+                    "provider request builder is already bound to another context source",
                 )
-            messages = project_provider_messages(messages)
-        return ProviderRequest(
-            system=self.context_renderer.render().text,
-            messages=messages,
-            tools=list(self.tools),
-        )
+            return
+        if self.snapshot_renderer is not None and self.context_projections is not None:
+            return
+        if self.snapshot_renderer is not None or self.context_projections is not None:
+            raise RuntimeError(
+                "provider request builder context projection is partially configured",
+            )
+        self.snapshot_renderer = ContextSnapshotRenderer(token_counter)
+        self.context_projections = _ContextRuntimeProjectionProvider(source)
+        self._bound_context_source = source
+        self._bound_token_counter = token_counter
 
-    def build_with_receipt(self) -> ProviderRequestBuild:
+    def build(self) -> ProviderRequestBuild:
         """从当前权威状态重新组装双平面请求及临时消息回执。"""
 
         if self.snapshot_renderer is None or self.context_projections is None:
             raise RuntimeError(
-                "build_with_receipt requires snapshot renderer and context projections",
+                "build requires snapshot renderer and context projections",
             )
         envelope = self.context_renderer.render()
         snapshot = self.snapshot_renderer.render(

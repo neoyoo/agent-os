@@ -9,6 +9,7 @@ from agentos._frozen_json import thaw_json
 from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy, default_redactor
 from agentos.providers import (
+    ProviderInputItem,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
@@ -16,6 +17,7 @@ from agentos.providers import (
     provider_message_to_dict,
     provider_tool_spec_to_dict,
 )
+from agentos.providers.input_serialization import provider_input_to_dict
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +91,7 @@ def build_provider_request_snapshot(
 ) -> ProviderRequestSnapshot:
     """基于 capture policy 构造 ProviderRequestSnapshot。"""
 
+    messages = [_provider_input_to_dict(message) for message in request.messages]
     return ProviderRequestSnapshot(
         system=(
             _captured_string(request.system, policy)
@@ -97,7 +100,7 @@ def build_provider_request_snapshot(
         ),
         messages=(
             _captured_dicts(
-                [provider_message_to_dict(message) for message in request.messages],
+                messages,
                 policy,
             )
             if policy.capture_messages
@@ -116,7 +119,7 @@ def build_provider_request_snapshot(
         tool_count=len(request.tools),
         system_sha256=stable_sha256(request.system),
         messages_sha256=stable_sha256(
-            [provider_message_to_dict(message) for message in request.messages],
+            messages,
         ),
         tools_sha256=stable_sha256(
             [provider_tool_spec_to_dict(tool) for tool in request.tools],
@@ -175,6 +178,14 @@ def build_tool_call_snapshot(
         ),
         arguments_sha256=stable_sha256(arguments),
     )
+
+
+def _provider_input_to_dict(item: object) -> dict[str, object]:
+    """把逻辑 Provider 输入转换为脱敏、JSON-safe 的观测形态。"""
+
+    if not isinstance(item, ProviderInputItem):
+        return provider_message_to_dict(item)  # type: ignore[arg-type]
+    return provider_input_to_dict(item)
 
 
 def build_tool_result_snapshot(

@@ -7,7 +7,6 @@ from agentos.providers import (
     FakeProvider,
     ProviderResponse,
     ProviderToolCall,
-    provider_message_to_dict,
 )
 from agentos.runtime import (
     ProviderRequestBuilder,
@@ -63,6 +62,6 @@ def test_streaming_query_loop_executes_tool_and_continues(tmp_path: Path) -> Non
     ) in events
     assert any(isinstance(event, ToolStreamCompleted) for event in events)
     assert events[-1] == TurnStreamCompleted(content="项目名是 agent-os。")
-    tool_result = provider_message_to_dict(provider.requests[1].messages[-1])
-    assert tool_result["role"] == "tool"
-    assert 'name = "agent-os"' in str(tool_result["content"])
+    tool_result = provider.requests[1].messages[-1]
+    assert tool_result.role == "tool"
+    assert 'name = "agent-os"' in tool_result.content[0].text  # type: ignore[union-attr]

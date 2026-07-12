@@ -1,3 +1,4 @@
+import inspect
 from typing import get_type_hints
 
 from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
@@ -5,16 +6,18 @@ from agentos.builder import AgentBuilder
 from agentos.context import (
     ContextRenderer,
     ContextRuntime,
+    ContextSnapshotRenderer,
     WorkingStateField,
 )
 from agentos.context.models import SystemEnvelope
-from agentos.context.projection import default_system_section_registry
+from agentos.context.projection import (
+    default_system_section_registry,
+    project_context_state,
+)
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     ProviderFunctionSpec,
     ProviderToolSpec,
-    UserMessage,
-    provider_message_to_dict,
 )
 from agentos.runtime import ProviderRequestBuilder
 from agentos.tokens import HeuristicTokenCounter
@@ -41,20 +44,52 @@ class DeferredContextRuntime:
         raise AssertionError("Phase 1 must not read dynamic context state")
 
 
+class EmptyProjectionProvider:
+    def projections(self):  # type: ignore[no-untyped-def]
+        return ()
+
+
+class RuntimeProjectionProvider:
+    def __init__(self, runtime: ContextRuntime) -> None:
+        self.runtime = runtime
+
+    def projections(self):  # type: ignore[no-untyped-def]
+        return project_context_state(self.runtime.snapshot())
+
+
+def _configured_builder(
+    *,
+    renderer: object,
+    messages: MessageRuntime,
+    context: ContextRuntime | None = None,
+    tools: list[ProviderToolSpec] | None = None,
+    attachments: AttachmentRuntime | None = None,
+) -> ProviderRequestBuilder:
+    return ProviderRequestBuilder(
+        context_renderer=renderer,  # type: ignore[arg-type]
+        message_runtime=messages,
+        tools=[] if tools is None else tools,
+        attachment_runtime=attachments,
+        snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
+        context_projections=(
+            EmptyProjectionProvider()
+            if context is None
+            else RuntimeProjectionProvider(context)
+        ),
+    )
+
+
 def test_renderer_injection_boundaries_share_protocol() -> None:
     from agentos.runtime.provider_request_builder import SystemEnvelopeRenderer
 
-    assert (
-        get_type_hints(ProviderRequestBuilder)["context_renderer"]
-        is SystemEnvelopeRenderer
+    assert get_type_hints(ProviderRequestBuilder)["context_renderer"] is (
+        SystemEnvelopeRenderer
     )
-    assert (
-        get_type_hints(AgentBuilder.context_renderer)["renderer"]
-        is SystemEnvelopeRenderer
+    assert get_type_hints(AgentBuilder.context_renderer)["renderer"] is (
+        SystemEnvelopeRenderer
     )
-    assert (
-        get_type_hints(ProviderRequestBuilder.build)["context_runtime"]
-        is ContextRuntime
+    assert tuple(inspect.signature(ProviderRequestBuilder.build).parameters) == (
+        "self",
     )
 
 
@@ -63,16 +98,18 @@ def test_provider_request_builder_calls_renderer_without_dynamic_state() -> None
     messages = MessageRuntime()
     messages.append_user("Please build it.")
 
-    request = ProviderRequestBuilder(
-        context_renderer=renderer,
-        message_runtime=messages,
-    ).build(DeferredContextRuntime())  # type: ignore[arg-type]
+    request = _configured_builder(
+        renderer=renderer,
+        messages=messages,
+    ).build().request
 
     assert renderer.calls == 1
     assert request.system == "# Runtime Contract\n\nTrusted only.\n"
-    assert [provider_message_to_dict(message) for message in request.messages] == [
-        {"role": "user", "content": "Please build it."},
+    assert [message.kind for message in request.messages] == [
+        "context_snapshot",
+        "business_message",
     ]
+    assert request.messages[1].content[0].text == "Please build it."  # type: ignore[union-attr]
 
 
 def test_provider_request_system_contains_no_working_state() -> None:
@@ -88,10 +125,11 @@ def test_provider_request_system_contains_no_working_state() -> None:
     )
     context.update_state("task_goal", "secret-dynamic-value")
 
-    request = ProviderRequestBuilder(
-        context_renderer=_default_renderer(),
-        message_runtime=MessageRuntime(),
-    ).build(context)
+    request = _configured_builder(
+        renderer=_default_renderer(),
+        messages=MessageRuntime(),
+        context=context,
+    ).build().request
 
     assert isinstance(request.system, str)
     assert "# Runtime Contract" in request.system
@@ -110,11 +148,11 @@ def test_provider_request_builder_provides_tool_schema_only_through_tools() -> N
         ),
     )
 
-    request = ProviderRequestBuilder(
-        context_renderer=_default_renderer(),
-        message_runtime=MessageRuntime(),
+    request = _configured_builder(
+        renderer=_default_renderer(),
+        messages=MessageRuntime(),
         tools=[tool_schema],
-    ).build(ContextRuntime())
+    ).build().request
 
     assert request.tools == (
         ProviderToolSpec(
@@ -142,26 +180,20 @@ def test_provider_request_builder_preserves_existing_attachment_projection() -> 
     )
     content = attachments.prepare_user_message("Analyze the image", [attachment])
     messages.append_user(content)
-    builder = ProviderRequestBuilder(
-        context_renderer=_default_renderer(),
-        message_runtime=messages,
-        attachment_runtime=attachments,
+    builder = _configured_builder(
+        renderer=_default_renderer(),
+        messages=messages,
+        attachments=attachments,
     )
 
-    first_request = builder.build(ContextRuntime())
-    second_request = builder.build(ContextRuntime())
+    first_request = builder.build().request
+    second_request = builder.build().request
 
-    assert first_request.messages == (
-        UserMessage(
-            content=(
-                TextPart("Analyze the image"),
-                ImagePart(attachment),
-            ),
-        ),
+    assert first_request.messages[1].content == (
+        TextPart("Analyze the image"),
+        ImagePart(attachment),
     )
-    assert second_request.messages[-1] == UserMessage(
-        content=(
-            TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
-        ),
+    assert second_request.messages[-1].content == (
+        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
+        ImagePart(attachment),
     )

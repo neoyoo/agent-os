@@ -41,7 +41,7 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
         await asyncio.sleep(0)
         return "async-ok"
 
-    async def run() -> tuple[str, list[dict[str, object]]]:
+    async def run() -> tuple[str, list[object]]:
         context = ContextRuntime()
         messages = MessageRuntime()
         registry = ToolRegistry()
@@ -62,13 +62,13 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
             tool_call_router=router,
         )
         result = await loop.run_turn("hello")
-        return result, messages.materialize_provider_messages()
+        return result, messages.materialize_active()
 
     result, provider_messages = asyncio.run(run())
 
     assert result == "done"
-    assert provider_messages[-2]["role"] == "tool"
-    assert provider_messages[-2]["content"] == "async-ok"
+    assert provider_messages[-2].role == "tool"
+    assert provider_messages[-2].content == "async-ok"
 
 
 def test_sync_handler_still_works_in_async_loop() -> None:
@@ -177,6 +177,61 @@ def test_async_provider_stream_is_awaited_without_executor_bridge() -> None:
     assert events[-1] == TurnStreamCompleted(content="async")
 
 
+def test_async_first_attempt_build_has_no_external_yield_before_call() -> None:
+    class RecordingAsyncProvider:
+        def __init__(self) -> None:
+            self.requests: list[ProviderRequest] = []
+
+        def complete(self, request: ProviderRequest) -> ProviderResponse:
+            raise AssertionError("native async loop must not call sync complete")
+
+        async def async_stream(
+            self,
+            request: ProviderRequest,
+            options: ProviderStreamOptions,
+        ):
+            del options
+            self.requests.append(request)
+            yield ProviderStreamStarted(request_id="async_recorded")
+            yield ProviderStreamCompleted(
+                request_id="async_recorded",
+                response=ProviderResponse(content="done", stop_reason="stop"),
+                stop_reason="stop",
+            )
+
+    async def collect() -> tuple[list[object], RecordingAsyncProvider]:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        provider = RecordingAsyncProvider()
+        loop = AsyncQueryLoop(
+            context_runtime=context,
+            message_runtime=messages,
+            request_builder=_request_builder(messages),
+            provider=provider,  # type: ignore[arg-type]
+        )
+        stream = loop.run_turn_stream("hello")
+        events = [
+            await anext(stream),
+            await anext(stream),
+            await anext(stream),
+            await anext(stream),
+        ]
+        messages.append_user("state added before the physical call")
+        events.append(await anext(stream))
+        assert len(provider.requests) == 1
+        events.extend([event async for event in stream])
+        return events, provider
+
+    events, provider = asyncio.run(collect())
+
+    assert [
+        item.content[0].text  # type: ignore[union-attr]
+        for item in provider.requests[0].messages
+        if item.kind == "business_message"
+    ] == ["hello", "state added before the physical call"]
+    assert events[-1] == TurnStreamCompleted(content="done")
+
+
 def test_async_provider_stream_retries_failure_before_visible_delta() -> None:
     class FlakyAsyncProvider:
         def __init__(self) -> None:
@@ -271,12 +326,12 @@ def test_duplicate_tool_call_suppression_matches_sync_loop() -> None:
             tool_call_router=router,
         )
         await loop.run_turn("hello")
-        return messages.materialize_provider_messages()
+        return messages.materialize_active()
 
     provider_messages = asyncio.run(run())
 
     assert calls == [{"value": "same"}]
-    assert "duplicate tool call ignored" in str(provider_messages[-2]["content"])
+    assert "duplicate tool call ignored" in provider_messages[-2].content
 
 
 class _TwoStepProvider:
