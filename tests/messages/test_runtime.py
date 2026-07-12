@@ -1,6 +1,13 @@
 import json
+from typing import get_type_hints
 
-from agentos.messages import MessageRuntime, ToolCall, ToolPairWindowError
+from agentos.messages import (
+    MessageRuntime,
+    MessageStore,
+    StoredMessage,
+    ToolCall,
+    ToolPairWindowError,
+)
 from agentos.providers import provider_message_to_dict
 
 
@@ -30,6 +37,17 @@ def test_active_messages_materialize_provider_shape() -> None:
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi"},
     ]
+
+
+def test_message_store_public_operations_use_stored_message_truth() -> None:
+    runtime = MessageRuntime()
+
+    message = runtime.append_user("Hello")
+
+    assert isinstance(message, StoredMessage)
+    assert get_type_hints(MessageStore.get)["return"] is StoredMessage
+    assert get_type_hints(MessageStore.put)["message"] is StoredMessage
+    assert get_type_hints(MessageRuntime.append_user)["return"] is StoredMessage
 
 
 def test_tool_call_provider_dict_deep_copies_arguments() -> None:

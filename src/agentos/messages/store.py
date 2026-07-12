@@ -1,4 +1,4 @@
-from agentos.messages.types import Message, MessageRole, ToolCall
+from agentos.messages.types import MessageRole, StoredMessage, ToolCall
 
 
 class MessageStore:
@@ -7,7 +7,7 @@ class MessageStore:
     def __init__(self) -> None:
         """创建空消息存储。"""
 
-        self._messages: list[Message] = []
+        self._messages: list[StoredMessage] = []
         self._next_id = 1
 
     def append(
@@ -16,20 +16,20 @@ class MessageStore:
         content: str,
         tool_calls: list[ToolCall] | None = None,
         tool_call_id: str | None = None,
-    ) -> Message:
+    ) -> StoredMessage:
         """追加一条原始消息，并返回新消息。"""
 
-        message = Message(
+        message = StoredMessage(
             id=self._new_id(),
             role=role,
             content=content,
-            tool_calls=list(tool_calls or []),
+            tool_calls=tuple(tool_calls or ()),
             tool_call_id=tool_call_id,
         )
         self._messages.append(message)
         return message
 
-    def get(self, message_id: str) -> Message:
+    def get(self, message_id: str) -> StoredMessage:
         """按 id 读取原始消息。"""
 
         for message in self._messages:
@@ -37,7 +37,7 @@ class MessageStore:
                 return message
         raise KeyError(message_id)
 
-    def put(self, message: Message) -> None:
+    def put(self, message: StoredMessage) -> None:
         """按原始 id 水合一条已存在的消息。"""
 
         for existing in self._messages:
@@ -48,13 +48,17 @@ class MessageStore:
         self._messages.append(message)
         self._advance_next_id(message.id)
 
-    def all(self) -> list[Message]:
+    def all(self) -> list[StoredMessage]:
         """返回全部原始消息副本。"""
 
         return list(self._messages)
 
     @classmethod
-    def from_messages(cls, messages: list[Message], next_id: int) -> "MessageStore":
+    def from_messages(
+        cls,
+        messages: list[StoredMessage],
+        next_id: int,
+    ) -> "MessageStore":
         """从持久化 snapshot 恢复 MessageStore。"""
 
         store = cls()

@@ -1,17 +1,12 @@
 from dataclasses import dataclass, field
-from typing import cast
 
-from agentos._frozen_json import thaw_json
-from agentos.messages.store import MessageStore
-from agentos.messages.types import Message, MessageRole, ToolCall
-from agentos.messages.window import ActiveWindow
-from agentos.providers import (
-    AssistantMessage,
-    ProviderMessage,
-    ProviderToolCall,
-    ToolResultMessage,
-    UserMessage,
+from agentos.messages._migration import (
+    _LegacyProviderMessage,
+    materialize_provider_messages,
 )
+from agentos.messages.store import MessageStore
+from agentos.messages.types import MessageRef, MessageRole, StoredMessage, ToolCall
+from agentos.messages.window import ActiveWindow
 
 
 @dataclass(slots=True)
@@ -21,7 +16,7 @@ class MessageRuntime:
     store: MessageStore = field(default_factory=MessageStore)
     active_window: ActiveWindow = field(default_factory=ActiveWindow)
 
-    def append_user(self, content: str) -> Message:
+    def append_user(self, content: str) -> StoredMessage:
         """追加 user 消息并加入 active window。"""
 
         return self._append_active(role="user", content=content)
@@ -30,7 +25,7 @@ class MessageRuntime:
         self,
         content: str,
         tool_calls: list[ToolCall] | None = None,
-    ) -> Message:
+    ) -> StoredMessage:
         """追加 assistant 消息并加入 active window。"""
 
         return self._append_active(
@@ -39,7 +34,11 @@ class MessageRuntime:
             tool_calls=tool_calls,
         )
 
-    def append_tool_result(self, tool_call_id: str, content: str) -> Message:
+    def append_tool_result(
+        self,
+        tool_call_id: str,
+        content: str,
+    ) -> StoredMessage:
         """追加 tool result 消息并加入 active window。"""
 
         return self._append_active(
@@ -48,7 +47,7 @@ class MessageRuntime:
             tool_call_id=tool_call_id,
         )
 
-    def hydrate_messages(self, messages: list[Message]) -> None:
+    def hydrate_messages(self, messages: list[StoredMessage]) -> None:
         """把外部存储召回的原始消息水合进本地 MessageStore。"""
 
         for message in messages:
@@ -59,21 +58,30 @@ class MessageRuntime:
 
         return self.active_window.has_temporary()
 
-    def materialize_active(self, consume_temporary: bool = False) -> list[Message]:
+    def snapshot_active_with_refs(
+        self,
+    ) -> tuple[tuple[MessageRef, StoredMessage], ...]:
+        """返回同一时刻的 active ref 与消息真值快照。"""
+
+        return tuple(
+            (ref, self.store.get(ref.message_id))
+            for ref in self.active_window.snapshot_refs()
+        )
+
+    def consume_temporary_refs(self, message_ids: tuple[str, ...]) -> None:
+        """按成功请求回执精确消费 temporary refs。"""
+
+        self.active_window.consume_temporary(message_ids)
+
+    def materialize_active(self) -> list[StoredMessage]:
         """返回 active window 中的原始消息。"""
 
-        messages = self.active_window.materialize(self.store)
-        if consume_temporary:
-            self.active_window.clear_temporary()
-        return messages
+        return [message for _, message in self.snapshot_active_with_refs()]
 
-    def materialize_provider_messages(self) -> list[ProviderMessage]:
+    def materialize_provider_messages(self) -> list[_LegacyProviderMessage]:
         """返回 provider request 可直接使用的 active messages。"""
 
-        return [
-            self._to_provider_message(message)
-            for message in self.materialize_active(consume_temporary=True)
-        ]
+        return materialize_provider_messages(self.materialize_active())
 
     @classmethod
     def from_parts(
@@ -91,7 +99,7 @@ class MessageRuntime:
         content: str,
         tool_calls: list[ToolCall] | None = None,
         tool_call_id: str | None = None,
-    ) -> Message:
+    ) -> StoredMessage:
         """追加消息并同步 active ref。"""
 
         message = self.store.append(
@@ -102,32 +110,3 @@ class MessageRuntime:
         )
         self.active_window.append(message.id)
         return message
-
-    def _to_provider_message(self, message: Message) -> ProviderMessage:
-        """把内部 Message 转为 provider 边界强类型消息。"""
-
-        if message.role == "user":
-            return UserMessage(content=message.content)
-        if message.role == "assistant":
-            return AssistantMessage(
-                content=message.content,
-                tool_calls=tuple(
-                    ProviderToolCall(
-                        id=tool_call.id,
-                        name=tool_call.name,
-                        arguments=cast(
-                            dict[str, object],
-                            thaw_json(tool_call.arguments),
-                        ),
-                    )
-                    for tool_call in message.tool_calls
-                ),
-            )
-        if message.role == "tool":
-            if message.tool_call_id is None:
-                raise ValueError("tool message requires tool_call_id")
-            return ToolResultMessage(
-                tool_call_id=message.tool_call_id,
-                content=message.content,
-            )
-        raise ValueError(f"unsupported message role: {message.role}")
