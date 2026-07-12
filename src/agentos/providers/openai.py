@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from agentos._frozen_json import thaw_json
 from agentos.providers._content_parts import openai_chat_user_content
 from agentos.providers._tool_arguments import (
     parse_json_object_arguments,
@@ -94,7 +95,7 @@ class OpenAIProvider:
                         "function": {
                             "name": tool_call.name,
                             "arguments": json.dumps(
-                                tool_call.arguments,
+                                thaw_json(tool_call.arguments),
                                 ensure_ascii=False,
                             ),
                         },

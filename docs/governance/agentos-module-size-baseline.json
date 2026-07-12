@@ -74,7 +74,7 @@
     },
     {
       "path": "src/agentos/runtime/query_loop.py",
-      "lines": 884,
+      "lines": 885,
       "gate": "no_new_responsibility"
     },
     {
@@ -183,11 +183,6 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/providers/messages.py",
-      "lines": 353,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/channels/sse_turn_control.py",
       "lines": 348,
       "gate": "responsibility_review"
@@ -195,6 +190,11 @@
     {
       "path": "src/agentos/testing/contracts/plan_claim_store.py",
       "lines": 338,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/providers/messages.py",
+      "lines": 335,
       "gate": "responsibility_review"
     },
     {

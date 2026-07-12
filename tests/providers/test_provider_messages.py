@@ -223,24 +223,23 @@ def test_provider_tool_spec_preserves_canonical_function_schema() -> None:
     assert restored == spec
 
 
-def test_provider_request_normalizes_legacy_dict_inputs() -> None:
+def test_provider_request_normalizes_typed_sequences_to_tuples() -> None:
     request = ProviderRequest(
         system="system",
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[UserMessage(content="hello")],
         tools=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "lookup",
-                    "description": "Lookup.",
-                    "parameters": {"type": "object"},
-                },
-            },
+            ProviderToolSpec(
+                function=ProviderFunctionSpec(
+                    name="lookup",
+                    description="Lookup.",
+                    parameters={"type": "object"},
+                ),
+            ),
         ],
     )
 
-    assert request.messages == [UserMessage(content="hello")]
-    assert request.tools == [
+    assert request.messages == (UserMessage(content="hello"),)
+    assert request.tools == (
         ProviderToolSpec(
             function=ProviderFunctionSpec(
                 name="lookup",
@@ -248,7 +247,37 @@ def test_provider_request_normalizes_legacy_dict_inputs() -> None:
                 parameters={"type": "object"},
             ),
         ),
+    )
+
+
+def test_provider_request_bridge_copies_mutable_message_inputs() -> None:
+    content = [TextPart("before")]
+    tool_calls = [
+        ProviderToolCall(
+            id="call_1",
+            name="lookup",
+            arguments={"query": "before"},
+        ),
     ]
+    request = ProviderRequest(
+        system="system",
+        messages=[
+            UserMessage(content=content),  # type: ignore[arg-type]
+            AssistantMessage(tool_calls=tool_calls),  # type: ignore[arg-type]
+        ],
+    )
+
+    content.append(TextPart("after"))
+    tool_calls.clear()
+
+    assert request.messages[0].content == (TextPart("before"),)
+    assert request.messages[1].tool_calls == (
+        ProviderToolCall(
+            id="call_1",
+            name="lookup",
+            arguments={"query": "before"},
+        ),
+    )
 
 
 def test_provider_request_builder_returns_strong_typed_messages() -> None:
@@ -272,7 +301,7 @@ def test_provider_request_builder_returns_strong_typed_messages() -> None:
         tools=[],
     ).build(context)
 
-    assert request.messages == [
+    assert request.messages == (
         UserMessage(content="hello"),
         AssistantMessage(
             content="need tool",
@@ -284,4 +313,4 @@ def test_provider_request_builder_returns_strong_typed_messages() -> None:
                 ),
             ),
         ),
-    ]
+    )

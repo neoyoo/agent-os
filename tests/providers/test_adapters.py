@@ -13,8 +13,10 @@ from agentos.providers import (
     AssistantMessage,
     AnthropicProvider,
     OpenAIProvider,
+    ProviderFunctionSpec,
     ProviderRequest,
     ProviderToolCall,
+    ProviderToolSpec,
     ProviderUsage,
     ToolResultMessage,
     UserMessage,
@@ -66,16 +68,15 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
     response = provider.complete(
         ProviderRequest(
             system="system text",
-            messages=[{"role": "user", "content": "read project name"}],
+            messages=[UserMessage(content="read project name")],
             tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "description": "Read file.",
-                        "parameters": {"type": "object"},
-                    },
-                },
+                ProviderToolSpec(
+                    function=ProviderFunctionSpec(
+                        name="read_file",
+                        description="Read file.",
+                        parameters={"type": "object"},
+                    ),
+                ),
             ],
         ),
     )
@@ -304,16 +305,15 @@ def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
     response = provider.complete(
         ProviderRequest(
             system="system text",
-            messages=[{"role": "user", "content": "read project name"}],
+            messages=[UserMessage(content="read project name")],
             tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "description": "Read file.",
-                        "parameters": {"type": "object"},
-                    },
-                },
+                ProviderToolSpec(
+                    function=ProviderFunctionSpec(
+                        name="read_file",
+                        description="Read file.",
+                        parameters={"type": "object"},
+                    ),
+                ),
             ],
         ),
     )

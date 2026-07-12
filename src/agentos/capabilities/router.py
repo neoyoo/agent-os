@@ -1,6 +1,8 @@
 import asyncio
 from dataclasses import dataclass, field
+from typing import cast
 
+from agentos._frozen_json import thaw_json
 from agentos.attachments.types import AttachmentError
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.executor import (
@@ -96,7 +98,7 @@ class ToolCallRouter:
         if self.mcp_adapter is None:
             return tool_call
         tool = self.mcp_adapter.registered_tool_for(tool_call.name)
-        arguments = dict(tool_call.arguments)
+        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
         validate_tool_arguments(tool_call.name, arguments, tool.parameters)
         if self.sandbox_policy is not None:
             self.sandbox_policy.ensure_tool_call_allowed(tool, arguments)
@@ -120,7 +122,7 @@ class ToolCallRouter:
         if self.context_runtime is None:
             raise RuntimeError("context runtime is required for context tools")
 
-        arguments = tool_call.arguments
+        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
         if tool_call.name == "declare_schema":
             self.context_runtime.declare_schema(self._working_state_fields(arguments))
         elif tool_call.name == "update_state":

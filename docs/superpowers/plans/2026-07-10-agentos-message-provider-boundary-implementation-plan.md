@@ -78,11 +78,11 @@ Task 1–14 每个任务都必须执行 Red -> 最小实现 -> 模块 Green -> �
 
 - **Phase / Active Specs:** Phase 2；两份 2026-07-10 已批准 Spec、总体实施计划、Phase 1 实施结果，以及 2026-07-11 Message/Provider Contract Addendum。
 - **Acceptance Items:** `StoredMessage` 是唯一业务消息真值；所有 JSON-like 领域字段递归冻结；`ProviderInputItem`/`ProviderRequest` 深不可变；Snapshot 位于 Active Messages 前且不打断 Tool Pair；Read Model 只来自 StoredMessage 和显式 Event Projector；每次 build/physical retry 重新渲染 Snapshot；temporary recall 只在 after-hook 与 usability validation 均成功后按 build receipt 精确消费；同步/异步遵守同一 Attempt Contract；旧 `Message`/`ProviderMessage` Public 名称删除。
-- **Allowed Files:** `src/agentos/_frozen_json.py`、`src/agentos/_internal_transcript.py`；`src/agentos/artifacts/types.py`、`artifacts/__init__.py`（仅 ArtifactRef）；`src/agentos/context/models.py`（仅 internal transcript marker）；`src/agentos/messages/**`；`src/agentos/providers/input.py`、`base.py`、`messages.py`、`__init__.py` 和具体 Adapter 的最小逻辑输入兼容；`src/agentos/attachments/runtime.py`（仅旧 Public Attachment 行为的 ProviderInput 兼容桥）；`src/agentos/runtime/message_projection.py`、`provider_request_builder.py`、`provider_attempt.py`、`async_provider_attempt.py`、`query_loop.py`、`async_query_loop.py`；`src/agentos/builder.py`；所有直接依赖旧 Message 名称的 persistence/compression/recall/memory/policy/capability 类型注解和 serializer；对应测试、API inventory 和稳定性文档。
+- **Allowed Files:** `src/agentos/_frozen_json.py`、`src/agentos/_internal_transcript.py`；`src/agentos/artifacts/types.py`、`artifacts/__init__.py`（仅 ArtifactRef）；`src/agentos/context/models.py`（仅 internal transcript marker）；`src/agentos/messages/**`；`src/agentos/providers/input.py`、`base.py`、`messages.py`、`__init__.py` 和具体 Adapter 的最小逻辑输入兼容；`src/agentos/attachments/runtime.py`（仅旧 Public Attachment 行为的 ProviderInput 兼容桥）；`src/agentos/runtime/message_projection.py`、`provider_request_builder.py`、`provider_attempt.py`、`async_provider_attempt.py`、`query_loop.py`、`async_query_loop.py`；`src/agentos/observability/snapshots.py`（仅冻结 JSON 的观测序列化边界）；`src/agentos/builder.py`；所有直接依赖旧 Message 名称的 persistence/compression/recall/memory/policy/capability 类型注解和 serializer；对应测试、Public API inventory、module-size baseline 和稳定性文档。
 - **Forbidden Files:** Artifact Store/Runtime/Projection、Attachment 生命周期重写、Skill/Plan/Memory Projection、Provider-specific strict-role merge/File ID/cache 优化、Tool Scheduler、Distributed/Transport 语义、Root API 五名称收敛之外的公共扩张。
 - **Dependency Boundaries:** `messages` 不导入 `providers`；Provider Input Projection 位于 `providers/input.py` 或 Request Builder 的纯函数边界；Provider Adapter 不读取 MessageStore/ContextRuntime；Read Model 不读取 ProviderRequest Transcript。
 - **Completed In This Work Package:** M2 Core Request Pipeline、业务/Provider/前端三类模型分离、每 attempt 重建、同步异步一致性和 breaking type migration。
-- **Explicit Deferrals:** Artifact Catalog/Mount/Session Scope 到 Phase 3A；Phase 2 只保留现有 Public Attachment API 的私有 ProviderInput 兼容桥，不扩展新附件语义，并在 Phase 3A 由正式 ContextMount 替换；完整 Adapter Contract/严格角色合并到 Phase 3B；真实 Skill/Plan/Memory Projection 到 Phase 3C；Local Tool Scheduler/Public root 收敛到 Phase 4。
+- **Explicit Deferrals:** Artifact Catalog/Mount/Session Scope 到 Phase 3A；Phase 2 只保留现有 Public Attachment API 的私有 ProviderInput 兼容桥，不扩展新附件语义，并在 Phase 3A 由正式 ContextMount 替换；完整 Adapter Contract/严格角色合并到 Phase 3B；真实 Skill/Plan/Memory Projection 到 Phase 3C；Local Tool Scheduler/Public root 收敛到 Phase 4。`providers/openai_compatible.py` 已超过 800 行，Phase 2 禁止继续净增长；Phase 3B 必须先以现有 adapter tests 固化 payload、stream、timeout 和错误映射，再按顺序提取 `openai_compatible_wire.py`（request/tool/content 序列化纯函数）、`openai_compatible_parsing.py`（response/stream 解析纯函数）和 `openai_compatible_transport.py`（HTTP/timeout I/O），最后由 `openai_compatible.py` 只保留 Provider 门面与生命周期协调。拆分期间不得改变 Public API、retry 或 wire 语义，目标是门面文件 `<300` 且三个目标模块各 `<500`。
 - **Verification Commands:** 每任务定向 pytest；Phase 1+2 contract matrix；全量 pytest；compileall；ruff；public inventory generator；协议 drift scan；module size scan；diff check。
 
 ## File Responsibility Map
@@ -354,8 +354,19 @@ git commit -m "refactor: isolate stored message runtime"
 - Modify: `src/agentos/providers/base.py`
 - Modify: `src/agentos/providers/messages.py`
 - Modify: `src/agentos/providers/__init__.py`
+- Modify: `src/agentos/providers/openai.py`（仅 Frozen JSON wire thaw）
+- Modify: `src/agentos/providers/openai_compatible.py`（仅 Frozen JSON wire thaw）
+- Modify: `src/agentos/providers/anthropic.py`（仅 Frozen JSON wire thaw）
+- Modify: `src/agentos/runtime/query_loop.py`（仅 ProviderToolCall -> Stored ToolCall 冻结值传递和 signature thaw）
+- Modify: `src/agentos/runtime/async_query_loop.py`（仅 ProviderToolCall -> Stored ToolCall 冻结值传递）
+- Modify: `src/agentos/observability/snapshots.py`（仅 Frozen JSON capture/hash thaw）
+- Modify: `src/agentos/capabilities/executor.py`（仅单次 Tool 执行参数 thaw）
+- Modify: `src/agentos/capabilities/router.py`（仅 Context/MCP Tool 参数 thaw）
+- Modify: `src/agentos/capabilities/mcp.py`（typed ProviderToolSpec 与 MCP call 参数 thaw）
 - Modify: `tests/providers/test_provider_messages.py`
 - Create: `tests/providers/test_provider_input_contract.py`
+- Modify: 直接构造 `ProviderRequest`、断言 tuple 边界或验证上述 serializer 的现有 tests
+- Modify: `docs/governance/agentos-module-size-baseline.json`
 
 - [ ] **Step 1: 写元数据矩阵、不可变和 legacy dict 拒绝测试**
 
@@ -480,11 +491,32 @@ class ProviderInputItem:
 
 `ProviderToolCall.arguments`、`ProviderToolSpec.function.parameters` 和任何 JSON-like ContentPart metadata 均调用 Task 1 的 `freeze_json()`；Adapter 只在 wire 边界调用 `thaw_json()`。`ProviderRequest.__post_init__` tuple-normalize 已类型化输入并拒绝 dict，因此“深不可变”包括直接修改嵌套 Tool arguments/schema parameters 的失败测试。旧 `ProviderMessage` 暂时保留为 Adapter 私有迁移入口，不从新模块引用；Task 13 删除 Public export 和桥。
 
+该 breaking type flip 不能只通过 Task 3 的新测试后提交。Task 3 必须在同一原子提交中完成所有直接消费者的稳定化，保证提交结束时全仓 Green：
+
+- 现有 `ProviderRequest` fixture 和 Hook replacement 改为强类型 `ProviderMessage`/`ProviderToolSpec` 与 tuple 断言；不得恢复 dict 自动转换；
+- 当前 Capability/Router 生产路径已经提供 `ProviderToolSpec`；直接传 dict 的 Builder 测试 fixture 改为强类型，不给 Builder 增加转换分支；Task 5 仍负责最终双平面 Builder 接口；
+- OpenAI、OpenAI-compatible 和 Anthropic 只在最终 wire payload 中对 tool arguments/schema parameters 调用 `thaw_json()`；不得提前实现 `ProviderInputItem` 双读、严格角色合并或 File ID 优化；
+- QueryLoop/AsyncQueryLoop 把 Provider tool call 转回 Stored `ToolCall` 时直接传递不可变 `FrozenJsonObject`，不再做会残留嵌套冻结值的浅层 `dict()`；同步 Loop 只在生成 JSON 去重 signature 时显式 `thaw_json()`；不得改变 Loop 控制流、retry 或 scheduler 语义；
+- Observability snapshot 在 capture/hash 序列化边界显式 thaw，不修改 capture policy、脱敏或 Trace schema；
+- ToolExecutor、Context Tool 和 MCP 在单次执行入口把 `FrozenJsonObject` thaw 为新的 dict/list 副本，再执行 schema 校验、Sandbox 和用户 handler；MCP Registry 直接生成 `ProviderToolSpec`，不保留与返回注解冲突的 dict schema；
+- `providers/messages.py` 移动类型后同步重新生成 module-size baseline；Public export 变化同步重新生成 inventory；
+- Python 运行时新增的类内部元数据不得使 nominal marker 测试依赖精确 `vars()` 闭集，测试只约束 marker 无公开行为和无实例状态。
+
+这些修改是深冻结契约的直接输出边界稳定化，不是 Task 5-7 的行为偷跑，也不能通过 facade、wrapper、旧新双写、第二 serializer 或可变 dict 回退替代。
+
 - [ ] **Step 4: Green 和提交**
 
 ```powershell
-python -m pytest tests/providers/test_provider_input_contract.py tests/providers/test_provider_messages.py tests/context/test_context_protocol_models.py -q
-git add -- src/agentos/_internal_transcript.py src/agentos/context/models.py src/agentos/providers/input.py src/agentos/providers/base.py src/agentos/providers/messages.py src/agentos/providers/__init__.py tests/providers/test_provider_input_contract.py tests/providers/test_provider_messages.py
+$python = Resolve-Path '.\.venv\Scripts\python.exe'
+& $python -m pytest tests/providers tests/messages/test_runtime.py tests/runtime/test_provider_request_builder.py tests/runtime/test_query_loop.py tests/runtime/test_async_query_loop_native.py tests/runtime/test_query_loop_hooks.py tests/runtime/test_agent_builder.py tests/runtime/test_agent_stream_api.py tests/runtime/test_skill_mcp_tool_loop.py tests/runtime/test_streaming_tool_loop.py tests/runtime/test_tool_loop.py tests/capabilities tests/multi/test_continuation.py tests/examples/test_small_openai_agent.py tests/observability tests/context/test_context_protocol_models.py tests/architecture/test_module_size_baseline.py tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py -q
+& $python -m pytest -q
+& $python -m compileall -q src tests
+& $python -m ruff check src tests
+& $python scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
+& $python scripts/generate_module_size_baseline.py --root src/agentos --output docs/governance/agentos-module-size-baseline.json
+& $python -m pytest tests/architecture/test_module_size_baseline.py tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py -q
+git diff --check
+git add -- docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md docs/governance/agentos-module-size-baseline.json src/agentos/_internal_transcript.py src/agentos/context/models.py src/agentos/providers/input.py src/agentos/providers/base.py src/agentos/providers/messages.py src/agentos/providers/__init__.py src/agentos/providers/openai.py src/agentos/providers/openai_compatible.py src/agentos/providers/anthropic.py src/agentos/runtime/query_loop.py src/agentos/runtime/async_query_loop.py src/agentos/observability/snapshots.py src/agentos/capabilities/executor.py src/agentos/capabilities/router.py src/agentos/capabilities/mcp.py tests/providers tests/messages/test_runtime.py tests/runtime/test_provider_request_builder.py tests/runtime/test_query_loop.py tests/runtime/test_async_query_loop_native.py tests/runtime/test_query_loop_hooks.py tests/runtime/test_agent_builder.py tests/runtime/test_agent_stream_api.py tests/runtime/test_skill_mcp_tool_loop.py tests/runtime/test_streaming_tool_loop.py tests/runtime/test_tool_loop.py tests/capabilities tests/multi/test_continuation.py tests/examples/test_small_openai_agent.py tests/observability tests/architecture/test_module_size_baseline.py tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py tests/architecture/test_public_api_inventory_cli.py
 git commit -m "feat: define immutable provider input items"
 ```
 
@@ -1051,7 +1083,7 @@ def test_builder_assembles_projection_owners_without_adapter_dependency() -> Non
 `docs/api-stability.md` 记录 `0.2.0a1` 删除旧名，说明迁移期间桥从未作为新 Public API 承诺。生成 inventory 后要求 `providers/messages.py < 300`、`builder.py` 不净增职责且行数不超过实施前基线；否则继续拆分。
 
 ```powershell
-python scripts/generate_public_api_inventory.py --output docs/public-api-inventory.json
+& (Resolve-Path '.\.venv\Scripts\python.exe') scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
 python -m pytest tests/messages tests/providers tests/runtime/test_agent_builder.py tests/architecture/test_public_api.py -q
 Get-ChildItem src/agentos/providers/messages.py,src/agentos/builder.py | ForEach-Object { "{0}: {1}" -f $_.Name,(Get-Content -Encoding utf8 $_).Count }
 git add -- src/agentos/builder.py src/agentos/messages src/agentos/providers tests/runtime/test_agent_builder.py tests/architecture/test_public_api.py docs/public-api-inventory.json docs/api-stability.md
@@ -1077,7 +1109,7 @@ python -m pytest tests/context tests/messages tests/providers/test_provider_inpu
 python -m pytest -q
 python -m compileall -q src tests
 python -m ruff check src tests
-python scripts/generate_public_api_inventory.py --check
+& (Resolve-Path '.\.venv\Scripts\python.exe') scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
 rg -n "system: rendered context|AttachmentLifecycle|ProviderMessage|class Message\b|materialize_provider_messages|<task_goal>|<constraints>" src tests
 rg -n "ProviderMessage|class Message\b|materialize_provider_messages" docs --glob "!superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md" --glob "!superpowers/specs/2026-07-11-agentos-message-provider-boundary-contract-addendum.md"
 Get-ChildItem src/agentos/runtime/query_loop.py,src/agentos/runtime/async_query_loop.py,src/agentos/providers/messages.py,src/agentos/builder.py | ForEach-Object { "{0}: {1}" -f $_.Name,(Get-Content -Encoding utf8 $_).Count }

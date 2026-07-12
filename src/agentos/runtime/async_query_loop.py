@@ -299,7 +299,7 @@ class AsyncQueryLoop:
                 ToolCall(
                     id=tool_call.id,
                     name=tool_call.name,
-                    arguments=dict(tool_call.arguments),
+                    arguments=tool_call.arguments,
                 )
                 for tool_call in response.tool_calls
             ]

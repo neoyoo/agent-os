@@ -15,7 +15,12 @@ from agentos.capabilities.skills import (
 )
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
+from agentos.providers import (
+    FakeProvider,
+    ProviderResponse,
+    ProviderToolCall,
+    provider_message_to_dict,
+)
 from agentos.runtime import AsyncQueryLoop, ProviderRequestBuilder, QueryLoop
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -90,13 +95,12 @@ def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None
     response = asyncio.run(loop.run_turn("Review this code"))
 
     assert response == "I will follow the review skill."
-    tool_names = {
-        tool["function"]["name"] for tool in provider.requests[0].tools
-    }
+    tool_names = {tool.function.name for tool in provider.requests[0].tools}
     assert "load_skill" in tool_names
     assert "code-review" not in provider.requests[0].system
-    assert provider.requests[1].messages[-1]["role"] == "tool"
-    assert "# Review Body" in provider.requests[1].messages[-1]["content"]
+    tool_result = provider_message_to_dict(provider.requests[1].messages[-1])
+    assert tool_result["role"] == "tool"
+    assert "# Review Body" in str(tool_result["content"])
     assert "# Review Body" not in provider.requests[0].system
 
 
@@ -143,10 +147,9 @@ def test_query_loop_executes_mcp_tool_call() -> None:
     response = loop.run_turn("Lookup docs")
 
     assert response == "MCP result consumed."
-    tool_names = {
-        tool["function"]["name"] for tool in provider.requests[0].tools
-    }
+    tool_names = {tool.function.name for tool in provider.requests[0].tools}
     assert "mcp__docs__lookup" in tool_names
     assert "docs" not in provider.requests[0].system
-    assert provider.requests[1].messages[-1]["role"] == "tool"
-    assert provider.requests[1].messages[-1]["content"] == "lookup:phase5"
+    tool_result = provider_message_to_dict(provider.requests[1].messages[-1])
+    assert tool_result["role"] == "tool"
+    assert tool_result["content"] == "lookup:phase5"

@@ -1,5 +1,6 @@
-from pathlib import Path
+import pytest
 
+from agentos._frozen_json import thaw_json
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy
@@ -26,7 +27,7 @@ from agentos.providers import (
 def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only() -> None:
     request = ProviderRequest(
         system="system secret",
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[UserMessage(content="hello")],
         tools=[
             ProviderToolSpec(
                 function=ProviderFunctionSpec(
@@ -61,7 +62,7 @@ def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only
 def test_provider_request_snapshot_full_mode_captures_payloads() -> None:
     request = ProviderRequest(
         system="system text",
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[UserMessage(content="hello")],
         tools=[
             ProviderToolSpec(
                 function=ProviderFunctionSpec(
@@ -141,49 +142,13 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
     )
 
 
-def test_provider_request_snapshot_sanitizes_non_json_tool_arguments() -> None:
-    request = ProviderRequest(
-        system="system text",
-        messages=[
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "name": "inspect",
-                        "arguments": {
-                            "payload": b"secret-bytes",
-                            "path": Path("/tmp/private.txt"),
-                        },
-                    },
-                ],
-            },
-        ],
-    )
-
-    snapshot = build_provider_request_snapshot(
-        request,
-        CapturePolicy.full_for_local_development(),
-    )
-
-    assert snapshot.messages == (
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "name": "inspect",
-                    "arguments": {
-                        "payload": "<bytes:12>",
-                        "path": "<path>",
-                    },
-                },
-            ],
-        },
-    )
-    assert "secret-bytes" not in str(snapshot.messages)
+def test_provider_request_rejects_non_json_tool_arguments_before_snapshot() -> None:
+    with pytest.raises(TypeError, match="JSON-compatible"):
+        ProviderToolCall(
+            id="call_1",
+            name="inspect",
+            arguments={"payload": b"secret-bytes"},
+        )
 
 
 def test_provider_response_snapshot_includes_tool_calls_stop_reason_and_usage() -> None:
@@ -234,7 +199,9 @@ def test_tool_snapshots_respect_capture_policy() -> None:
     full_result = build_tool_result_snapshot(result, CapturePolicy.full_for_local_development())
 
     assert metadata_call.arguments is None
-    assert metadata_call.arguments_sha256 == stable_sha256(call.arguments)
+    assert metadata_call.arguments_sha256 == stable_sha256(
+        thaw_json(call.arguments),
+    )
     assert metadata_result.content is None
     assert metadata_result.content_sha256 == stable_sha256("file content")
     assert full_call.arguments == {"path": "pyproject.toml"}

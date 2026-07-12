@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from agentos._frozen_json import thaw_json
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextState
@@ -374,7 +375,7 @@ class QueryLoop:
                 ToolCall(
                     id=tool_call.id,
                     name=tool_call.name,
-                    arguments=dict(tool_call.arguments),
+                    arguments=tool_call.arguments,
                 )
                 for tool_call in response.tool_calls
             ]
@@ -569,7 +570,7 @@ class QueryLoop:
         return json.dumps(
             {
                 "name": tool_call.name,
-                "arguments": tool_call.arguments,
+                "arguments": thaw_json(tool_call.arguments),
             },
             ensure_ascii=False,
             sort_keys=True,

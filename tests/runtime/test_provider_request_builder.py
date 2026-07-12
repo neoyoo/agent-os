@@ -99,17 +99,16 @@ def test_provider_request_system_contains_no_working_state() -> None:
 
 
 def test_provider_request_builder_provides_tool_schema_only_through_tools() -> None:
-    tool_schema = {
-        "type": "function",
-        "function": {
-            "name": "dangerous_schema_marker",
-            "description": "Dangerous marker.",
-            "parameters": {
+    tool_schema = ProviderToolSpec(
+        function=ProviderFunctionSpec(
+            name="dangerous_schema_marker",
+            description="Dangerous marker.",
+            parameters={
                 "type": "object",
                 "properties": {"secret": {"type": "string"}},
             },
-        },
-    }
+        ),
+    )
 
     request = ProviderRequestBuilder(
         context_renderer=_default_renderer(),
@@ -117,7 +116,7 @@ def test_provider_request_builder_provides_tool_schema_only_through_tools() -> N
         tools=[tool_schema],
     ).build(ContextRuntime())
 
-    assert request.tools == [
+    assert request.tools == (
         ProviderToolSpec(
             function=ProviderFunctionSpec(
                 name="dangerous_schema_marker",
@@ -128,7 +127,7 @@ def test_provider_request_builder_provides_tool_schema_only_through_tools() -> N
                 },
             ),
         ),
-    ]
+    )
     assert "dangerous_schema_marker" not in request.system
     assert "secret" not in request.system
 
@@ -152,14 +151,14 @@ def test_provider_request_builder_preserves_existing_attachment_projection() -> 
     first_request = builder.build(ContextRuntime())
     second_request = builder.build(ContextRuntime())
 
-    assert first_request.messages == [
+    assert first_request.messages == (
         UserMessage(
             content=(
                 TextPart("Analyze the image"),
                 ImagePart(attachment),
             ),
         ),
-    ]
+    )
     assert second_request.messages[-1] == UserMessage(
         content=(
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),

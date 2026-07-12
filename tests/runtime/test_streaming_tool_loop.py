@@ -3,7 +3,12 @@ from pathlib import Path
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
+from agentos.providers import (
+    FakeProvider,
+    ProviderResponse,
+    ProviderToolCall,
+    provider_message_to_dict,
+)
 from agentos.runtime import (
     ProviderRequestBuilder,
     QueryLoop,
@@ -58,5 +63,6 @@ def test_streaming_query_loop_executes_tool_and_continues(tmp_path: Path) -> Non
     ) in events
     assert any(isinstance(event, ToolStreamCompleted) for event in events)
     assert events[-1] == TurnStreamCompleted(content="项目名是 agent-os。")
-    assert provider.requests[1].messages[-1]["role"] == "tool"
-    assert 'name = "agent-os"' in str(provider.requests[1].messages[-1]["content"])
+    tool_result = provider_message_to_dict(provider.requests[1].messages[-1])
+    assert tool_result["role"] == "tool"
+    assert 'name = "agent-os"' in str(tool_result["content"])

@@ -13,7 +13,7 @@ from agentos.capabilities.mcp import (
     MCPToolAdapter,
     MCPToolInfo,
 )
-from agentos.providers import ProviderToolCall
+from agentos.providers import ProviderToolCall, ProviderToolSpec
 from agentos.workspace import WorkspaceHandle
 
 
@@ -59,8 +59,9 @@ def test_mcp_registry_exports_provider_specs_and_server_summaries() -> None:
     specs = registry.provider_tool_specs()
     declarations = registry.capability_declarations()
 
-    assert specs[0]["function"]["name"] == "mcp__github__create_issue"
-    assert specs[0]["function"]["parameters"]["required"] == ["title"]
+    assert isinstance(specs[0], ProviderToolSpec)
+    assert specs[0].function.name == "mcp__github__create_issue"
+    assert specs[0].function.parameters["required"] == ("title",)
     assert declarations[0].name == "github"
     assert declarations[0].tool_prefix == "mcp__github__<tool>"
 

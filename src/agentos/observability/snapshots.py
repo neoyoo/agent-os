@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+from typing import cast
 
+from agentos._frozen_json import thaw_json
 from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy, default_redactor
 from agentos.providers import (
@@ -162,15 +164,16 @@ def build_tool_call_snapshot(
 ) -> ToolCallSnapshot:
     """基于 capture policy 构造 ToolCallSnapshot。"""
 
+    arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
     return ToolCallSnapshot(
         id=tool_call.id,
         name=tool_call.name,
         arguments=(
-            _captured_dict(tool_call.arguments, policy)
+            _captured_dict(arguments, policy)
             if policy.capture_tool_arguments
             else None
         ),
-        arguments_sha256=stable_sha256(tool_call.arguments),
+        arguments_sha256=stable_sha256(arguments),
     )
 
 

@@ -1,38 +1,17 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass, field, is_dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from dataclasses import dataclass
+from typing import Literal, TypeAlias, cast
 
+from agentos._frozen_json import FrozenJsonObject, freeze_json, thaw_json
+from agentos.providers.input import (
+    FilePart,
+    ImagePart,
+    ProviderContentPart,
+    ProviderToolCall,
+    TextPart,
+)
 
-if TYPE_CHECKING:
-    from agentos.providers.base import ProviderToolCall
-
-
-@dataclass(frozen=True, slots=True)
-class TextPart:
-    """provider content 中的文本片段。"""
-
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class ImagePart:
-    """provider content 中的一次性图片附件片段。"""
-
-    attachment: object
-    detail: Literal["auto", "low", "high"] = "auto"
-
-
-@dataclass(frozen=True, slots=True)
-class FilePart:
-    """provider content 中的一次性文件附件片段。"""
-
-    attachment: object
-
-
-ProviderContentPart: TypeAlias = TextPart | ImagePart | FilePart
 ProviderMessageContent: TypeAlias = str | tuple[ProviderContentPart, ...]
 
 
@@ -41,6 +20,16 @@ class UserMessage:
     """用户消息。"""
 
     content: ProviderMessageContent
+
+    def __post_init__(self) -> None:
+        """复制多模态片段，避免外部可变集合污染请求快照。"""
+
+        if isinstance(self.content, str):
+            return
+        content = tuple(self.content)
+        if any(type(part) not in (TextPart, ImagePart, FilePart) for part in content):
+            raise TypeError("provider message content contains an unsupported part")
+        object.__setattr__(self, "content", content)
 
     def __getitem__(self, key: str) -> object:
         """迁移期只读 dict-style 访问。"""
@@ -65,6 +54,14 @@ class AssistantMessage:
     content: str = ""
     tool_calls: tuple[ProviderToolCall, ...] = ()
     thinking_content: str | None = None
+
+    def __post_init__(self) -> None:
+        """复制工具调用集合，避免外部可变别名进入请求快照。"""
+
+        tool_calls = tuple(self.tool_calls)
+        if any(type(call) is not ProviderToolCall for call in tool_calls):
+            raise TypeError("assistant tool_calls require ProviderToolCall")
+        object.__setattr__(self, "tool_calls", tool_calls)
 
     def __getitem__(self, key: str) -> object:
         """迁移期只读 dict-style 访问。"""
@@ -108,18 +105,26 @@ class ToolResultMessage:
 ProviderMessage: TypeAlias = UserMessage | AssistantMessage | ToolResultMessage
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ProviderFunctionSpec:
     """OpenAI-style function tool schema 的 function 部分。"""
 
     name: str
     description: str
-    parameters: dict[str, object] = field(default_factory=dict)
+    parameters: FrozenJsonObject
 
-    def __post_init__(self) -> None:
-        """复制可变 schema，避免调用方后续修改污染 provider request。"""
-
-        object.__setattr__(self, "parameters", deepcopy(self.parameters))
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        parameters: dict[str, object] | FrozenJsonObject | None = None,
+    ) -> None:
+        frozen = freeze_json({} if parameters is None else parameters)
+        if not isinstance(frozen, FrozenJsonObject):
+            raise TypeError("provider function parameters must be a JSON object")
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "parameters", frozen)
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +263,7 @@ def provider_tool_spec_to_dict(spec: ProviderToolSpec) -> dict[str, object]:
         "function": {
             "name": spec.function.name,
             "description": spec.function.description,
-            "parameters": deepcopy(spec.function.parameters),
+            "parameters": thaw_json(spec.function.parameters),
         },
     }
 
@@ -288,7 +293,7 @@ def provider_tool_spec_from_dict(value: object) -> ProviderToolSpec:
         function=ProviderFunctionSpec(
             name=name,
             description=description,
-            parameters=deepcopy(parameters),
+            parameters=parameters,
         ),
     )
 
@@ -307,36 +312,13 @@ def _tool_call_to_dict(tool_call: ProviderToolCall) -> dict[str, object]:
         "name": tool_call.name,
     }
     if tool_call.arguments:
-        result["arguments"] = _json_safe_value(tool_call.arguments)
+        result["arguments"] = thaw_json(tool_call.arguments)
     return result
-
-
-def _json_safe_value(value: object) -> object:
-    """递归清洗 provider tool arguments，避免观测快照泄露或崩溃。"""
-
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (bytes, bytearray)):
-        return f"<bytes:{len(value)}>"
-    if isinstance(value, Path):
-        return "<path>"
-    if isinstance(value, dict):
-        return {
-            str(key): _json_safe_value(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_json_safe_value(item) for item in value]
-    if is_dataclass(value):
-        return f"<object:{type(value).__name__}>"
-    return f"<object:{type(value).__name__}>"
 
 
 def _tool_call_from_dict(value: object) -> ProviderToolCall:
     if not isinstance(value, dict):
         raise ValueError("provider tool call must be an object")
-    from agentos.providers.base import ProviderToolCall
-
     raw_id = value.get("id")
     raw_name = value.get("name")
     if not isinstance(raw_id, str) or not raw_id:
@@ -349,5 +331,5 @@ def _tool_call_from_dict(value: object) -> ProviderToolCall:
     return ProviderToolCall(
         id=raw_id,
         name=raw_name,
-        arguments=deepcopy(raw_arguments),
+        arguments=cast(dict[str, object], raw_arguments),
     )

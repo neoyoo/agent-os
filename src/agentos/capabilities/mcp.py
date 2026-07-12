@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, cast
 
+from agentos._frozen_json import thaw_json
 from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
 from agentos.capabilities.tools import RegisteredTool
 from agentos.context.projection import MCPServerDeclaration
-from agentos.providers import ProviderToolCall, ProviderToolSpec
+from agentos.providers import (
+    ProviderFunctionSpec,
+    ProviderToolCall,
+    ProviderToolSpec,
+)
 
 
 _MCP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -85,17 +90,16 @@ class MCPRegistry:
 
         self._ensure_fresh()
         return [
-            {
-                "type": "function",
-                "function": {
-                    "name": provider_name,
-                    "description": (
+            ProviderToolSpec(
+                function=ProviderFunctionSpec(
+                    name=provider_name,
+                    description=(
                         f"MCP server `{server.name}` tool `{tool.name}`. "
                         f"{tool.description}"
                     ).strip(),
-                    "parameters": self.normalized_schema(tool.input_schema),
-                },
-            }
+                    parameters=self.normalized_schema(tool.input_schema),
+                ),
+            )
             for provider_name, (server, tool) in self._tools.items()
         ]
 
@@ -193,7 +197,8 @@ class MCPToolAdapter:
         """Execute an MCP tool call after ToolCallRouter validation."""
 
         server, local_tool_name = self.registry.resolve_provider_tool(tool_call.name)
-        content = server.client.call_tool(local_tool_name, dict(tool_call.arguments))
+        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
+        content = server.client.call_tool(local_tool_name, arguments)
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
             content=content,

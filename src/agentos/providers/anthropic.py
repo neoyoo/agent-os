@@ -2,6 +2,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any
 
+from agentos._frozen_json import thaw_json
 from agentos.attachments.types import (
     BytesSource,
     InlineBase64Source,
@@ -106,7 +107,7 @@ class AnthropicProvider:
                         "type": "tool_use",
                         "id": tool_call.id,
                         "name": tool_call.name,
-                        "input": tool_call.arguments,
+                        "input": thaw_json(tool_call.arguments),
                     },
                 )
             return {
@@ -230,7 +231,7 @@ class AnthropicProvider:
                 {
                     "name": tool.function.name,
                     "description": tool.function.description,
-                    "input_schema": tool.function.parameters,
+                    "input_schema": thaw_json(tool.function.parameters),
                 },
             )
         return converted

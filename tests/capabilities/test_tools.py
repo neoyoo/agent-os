@@ -136,6 +136,34 @@ def test_tool_call_router_executes_external_tool_calls() -> None:
     assert result.content == "echo:hello"
 
 
+def test_tool_executor_thaws_nested_arguments_for_handler() -> None:
+    captured: list[dict[str, object]] = []
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="batch",
+            description="Process a batch.",
+            parameters={
+                "type": "object",
+                "properties": {"items": {"type": "array"}},
+                "required": ["items"],
+            },
+            handler=lambda arguments: captured.append(arguments) or "done",
+        ),
+    )
+
+    result = ToolCallRouter(tool_registry=registry).execute_tool_call(
+        ProviderToolCall(
+            id="call_batch",
+            name="batch",
+            arguments={"items": [{"name": "first"}]},
+        ),
+    )
+
+    assert result.content == "done"
+    assert captured == [{"items": [{"name": "first"}]}]
+
+
 def test_tool_call_router_exposes_context_protocol_tool_specs() -> None:
     runtime = ToolCallRouter(tool_registry=ToolRegistry())
 

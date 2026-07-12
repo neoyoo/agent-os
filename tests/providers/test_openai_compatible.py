@@ -7,12 +7,16 @@ import pytest
 
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.providers import (
+    AssistantMessage,
     HttpxAsyncJSONTransport,
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
+    ProviderFunctionSpec,
     ProviderRequest,
     ProviderToolCall,
+    ProviderToolSpec,
     ProviderUsage,
+    ToolResultMessage,
     UrlLibJSONTransport,
     UserMessage,
 )
@@ -86,33 +90,30 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
         ProviderRequest(
             system="system prompt",
             messages=[
-                {"role": "user", "content": "读取项目名"},
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": "call_existing",
-                            "name": "read_file",
-                            "arguments": {"path": "README.md"},
-                        },
-                    ],
-                },
-                {
-                    "role": "tool",
-                    "tool_call_id": "call_existing",
-                    "content": "readme",
-                },
+                UserMessage(content="读取项目名"),
+                AssistantMessage(
+                    content="",
+                    tool_calls=(
+                        ProviderToolCall(
+                            id="call_existing",
+                            name="read_file",
+                            arguments={"path": "README.md"},
+                        ),
+                    ),
+                ),
+                ToolResultMessage(
+                    tool_call_id="call_existing",
+                    content="readme",
+                ),
             ],
             tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "description": "读取文件。",
-                        "parameters": {"type": "object"},
-                    },
-                },
+                ProviderToolSpec(
+                    function=ProviderFunctionSpec(
+                        name="read_file",
+                        description="读取文件。",
+                        parameters={"type": "object"},
+                    ),
+                ),
             ],
         ),
     )
@@ -446,7 +447,7 @@ def test_openai_compatible_provider_can_disable_thinking() -> None:
     )
 
     provider.complete(
-        ProviderRequest(system="system", messages=[{"role": "user", "content": "hi"}]),
+        ProviderRequest(system="system", messages=[UserMessage(content="hi")]),
     )
 
     assert transport.calls[0]["payload"]["thinking"] == {"type": "disabled"}
@@ -466,7 +467,7 @@ def test_openai_compatible_provider_merges_extra_body_into_payload() -> None:
     )
 
     provider.complete(
-        ProviderRequest(system="system", messages=[{"role": "user", "content": "hi"}]),
+        ProviderRequest(system="system", messages=[UserMessage(content="hi")]),
     )
 
     payload = transport.calls[0]["payload"]
@@ -513,16 +514,15 @@ def test_openai_compatible_provider_core_payload_overrides_extra_body() -> None:
     provider.complete(
         ProviderRequest(
             system="system",
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[UserMessage(content="hi")],
             tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "description": "read file",
-                        "parameters": {"type": "object"},
-                    },
-                },
+                ProviderToolSpec(
+                    function=ProviderFunctionSpec(
+                        name="read_file",
+                        description="read file",
+                        parameters={"type": "object"},
+                    ),
+                ),
             ],
         ),
     )
@@ -592,18 +592,14 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
 
 
 def test_openai_compatible_provider_rejects_system_messages_in_active_window() -> None:
-    try:
+    with pytest.raises(TypeError, match="ProviderInputItem"):
         ProviderRequest(
             system="system",
             messages=[
                 {"role": "system", "content": "extra system"},
-                {"role": "user", "content": "hi"},
+                UserMessage(content="hi"),
             ],
         )
-    except ValueError as error:
-        assert "unsupported provider message role" in str(error)
-    else:
-        raise AssertionError("Expected ValueError")
 
 
 def test_openai_compatible_provider_rejects_non_object_tool_arguments() -> None:

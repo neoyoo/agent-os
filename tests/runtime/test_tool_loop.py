@@ -71,7 +71,7 @@ def test_small_agent_reads_project_file_with_tool_call_loop() -> None:
     answer = loop.run_turn("读取 pyproject.toml 里的项目名")
 
     assert answer == "项目名是 agent-os。"
-    assert provider.requests[0].tools == capabilities.tool_specs()
+    assert provider.requests[0].tools == tuple(capabilities.tool_specs())
     assert [provider_message_to_dict(message) for message in provider.requests[0].messages] == [
         {"role": "user", "content": "读取 pyproject.toml 里的项目名"},
     ]

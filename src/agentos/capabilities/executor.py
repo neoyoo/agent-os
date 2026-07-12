@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
+from typing import cast
 
+from agentos._frozen_json import thaw_json
 from agentos._redaction import is_secret_like_key
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.registry import ToolRegistry
@@ -68,8 +70,8 @@ class ToolExecutor:
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
         tool = self._tool_for_call(tool_call)
-        self._validate_arguments(tool_call, tool.parameters)
-        arguments = dict(tool_call.arguments)
+        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
+        self._validate_arguments(tool_call.name, arguments, tool.parameters)
         self._ensure_sandbox_allowed(tool, arguments)
         content = self.backend.run(
             tool,
@@ -86,8 +88,8 @@ class ToolExecutor:
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
         tool = self._tool_for_call(tool_call)
-        self._validate_arguments(tool_call, tool.parameters)
-        arguments = dict(tool_call.arguments)
+        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
+        self._validate_arguments(tool_call.name, arguments, tool.parameters)
         self._ensure_sandbox_allowed(tool, arguments)
         content = await self.backend.async_run(
             tool,
@@ -113,12 +115,13 @@ class ToolExecutor:
 
     def _validate_arguments(
         self,
-        tool_call: ProviderToolCall,
+        tool_name: str,
+        arguments: dict[str, object],
         schema: dict[str, object],
     ) -> None:
         """执行最小 JSON schema 校验，避免无效参数进入 handler。"""
 
-        validate_tool_arguments(tool_call.name, tool_call.arguments, schema)
+        validate_tool_arguments(tool_name, arguments, schema)
 
 
 def _matches_json_type(value: object, expected: object) -> bool:

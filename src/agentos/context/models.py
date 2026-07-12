@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from agentos._internal_transcript import InternalTranscriptValue
+
 if TYPE_CHECKING:
     from agentos.context.xml import XmlElement
 
@@ -63,7 +65,7 @@ class SystemEnvelope:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextSnapshot:
+class ContextSnapshot(InternalTranscriptValue):
     """动态上下文数据平面的确定性 XML。"""
 
     xml: str

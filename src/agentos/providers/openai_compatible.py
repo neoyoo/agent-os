@@ -10,6 +10,7 @@ from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from agentos._frozen_json import thaw_json
 from agentos.providers._tool_arguments import (
     parse_json_object_arguments,
     require_tool_call_id,
@@ -706,8 +707,7 @@ class OpenAICompatibleProvider:
             "function": {
                 "name": tool_call.name,
                 "arguments": json.dumps(
-                    tool_call.arguments,
-                    ensure_ascii=False,
+                    thaw_json(tool_call.arguments), ensure_ascii=False
                 ),
             },
         }

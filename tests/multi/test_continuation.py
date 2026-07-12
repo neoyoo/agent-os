@@ -18,7 +18,12 @@ from agentos.multi import (
     TaskTable,
 )
 from agentos.multi import AgentCoordinationTools
-from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
+from agentos.providers import (
+    FakeProvider,
+    ProviderResponse,
+    ProviderToolCall,
+    UserMessage,
+)
 from agentos.runtime import Agent, ProviderRequestBuilder
 from tests._context_protocol_fixtures import default_context_renderer
 from tests.multi.helpers import build_agent_with_response
@@ -364,7 +369,7 @@ def test_local_continuation_trigger_queues_while_user_turn_is_running() -> None:
     assert trigger.wait_idle("parent", timeout=1)
 
     assert len(provider.requests) == 2
-    assert provider.requests[0].messages == [{"role": "user", "content": "hello"}]
+    assert provider.requests[0].messages == (UserMessage(content="hello"),)
     assert "# Runtime Notice" not in provider.requests[1].system
     assert "task_1" not in provider.requests[1].system
     assert notice_store.consume_notices("parent") == ()

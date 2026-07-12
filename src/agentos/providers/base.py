@@ -1,55 +1,44 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from copy import deepcopy
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, TypeAlias
 
+from agentos._internal_transcript import InternalTranscriptValue
+from agentos.providers.input import ProviderInputItem, ProviderToolCall
 from agentos.providers.messages import (
     ProviderMessage,
     ProviderToolSpec,
-    provider_message_from_dict,
-    provider_tool_spec_from_dict,
 )
 if TYPE_CHECKING:
     from agentos.providers.stream import ProviderStreamEvent, ProviderStreamOptions
 
 
-@dataclass(frozen=True, slots=True)
-class ProviderToolCall:
-    """provider 返回的标准化工具调用。"""
-
-    id: str
-    name: str
-    arguments: dict[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        """复制参数，避免 frozen dataclass 被外部可变引用污染。"""
-
-        object.__setattr__(self, "arguments", deepcopy(self.arguments))
+_ProviderRequestMessage: TypeAlias = ProviderInputItem | ProviderMessage
 
 
 @dataclass(frozen=True, slots=True)
-class ProviderRequest:
+class ProviderRequest(InternalTranscriptValue):
     """发送给 provider 的标准化请求。"""
 
     system: str
-    messages: list[ProviderMessage]
-    tools: list[ProviderToolSpec] = field(default_factory=list)
+    messages: tuple[_ProviderRequestMessage, ...]
+    tools: tuple[ProviderToolSpec, ...] = ()
 
     def __post_init__(self) -> None:
-        """标准化迁移期传入的 dict message / tool schema。"""
+        """冻结 typed 输入并拒绝 legacy dict 边界。"""
 
-        object.__setattr__(
-            self,
-            "messages",
-            [provider_message_from_dict(message) for message in self.messages],
-        )
-        object.__setattr__(
-            self,
-            "tools",
-            [provider_tool_spec_from_dict(tool) for tool in self.tools],
-        )
+        messages = tuple(self.messages)
+        if any(not isinstance(item, (ProviderInputItem, ProviderMessage)) for item in messages):
+            raise TypeError(
+                "ProviderRequest messages must contain ProviderInputItem "
+                "or typed migration messages",
+            )
+        tools = tuple(self.tools)
+        if any(type(item) is not ProviderToolSpec for item in tools):
+            raise TypeError("ProviderRequest tools must contain ProviderToolSpec")
+        object.__setattr__(self, "messages", messages)
+        object.__setattr__(self, "tools", tools)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +55,7 @@ class ProviderUsage:
 
 
 @dataclass(frozen=True, slots=True)
-class ProviderResponse:
+class ProviderResponse(InternalTranscriptValue):
     """provider 返回的标准化响应。"""
 
     content: str = ""

@@ -74,7 +74,7 @@ def test_before_provider_call_hook_can_modify_request() -> None:
     loop.run_turn("hello")
 
     assert provider.requests[0].system == "modified system"
-    assert provider.requests[0].messages == [UserMessage(content="modified user")]
+    assert provider.requests[0].messages == (UserMessage(content="modified user"),)
 
 
 def test_after_provider_call_hook_observes_response() -> None:

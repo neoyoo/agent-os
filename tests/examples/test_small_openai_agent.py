@@ -8,7 +8,12 @@ from agentos.examples.small_openai_agent import (
 )
 from agentos.observability import CapturePolicy, InMemoryTracer, ObservabilityConfig
 from agentos.observability.instrumented import InstrumentedQueryLoop
-from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
+from agentos.providers import (
+    FakeProvider,
+    ProviderResponse,
+    ProviderToolCall,
+    provider_message_to_dict,
+)
 
 
 def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
@@ -31,7 +36,7 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
     answer = loop.run_turn("读取 pyproject.toml 里的项目名")
 
     assert answer == "项目名是 agent-os。"
-    tool_names = [tool["function"]["name"] for tool in provider.requests[0].tools]
+    tool_names = [tool.function.name for tool in provider.requests[0].tools]
     assert tool_names[:5] == [
         "declare_schema",
         "update_state",
@@ -40,8 +45,9 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
         "recall_context",
     ]
     assert "read_file" in tool_names
-    assert provider.requests[1].messages[-1]["role"] == "tool"
-    assert 'name = "agent-os"' in str(provider.requests[1].messages[-1]["content"])
+    tool_result = provider_message_to_dict(provider.requests[1].messages[-1])
+    assert tool_result["role"] == "tool"
+    assert 'name = "agent-os"' in str(tool_result["content"])
 
 
 def test_build_agent_exposes_registered_tools_only_through_request_tools() -> None:

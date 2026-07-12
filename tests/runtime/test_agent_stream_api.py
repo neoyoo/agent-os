@@ -5,7 +5,7 @@ from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
 from agentos import Agent
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderResponse
+from agentos.providers import FakeProvider, ProviderResponse, UserMessage
 from agentos.runtime import EventBus, ProviderRequestBuilder, TurnStartedEvent
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -233,7 +233,7 @@ def test_agent_continuation_injects_notice_without_user_message() -> None:
     result = agent.run_continuation()
 
     assert result.content == "checked"
-    assert provider.requests[0].messages == []
+    assert provider.requests[0].messages == ()
     assert "# Runtime Notice" not in provider.requests[0].system
     assert "Task task_1 completed." not in provider.requests[0].system
     assert context.snapshot().runtime_notices == ()
@@ -321,8 +321,5 @@ def test_agent_user_turn_and_continuation_are_serialized() -> None:
 
     assert continuation_result == ["first"]
     assert user_result == ["second"]
-    assert provider.requests[0].messages == []
-    assert provider.requests[1].messages[-1] == {
-        "role": "user",
-        "content": "hello",
-    }
+    assert provider.requests[0].messages == ()
+    assert provider.requests[1].messages[-1] == UserMessage(content="hello")

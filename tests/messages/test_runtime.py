@@ -1,6 +1,6 @@
-import json
 from typing import get_type_hints
 
+from agentos._frozen_json import FrozenJsonObject, thaw_json
 from agentos.messages import (
     MessageRuntime,
     MessageStore,
@@ -60,7 +60,7 @@ def test_tool_call_provider_dict_deep_copies_arguments() -> None:
     assert provider_dict["arguments"] == {"path": {"value": "pyproject.toml"}}
 
 
-def test_provider_projection_thaws_nested_tool_arguments() -> None:
+def test_provider_projection_keeps_nested_tool_arguments_frozen() -> None:
     runtime = MessageRuntime()
     runtime.append_assistant(
         "",
@@ -76,8 +76,8 @@ def test_provider_projection_thaws_nested_tool_arguments() -> None:
     projected = runtime.materialize_provider_messages()
     arguments = projected[0].tool_calls[0].arguments
 
-    assert arguments == {"filters": {"tags": ["phase2"]}}
-    assert json.loads(json.dumps(arguments)) == arguments
+    assert isinstance(arguments, FrozenJsonObject)
+    assert thaw_json(arguments) == {"filters": {"tags": ["phase2"]}}
 
 
 def test_message_store_is_append_only_when_active_refs_are_removed() -> None:

@@ -1,0 +1,273 @@
+from dataclasses import FrozenInstanceError
+from typing import get_args
+
+import pytest
+
+from agentos._internal_transcript import InternalTranscriptValue
+from agentos.context import ContextSnapshot
+from agentos.providers import (
+    FilePart,
+    ImagePart,
+    InputAuthority,
+    InputOrigin,
+    PersistencePolicy,
+    ProviderFunctionSpec,
+    ProviderInputItem,
+    ProviderInputKind,
+    ProviderRequest,
+    ProviderResponse,
+    ProviderRole,
+    ProviderToolCall,
+    ProviderToolSpec,
+    TextPart,
+    VisibilityPolicy,
+)
+
+
+def _raw_provider_input(**overrides: object) -> ProviderInputItem:
+    values: dict[str, object] = {
+        "role": "user",
+        "kind": "business_message",
+        "origin": "message_store",
+        "authority": "conversation_data",
+        "persistence": "stored",
+        "visibility": "conversation",
+        "content": (TextPart("hello"),),
+    }
+    values.update(overrides)
+    return ProviderInputItem(**values)  # type: ignore[arg-type]
+
+
+def test_provider_input_literal_sets_are_closed() -> None:
+    assert set(get_args(ProviderRole)) == {"user", "assistant", "tool"}
+    assert set(get_args(ProviderInputKind)) == {
+        "context_snapshot",
+        "business_message",
+        "tool_result",
+        "recalled_message",
+        "context_mount",
+    }
+    assert set(get_args(InputOrigin)) == {
+        "runtime",
+        "message_store",
+        "recall_runtime",
+        "artifact_runtime",
+    }
+    assert set(get_args(InputAuthority)) == {
+        "context_data",
+        "conversation_data",
+        "tool_data",
+        "artifact_data",
+    }
+    assert set(get_args(PersistencePolicy)) == {"stored", "ephemeral"}
+    assert set(get_args(VisibilityPolicy)) == {"conversation", "internal"}
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected"),
+    [
+        (
+            lambda: ProviderInputItem.context_snapshot("<context-snapshot/>\n"),
+            (
+                "user",
+                "context_snapshot",
+                "runtime",
+                "context_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.business_user("hello"),
+            (
+                "user",
+                "business_message",
+                "message_store",
+                "conversation_data",
+                "stored",
+                "conversation",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.business_assistant("hello"),
+            (
+                "assistant",
+                "business_message",
+                "message_store",
+                "conversation_data",
+                "stored",
+                "conversation",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.tool_result("call_1", "ok"),
+            (
+                "tool",
+                "tool_result",
+                "message_store",
+                "tool_data",
+                "stored",
+                "internal",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.recalled_user("old"),
+            (
+                "user",
+                "recalled_message",
+                "recall_runtime",
+                "conversation_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.recalled_assistant("old"),
+            (
+                "assistant",
+                "recalled_message",
+                "recall_runtime",
+                "conversation_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.recalled_tool("call_1", "old"),
+            (
+                "tool",
+                "recalled_message",
+                "recall_runtime",
+                "tool_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+        (
+            lambda: ProviderInputItem.context_mount((ImagePart("art_1"),)),
+            (
+                "user",
+                "context_mount",
+                "artifact_runtime",
+                "artifact_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+    ],
+)
+def test_provider_input_factories_freeze_the_metadata_matrix(
+    factory: object,
+    expected: tuple[str, str, str, str, str, str],
+) -> None:
+    item = factory()  # type: ignore[operator]
+
+    assert (
+        item.role,
+        item.kind,
+        item.origin,
+        item.authority,
+        item.persistence,
+        item.visibility,
+    ) == expected
+
+
+def test_context_snapshot_item_has_sdk_fixed_metadata_and_content() -> None:
+    item = ProviderInputItem.context_snapshot("<context-snapshot/>\n")
+
+    assert item.content == (TextPart("<context-snapshot/>\n"),)
+    assert item.tool_calls == ()
+    assert item.tool_call_id is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"role": "assistant", "kind": "context_snapshot"},
+        {"kind": "tool_result", "tool_call_id": None},
+        {"kind": "business_message", "origin": "recall_runtime"},
+        {"kind": "recalled_message", "persistence": "stored"},
+        {"kind": "context_mount", "authority": "conversation_data"},
+        {"kind": "unknown"},
+    ],
+)
+def test_provider_input_rejects_cross_matrix_combinations(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="metadata matrix"):
+        _raw_provider_input(**overrides)
+
+
+def test_provider_input_requires_tool_call_id_only_for_tool_data() -> None:
+    with pytest.raises(ValueError, match="tool_call_id"):
+        ProviderInputItem.tool_result("", "missing")
+    with pytest.raises(ValueError, match="tool_call_id"):
+        _raw_provider_input(tool_call_id="call_1")
+
+
+def test_provider_input_and_request_are_deeply_immutable() -> None:
+    arguments = {"filters": {"tags": ["phase2"]}}
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+    }
+    tool_call = ProviderToolCall("call_1", "search", arguments)
+    tool_spec = ProviderToolSpec(
+        function=ProviderFunctionSpec(
+            name="search",
+            description="Search.",
+            parameters=parameters,
+        ),
+    )
+    messages = [ProviderInputItem.business_assistant("", (tool_call,))]
+    tools = [tool_spec]
+
+    request = ProviderRequest(system="system", messages=messages, tools=tools)
+    arguments["filters"]["tags"].append("mutated")  # type: ignore[index,union-attr]
+    parameters["properties"]["other"] = {}  # type: ignore[index]
+    messages.clear()
+    tools.clear()
+
+    assert isinstance(request.messages, tuple)
+    assert isinstance(request.tools, tuple)
+    assert request.messages[0].tool_calls[0].arguments["filters"]["tags"] == (
+        "phase2",
+    )
+    assert "other" not in request.tools[0].function.parameters["properties"]
+    with pytest.raises(FrozenInstanceError):
+        request.system = "mutated"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        request.messages[0].tool_calls[0].arguments["filters"]["tags"] += (  # type: ignore[index,operator]
+            "mutated",
+        )
+    with pytest.raises(TypeError):
+        request.tools[0].function.parameters["properties"]["query"] = {}  # type: ignore[index]
+
+
+def test_provider_request_rejects_legacy_dict_messages() -> None:
+    with pytest.raises(TypeError, match="ProviderInputItem"):
+        ProviderRequest(
+            system="system",
+            messages=({"role": "user", "content": "hello"},),  # type: ignore[arg-type]
+        )
+
+
+def test_internal_provider_transcript_values_share_nominal_marker() -> None:
+    values = (
+        ContextSnapshot(xml="<context-snapshot/>\n"),
+        ProviderInputItem.business_user("hello"),
+        ProviderRequest(system="system", messages=(), tools=()),
+        ProviderResponse(content="internal"),
+    )
+
+    assert all(isinstance(value, InternalTranscriptValue) for value in values)
+    assert InternalTranscriptValue.__slots__ == ()
+    with pytest.raises(AttributeError):
+        InternalTranscriptValue().state = "forbidden"  # type: ignore[attr-defined]
+
+
+def test_provider_content_rejects_unknown_parts() -> None:
+    with pytest.raises(TypeError, match="content parts"):
+        _raw_provider_input(content=(object(),))
+    with pytest.raises(TypeError, match="content parts"):
+        ProviderInputItem.context_mount((FilePart("art_1"), object()))  # type: ignore[arg-type]
