@@ -59,6 +59,15 @@ Phase 2 使用“核心接口串行冻结、外围消费者受控并行、公共
 - 每个 worktree 从 Wave 2 的同一冻结提交创建，提交后由主 Agent 逐一审查并以非交互 Git 命令集成；不允许在 worktree 内自行合并其他工作流；
 - Task 13 前必须重新运行旧名称 drift scan；Task 14 前不得保留任何未声明迁移桥。
 
+### Compatibility Budget
+
+本项目尚未生产推广，Phase 2 优先选择清晰的 breaking migration，不为历史调用方式设计长期兼容架构。允许的临时兼容仅有：
+
+1. `Message = StoredMessage` 同一类身份 alias，用于让分阶段提交保持可运行；不得增加 wrapper、subclass、双写、行为分支或第二套 serializer，并在 Task 13 删除；
+2. 现有 Public Attachment 行为的私有 ProviderInput 投影桥，仅维持当前图片能力，并在 Phase 3A 由正式 ContextMount 替换。
+
+除以上两项外，不得新增 deprecated facade、legacy DTO、旧新字段双读、自动猜测迁移、版本分支或 Adapter-specific 领域字段。任何新增兼容需求都必须先停止实现、更新 Spec 并获得批准；Phase 2 最终 Public API 只保留正式的 `StoredMessage` 和 `ProviderInputItem` 边界。
+
 ## Mandatory Execution Bootstrap And Review Gate
 
 Task 1 前依次完整读取 `AGENTS.md`、工程规范、两份批准 Spec、已批准 addendum、本计划、Phase 1 实施结果、将修改的源码/相邻测试及对应 `ai-knowledge/wiki` 页面，并重新发布 Scope Contract。上下文压缩、交接或 Agent 替换后重复。
