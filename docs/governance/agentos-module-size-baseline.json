@@ -143,18 +143,18 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/context/registry.py",
+      "lines": 479,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/state_plane.py",
       "lines": 455,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/examples/small_openai_agent.py",
-      "lines": 438,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/context/renderer.py",
-      "lines": 419,
+      "lines": 441,
       "gate": "responsibility_review"
     },
     {
@@ -210,11 +210,6 @@
     {
       "path": "src/agentos/probes.py",
       "lines": 312,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/builder.py",
-      "lines": 301,
       "gate": "responsibility_review"
     }
   ]
