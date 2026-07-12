@@ -44,19 +44,18 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
     assert 'name = "agent-os"' in str(provider.requests[1].messages[-1]["content"])
 
 
-def test_build_agent_renders_capability_plane_from_registered_tools() -> None:
+def test_build_agent_exposes_registered_tools_only_through_request_tools() -> None:
     provider = FakeProvider([ProviderResponse(content="ok")])
     loop = build_agent(provider=provider, project_root=Path.cwd())
 
     loop.run_turn("hello")
 
-    system = provider.requests[0].system
-    assert "- Registered tools: `read_file` — 读取项目内文本文件内容。" in system
-    assert "edit_file" not in system
-    assert "run_shell" not in system
-    tool_names = [tool["function"]["name"] for tool in provider.requests[0].tools]
+    request = provider.requests[0]
+    tool_names = [tool["function"]["name"] for tool in request.tools]
     assert "recall_context" in tool_names
     assert "read_file" in tool_names
+    assert "Registered tools" not in request.system
+    assert "read_file" not in request.system
 
 
 

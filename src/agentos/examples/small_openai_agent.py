@@ -6,7 +6,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
-from agentos.context import CapabilityPlane, ContextRenderer, ContextRuntime
+from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context.projection import default_system_section_registry
 from agentos.messages import MessageRuntime
 from agentos.observability import (
     CapturePolicy,
@@ -39,6 +40,7 @@ from agentos.runtime import (
     event_to_json,
     event_to_sse,
 )
+from agentos.tokens import HeuristicTokenCounter
 
 
 def load_dotenv(env_file: str | Path = ".env") -> None:
@@ -277,6 +279,13 @@ def _json_default(value: object) -> object:
         )
 
 
+def _default_context_renderer() -> ContextRenderer:
+    return ContextRenderer(
+        registry=default_system_section_registry(),
+        token_counter=HeuristicTokenCounter(),
+    )
+
+
 def build_agent(
     provider: Provider,
     project_root: str | Path = ".",
@@ -296,13 +305,7 @@ def build_agent(
         context_runtime=context,
         message_runtime=messages,
         request_builder=ProviderRequestBuilder(
-            context_renderer=ContextRenderer(
-                capability_plane=CapabilityPlane(
-                    tool_groups=[
-                        registry.capability_tool_group("Registered tools"),
-                    ],
-                ),
-            ),
+            context_renderer=_default_context_renderer(),
             message_runtime=messages,
             tools=capabilities.tool_specs(),
         ),
