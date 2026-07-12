@@ -218,13 +218,17 @@ try {
     if ($worktreeListExit -ne 0) { throw "Cannot verify created worktree registrations" }
     $registeredPaths = @(
         $porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object {
-            [System.IO.Path]::TrimEndingDirectorySeparator(
-                [System.IO.Path]::GetFullPath($_.Substring(9).Trim())
+            ([System.IO.Path]::GetFullPath($_.Substring(9).Trim())).TrimEnd(
+                [System.IO.Path]::DirectorySeparatorChar,
+                [System.IO.Path]::AltDirectorySeparatorChar
             )
         }
     )
     foreach ($record in $worktrees) {
-        $normalizedPath = [System.IO.Path]::TrimEndingDirectorySeparator($record.Path)
+        $normalizedPath = ([System.IO.Path]::GetFullPath($record.Path)).TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        )
         if ($normalizedPath -notin $registeredPaths) {
             throw "$($record.Owner) worktree is not registered at $normalizedPath"
         }
@@ -254,15 +258,19 @@ try {
         if ($cleanupListExit -ne 0) { throw "Cannot inspect partial worktree registrations" }
         $cleanupRegistered = @(
             $cleanupPorcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object {
-                [System.IO.Path]::TrimEndingDirectorySeparator(
-                    [System.IO.Path]::GetFullPath($_.Substring(9).Trim())
+                ([System.IO.Path]::GetFullPath($_.Substring(9).Trim())).TrimEnd(
+                    [System.IO.Path]::DirectorySeparatorChar,
+                    [System.IO.Path]::AltDirectorySeparatorChar
                 )
             }
         )
         $cleanupRecords = @($worktrees)
         [array]::Reverse($cleanupRecords)
         foreach ($record in $cleanupRecords) {
-            $normalizedPath = [System.IO.Path]::TrimEndingDirectorySeparator($record.Path)
+            $normalizedPath = ([System.IO.Path]::GetFullPath($record.Path)).TrimEnd(
+                [System.IO.Path]::DirectorySeparatorChar,
+                [System.IO.Path]::AltDirectorySeparatorChar
+            )
             if ($normalizedPath -in $cleanupRegistered) {
                 git worktree remove --force -- $normalizedPath
                 $cleanupRemoveExit = $LASTEXITCODE
@@ -273,8 +281,9 @@ try {
                 $afterRemoveExit = $LASTEXITCODE
                 $afterRegistered = @(
                     $afterRemove | Where-Object { $_ -like 'worktree *' } | ForEach-Object {
-                        [System.IO.Path]::TrimEndingDirectorySeparator(
-                            [System.IO.Path]::GetFullPath($_.Substring(9).Trim())
+                        ([System.IO.Path]::GetFullPath($_.Substring(9).Trim())).TrimEnd(
+                            [System.IO.Path]::DirectorySeparatorChar,
+                            [System.IO.Path]::AltDirectorySeparatorChar
                         )
                     }
                 )
@@ -437,7 +446,10 @@ diagnostic-only 历史证据：
 $phase0 = [System.IO.Path]::GetFullPath(
     (Join-Path $env:TEMP "agentos-phase0-failure-audit-$([guid]::NewGuid().ToString('N'))")
 )
-$normalizedPhase0 = [System.IO.Path]::TrimEndingDirectorySeparator($phase0)
+$normalizedPhase0 = ([System.IO.Path]::GetFullPath($phase0)).TrimEnd(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
+)
 $priorPythonPath = [Environment]::GetEnvironmentVariable('PYTHONPATH', 'Process')
 $priorExpectedSourceRoot = [Environment]::GetEnvironmentVariable('AGENTOS_EXPECTED_SOURCE_ROOT', 'Process')
 try {
@@ -448,8 +460,9 @@ try {
     if ($addListExit -ne 0) { throw "Cannot inspect Phase 0 registration after add" }
     $addRegistered = @(
         $addPorcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object {
-            [System.IO.Path]::TrimEndingDirectorySeparator(
-                [System.IO.Path]::GetFullPath($_.Substring(9).Trim())
+            ([System.IO.Path]::GetFullPath($_.Substring(9).Trim())).TrimEnd(
+                [System.IO.Path]::DirectorySeparatorChar,
+                [System.IO.Path]::AltDirectorySeparatorChar
             )
         }
     )
@@ -509,8 +522,9 @@ try {
     }
     $cleanupRegistered = @(
         $cleanupPorcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object {
-            [System.IO.Path]::TrimEndingDirectorySeparator(
-                [System.IO.Path]::GetFullPath($_.Substring(9).Trim())
+            ([System.IO.Path]::GetFullPath($_.Substring(9).Trim())).TrimEnd(
+                [System.IO.Path]::DirectorySeparatorChar,
+                [System.IO.Path]::AltDirectorySeparatorChar
             )
         }
     )
@@ -527,8 +541,9 @@ try {
         }
         $afterRemoveRegistered = @(
             $afterRemovePorcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object {
-                [System.IO.Path]::TrimEndingDirectorySeparator(
-                    [System.IO.Path]::GetFullPath($_.Substring(9).Trim())
+                ([System.IO.Path]::GetFullPath($_.Substring(9).Trim())).TrimEnd(
+                    [System.IO.Path]::DirectorySeparatorChar,
+                    [System.IO.Path]::AltDirectorySeparatorChar
                 )
             }
         )
