@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentos._frozen_json import thaw_json
 from agentos.context import CompressedSegment
 from agentos.memory.types import (
     CompressedSegmentPackage,
@@ -38,7 +39,7 @@ def tool_call_to_dict(tool_call: ToolCall) -> JsonDict:
     return {
         "id": tool_call.id,
         "name": tool_call.name,
-        "arguments": dict(tool_call.arguments),
+        "arguments": thaw_json(tool_call.arguments),
     }
 
 

@@ -89,7 +89,9 @@ def test_recall_context_returns_tool_use_and_tool_result_pair() -> None:
         message_runtime=message_runtime,
     ).recall_context("seg_1")
 
-    assert recalled_messages[1].tool_calls == [ToolCall(id="call_1", name="read_file")]
+    assert recalled_messages[1].tool_calls == (
+        ToolCall(id="call_1", name="read_file"),
+    )
     assert recalled_messages[2].role == "tool"
     assert recalled_messages[2].tool_call_id == "call_1"
 

@@ -1,3 +1,5 @@
+import json
+
 from agentos.messages import MessageRuntime, ToolCall, ToolPairWindowError
 from agentos.providers import provider_message_to_dict
 
@@ -38,6 +40,26 @@ def test_tool_call_provider_dict_deep_copies_arguments() -> None:
     nested["path"]["value"] = "mutated"  # type: ignore[index]
 
     assert provider_dict["arguments"] == {"path": {"value": "pyproject.toml"}}
+
+
+def test_provider_projection_thaws_nested_tool_arguments() -> None:
+    runtime = MessageRuntime()
+    runtime.append_assistant(
+        "",
+        tool_calls=[
+            ToolCall(
+                id="call_1",
+                name="inspect",
+                arguments={"filters": {"tags": ["phase2"]}},
+            ),
+        ],
+    )
+
+    projected = runtime.materialize_provider_messages()
+    arguments = projected[0].tool_calls[0].arguments
+
+    assert arguments == {"filters": {"tags": ["phase2"]}}
+    assert json.loads(json.dumps(arguments)) == arguments
 
 
 def test_message_store_is_append_only_when_active_refs_are_removed() -> None:

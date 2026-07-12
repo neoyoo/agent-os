@@ -1,3 +1,5 @@
+import json
+
 from agentos.compression import CompressionIndex
 from agentos.context import ContextState, WorkingStateField, WorkingStateSchema
 from agentos.context.state import CompressedSegment
@@ -13,6 +15,7 @@ from agentos.persistence.serializers import (
     message_runtime_to_dict,
     session_snapshot_from_dict,
     session_snapshot_to_dict,
+    tool_call_to_dict,
 )
 from agentos.runtime import SessionState, TurnStartedEvent
 
@@ -114,6 +117,22 @@ def test_message_runtime_round_trips_originals_active_refs_and_next_id() -> None
     assert new_message.id == "msg_4"
     assert [ref.message_id for ref in restored.active_window.refs][:1] == [user.id]
     assert restored.active_window.refs[0].temporary is True
+
+
+def test_tool_call_serializer_thaws_nested_arguments() -> None:
+    encoded = tool_call_to_dict(
+        ToolCall(
+            id="call_1",
+            name="inspect",
+            arguments={"filters": {"tags": ["phase2"]}},
+        ),
+    )
+
+    assert json.loads(json.dumps(encoded)) == {
+        "id": "call_1",
+        "name": "inspect",
+        "arguments": {"filters": {"tags": ["phase2"]}},
+    }
 
 
 def test_compression_index_round_trips_segment_source_refs() -> None:

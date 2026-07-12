@@ -1,3 +1,5 @@
+import json
+
 from agentos.context import CompressedSegment
 from agentos.memory import (
     CompressedSegmentPackage,
@@ -5,7 +7,8 @@ from agentos.memory import (
     RecallCandidate,
     SegmentRecallDocument,
 )
-from agentos.messages import Message, MessageRef
+from agentos.memory.serializers import tool_call_to_dict
+from agentos.messages import Message, MessageRef, ToolCall
 
 
 def test_segment_recall_document_renders_search_text_without_original_payload() -> None:
@@ -80,3 +83,19 @@ def test_recall_candidate_is_orderable_by_score_in_callers() -> None:
     assert candidate.segment_id == "seg_1"
     assert candidate.score == 0.75
     assert candidate.reason == "keyword overlap"
+
+
+def test_memory_tool_call_serializer_thaws_nested_arguments() -> None:
+    encoded = tool_call_to_dict(
+        ToolCall(
+            id="call_1",
+            name="inspect",
+            arguments={"filters": {"tags": ["phase2"]}},
+        ),
+    )
+
+    assert json.loads(json.dumps(encoded)) == {
+        "id": "call_1",
+        "name": "inspect",
+        "arguments": {"filters": {"tags": ["phase2"]}},
+    }

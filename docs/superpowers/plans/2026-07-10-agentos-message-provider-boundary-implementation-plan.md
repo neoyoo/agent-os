@@ -142,8 +142,15 @@ Expected: 48 个旧消息边界依赖文件、101 个 Provider Request 构造/�
 - Modify: `src/agentos/messages/types.py`
 - Create: `src/agentos/messages/_migration.py`
 - Modify: `src/agentos/messages/__init__.py`
+- Modify: `src/agentos/messages/runtime.py`（仅现有 Provider 输出边界 thaw）
+- Modify: `src/agentos/persistence/serializers.py`（仅 ToolCall 输出边界 thaw）
+- Modify: `src/agentos/memory/serializers.py`（仅 ToolCall 输出边界 thaw）
 - Create: `tests/test_frozen_json.py`
 - Test: `tests/messages/test_stored_message.py`
+- Test: `tests/messages/test_runtime.py`
+- Test: `tests/persistence/test_serializers.py`
+- Test: `tests/memory/test_types.py`
+- Test: `tests/recall/test_runtime.py`（仅 tuple 领域契约断言）
 
 - [ ] **Step 1: 写不可变、复制和禁止 Provider metadata 的 Red 测试**
 
@@ -245,11 +252,23 @@ class StoredMessage:
 
 `ToolCall.arguments` 在 `__post_init__` 调用 `freeze_json()`，因此实例构造后不能直接修改任意嵌套值。此任务只增加新类型：由于当前 Store/Window/Runtime 和 persistence serializer 仍直接从 `messages.types` 导入旧名称，`messages/types.py` 暂时保留 **单一类身份 alias** `Message = StoredMessage`；`messages/_migration.py` 只集中重导出同一绑定，不能定义第二个类、包装器或第二份领域模型。`messages.__init__` 暂时继续导出该绑定，以保证当前消费者构造的对象天然就是 `StoredMessage`。测试断言 `Message is StoredMessage`、`agentos.messages.types.Message is StoredMessage`、Store 接受旧 import 构造值、相等性/序列化没有双模型分支。两个桥位置都必须带 `# Phase 2 migration bridge; remove in Task 13`，不得新增业务调用者；Task 2/8 迁移直接内部 import 后，Task 13 一次性删除旧名称。`StoredMessage.to_provider_dict()` 不存在，业务类型不能知道 Provider 形态。
 
+深冻结会使现有直接输出边界中的浅层 `dict(tool_call.arguments)` 留下嵌套 `FrozenJsonObject`，并破坏 Provider 投影、JSON serializer 和 `MessageStore.put()` 的冲突判定。Task 1 因此必须在同一原子提交中完成以下稳定化，不得用 `__deepcopy__`、伪 dict 行为或第二套 serializer 掩盖边界错误：
+
+- `FrozenJsonObject` 使用 JSON 类型敏感的递归等价，至少保证 `true`、`1` 和 `1.0` 不互相等价；
+- JSON 闭集只接受精确内建类型，拒绝携带自定义行为或可变附加状态的内建类型子类；循环容器稳定抛出 `ValueError("circular JSON value")`，共享但无环的输入仍允许；
+- `FrozenJsonObject` 禁止继承，并提供与类型敏感、对象键无序等价一致的稳定进程内哈希，使包含它的 frozen 领域值不会暴露虚假 Hashable 契约；
+- 作为不可变值对象，`FrozenJsonObject` 的 `copy`/`deepcopy` 安全返回自身，pickle round-trip 重建同语义精确类型；该协议不能替代 Provider/serializer 输出边界的显式 `thaw_json()`；
+- `MessageRuntime` 现有 Provider 投影在构造 `ProviderToolCall` 前调用 `thaw_json()`；
+- persistence 和 memory 的现有 `tool_call_to_dict()` 在 JSON 输出边界调用 `thaw_json()`；
+- 对应测试必须覆盖嵌套 object/list 可被标准 `json.dumps()` 序列化，以及同 ID 消息只因 bool/int/float 参数不同就产生冲突。
+
+这里不提前迁移 Store、Memory、Persistence 的类型所有权，不改变 wire schema，也不新增兼容入口。Task 2、8、10 仍负责正式类型迁移和模块 Owner 收口。
+
 - [ ] **Step 4: Green 和提交**
 
 ```powershell
-python -m pytest tests/test_frozen_json.py tests/messages/test_stored_message.py tests/messages -q
-git add -- src/agentos/_frozen_json.py src/agentos/artifacts/types.py src/agentos/artifacts/__init__.py src/agentos/messages/types.py src/agentos/messages/_migration.py src/agentos/messages/__init__.py tests/test_frozen_json.py tests/messages/test_stored_message.py
+python -m pytest tests/test_frozen_json.py tests/messages/test_stored_message.py tests/messages/test_runtime.py tests/persistence/test_serializers.py tests/memory/test_types.py tests/recall/test_runtime.py tests/messages -q
+git add -- docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md src/agentos/_frozen_json.py src/agentos/artifacts/types.py src/agentos/artifacts/__init__.py src/agentos/messages/types.py src/agentos/messages/_migration.py src/agentos/messages/__init__.py src/agentos/messages/runtime.py src/agentos/persistence/serializers.py src/agentos/memory/serializers.py tests/test_frozen_json.py tests/messages/test_stored_message.py tests/messages/test_runtime.py tests/persistence/test_serializers.py tests/memory/test_types.py tests/recall/test_runtime.py
 git commit -m "feat: define stored message truth model"
 ```
 

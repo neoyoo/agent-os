@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
+from typing import cast
 
+from agentos._frozen_json import thaw_json
 from agentos.messages.store import MessageStore
 from agentos.messages.types import Message, MessageRole, ToolCall
 from agentos.messages.window import ActiveWindow
@@ -113,7 +115,10 @@ class MessageRuntime:
                     ProviderToolCall(
                         id=tool_call.id,
                         name=tool_call.name,
-                        arguments=dict(tool_call.arguments),
+                        arguments=cast(
+                            dict[str, object],
+                            thaw_json(tool_call.arguments),
+                        ),
                     )
                     for tool_call in message.tool_calls
                 ),
