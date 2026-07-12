@@ -234,7 +234,7 @@ class StoredMessage:
         object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
 ```
 
-`ToolCall.arguments` 在 `__post_init__` 调用 `freeze_json()`，因此实例构造后不能直接修改任意嵌套值。此任务只增加新类型：`messages/_migration.py` 中使用 **单一类身份 alias** `Message = StoredMessage`，不是子类、包装器或第二个 dataclass；`messages.__init__` 暂时继续导出它，以保证当前消费者构造的对象天然就是 `StoredMessage`。测试断言 `Message is StoredMessage`、Store 接受旧 import 构造值、相等性/序列化没有双模型分支。桥必须带 `# Phase 2 migration bridge; remove in Task 13`，不得新增调用者；`StoredMessage.to_provider_dict()` 不存在，业务类型不能知道 Provider 形态。
+`ToolCall.arguments` 在 `__post_init__` 调用 `freeze_json()`，因此实例构造后不能直接修改任意嵌套值。此任务只增加新类型：由于当前 Store/Window/Runtime 和 persistence serializer 仍直接从 `messages.types` 导入旧名称，`messages/types.py` 暂时保留 **单一类身份 alias** `Message = StoredMessage`；`messages/_migration.py` 只集中重导出同一绑定，不能定义第二个类、包装器或第二份领域模型。`messages.__init__` 暂时继续导出该绑定，以保证当前消费者构造的对象天然就是 `StoredMessage`。测试断言 `Message is StoredMessage`、`agentos.messages.types.Message is StoredMessage`、Store 接受旧 import 构造值、相等性/序列化没有双模型分支。两个桥位置都必须带 `# Phase 2 migration bridge; remove in Task 13`，不得新增业务调用者；Task 2/8 迁移直接内部 import 后，Task 13 一次性删除旧名称。`StoredMessage.to_provider_dict()` 不存在，业务类型不能知道 Provider 形态。
 
 - [ ] **Step 4: Green 和提交**
 
