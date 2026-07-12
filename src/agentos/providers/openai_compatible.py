@@ -25,6 +25,7 @@ from agentos.providers.base import (
     ProviderToolCall,
     ProviderUsage,
 )
+from agentos.providers.input import ProviderInputItem, TextPart
 from agentos.providers.messages import (
     AssistantMessage,
     ToolResultMessage,
@@ -633,7 +634,6 @@ class OpenAICompatibleProvider:
 
     def _payload(self, request: ProviderRequest) -> dict[str, object]:
         """构造 OpenAI-compatible chat completions payload。"""
-
         payload: dict[str, object] = (
             copy.deepcopy(self.extra_body) if self.extra_body else {}
         )
@@ -656,7 +656,6 @@ class OpenAICompatibleProvider:
 
     def _chat_completions_url(self) -> str:
         """返回 chat completions endpoint URL。"""
-
         base_url = self.base_url.rstrip("/")
         if base_url.endswith("/chat/completions"):
             return base_url
@@ -664,17 +663,27 @@ class OpenAICompatibleProvider:
 
     def _timeout(self) -> float:
         """返回 provider 调用超时秒数。"""
-
         return self.timeout_seconds
 
-    def _message(self, message: ProviderMessage) -> dict[str, object]:
+    def _message(self, message: ProviderInputItem | ProviderMessage) -> dict[str, object]:
         """把 SDK 内部 provider message 转为 OpenAI-compatible message。"""
-
+        # Phase 2 migration bridge; remove in Task 13.
+        if isinstance(message, ProviderInputItem):
+            if message.role == "user":
+                message = UserMessage(
+                    message.content[0].text if len(message.content) == 1
+                    and isinstance(message.content[0], TextPart) else message.content
+                )
+            elif message.role in ("assistant", "tool") and (
+                len(message.content) != 1 or not isinstance(message.content[0], TextPart)
+            ):
+                raise ValueError(f"{message.role} provider input content requires exactly one TextPart")
+            elif message.role == "assistant":
+                message = AssistantMessage(message.content[0].text, message.tool_calls)
+            elif message.role == "tool" and message.tool_call_id is not None:
+                message = ToolResultMessage(message.tool_call_id, message.content[0].text)
         if isinstance(message, UserMessage):
-            return {
-                "role": "user",
-                "content": openai_chat_user_content(message.content),
-            }
+            return {"role": "user", "content": openai_chat_user_content(message.content)}
         if isinstance(message, AssistantMessage):
             result: dict[str, object] = {
                 "role": "assistant",
@@ -683,24 +692,16 @@ class OpenAICompatibleProvider:
             if not message.tool_calls:
                 return result
             result["content"] = message.content or None
-            result["tool_calls"] = [
-                self._request_tool_call(tool_call)
-                for tool_call in message.tool_calls
-            ]
+            result["tool_calls"] = [self._request_tool_call(c) for c in message.tool_calls]
             return result
         if isinstance(message, ToolResultMessage):
-            return {
-                "role": "tool",
-                "tool_call_id": message.tool_call_id,
-                "content": message.content,
-            }
+            return {"role": "tool", "tool_call_id": message.tool_call_id, "content": message.content}
         raise OpenAICompatibleProviderError(
             "active messages must not include system role; use ProviderRequest.system",
         )
 
     def _request_tool_call(self, tool_call: ProviderToolCall) -> dict[str, object]:
         """把内部 tool call 摘要转为 OpenAI function tool_call。"""
-
         return {
             "id": tool_call.id,
             "type": "function",
@@ -714,7 +715,6 @@ class OpenAICompatibleProvider:
 
     def _response(self, response: dict[str, object]) -> ProviderResponse:
         """把 OpenAI-compatible response 转为 ProviderResponse。"""
-
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("OpenAI-compatible response requires choices")

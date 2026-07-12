@@ -14,6 +14,7 @@ from agentos.providers import (
     AnthropicProvider,
     OpenAIProvider,
     ProviderFunctionSpec,
+    ProviderInputItem,
     ProviderRequest,
     ProviderToolCall,
     ProviderToolSpec,
@@ -21,6 +22,146 @@ from agentos.providers import (
     ToolResultMessage,
     UserMessage,
 )
+
+
+_FORBIDDEN_PROVIDER_METADATA = {
+    "origin",
+    "authority",
+    "persistence",
+    "visibility",
+}
+
+
+def _logical_message_pairs() -> tuple[
+    tuple[UserMessage | AssistantMessage | ToolResultMessage, ProviderInputItem],
+    ...,
+]:
+    tool_call = ProviderToolCall(
+        id="call_1",
+        name="lookup",
+        arguments={"query": "agentos"},
+    )
+    return (
+        (UserMessage("hello"), ProviderInputItem.business_user("hello")),
+        (
+            AssistantMessage("", tool_calls=(tool_call,)),
+            ProviderInputItem.business_assistant("", (tool_call,)),
+        ),
+        (
+            ToolResultMessage("call_1", "done"),
+            ProviderInputItem.tool_result("call_1", "done"),
+        ),
+        (UserMessage("old"), ProviderInputItem.recalled_user("old")),
+        (
+            ToolResultMessage("call_1", "old result"),
+            ProviderInputItem.recalled_tool("call_1", "old result"),
+        ),
+    )
+
+
+def _provider_input_with_content(
+    role: str,
+    content: tuple[TextPart | ImagePart, ...],
+) -> ProviderInputItem:
+    if role == "assistant":
+        return ProviderInputItem(
+            role="assistant",
+            kind="business_message",
+            origin="message_store",
+            authority="conversation_data",
+            persistence="stored",
+            visibility="conversation",
+            content=content,
+        )
+    return ProviderInputItem(
+        role="tool",
+        kind="tool_result",
+        origin="message_store",
+        authority="tool_data",
+        persistence="stored",
+        visibility="internal",
+        content=content,
+        tool_call_id="call_1",
+    )
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        OpenAIProvider(client=object(), model="gpt-test"),
+        AnthropicProvider(client=object(), model="claude-test"),
+    ],
+    ids=["openai", "anthropic"],
+)
+@pytest.mark.parametrize("legacy, logical", _logical_message_pairs())
+def test_provider_input_wire_matches_legacy_messages(
+    provider: OpenAIProvider | AnthropicProvider,
+    legacy: UserMessage | AssistantMessage | ToolResultMessage,
+    logical: ProviderInputItem,
+) -> None:
+    request = ProviderRequest(system="system", messages=(logical,))
+
+    provider._ensure_no_active_system_messages(request)
+    wire = provider._message(logical)
+
+    assert wire == provider._message(legacy)
+    assert _FORBIDDEN_PROVIDER_METADATA.isdisjoint(wire)
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        OpenAIProvider(client=object(), model="gpt-test"),
+        AnthropicProvider(client=object(), model="claude-test"),
+    ],
+    ids=["openai", "anthropic"],
+)
+@pytest.mark.parametrize("role", ["assistant", "tool"])
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param((), id="empty"),
+        pytest.param((TextPart("one"), TextPart("two")), id="multiple"),
+        pytest.param((ImagePart(object()),), id="non-text"),
+    ],
+)
+def test_provider_input_rejects_non_single_text_assistant_and_tool_content(
+    provider: OpenAIProvider | AnthropicProvider,
+    role: str,
+    content: tuple[TextPart | ImagePart, ...],
+) -> None:
+    logical = _provider_input_with_content(role, content)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"{role} provider input content requires exactly one TextPart",
+    ):
+        provider._message(logical)
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        OpenAIProvider(client=object(), model="gpt-test"),
+        AnthropicProvider(client=object(), model="claude-test"),
+    ],
+    ids=["openai", "anthropic"],
+)
+def test_context_mount_wire_matches_legacy_multimodal_user(
+    provider: OpenAIProvider | AnthropicProvider,
+) -> None:
+    attachment = Attachment(
+        handle="att_1",
+        filename="diagram.png",
+        mime_type="image/png",
+        size_bytes=11,
+        source=BytesSource(b"image-bytes"),
+    )
+    content = (TextPart("inspect"), ImagePart(attachment))
+
+    assert provider._message(ProviderInputItem.context_mount(content)) == (
+        provider._message(UserMessage(content))
+    )
 
 
 def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:

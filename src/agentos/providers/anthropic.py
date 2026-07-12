@@ -18,6 +18,7 @@ from agentos.providers.base import (
     ProviderToolSpec,
     ProviderUsage,
 )
+from agentos.providers.input import ProviderInputItem
 from agentos.providers.messages import (
     AssistantMessage,
     FilePart,
@@ -80,18 +81,42 @@ class AnthropicProvider:
         """拒绝 active window 中的 system 消息，避免 provider 收到双 system。"""
 
         for message in request.messages:
-            if not isinstance(
-                message,
-                (UserMessage, AssistantMessage, ToolResultMessage),
+            if isinstance(message, ProviderInputItem) and message.role in (
+                "user",
+                "assistant",
+                "tool",
             ):
-                raise ValueError(
-                    "active messages must not include system role; use "
-                    "ProviderRequest.system",
-                )
+                continue
+            if isinstance(message, (UserMessage, AssistantMessage, ToolResultMessage)):
+                continue
+            raise ValueError(
+                "active messages must not include system role; use "
+                "ProviderRequest.system",
+            )
 
-    def _message(self, message: ProviderMessage) -> dict[str, object]:
+    def _message(
+        self,
+        message: ProviderInputItem | ProviderMessage,
+    ) -> dict[str, object]:
         """把 provider message 转为 Anthropic Messages API 形态。"""
 
+        # Phase 2 migration bridge; remove in Task 13.
+        if isinstance(message, ProviderInputItem):
+            if message.role == "user":
+                if len(message.content) == 1 and isinstance(message.content[0], TextPart):
+                    return self._message(UserMessage(message.content[0].text))
+                return self._message(UserMessage(message.content))
+            if message.role in ("assistant", "tool"):
+                if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
+                    raise ValueError(f"{message.role} provider input content requires exactly one TextPart")
+            if message.role == "assistant":
+                return self._message(
+                    AssistantMessage(message.content[0].text, message.tool_calls),
+                )
+            if message.role == "tool" and message.tool_call_id is not None:
+                return self._message(
+                    ToolResultMessage(message.tool_call_id, message.content[0].text),
+                )
         if isinstance(message, UserMessage):
             return {
                 "role": "user",
@@ -195,7 +220,10 @@ class AnthropicProvider:
             return {"type": "file", "file_id": source.file_id}
         raise ValueError("unsupported Anthropic attachment source")
 
-    def _messages(self, messages: list[ProviderMessage]) -> list[dict[str, object]]:
+    def _messages(
+        self,
+        messages: list[ProviderInputItem | ProviderMessage],
+    ) -> list[dict[str, object]]:
         """转换并合并连续 tool_result，满足 Anthropic 角色交替规则。"""
 
         return self._merge_consecutive_tool_results(
