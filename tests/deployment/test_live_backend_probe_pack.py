@@ -26,11 +26,8 @@ def _run_live_backend_probe(
     backend_name: str,
     *arguments: str,
     cwd: Path | None = None,
-    disable_site: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     command = [sys.executable]
-    if disable_site:
-        command.append("-S")
     command.extend(
         (
             "-m",
@@ -162,7 +159,6 @@ def test_reference_live_backend_probe_subprocess_has_isolated_import(
     completed = _run_live_backend_probe(
         "agent_registry",
         cwd=tmp_path,
-        disable_site=True,
     )
 
     assert completed.returncode == 0, completed.stderr
