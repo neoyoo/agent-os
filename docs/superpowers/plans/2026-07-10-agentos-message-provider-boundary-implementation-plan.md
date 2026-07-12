@@ -14,12 +14,50 @@
 
 实现前必须同时满足：
 
-1. Phase 1 Context Protocol Kernel 已合入并通过全量验证；
-2. `2026-07-11-agentos-message-provider-boundary-contract-addendum.md` 已由用户批准；
+1. Phase 1 Context Protocol Kernel 已进入 Phase 2 基线分支并通过全量验证；
+2. `2026-07-11-agentos-message-provider-boundary-contract-addendum.md` 和本计划已由用户批准；
 3. 本计划 Scope Contract 已再次发布；
 4. Phase 1 的 `ContextRenderer.render() -> SystemEnvelope` 和 `ContextSnapshotRenderer.render() -> ContextSnapshot` 签名没有漂移。
 
 任一条件不满足时，本计划只能审阅，不能启动实现 subagent。
+
+### 2026-07-12 Execution Re-baseline
+
+Gate 0 当前事实：
+
+- Phase 1 基线提交为 `1b9f385bfc414dbffdf17332aadbacdc3e30b756`；
+- Phase 1 分支已推送，用户确认 Pull Request 已创建；
+- Phase 2 集成分支为 `feature/agentos-sdk-phase2-message-provider-boundary`，直接从上述提交创建；
+- Phase 1 全量验证证据为 `1945 passed, 15 skipped`，Ruff、compileall、模块规模/Public API 测试和两层 Review 均通过；
+- 当前有 48 个源码/测试文件直接依赖 `Message`、`ProviderMessage` 或 `materialize_provider_messages`；
+- 当前有 101 个 `ProviderRequestBuilder(` 或 `ProviderRequest(` 构造/引用位置；
+- 当前规模为 `query_loop.py=884`、`async_query_loop.py=570`、`providers/messages.py=353`、`builder.py=287` 行。
+
+`ai-knowledge/wiki` 当前不在本工作区 checkout 中。实施者必须读取仓库内已固化的对应设计输入 `docs/plans/2026-06-10-kb-refresh-agentos-sdk-iteration.md`，以及 `AGENTS.md` 中的 query-loop、context-management、memory-system 和 session-recovery 映射；若后续恢复 `ai-knowledge` checkout，再补读原始页面，但不得因此改变已批准 Phase 2 Spec。
+
+## Execution Waves And Ownership
+
+Phase 2 使用“核心接口串行冻结、外围消费者受控并行、公共 API 串行收口”的执行拓扑。共享核心文件不得由多个 worktree 同时修改。
+
+| Wave | Tasks | Execution | Merge gate |
+|---|---:|---|---|
+| Wave 0 | Task 0 | 主集成分支，只读基线和 Scope Contract | Gate 0 事实、迁移清单和规模基线确认 |
+| Wave 1 | Tasks 1-4 | 主集成分支串行 | `StoredMessage`、`ProviderInputItem`、Read Model 接口冻结 |
+| Wave 2 | Tasks 5-7 | 主集成分支串行 | Request Builder/Attempt Contract 冻结，两个 Loop 迁移完成 |
+| Wave 3A | Task 8 | 独立 worktree/subagent | Persistence 定向测试、双层 Review、精确提交 |
+| Wave 3B | Task 9 | 独立 worktree/subagent | Compression/Recall 定向测试、双层 Review、精确提交 |
+| Wave 3C | Task 10 | 独立 worktree/subagent | Memory 定向测试、双层 Review、精确提交 |
+| Wave 3D | Tasks 11-12 | 主 Agent；可与 3A-3C 并行 | Policy/Capability/Debug 定向测试、双层 Review |
+| Wave 4 | Task 13 | 所有 Wave 3 合并后在主集成分支串行 | 迁移桥和旧 Public API 零残留 |
+| Wave 5 | Task 14 | 主集成分支串行 | Contract Matrix、全量门禁和阶段双层 Review |
+
+并行规则：
+
+- Wave 1 和 Wave 2 不启动实现 subagent；Architecture/Integration Owner 独占共享核心文件；
+- Wave 3 最多同时运行三个 worktree subagent，主 Agent 保留第四个并发槽负责 Task 11-12、diff 审查和集成；
+- Wave 3 worktree 禁止修改 `messages/**`、`providers/input.py`、`providers/base.py`、`runtime/provider_request_builder.py`、`runtime/provider_attempt.py`、`runtime/async_provider_attempt.py`、两个 QueryLoop、Builder 和 Public API inventory；
+- 每个 worktree 从 Wave 2 的同一冻结提交创建，提交后由主 Agent 逐一审查并以非交互 Git 命令集成；不允许在 worktree 内自行合并其他工作流；
+- Task 13 前必须重新运行旧名称 drift scan；Task 14 前不得保留任何未声明迁移桥。
 
 ## Mandatory Execution Bootstrap And Review Gate
 
@@ -60,23 +98,25 @@ Task 1–14 每个任务都必须执行 Red -> 最小实现 -> 模块 Green -> �
 
 ---
 
-### Task 0: 外部批准 Gate 与 Breaking Migration 基线
+### Task 0: Gate 0 确认与 Breaking Migration 基线
 
 **Files:**
 - Read only: `docs/superpowers/specs/2026-07-11-agentos-message-provider-boundary-contract-addendum.md`
 - Read only: `docs/api-stability.md`
 
-- [ ] **Step 1: 等待 Architecture Owner 明确批准**
+- [x] **Step 1: 确认 Architecture Owner 批准和 Phase 1 远端固化**
 
-批准是外部治理动作，不是文件修改步骤。必须由用户明确批准 addendum 与本计划后，才允许开始 Task 1、修改 `docs/api-stability.md` 或启动实现 subagent。
+用户已批准 addendum、本计划和 Phase 2 下一步，并确认 Phase 1 Pull Request 已创建。Phase 2 集成分支已从 Phase 1 提交 `1b9f385` 创建；该步骤不修改业务代码。
 
-- [ ] **Step 2: 固定只读迁移搜索基线**
+- [x] **Step 2: 固定只读迁移搜索和模块规模基线**
 
 ```powershell
 rg -l "\bMessage\b|ProviderMessage|materialize_provider_messages" src/agentos tests | Sort-Object
+rg -n "ProviderRequestBuilder\(|ProviderRequest\(" src/agentos tests
+Get-ChildItem src/agentos/runtime/query_loop.py,src/agentos/runtime/async_query_loop.py,src/agentos/providers/messages.py,src/agentos/builder.py | ForEach-Object { "{0}: {1}" -f $_.Name,(Get-Content -Encoding utf8 $_).Count }
 ```
 
-Expected: 输出当前迁移清单并保存于任务工作记录；不修改仓库。迁移期间只允许 `messages/_migration.py` 和 Adapter 私有兼容入口保留旧名，最终 Public API 收口任务必须删除这些桥。
+Expected: 48 个旧消息边界依赖文件、101 个 Provider Request 构造/引用位置；规模分别为 884、570、353、287 行。迁移期间只允许 `messages/_migration.py` 和 Adapter 私有兼容入口保留旧名，最终 Public API 收口任务必须删除这些桥。
 
 - [ ] **Step 3: 发布实施 Scope Contract**
 
@@ -840,8 +880,12 @@ git commit -m "refactor: persist stored message truth"
 - Modify: `src/agentos/compression/llm_compressor.py`
 - Modify: `src/agentos/compression/runtime.py`
 - Modify: `src/agentos/recall/runtime.py`
-- Modify: `tests/compression/**`
-- Modify: `tests/recall/**`
+- Modify: `tests/compression/test_llm_compressor.py`
+- Modify: `tests/compression/test_memory_sink.py`
+- Modify: `tests/compression/test_package_compressor.py`
+- Modify: `tests/compression/test_runtime.py`
+- Modify: `tests/recall/test_query_recall.py`
+- Modify: `tests/recall/test_runtime.py`
 
 - [ ] **Step 1: 写算法等价与 temporary recall Red 测试**
 
@@ -868,7 +912,11 @@ git commit -m "refactor: migrate compression and recall messages"
 - Modify: `src/agentos/memory/serializers.py`
 - Modify: `src/agentos/memory/store.py`
 - Modify: `src/agentos/memory/types.py`
-- Modify: `tests/memory/**`
+- Modify: `tests/memory/test_in_memory.py`
+- Modify: `tests/memory/test_optional_adapters.py`
+- Modify: `tests/memory/test_production_adapters.py`
+- Modify: `tests/memory/test_runtime.py`
+- Modify: `tests/memory/test_types.py`
 
 - [ ] **Step 1: 写新类型边界 Red 测试**
 
@@ -891,8 +939,8 @@ git commit -m "refactor: migrate memory message consumers"
 **Files:**
 - Modify: `src/agentos/policies/budget.py`
 - Modify: `src/agentos/capabilities/router.py`
-- Modify: `tests/policies/**`
-- Modify: `tests/capabilities/**`
+- Modify: `tests/policies/test_token_budget_policy.py`
+- Modify: `tests/capabilities/test_tools.py`
 
 - [ ] **Step 1: 写旧类型消除 Red 测试**
 
@@ -1030,8 +1078,10 @@ git commit -m "test: freeze message provider boundary contract"
 ## Self-Review Result
 
 - **Spec coverage:** StoredMessage、ProviderInputItem、Read Model、Snapshot 顺序、Tool Pair、每 build/attempt 重建、temporary recall、sync/async parity、Public name removal 均有独立任务和测试。
-- **Resolved ambiguities:** ProviderInput 枚举、ArtifactRef ownership/`media_type`、Read Model event projector 和 retry consumption 均由待批准 addendum 冻结，不交给实现猜测。
+- **Resolved ambiguities:** ProviderInput 枚举、ArtifactRef ownership/`media_type`、Read Model event projector 和 retry consumption 均由已批准 addendum 冻结，不交给实现猜测。
 - **Plan completeness audit:** 已逐步检查，所有行为步骤均含具体输入、实现边界、命令和预期结果。
 - **Type consistency:** `StoredMessage` 只在 MessageStore；`ProviderInputItem` 只在 ProviderRequest；`ArtifactRef` 单一定义；`ProviderRequest.messages/tools` 始终 tuple；`ContextSnapshot` 固定工厂元数据。
 - **File-size review:** `query_loop.py` 目标 `<800`、`async_query_loop.py` 目标 `<500`、`providers/messages.py` 目标 `<300`；`builder.py` 仅保留组装且不得超过实施前基线。任何目标未满足都不能通过 Phase 2 DoD。
+- **Execution topology review:** Tasks 1-7 独占共享核心文件；Tasks 8-10 只在 Wave 2 接口冻结后进入三个独立 worktree；Tasks 11-12 由主 Agent 持有；Tasks 13-14 等待所有迁移工作流合并后串行执行。
+- **Re-baseline review:** 48 个旧边界依赖文件、101 个 Request 构造/引用位置和四个规模基线已经写入 Task 0；测试通配符已替换为实际文件路径。
 - **Rollback boundary:** 新类型先以受限内部桥加法引入；Adapter 双读先于 Request Builder 切换；Persistence、Compression/Recall、Memory、Policy/Capability、Debug Projection、Attempt Runner、Public cleanup 分别提交。每个任务命令都包含受影响模块回归；Task 13 删除全部 Phase 2 Message/Provider 迁移桥，唯独承载既有 Public Attachment 行为的私有兼容桥按声明保留到 Phase 3A，因此每一提交保持 Green 且可精确回滚。
