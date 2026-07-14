@@ -10,15 +10,13 @@ from typing import Callable, Sequence, TypeVar, cast
 
 from agentos.context import CompressedSegment
 from agentos.memory.serializers import (
-    message_from_dict,
     message_ref_from_dict,
     message_ref_to_dict,
-    message_to_dict,
     package_from_dict,
     package_to_dict,
 )
 from agentos.memory.types import CompressedSegmentPackage
-from agentos.messages import Message, MessageRef
+from agentos.messages import MessageRef, StoredMessage
 from agentos.persistence.base import (
     SessionSnapshot,
     SessionSnapshotRecord,
@@ -28,6 +26,8 @@ from agentos.persistence.base import (
 )
 from agentos.persistence.protocols import PostgresConnection, PostgresCursor
 from agentos.persistence.serializers import (
+    message_from_dict,
+    message_to_dict,
     session_snapshot_from_dict,
     session_snapshot_to_dict,
 )
@@ -538,7 +538,7 @@ class PostgresDurableSessionStore(_PostgresConnectionLeaseMixin):
         )
 
     @_with_postgres_connection_scope
-    def append_message(self, session_id: str, message: Message) -> None:
+    def append_message(self, session_id: str, message: StoredMessage) -> None:
         """追加原始消息。"""
 
         self._execute(
@@ -562,7 +562,7 @@ class PostgresDurableSessionStore(_PostgresConnectionLeaseMixin):
         self,
         session_id: str,
         message_ids: Sequence[str],
-    ) -> list[Message]:
+    ) -> list[StoredMessage]:
         """按 ids 读取原始消息，返回顺序与 message_ids 一致。"""
 
         if not message_ids:
@@ -579,7 +579,7 @@ class PostgresDurableSessionStore(_PostgresConnectionLeaseMixin):
             str(row[0]): row[1]
             for row in rows
         }
-        messages: list[Message] = []
+        messages: list[StoredMessage] = []
         for message_id in message_ids:
             if message_id not in payloads_by_id:
                 raise KeyError(message_id)

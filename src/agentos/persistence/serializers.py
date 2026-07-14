@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentos.providers.json_values import thaw_json
+from agentos.artifacts import ArtifactRef
 from agentos.compression.index import CompressionIndex
 from agentos.context.schema import WorkingStateField, WorkingStateSchema
 from agentos.context.state import (
@@ -12,7 +12,7 @@ from agentos.context.state import (
 )
 from agentos.messages.runtime import MessageRuntime
 from agentos.messages.store import MessageStore
-from agentos.messages.types import Message, MessageRef, ToolCall
+from agentos.messages.types import MessageRef, StoredMessage, ToolCall
 from agentos.messages.window import ActiveWindow
 from agentos.observability.events import event_record_from_dict, event_record_to_dict
 from agentos.persistence.base import (
@@ -20,6 +20,7 @@ from agentos.persistence.base import (
     SessionSnapshot,
     SnapshotVersionError,
 )
+from agentos.providers.json_values import thaw_json
 from agentos.runtime.session import SessionState
 
 
@@ -121,13 +122,41 @@ def tool_call_from_dict(data: JsonDict) -> ToolCall:
     )
 
 
-def message_to_dict(message: Message) -> JsonDict:
+def artifact_ref_to_dict(artifact_ref: ArtifactRef) -> JsonDict:
+    """序列化 StoredMessage 的附件轻量引用。"""
+
+    return {
+        "artifact_id": artifact_ref.artifact_id,
+        "filename": artifact_ref.filename,
+        "media_type": artifact_ref.media_type,
+    }
+
+
+def artifact_ref_from_dict(data: JsonDict) -> ArtifactRef:
+    """反序列化 StoredMessage 的附件轻量引用。"""
+
+    return ArtifactRef(
+        artifact_id=str(data["artifact_id"]),
+        filename=(
+            None
+            if data.get("filename") is None
+            else str(data.get("filename"))
+        ),
+        media_type=str(data["media_type"]),
+    )
+
+
+def message_to_dict(message: StoredMessage) -> JsonDict:
     """序列化原始 message。"""
 
     return {
         "id": message.id,
         "role": message.role,
         "content": message.content,
+        "artifact_refs": [
+            artifact_ref_to_dict(artifact_ref)
+            for artifact_ref in message.artifact_refs
+        ],
         "tool_calls": [
             tool_call_to_dict(tool_call) for tool_call in message.tool_calls
         ],
@@ -135,17 +164,21 @@ def message_to_dict(message: Message) -> JsonDict:
     }
 
 
-def message_from_dict(data: JsonDict) -> Message:
+def message_from_dict(data: JsonDict) -> StoredMessage:
     """反序列化原始 message。"""
 
-    return Message(
+    return StoredMessage(
         id=str(data["id"]),
         role=data["role"],
         content=str(data["content"]),
-        tool_calls=[
+        artifact_refs=tuple(
+            artifact_ref_from_dict(artifact_ref)
+            for artifact_ref in data.get("artifact_refs", [])
+        ),
+        tool_calls=tuple(
             tool_call_from_dict(tool_call)
             for tool_call in data.get("tool_calls", [])
-        ],
+        ),
         tool_call_id=(
             None
             if data.get("tool_call_id") is None

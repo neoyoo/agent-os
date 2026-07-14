@@ -1,9 +1,12 @@
 import json
 
+import pytest
+
+from agentos.artifacts import ArtifactRef
 from agentos.compression import CompressionIndex
 from agentos.context import ContextState, WorkingStateField, WorkingStateSchema
 from agentos.context.state import CompressedSegment
-from agentos.messages import MessageRuntime, ToolCall
+from agentos.messages import MessageRuntime, StoredMessage, ToolCall
 from agentos.observability.events import EventLog, EventRecord
 from agentos.persistence.base import SessionSnapshot
 from agentos.persistence.serializers import (
@@ -11,12 +14,15 @@ from agentos.persistence.serializers import (
     compression_index_to_dict,
     context_state_from_dict,
     context_state_to_dict,
+    message_from_dict,
     message_runtime_from_dict,
     message_runtime_to_dict,
+    message_to_dict,
     session_snapshot_from_dict,
     session_snapshot_to_dict,
     tool_call_to_dict,
 )
+from agentos.providers.json_values import FrozenJsonObject
 from agentos.runtime import SessionState, TurnStartedEvent
 
 
@@ -133,6 +139,75 @@ def test_tool_call_serializer_thaws_nested_arguments() -> None:
         "name": "inspect",
         "arguments": {"filters": {"tags": ["phase2"]}},
     }
+
+
+def test_stored_message_round_trip_preserves_artifacts_and_frozen_tool_calls() -> None:
+    message = StoredMessage(
+        id="msg_7",
+        role="assistant",
+        content="",
+        artifact_refs=(
+            ArtifactRef(
+                artifact_id="art_drawing",
+                filename="drawing.png",
+                media_type="image/png",
+            ),
+        ),
+        tool_calls=(
+            ToolCall(
+                id="call_1",
+                name="inspect",
+                arguments={
+                    "filters": {
+                        "tags": ["phase2", "persistence"],
+                    },
+                },
+            ),
+        ),
+    )
+
+    encoded = message_to_dict(message)
+    restored = message_from_dict({**encoded, "unknown_field": "ignored"})
+
+    assert encoded == {
+        "id": "msg_7",
+        "role": "assistant",
+        "content": "",
+        "artifact_refs": [
+            {
+                "artifact_id": "art_drawing",
+                "filename": "drawing.png",
+                "media_type": "image/png",
+            },
+        ],
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "name": "inspect",
+                "arguments": {
+                    "filters": {
+                        "tags": ["phase2", "persistence"],
+                    },
+                },
+            },
+        ],
+        "tool_call_id": None,
+    }
+    assert {
+        "context_snapshot",
+        "kind",
+        "origin",
+        "authority",
+        "persistence",
+        "visibility",
+    }.isdisjoint(encoded)
+    assert restored == message
+    assert isinstance(restored.tool_calls[0].arguments, FrozenJsonObject)
+    filters = restored.tool_calls[0].arguments["filters"]
+    assert isinstance(filters, FrozenJsonObject)
+    assert filters["tags"] == ("phase2", "persistence")
+    with pytest.raises(TypeError):
+        restored.tool_calls[0].arguments["filters"] = {}
 
 
 def test_compression_index_round_trips_segment_source_refs() -> None:

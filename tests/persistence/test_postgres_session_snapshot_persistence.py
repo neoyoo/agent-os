@@ -5,15 +5,18 @@ from pathlib import Path
 
 import pytest
 
+from agentos.artifacts import ArtifactRef
 from agentos.compression import CompressionIndex
 from agentos.context import ContextState
-from agentos.messages import MessageRuntime
+from agentos.messages import MessageRuntime, StoredMessage, ToolCall
 from agentos.persistence import (
+    PostgresDurableSessionStore,
     PostgresSessionSnapshotPersistence,
     SnapshotConflictError,
     SessionSnapshot,
 )
 from agentos.persistence.serializers import session_snapshot_to_dict
+from agentos.providers.json_values import FrozenJsonObject
 from agentos.runtime import SessionState
 from agentos.channels import SessionLease, SessionLeaseError
 
@@ -31,6 +34,7 @@ class FakeCursor:
 
 class FakeConnection:
     def __init__(self) -> None:
+        self.messages: dict[tuple[str, str], dict[str, object]] = {}
         self.snapshots: dict[str, dict[str, object]] = {}
         self._pending_snapshots: dict[str, dict[str, object] | None] = {}
         self.sql: list[str] = []
@@ -130,6 +134,23 @@ class FakeConnection:
         if "DELETE FROM agentos_session_snapshots" in sql:
             self._pending_snapshots[str(params[0])] = None
             return FakeCursor()
+        if "INSERT INTO agentos_messages" in sql:
+            self.messages[(str(params[0]), str(params[1]))] = json.loads(
+                str(params[2]),
+            )
+            return FakeCursor()
+        if "SELECT message_id, payload FROM agentos_messages" in sql:
+            session_id = str(params[0])
+            message_ids = params[1]
+            if not isinstance(message_ids, list):
+                raise AssertionError("message ids must be a list")
+            return FakeCursor(
+                [
+                    (message_id, self.messages[(session_id, message_id)])
+                    for message_id in message_ids
+                    if (session_id, message_id) in self.messages
+                ],
+            )
         return FakeCursor()
 
     def commit(self) -> None:
@@ -186,6 +207,28 @@ def make_snapshot(session_id: str = "session_1") -> SessionSnapshot:
     )
 
 
+def make_stored_message(*, tags: tuple[str, ...]) -> StoredMessage:
+    return StoredMessage(
+        id="msg_1",
+        role="assistant",
+        content="",
+        artifact_refs=(
+            ArtifactRef(
+                artifact_id="art_drawing",
+                filename="drawing.png",
+                media_type="image/png",
+            ),
+        ),
+        tool_calls=(
+            ToolCall(
+                id="call_1",
+                name="inspect",
+                arguments={"filters": {"tags": list(tags)}},
+            ),
+        ),
+    )
+
+
 def test_postgres_session_snapshot_persistence_round_trips_snapshot() -> None:
     connection = FakeConnection()
     store = PostgresSessionSnapshotPersistence(
@@ -205,6 +248,68 @@ def test_postgres_session_snapshot_persistence_round_trips_snapshot() -> None:
     joined_sql = "\n".join(connection.sql)
     assert "ON CONFLICT (session_id) DO UPDATE" in joined_sql
     assert "payload = EXCLUDED.payload" in joined_sql
+
+
+def test_postgres_session_snapshot_round_trips_stored_message_artifacts() -> None:
+    connection = FakeConnection()
+    store = PostgresSessionSnapshotPersistence(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    messages = MessageRuntime()
+    message = make_stored_message(tags=("phase2",))
+    messages.hydrate_messages([message])
+    messages.active_window.append(message.id)
+    snapshot = SessionSnapshot(
+        session_state=SessionState(id="session_1"),
+        context_state=ContextState(),
+        message_runtime=messages,
+        compression_index=CompressionIndex(),
+    )
+
+    store.save(snapshot)
+    restored = store.load("session_1")
+
+    assert restored.message_runtime.store.get("msg_1") == message
+
+
+def test_postgres_durable_store_uses_canonical_stored_message_serializer() -> None:
+    connection = FakeConnection()
+    store = PostgresDurableSessionStore(
+        dsn="postgresql://unused",
+        connection=connection,
+    )
+    message = make_stored_message(tags=("phase2", "postgres"))
+
+    store.append_message("session_1", message)
+    restored = store.get_messages("session_1", [message.id])
+
+    assert restored == [message]
+    assert type(restored[0]) is StoredMessage
+    arguments = restored[0].tool_calls[0].arguments
+    assert isinstance(arguments, FrozenJsonObject)
+    filters = arguments["filters"]
+    assert isinstance(filters, FrozenJsonObject)
+    assert filters["tags"] == ("phase2", "postgres")
+    with pytest.raises(TypeError):
+        arguments["filters"] = {}
+
+    wire = connection.messages[("session_1", "msg_1")]
+    assert set(wire) == {
+        "id",
+        "role",
+        "content",
+        "artifact_refs",
+        "tool_calls",
+        "tool_call_id",
+    }
+    assert {
+        "context_snapshot",
+        "origin",
+        "authority",
+        "persistence",
+        "visibility",
+    }.isdisjoint(wire)
 
 
 def test_postgres_session_snapshot_persistence_from_pool_borrows_per_method() -> None:
