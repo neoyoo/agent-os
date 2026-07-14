@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from agentos.compression import CompressionIndex
 from agentos.memory import MemoryRuntime
-from agentos.messages import Message, MessageRuntime
+from agentos.messages import MessageRuntime, StoredMessage
 
 if TYPE_CHECKING:
     from agentos.runtime.event_bus import EventBus
@@ -34,7 +34,7 @@ class RecallRuntime:
         *,
         query: str | None = None,
         limit: int = 1,
-    ) -> list[Message]:
+    ) -> tuple[StoredMessage, ...]:
         """按 handle 或 query 恢复原始消息。"""
 
         if (handle is None) == (query is None):
@@ -46,7 +46,7 @@ class RecallRuntime:
 
         return self._recall_by_handle(handle)
 
-    def _recall_by_handle(self, handle: str) -> list[Message]:
+    def _recall_by_handle(self, handle: str) -> tuple[StoredMessage, ...]:
         """按 compressed segment handle 召回。"""
 
         from agentos.runtime.event_bus import RecallContextRequestedEvent
@@ -58,7 +58,7 @@ class RecallRuntime:
             ),
         )
         try:
-            source_message_ids = self.compression_index.source_refs(handle)
+            source_message_ids = tuple(self.compression_index.source_refs(handle))
         except KeyError as error:
             message = f"unknown compressed segment: {handle}"
             from agentos.runtime.event_bus import RecallContextFailedEvent
@@ -74,22 +74,28 @@ class RecallRuntime:
                 message,
             ) from error
 
-        recalled_messages = [
+        recalled_messages = tuple(
             self.message_runtime.store.get(message_id)
             for message_id in source_message_ids
-        ]
+        )
+        recalled_message_ids = tuple(message.id for message in recalled_messages)
+        self.message_runtime.active_window.prepend_temporary(recalled_message_ids)
         from agentos.runtime.event_bus import RecallContextInjectedEvent
 
         self._emit(
             RecallContextInjectedEvent(
                 handle=handle,
-                message_ids=tuple(source_message_ids),
+                message_ids=recalled_message_ids,
                 **self._event_context(),
             ),
         )
         return recalled_messages
 
-    def _recall_by_query(self, query: str, limit: int) -> list[Message]:
+    def _recall_by_query(
+        self,
+        query: str,
+        limit: int,
+    ) -> tuple[StoredMessage, ...]:
         """按 query 检索 recall index 并召回。"""
 
         if self.memory_runtime is None:
@@ -106,18 +112,22 @@ class RecallRuntime:
                 **self._event_context(),
             ),
         )
-        recalled_messages = self.memory_runtime.recall_by_query(
-            self.session_id,
-            query,
-            limit,
+        recalled_messages = tuple(
+            self.memory_runtime.recall_by_query(
+                self.session_id,
+                query,
+                limit,
+            ),
         )
-        self.message_runtime.hydrate_messages(recalled_messages)
+        self.message_runtime.hydrate_messages(list(recalled_messages))
+        recalled_message_ids = tuple(message.id for message in recalled_messages)
+        self.message_runtime.active_window.prepend_temporary(recalled_message_ids)
         from agentos.runtime.event_bus import RecallContextInjectedEvent
 
         self._emit(
             RecallContextInjectedEvent(
                 handle=event_handle,
-                message_ids=tuple(message.id for message in recalled_messages),
+                message_ids=recalled_message_ids,
                 **self._event_context(),
             ),
         )

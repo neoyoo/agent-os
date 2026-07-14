@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from typing import Sequence
 
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 from agentos.policies import CompressionBudget
 
 
@@ -11,7 +10,7 @@ class Evictor:
 
     budget_policy: CompressionBudget
 
-    def select_message_ids(self, messages: Sequence[Message]) -> list[str]:
+    def select_message_ids(self, messages: tuple[StoredMessage, ...]) -> list[str]:
         """选择最旧的连续前缀，并扩展边界以保护 tool pair。"""
 
         selected_until = self.budget_policy.oldest_prefix_size(messages) - 1
@@ -23,7 +22,7 @@ class Evictor:
 
     def _expand_for_tool_pairs(
         self,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
         selected_until: int,
     ) -> int:
         """如果选择边界切到 tool pair 中间，就扩展到 pair 结束。"""
@@ -54,8 +53,8 @@ class Evictor:
 
     def _tool_result_indexes(
         self,
-        messages: Sequence[Message],
-        assistant: Message,
+        messages: tuple[StoredMessage, ...],
+        assistant: StoredMessage,
     ) -> list[int]:
         """查找 assistant tool calls 对应的 tool result 位置。"""
 

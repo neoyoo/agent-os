@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from collections.abc import Sequence
+from typing import Protocol
 
 from agentos.compression._helpers import (
     build_searchable_text,
@@ -9,13 +10,17 @@ from agentos.compression._helpers import (
 )
 from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 
 
 class Compressor(Protocol):
     """压缩器协议，允许后续替换为 LLMCompressor。"""
 
-    def compress(self, segment_id: str, messages: Sequence[Message]) -> CompressedSegment:
+    def compress(
+        self,
+        segment_id: str,
+        messages: tuple[StoredMessage, ...],
+    ) -> CompressedSegment:
         """把原始消息压缩为 LLM 可见摘要。"""
 
 
@@ -26,7 +31,7 @@ class PackageCompressor(Protocol):
         self,
         segment_id: str,
         session_id: str,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> CompressedSegmentPackage:
         """把原始消息压缩为 segment package。"""
 
@@ -38,7 +43,11 @@ class RuleBasedCompressor:
     max_items: int = 4
     max_searchable_text_chars: int = 500
 
-    def compress(self, segment_id: str, messages: Sequence[Message]) -> CompressedSegment:
+    def compress(
+        self,
+        segment_id: str,
+        messages: tuple[StoredMessage, ...],
+    ) -> CompressedSegment:
         """把原始消息压缩为 LLM 可见摘要，不携带内部元数据。"""
 
         if not messages:
@@ -60,7 +69,7 @@ class RuleBasedCompressor:
         self,
         segment_id: str,
         session_id: str,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> CompressedSegmentPackage:
         """生成 LLM 摘要、source refs 和 recall document。"""
 
@@ -79,7 +88,7 @@ class RuleBasedCompressor:
             ),
         )
 
-    def _topic(self, messages: Sequence[Message]) -> str:
+    def _topic(self, messages: tuple[StoredMessage, ...]) -> str:
         """从第一条 user 消息提取稳定主题。"""
 
         for message in messages:
@@ -87,7 +96,7 @@ class RuleBasedCompressor:
                 return self._clip(message.content, limit=48)
         return "historical context"
 
-    def _snippet(self, message: Message) -> str:
+    def _snippet(self, message: StoredMessage) -> str:
         """生成单条消息的短摘要片段。"""
 
         return f"{message.role}: {self._clip(message.content, limit=80)}"
@@ -97,17 +106,17 @@ class RuleBasedCompressor:
 
         return clip_text(value, limit=limit)
 
-    def _keywords(self, messages: Sequence[Message]) -> tuple[str, ...]:
+    def _keywords(self, messages: tuple[StoredMessage, ...]) -> tuple[str, ...]:
         """从源消息中提取适合词法检索的稳定关键词。"""
 
         return extract_keywords(messages)
 
-    def _tool_hints(self, messages: Sequence[Message]) -> tuple[str, ...]:
+    def _tool_hints(self, messages: tuple[StoredMessage, ...]) -> tuple[str, ...]:
         """提取工具调用名称和关键参数摘要。"""
 
         return extract_tool_hints(messages)
 
-    def _searchable_text(self, messages: Sequence[Message]) -> str:
+    def _searchable_text(self, messages: tuple[StoredMessage, ...]) -> str:
         """生成 recall index 使用的短检索文本。"""
 
         return build_searchable_text(

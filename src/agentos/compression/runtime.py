@@ -8,8 +8,7 @@ from agentos.compression.evictor import Evictor
 from agentos.compression.index import CompressionIndex
 from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
-from agentos.messages import Message
-from agentos.messages import MessageRuntime
+from agentos.messages import MessageRuntime, StoredMessage
 from agentos.policies import CompressionBudget
 
 if TYPE_CHECKING:
@@ -100,7 +99,7 @@ class CompressionRuntime:
             self._emit_compression_skipped("temporary_recalled_refs")
             return None
 
-        active_messages = self.message_runtime.materialize_active()
+        active_messages = tuple(self.message_runtime.materialize_active())
         selected_message_ids = self.evictor.select_message_ids(active_messages)
         if not selected_message_ids:
             self._emit_compression_skipped("under_budget")
@@ -109,10 +108,10 @@ class CompressionRuntime:
             self._emit_compression_skipped("would_clear_window")
             return None
 
-        source_messages = [
+        source_messages = tuple(
             self.message_runtime.store.get(message_id)
             for message_id in selected_message_ids
-        ]
+        )
         degraded = self._consecutive_failures >= self.max_consecutive_failures
         active_compressor = self.fallback_compressor if degraded else self.compressor
         try:
@@ -183,7 +182,7 @@ class CompressionRuntime:
 
     def _compress_package(
         self,
-        source_messages: list[Message],
+        source_messages: tuple[StoredMessage, ...],
         compressor: Compressor,
     ) -> CompressedSegmentPackage:
         """生成 compression package，并兼容旧 Compressor 协议。"""

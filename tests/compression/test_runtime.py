@@ -5,7 +5,7 @@ import pytest
 from agentos.compression import CompressionRuntime, Compressor
 from agentos.compression.runtime import CompressionContextBoundary
 from agentos.context import CompressedSegment, ContextRuntime
-from agentos.messages import MessageRuntime, ToolCall
+from agentos.messages import MessageRuntime, StoredMessage, ToolCall
 from agentos.policies import BudgetPolicy
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -30,6 +30,60 @@ def test_compression_runtime_uses_context_boundary_protocol() -> None:
     hints = get_type_hints(CompressionRuntime)
 
     assert hints["context_runtime"] is CompressionContextBoundary
+
+
+def test_compression_runtime_passes_message_tuples_to_budget_and_compressor() -> None:
+    class RecordingBudget:
+        def __init__(self) -> None:
+            self.messages: tuple[StoredMessage, ...] | None = None
+
+        def should_compress(self, messages: tuple[StoredMessage, ...]) -> bool:
+            return len(messages) > 1
+
+        def oldest_prefix_size(self, messages: tuple[StoredMessage, ...]) -> int:
+            assert isinstance(messages, tuple)
+            self.messages = messages
+            return 1
+
+    class RecordingCompressor:
+        def __init__(self) -> None:
+            self.messages: tuple[StoredMessage, ...] | None = None
+
+        def compress(
+            self,
+            segment_id: str,
+            messages: tuple[StoredMessage, ...],
+        ) -> CompressedSegment:
+            assert isinstance(messages, tuple)
+            self.messages = messages
+            return CompressedSegment(
+                id=segment_id,
+                topic="tuple boundary",
+                summary="Compression received an immutable message sequence.",
+            )
+
+    context_runtime = RecordingCompressionContext()
+    message_runtime = MessageRuntime()
+    old_message = message_runtime.append_user("Old detail")
+    message_runtime.append_user("Current detail")
+    budget = RecordingBudget()
+    compressor = RecordingCompressor()
+    runtime = CompressionRuntime(
+        context_runtime=context_runtime,
+        message_runtime=message_runtime,
+        budget_policy=budget,
+        compressor=compressor,
+    )
+
+    segment = runtime.maybe_compress()
+
+    assert segment is not None
+    assert budget.messages is not None
+    assert tuple(message.id for message in budget.messages) == (
+        old_message.id,
+        "msg_2",
+    )
+    assert compressor.messages == (old_message,)
 
 
 def test_compression_runtime_moves_old_refs_to_compressed_history() -> None:

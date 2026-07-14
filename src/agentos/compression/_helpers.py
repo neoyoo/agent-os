@@ -1,7 +1,7 @@
 import re
-from typing import Sequence
+from collections.abc import Sequence
 
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 
 
 def clip_text(value: str, *, limit: int) -> str:
@@ -13,7 +13,7 @@ def clip_text(value: str, *, limit: int) -> str:
     return f"{normalized[: limit - 3]}..."
 
 
-def extract_keywords(messages: Sequence[Message]) -> tuple[str, ...]:
+def extract_keywords(messages: tuple[StoredMessage, ...]) -> tuple[str, ...]:
     """从源消息中提取适合词法检索的稳定关键词。"""
 
     keywords: list[str] = []
@@ -33,7 +33,7 @@ def extract_keywords(messages: Sequence[Message]) -> tuple[str, ...]:
     return _dedupe(keywords)
 
 
-def extract_tool_hints(messages: Sequence[Message]) -> tuple[str, ...]:
+def extract_tool_hints(messages: tuple[StoredMessage, ...]) -> tuple[str, ...]:
     """提取工具调用名称和关键参数摘要。"""
 
     hints: list[str] = []
@@ -48,7 +48,7 @@ def extract_tool_hints(messages: Sequence[Message]) -> tuple[str, ...]:
 
 
 def build_searchable_text(
-    messages: Sequence[Message],
+    messages: tuple[StoredMessage, ...],
     *,
     max_items: int,
     limit: int,

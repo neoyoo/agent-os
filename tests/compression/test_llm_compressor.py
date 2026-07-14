@@ -6,7 +6,7 @@ from agentos.compression import (
     RuleBasedCompressor,
 )
 from agentos.context import CompressedSegment
-from agentos.messages import Message, ToolCall
+from agentos.messages import StoredMessage, ToolCall
 from agentos.providers import FakeProvider, provider_message_to_dict
 
 
@@ -21,10 +21,10 @@ def test_llm_compressor_uses_provider_to_build_segment() -> None:
 
     segment = compressor.compress(
         "seg_1",
-        [
-            Message(id="msg_1", role="user", content="Please type provider messages."),
-            Message(id="msg_2", role="assistant", content="Implemented it."),
-        ],
+        (
+            StoredMessage(id="msg_1", role="user", content="Please type provider messages."),
+            StoredMessage(id="msg_2", role="assistant", content="Implemented it."),
+        ),
     )
 
     assert segment.id == "seg_1"
@@ -47,7 +47,7 @@ def test_llm_compressor_falls_back_when_output_format_is_loose() -> None:
 
     segment = LlmCompressor(provider=provider).compress(
         "seg_1",
-        [Message(id="msg_1", role="user", content="Summarize this long task.")],
+        (StoredMessage(id="msg_1", role="user", content="Summarize this long task."),),
     )
 
     assert segment.topic == "A loose but still useful summary."
@@ -61,10 +61,10 @@ def test_llm_compressor_builds_recall_package() -> None:
             "SUMMARY: LLM compressor preserves source refs for recall.",
         ],
     )
-    messages = [
-        Message(id="msg_1", role="user", content="Compress these messages."),
-        Message(id="msg_2", role="assistant", content="Done."),
-    ]
+    messages = (
+        StoredMessage(id="msg_1", role="user", content="Compress these messages."),
+        StoredMessage(id="msg_2", role="assistant", content="Done."),
+    )
 
     package = LlmCompressor(provider=provider).compress_package(
         segment_id="seg_1",
@@ -81,7 +81,7 @@ def test_llm_compressor_builds_recall_package() -> None:
 
 def test_llm_compressor_rejects_empty_message_sequence() -> None:
     with pytest.raises(ValueError, match="empty message sequence"):
-        LlmCompressor(provider=FakeProvider(["unused"])).compress("seg_1", [])
+        LlmCompressor(provider=FakeProvider(["unused"])).compress("seg_1", ())
 
 
 def test_llm_compressor_adds_token_budget_instruction() -> None:
@@ -94,7 +94,7 @@ def test_llm_compressor_adds_token_budget_instruction() -> None:
 
     compressor.compress(
         "seg_1",
-        [Message(id="msg_1", role="user", content="x" * 800)],
+        (StoredMessage(id="msg_1", role="user", content="x" * 800),),
     )
 
     assert "目标输出上限: 50 tokens" in provider.requests[0].system
@@ -102,7 +102,11 @@ def test_llm_compressor_adds_token_budget_instruction() -> None:
 
 def test_fallback_compressor_uses_secondary_when_primary_fails() -> None:
     class FailingCompressor:
-        def compress(self, segment_id: str, messages: list[Message]):
+        def compress(
+            self,
+            segment_id: str,
+            messages: tuple[StoredMessage, ...],
+        ):
             raise RuntimeError("provider unavailable")
 
     compressor = FallbackCompressor(
@@ -112,7 +116,7 @@ def test_fallback_compressor_uses_secondary_when_primary_fails() -> None:
 
     segment = compressor.compress(
         "seg_1",
-        [Message(id="msg_1", role="user", content="Fallback topic.")],
+        (StoredMessage(id="msg_1", role="user", content="Fallback topic."),),
     )
 
     assert segment.id == "seg_1"
@@ -121,14 +125,18 @@ def test_fallback_compressor_uses_secondary_when_primary_fails() -> None:
 
 def test_fallback_compressor_package_preserves_recall_fields_with_basic_fallback() -> None:
     class FailingPackageCompressor:
-        def compress(self, segment_id: str, messages: list[Message]):
+        def compress(
+            self,
+            segment_id: str,
+            messages: tuple[StoredMessage, ...],
+        ):
             raise RuntimeError("provider unavailable")
 
         def compress_package(
             self,
             segment_id: str,
             session_id: str,
-            messages: list[Message],
+            messages: tuple[StoredMessage, ...],
         ):
             raise RuntimeError("provider unavailable")
 
@@ -136,7 +144,7 @@ def test_fallback_compressor_package_preserves_recall_fields_with_basic_fallback
         def compress(
             self,
             segment_id: str,
-            messages: list[Message],
+            messages: tuple[StoredMessage, ...],
         ) -> CompressedSegment:
             return CompressedSegment(
                 id=segment_id,
@@ -150,20 +158,20 @@ def test_fallback_compressor_package_preserves_recall_fields_with_basic_fallback
     ).compress_package(
         segment_id="seg_1",
         session_id="session_1",
-        messages=[
-            Message(
+        messages=(
+            StoredMessage(
                 id="msg_1",
                 role="assistant",
                 content="Read src/agentos/runtime/query_loop.py",
-                tool_calls=[
+                tool_calls=(
                     ToolCall(
                         id="call_1",
                         name="read_file",
                         arguments={"path": "src/agentos/runtime/query_loop.py"},
                     ),
-                ],
+                ),
             ),
-        ],
+        ),
     )
 
     assert "src/agentos/runtime/query_loop.py" in package.recall_document.keywords

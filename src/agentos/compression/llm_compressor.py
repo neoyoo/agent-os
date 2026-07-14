@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
 
 from agentos.compression._helpers import (
     clip_text,
@@ -11,7 +10,7 @@ from agentos.compression._helpers import (
 from agentos.compression.compressor import Compressor, RuleBasedCompressor
 from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 from agentos.providers import Provider, ProviderRequest, UserMessage
 
 
@@ -46,7 +45,7 @@ class LlmCompressor:
     def compress(
         self,
         segment_id: str,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> CompressedSegment:
         """用 LLM 压缩消息序列为 topic + summary。"""
 
@@ -57,7 +56,7 @@ class LlmCompressor:
         response = self.provider.complete(
             ProviderRequest(
                 system=self._system_prompt(serialized),
-                messages=[UserMessage(content=serialized)],
+                messages=(UserMessage(content=serialized),),
             ),
         )
         topic, summary = self._parse_llm_output(response.content)
@@ -67,7 +66,7 @@ class LlmCompressor:
         self,
         segment_id: str,
         session_id: str,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> CompressedSegmentPackage:
         """生成完整 compression package，包含 recall document。"""
 
@@ -103,7 +102,7 @@ class LlmCompressor:
         ratio_budget = max(1, int(estimated_input_tokens * self.compression_ratio))
         return min(self.max_output_tokens, ratio_budget)
 
-    def _serialize_messages(self, messages: Sequence[Message]) -> str:
+    def _serialize_messages(self, messages: tuple[StoredMessage, ...]) -> str:
         """把原始消息序列化为 LLM 可读文本。"""
 
         return "\n".join(
@@ -147,7 +146,7 @@ class FallbackCompressor:
     def compress(
         self,
         segment_id: str,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> CompressedSegment:
         """压缩消息，primary 失败时使用 fallback。"""
 
@@ -160,7 +159,7 @@ class FallbackCompressor:
         self,
         segment_id: str,
         session_id: str,
-        messages: Sequence[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> CompressedSegmentPackage:
         """生成 compression package，primary 失败时使用 fallback。"""
 
