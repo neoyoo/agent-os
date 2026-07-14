@@ -1057,11 +1057,11 @@ git commit -m "refactor: migrate compression and recall messages"
 
 - [ ] **Step 1: 写新类型边界 Red 测试**
 
-新增断言 Memory store/runtime/serializer 的公开类型注解和返回实例都是 `StoredMessage`，源码不再从 `agentos.messages` 导入旧 `Message`。该断言在迁移前确定性失败；同时保留现有 serializer round-trip characterization tests。
+新增断言 Memory store/runtime/serializer 的公开类型注解和返回实例都是 `StoredMessage`，源码不再从 `agentos.messages` 导入旧 `Message`。该断言在迁移前确定性失败；同时保留现有 serializer round-trip characterization tests，并增加带 `ArtifactRef`、嵌套 `ToolCall.arguments` 的 Memory message payload、Redis hot message/state 和 durable recall round-trip，证明恢复结果没有丢失业务消息真值。
 
 - [ ] **Step 2: 机械迁移并验证**
 
-只迁移 `StoredMessage` 类型、tuple 和 `FrozenJsonObject` 的只读访问，不改变 hot/durable store 算法或 Redis wire schema。
+迁移 `StoredMessage` 类型、tuple 和 `FrozenJsonObject` 的只读访问，不改变 hot/durable store 算法、Redis key/hash 结构、TTL、原子消费或 recall 排序。Memory message payload 必须增加 `artifact_refs` 业务字段，并与 canonical persistence serializer 使用同一 `ArtifactRef(artifact_id, filename, media_type)` 结构；读取既有 payload 时字段缺省为空。该加法字段是保存完整 `StoredMessage` 真值所必需的格式修正，不允许引入版本分支、双写或第二套 serializer。
 
 ```powershell
 python -m pytest tests/memory -q
