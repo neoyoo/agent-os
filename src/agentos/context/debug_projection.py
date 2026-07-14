@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from agentos.compression.index import CompressionIndex
     from agentos.context.state import ContextState
     from agentos.messages.runtime import MessageRuntime
+    from agentos.messages.types import StoredMessage
     from agentos.observability.events import EventLog
 
 
@@ -39,8 +40,8 @@ def render_debug_projection(
         for key, value in context_state.working_state.items()
     )
     lines.extend(["", "## Active Message Refs", ""])
-    for ref in message_runtime.active_window.refs:
-        lines.append(f"- message_id={ref.message_id} temporary={ref.temporary}")
+    for ref, message in message_runtime.snapshot_active_with_refs():
+        lines.append(_render_active_message(message, temporary=ref.temporary))
 
     lines.extend(["", "## Compression Index", ""])
     for segment_id, source_refs in compression_index.snapshot().items():
@@ -53,3 +54,14 @@ def render_debug_projection(
             f"session_id={record.session_id} turn_id={record.turn_id}"
         )
     return "\n".join(lines) + "\n"
+
+
+def _render_active_message(
+    message: StoredMessage,
+    *,
+    temporary: bool,
+) -> str:
+    return (
+        f"- message_id={message.id} role={message.role} "
+        f"temporary={temporary}"
+    )
