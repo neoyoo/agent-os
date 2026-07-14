@@ -4,7 +4,9 @@
 > `2026-07-12-agentos-single-async-query-loop-design.md` 取代。历史正文保留，
 > 其余 context-first 和依赖边界继续有效。
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For development agents:** 按仓库 `AGENTS.md`、工程规范、当前阶段详细计划、
+> Scope Contract、独立双层 Review 和精确提交规则逐任务执行。本文不依赖任何外部
+> Skill 才能生效；步骤使用 checkbox（`- [ ]`）跟踪。
 
 **Goal:** 在不保留旧错误边界的前提下，把现有 AgentOS RC 代码迁移为统一支持 Local、Durable 和 Distributed Profile 的 context-first SDK，并以 Context Protocol v1 作为所有 LLM 可见上下文的唯一协议锚点。
 
@@ -66,7 +68,7 @@ tools    = Provider Tool Schemas
 - `MessageStore` append-only 语义；
 - `ActiveWindow` 对 Tool Call/Tool Result Pair 的保护；
 - 每次 Provider 调用前通过 `ProviderRequestBuilder.build()` 重建请求；
-- 同步和异步 QueryLoop；
+- 单一异步 `QueryLoop`，同步调用只通过 `agentos.sync` 边界适配；
 - OpenAI、OpenAI-Compatible、Anthropic 和 Fake Provider；
 - 类型化 Runtime Event、HookManager 和 Observability；
 - Compression/Recall、Memory、Planner、Team、Channel 和 Distributed Adapter；
@@ -364,7 +366,12 @@ Phase 6  Distributed Runtime / Transport
 
 ### Phase 2：StoredMessage / ProviderInput Boundary
 
-**串行执行；这是第二个共享接口冻结点。**
+**核心接口已经冻结；剩余消费者迁移按详细计划 Wave 3 受控并行，Task 13-14 串行收口。**
+
+> **2026-07-14 状态同步：** Phase 2 正在执行。Task 0-7 与单一异步 Kernel
+> 重构已经在 `88ae4ff` 完成；当前详细计划执行游标为 Task 8。下方旧双 Loop
+> 文件列表只保留为最初规划记录，Loop/Runner 拓扑以
+> `2026-07-12-agentos-single-async-query-loop-design.md` 和 2026-07-14 re-baseline 为准。
 
 目标文件：
 
@@ -380,7 +387,8 @@ Phase 6  Distributed Runtime / Transport
 - 修改 `src/agentos/providers/__init__.py`
 - 修改 `src/agentos/runtime/provider_request_builder.py`
 - 修改 `src/agentos/runtime/query_loop.py`
-- 修改 `src/agentos/runtime/async_query_loop.py`
+- 修改 `src/agentos/runtime/provider_attempt.py`
+- 修改 `src/agentos/runtime/agent_stream.py`
 - 修改 `src/agentos/runtime/agent.py`
 - 修改 `src/agentos/builder.py`
 - 修改 `tests/messages/test_runtime.py`
@@ -394,7 +402,7 @@ Phase 6  Distributed Runtime / Transport
 - Snapshot 位于 Active Messages 之前且不打断 Tool Pair；
 - StoredMessage 与 ProviderInputItem 没有继承或持久化关系；
 - Frontend Read Model 只从 StoredMessage 和 user-visible Event 生成；
-- 同步和异步 Loop 使用同一个 ProviderRequestBuilder 路径；
+- stream/non-stream 以及同步/异步 Provider capability 使用同一个 QueryLoop、ProviderAttemptRunner 和 ProviderRequestBuilder 路径；
 - 每次 Provider 调用重新渲染 Snapshot；
 - 旧 `Message` 和 `ProviderMessage` 名称从 Public API 删除；
 - ProviderRequestBuilder 接受已注册的类型化 Context Projection Provider，后续工作包不需要修改 ContextSnapshotRenderer；
@@ -495,7 +503,9 @@ Phase 2 冻结后可独立执行，不修改 Provider Adapter。
 - 修改 `src/agentos/runtime/profile.py`
 - 修改 `src/agentos/runtime/provider_request_builder.py`
 - 修改 `src/agentos/runtime/query_loop.py`
-- 修改 `src/agentos/runtime/async_query_loop.py`
+- 修改 `src/agentos/runtime/provider_attempt.py`
+- 修改 `src/agentos/runtime/agent_stream.py`
+- 修改 `src/agentos/sync/`
 - 创建 `src/agentos/capabilities/scheduler.py`
 - 修改 `src/agentos/context/registry.py`
 - 修改 `src/agentos/__init__.py`
