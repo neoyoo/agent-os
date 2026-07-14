@@ -64,6 +64,8 @@ class SyncIteratorAsyncBridge(Generic[T]):
         self._queue: asyncio.Queue[T | BaseException | None] | None = None
         self._future: asyncio.Future[None] | None = None
         self._stop_requested = threading.Event()
+        self._demand = threading.Semaphore(0)
+        self._waiting_for_demand = threading.Event()
         self._closed = False
 
     def __aiter__(self) -> "SyncIteratorAsyncBridge[T]":
@@ -75,6 +77,7 @@ class SyncIteratorAsyncBridge(Generic[T]):
         if self._closed:
             raise StopAsyncIteration
         assert self._queue is not None
+        self._demand.release()
         try:
             item = await self._queue.get()
         except asyncio.CancelledError:
@@ -101,6 +104,7 @@ class SyncIteratorAsyncBridge(Generic[T]):
             return
         self._closed = True
         self._stop_requested.set()
+        self._demand.release()
         if self._on_cancel is not None:
             self._on_cancel()
 
@@ -127,12 +131,17 @@ class SyncIteratorAsyncBridge(Generic[T]):
         try:
             try:
                 iterator = self._factory()
-                for event in iterator:
+                while True:
+                    self._waiting_for_demand.set()
+                    self._demand.acquire()
+                    self._waiting_for_demand.clear()
                     if self._stop_requested.is_set():
+                        break
+                    try:
+                        event = next(iterator)
+                    except StopIteration:
                         break
                     self._put(event)
-                    if self._stop_requested.is_set():
-                        break
             finally:
                 close = getattr(iterator, "close", None)
                 if callable(close):

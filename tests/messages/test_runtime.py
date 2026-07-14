@@ -1,6 +1,6 @@
 from typing import get_type_hints
 
-from agentos._frozen_json import FrozenJsonObject, thaw_json
+from agentos.providers.json_values import FrozenJsonObject, thaw_json
 from agentos.messages import (
     MessageRuntime,
     MessageStore,

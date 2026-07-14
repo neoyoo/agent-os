@@ -3,7 +3,8 @@ from threading import Event as ThreadEvent
 
 import pytest
 
-from agentos.runtime.agent_stream import AgentStream, ExecutionLease
+from agentos.runtime._execution_lease import ExecutionLease
+from agentos.runtime.agent_stream import AgentStream
 from agentos.runtime.stream_events import TurnStreamCompleted, TurnStreamStarted
 from tests.runtime._agent_stream_thread_helpers import _ThreadWorker
 
@@ -202,14 +203,14 @@ def test_interrupt_cannot_miss_stream_while_open_is_constructing(
     allow_opener_exit = ThreadEvent()
     interrupt_started = ThreadEvent()
     interrupt_results: list[bool] = []
-    original_init = AgentStream.__init__
+    original_create = AgentStream._create
 
-    def blocking_init(self, *args, **kwargs) -> None:
+    def blocking_create(cls, *args, **kwargs) -> AgentStream:
         constructor_entered.set()
         allow_constructor.wait()
-        original_init(self, *args, **kwargs)
+        return original_create(*args, **kwargs)
 
-    monkeypatch.setattr(AgentStream, "__init__", blocking_init)
+    monkeypatch.setattr(AgentStream, "_create", classmethod(blocking_create))
     lease = ExecutionLease()
 
     async def open_and_wait_for_cleanup() -> None:

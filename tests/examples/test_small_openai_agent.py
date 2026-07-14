@@ -7,12 +7,21 @@ from agentos.examples.small_openai_agent import (
     traced_provider,
 )
 from agentos.observability import CapturePolicy, InMemoryTracer, ObservabilityConfig
-from agentos.observability.instrumented import InstrumentedQueryLoop
+from agentos.observability.query_loop import InstrumentedQueryLoop
 from agentos.providers import (
     FakeProvider,
     ProviderResponse,
     ProviderToolCall,
 )
+from agentos.runtime import AgentResult
+from agentos.sync import SyncAgent
+
+
+def run_agent(agent, user_message: str) -> AgentResult:
+    with SyncAgent(agent) as sync_agent:
+        outcome = sync_agent.run(user_message)
+    assert isinstance(outcome, AgentResult)
+    return outcome
 
 
 def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
@@ -30,9 +39,9 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
             ProviderResponse(content="项目名是 agent-os。"),
         ],
     )
-    loop = build_agent(provider=provider, project_root=Path.cwd())
+    agent = build_agent(provider=provider, project_root=Path.cwd())
 
-    answer = loop.run_turn("读取 pyproject.toml 里的项目名")
+    answer = run_agent(agent, "读取 pyproject.toml 里的项目名").content
 
     assert answer == "项目名是 agent-os。"
     tool_names = [tool.function.name for tool in provider.requests[0].tools]
@@ -51,9 +60,9 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
 
 def test_build_agent_exposes_registered_tools_only_through_request_tools() -> None:
     provider = FakeProvider([ProviderResponse(content="ok")])
-    loop = build_agent(provider=provider, project_root=Path.cwd())
+    agent = build_agent(provider=provider, project_root=Path.cwd())
 
-    loop.run_turn("hello")
+    run_agent(agent, "hello")
 
     request = provider.requests[0]
     tool_names = [tool["function"]["name"] for tool in request.tools]
@@ -68,7 +77,7 @@ def test_build_agent_can_enable_observability(tmp_path) -> None:
     tracer = InMemoryTracer()
     provider = FakeProvider([ProviderResponse(content="ok")])
 
-    loop = build_agent(
+    agent = build_agent(
         provider=provider,
         project_root=tmp_path,
         observability_config=ObservabilityConfig(
@@ -77,8 +86,8 @@ def test_build_agent_can_enable_observability(tmp_path) -> None:
         ),
     )
 
-    assert isinstance(loop, InstrumentedQueryLoop)
-    assert loop.run_turn("hello") == "ok"
+    assert isinstance(agent.query_loop, InstrumentedQueryLoop)
+    assert run_agent(agent, "hello").content == "ok"
     assert [record.name for record in tracer.records] == [
         "agent.turn",
         "provider.request.build",

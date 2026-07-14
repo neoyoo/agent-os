@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
+from agentos._sync_work import run_sync
 from agentos.providers import (
     Provider,
     ProviderRequest,
@@ -12,91 +12,95 @@ from agentos.providers import (
     ProviderStreamOptions,
     complete_response_to_stream_events,
 )
-from agentos.runtime._async_provider_bridge import (
-    complete_async_provider_from_thread,
-    stream_async_provider_from_thread,
+from agentos.runtime._async_bridge import (
+    _await_cleanup_preserving_cancellation,
+    iterate_sync_in_executor,
 )
-from agentos.runtime.provider_request_builder import ProviderRequestFactory
 from agentos.runtime.provider_attempt_state import ProviderAttemptState
+from agentos.runtime.provider_request_builder import ProviderRequestFactory
 from agentos.runtime.retry import RetryPolicy
 
 
 def ensure_provider_response_usable(response: ProviderResponse) -> None:
-    """拒绝被 Provider 截断或拦截的响应。"""
+    """拒绝无法表示最终答案的 Provider 响应。"""
 
-    stop_reason = response.stop_reason
-    if stop_reason in {"length", "max_tokens"}:
+    if response.stop_reason in {"length", "max_tokens"}:
         raise RuntimeError(
-            f"provider response was truncated before final answer: {stop_reason}",
+            "provider response was truncated before final answer: "
+            f"{response.stop_reason}",
         )
-    if stop_reason == "content_filter":
+    if response.stop_reason == "content_filter":
         raise RuntimeError("provider response was blocked by content filter")
 
 
-def provider_stream_events(
+async def provider_stream_events(
     provider: Provider,
     request: ProviderRequest,
     options: ProviderStreamOptions | None,
     *,
-    async_event_loop: asyncio.AbstractEventLoop | None,
     request_id_factory: Callable[[], str],
-    cancel_requested: Callable[[], bool],
-) -> Iterator[ProviderStreamEvent]:
-    """按同步 Loop 的能力优先级适配 Provider stream。"""
+) -> AsyncIterator[ProviderStreamEvent]:
+    """将 Provider 能力适配到统一的异步流边界。"""
 
-    if async_event_loop is not None:
-        async_stream = getattr(provider, "async_stream", None)
-        if callable(async_stream):
-            yield from stream_async_provider_from_thread(
-                loop=async_event_loop,
-                async_stream_factory=lambda: async_stream(request, options),
-                cancel_requested=cancel_requested,
-            )
-            return
-        async_complete = getattr(provider, "async_complete", None)
-        if callable(async_complete):
-            yield from complete_async_provider_from_thread(
-                loop=async_event_loop,
-                async_complete_factory=lambda: async_complete(request),
-                request_id=request_id_factory(),
-                options=options,
-                cancel_requested=cancel_requested,
-            )
-            return
-    stream = getattr(provider, "stream", None)
-    if callable(stream):
-        yield from stream(request, options)
+    async_stream = getattr(provider, "async_stream", None)
+    if callable(async_stream):
+        stream = async_stream(request, options)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            close = getattr(stream, "aclose", None)
+            if callable(close):
+                await _await_cleanup_preserving_cancellation(close)
         return
-    response = provider.complete(request)
-    yield from complete_response_to_stream_events(
+    async_complete = getattr(provider, "async_complete", None)
+    if callable(async_complete):
+        response = await async_complete(request)
+        for event in complete_response_to_stream_events(
+            request_id=request_id_factory(),
+            response=response,
+            options=options,
+        ):
+            yield event
+        return
+    stream_factory = getattr(provider, "stream", None)
+    if callable(stream_factory):
+        bridge = iterate_sync_in_executor(lambda: stream_factory(request, options))
+        try:
+            async for event in bridge:
+                yield event
+        finally:
+            await bridge._aclose_from_cancelled_task()
+        return
+    response = await run_sync(provider.complete, request)
+    for event in complete_response_to_stream_events(
         request_id=request_id_factory(),
         response=response,
         options=options,
-    )
+    ):
+        yield event
 
 
 @dataclass(slots=True)
 class ProviderAttemptRunner:
-    """协调一次或多次同步 Provider 物理调用。"""
+    """协调一次或多次 Provider 物理调用。"""
 
     request_factory: ProviderRequestFactory
     stream_provider: Callable[
         [ProviderRequest, ProviderStreamOptions | None],
-        Iterator[ProviderStreamEvent],
+        AsyncIterator[ProviderStreamEvent],
     ]
     before_call: Callable[[ProviderRequest], ProviderRequest]
     after_call: Callable[[ProviderRequest, ProviderResponse], ProviderResponse]
     ensure_usable: Callable[[ProviderResponse], None]
     consume_temporary: Callable[[tuple[str, ...]], None]
     retry_policy: RetryPolicy | None
-    on_retry: Callable[[int, Exception], None]
+    on_retry: Callable[[int, Exception], Awaitable[None]]
 
-    def run_stream(
+    async def run_stream(
         self,
         options: ProviderStreamOptions | None,
-    ) -> Iterator[ProviderStreamEvent]:
-        """运行 Provider attempt stream。"""
-
+    ) -> AsyncIterator[ProviderStreamEvent]:
         policy = self.retry_policy
         if policy is not None:
             policy.raise_if_open()
@@ -113,16 +117,15 @@ class ProviderAttemptRunner:
                     else ()
                 )
                 state.enter_provider_call()
-                stream = iter(self.stream_provider(request, options))
+                stream = self.stream_provider(request, options)
                 try:
-                    for event in stream:
-                        if not state.accept_stream_event(event):
-                            continue
-                        yield event
+                    async for event in stream:
+                        if state.accept_stream_event(event):
+                            yield event
                 finally:
-                    close = getattr(stream, "close", None)
+                    close = getattr(stream, "aclose", None)
                     if callable(close):
-                        close()
+                        await close()
                 completion = state.require_completion()
                 state.enter_after_hook()
                 response = self.after_call(request, completion.response)
@@ -139,4 +142,4 @@ class ProviderAttemptRunner:
                 if not state.should_retry(policy, error, attempt):
                     state.record_terminal_failure(policy)
                     raise
-                self.on_retry(attempt, error)
+                await self.on_retry(attempt, error)

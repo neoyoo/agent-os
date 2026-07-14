@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import asdict
 from time import monotonic
 
-from agentos.capabilities import ToolCallRouter
+from agentos._sync_work import run_sync
+from agentos.capabilities import ToolCallRouter, ToolConcurrencyPolicy
 from agentos.runtime._async_bridge import iterate_sync_in_executor
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.observability.attributes import (
@@ -36,15 +35,6 @@ from agentos.observability.conventions import (
     LANGFUSE_OBSERVATION_OUTPUT,
     LANGFUSE_OBSERVATION_TYPE,
     LANGFUSE_OBSERVATION_USAGE_DETAILS,
-    LANGFUSE_SESSION_ID,
-    LANGFUSE_TRACE_INPUT,
-    LANGFUSE_TRACE_NAME,
-    LANGFUSE_TRACE_OUTPUT,
-)
-from agentos.observability.context import (
-    current_observability_context,
-    use_default_trace_propagator,
-    use_runtime_trace_context,
 )
 from agentos.observability.snapshots import (
     ProviderRequestSnapshot,
@@ -72,13 +62,8 @@ from agentos.providers import (
     ProviderUsage,
     complete_response_to_stream_events,
 )
-from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime import ProviderRequestBuilder
 from agentos.runtime.provider_request_builder import ProviderRequestBuild
-from agentos.runtime.stream_events import (
-    RunOptions,
-    TurnStreamCompleted,
-    TurnStreamEvent,
-)
 
 
 class InstrumentedProvider:
@@ -544,7 +529,7 @@ class InstrumentedProvider:
         async_complete = getattr(self._inner, "async_complete", None)
         if callable(async_complete):
             return await async_complete(request)
-        return await asyncio.to_thread(self._inner.complete, request)
+        return await run_sync(self._inner.complete, request)
 
     async def _inner_async_stream(
         self,
@@ -558,10 +543,14 @@ class InstrumentedProvider:
             return
         stream = getattr(self._inner, "stream", None)
         if callable(stream):
-            async for event in iterate_sync_in_executor(
+            bridge = iterate_sync_in_executor(
                 lambda: stream(request, options),
-            ):
-                yield event
+            )
+            try:
+                async for event in bridge:
+                    yield event
+            finally:
+                await bridge._aclose_from_cancelled_task()
             return
         response = await self._inner_async_complete(request)
         for event in complete_response_to_stream_events(
@@ -662,10 +651,12 @@ class InstrumentedProviderRequestBuilder:
         self._capture_policy = capture_policy
         self.latest_request_snapshot: ProviderRequestSnapshot | None = None
 
-    def __getattr__(self, name: str) -> object:
-        """透传 ProviderRequestBuilder 的附加属性。"""
+    @property
+    def attachment_runtime(self) -> object | None:
+        return self._inner.attachment_runtime
 
-        return getattr(self._inner, name)
+    def _bind_context_source(self, context_runtime: object, token_counter: object) -> None:
+        self._inner._bind_context_source(context_runtime, token_counter)  # type: ignore[arg-type]
 
     def build(self) -> ProviderRequestBuild:
         """构造 provider request，并记录 provider.request.build span。"""
@@ -786,13 +777,15 @@ class InstrumentedToolCallRouter:
     async def async_execute_tool_call(self, tool_call: ProviderToolCall) -> object:
         """异步执行 tool call，并记录 tool span。"""
 
-        async_execute = getattr(self._inner, "async_execute_tool_call", None)
-        if callable(async_execute):
-            return await self._record_async_tool_call(
-                tool_call,
-                lambda: async_execute(tool_call),
-            )
-        return await asyncio.to_thread(self.execute_tool_call, tool_call)
+        return await self._record_async_tool_call(
+            tool_call,
+            lambda: self._inner.async_execute_tool_call(tool_call),
+        )
+
+    def concurrency_policy_for(self, tool_name: str) -> ToolConcurrencyPolicy:
+        """返回底层 router 的显式并发策略。"""
+
+        return self._inner.concurrency_policy_for(tool_name)
 
     def _record_tool_call(
         self,
@@ -936,338 +929,3 @@ class InstrumentedToolCallRouter:
                 "content_chars": snapshot.content_length,
             }
         return {"content": snapshot.content}
-
-
-class InstrumentedQueryLoop:
-    """在 QueryLoop turn boundary 上创建 root span。"""
-
-    def __init__(
-        self,
-        inner: QueryLoop,
-        *,
-        tracer: Tracer,
-        capture_policy: CapturePolicy,
-    ) -> None:
-        """保存被包装 QueryLoop 和观测配置。"""
-
-        self._inner = inner
-        self._tracer = tracer
-        self._capture_policy = capture_policy
-
-    def __getattr__(self, name: str) -> object:
-        """透传未显式包装的 QueryLoop 属性和方法。"""
-
-        return getattr(self._inner, name)
-
-    def run_turn(self, user_message: str) -> str:
-        """运行 turn，并记录 agent.turn root span。"""
-
-        attributes: dict[str, object] = {
-            LANGFUSE_OBSERVATION_TYPE: "agent",
-            LANGFUSE_TRACE_NAME: "agentos.turn",
-            "agentos.capture.mode": self._capture_policy.mode,
-            "agentos.turn.max_tool_iterations": self._inner.max_tool_iterations,
-            "agentos.user_input.length": len(user_message),
-        }
-        observability_context = current_observability_context()
-        session_id = None
-        turn_id = None
-        if self._inner.session_state is not None:
-            session_id = self._inner.session_state.id
-            turn_id = f"turn_{self._inner.session_state.next_turn_number()}"
-            attributes[LANGFUSE_SESSION_ID] = session_id
-            attributes["agentos.session.id"] = session_id
-            attributes["agentos.turn.id"] = turn_id
-
-        with use_default_trace_propagator(self._tracer):
-            with self._tracer.use_incoming_headers(
-                observability_context.incoming_headers,
-            ):
-                with use_runtime_trace_context(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                ):
-                    with self._tracer.start_span(
-                        "agent.turn",
-                        attributes=attributes,
-                    ) as span:
-                        apply_common_observability_attributes(
-                            span,
-                            tracer=self._tracer,
-                            capture_policy=self._capture_policy,
-                            context=observability_context,
-                            session_id=session_id,
-                            turn_id=turn_id,
-                        )
-                        input_payload = self._turn_input_payload(user_message)
-                        input_attribute = json_attribute(
-                            input_payload,
-                            policy=self._capture_policy,
-                        )
-                        span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
-                        span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
-                        try:
-                            response = self._inner.run_turn(user_message)
-                            if inspect.isawaitable(response):
-                                response = asyncio.run(response)
-                            span.set_attribute(
-                                "agentos.final_response.length",
-                                len(response),
-                            )
-                            output_attribute = json_attribute(
-                                self._turn_output_payload(response),
-                                policy=self._capture_policy,
-                            )
-                            span.set_attribute(LANGFUSE_TRACE_OUTPUT, output_attribute)
-                            span.set_attribute(
-                                LANGFUSE_OBSERVATION_OUTPUT,
-                                output_attribute,
-                            )
-                            return response
-                        finally:
-                            self._refresh_turn_input_attributes(
-                                span,
-                                user_message,
-                            )
-
-    def run_turn_stream(
-        self,
-        user_message: str,
-        options: RunOptions | None = None,
-        *,
-        attachments: list[object] | None = None,
-    ) -> Iterator[TurnStreamEvent] | AsyncIterator[TurnStreamEvent]:
-        """运行 streaming turn，并记录 agent.turn root span。"""
-
-        stream = self._inner.run_turn_stream(
-            user_message,
-            options,
-            attachments=attachments,
-        )
-        if hasattr(stream, "__aiter__"):
-            return self._run_turn_stream_async(
-                user_message,
-                stream,  # type: ignore[arg-type]
-            )
-        return self._run_turn_stream_sync(
-            user_message,
-            stream,  # type: ignore[arg-type]
-        )
-
-    def _run_turn_stream_sync(
-        self,
-        user_message: str,
-        stream: Iterator[TurnStreamEvent],
-    ) -> Iterator[TurnStreamEvent]:
-        """Record a root span around a sync turn stream."""
-
-        attributes: dict[str, object] = {
-            LANGFUSE_OBSERVATION_TYPE: "agent",
-            LANGFUSE_TRACE_NAME: "agentos.turn",
-            "agentos.capture.mode": self._capture_policy.mode,
-            "agentos.turn.max_tool_iterations": self._inner.max_tool_iterations,
-            "agentos.user_input.length": len(user_message),
-        }
-        observability_context = current_observability_context()
-        session_id = None
-        turn_id = None
-        if self._inner.session_state is not None:
-            session_id = self._inner.session_state.id
-            turn_id = f"turn_{self._inner.session_state.next_turn_number()}"
-            attributes[LANGFUSE_SESSION_ID] = session_id
-            attributes["agentos.session.id"] = session_id
-            attributes["agentos.turn.id"] = turn_id
-
-        with use_default_trace_propagator(self._tracer):
-            with self._tracer.use_incoming_headers(
-                observability_context.incoming_headers,
-            ):
-                with use_runtime_trace_context(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                ):
-                    with self._tracer.start_span(
-                        "agent.turn",
-                        attributes=attributes,
-                    ) as span:
-                        apply_common_observability_attributes(
-                            span,
-                            tracer=self._tracer,
-                            capture_policy=self._capture_policy,
-                            context=observability_context,
-                            session_id=session_id,
-                            turn_id=turn_id,
-                        )
-                        input_payload = self._turn_input_payload(user_message)
-                        input_attribute = json_attribute(
-                            input_payload,
-                            policy=self._capture_policy,
-                        )
-                        span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
-                        span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
-                        try:
-                            for event in stream:
-                                if isinstance(event, TurnStreamCompleted):
-                                    span.set_attribute(
-                                        "agentos.final_response.length",
-                                        len(event.content),
-                                    )
-                                    output_attribute = json_attribute(
-                                        self._turn_output_payload(event.content),
-                                        policy=self._capture_policy,
-                                    )
-                                    span.set_attribute(
-                                        LANGFUSE_TRACE_OUTPUT,
-                                        output_attribute,
-                                    )
-                                    span.set_attribute(
-                                        LANGFUSE_OBSERVATION_OUTPUT,
-                                        output_attribute,
-                                    )
-                                yield event
-                        finally:
-                            self._refresh_turn_input_attributes(
-                                span,
-                                user_message,
-                            )
-
-    async def _run_turn_stream_async(
-        self,
-        user_message: str,
-        stream: AsyncIterator[TurnStreamEvent],
-    ) -> AsyncIterator[TurnStreamEvent]:
-        """Record a root span around a native async turn stream."""
-
-        attributes: dict[str, object] = {
-            LANGFUSE_OBSERVATION_TYPE: "agent",
-            LANGFUSE_TRACE_NAME: "agentos.turn",
-            "agentos.capture.mode": self._capture_policy.mode,
-            "agentos.turn.max_tool_iterations": self._inner.max_tool_iterations,
-            "agentos.user_input.length": len(user_message),
-        }
-        observability_context = current_observability_context()
-        session_id = None
-        turn_id = None
-        if self._inner.session_state is not None:
-            session_id = self._inner.session_state.id
-            turn_id = f"turn_{self._inner.session_state.next_turn_number()}"
-            attributes[LANGFUSE_SESSION_ID] = session_id
-            attributes["agentos.session.id"] = session_id
-            attributes["agentos.turn.id"] = turn_id
-
-        with use_default_trace_propagator(self._tracer):
-            with self._tracer.use_incoming_headers(
-                observability_context.incoming_headers,
-            ):
-                with use_runtime_trace_context(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                ):
-                    with self._tracer.start_span(
-                        "agent.turn",
-                        attributes=attributes,
-                    ) as span:
-                        apply_common_observability_attributes(
-                            span,
-                            tracer=self._tracer,
-                            capture_policy=self._capture_policy,
-                            context=observability_context,
-                            session_id=session_id,
-                            turn_id=turn_id,
-                        )
-                        input_payload = self._turn_input_payload(user_message)
-                        input_attribute = json_attribute(
-                            input_payload,
-                            policy=self._capture_policy,
-                        )
-                        span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
-                        span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
-                        try:
-                            async for event in stream:
-                                if isinstance(event, TurnStreamCompleted):
-                                    span.set_attribute(
-                                        "agentos.final_response.length",
-                                        len(event.content),
-                                    )
-                                    output_attribute = json_attribute(
-                                        self._turn_output_payload(event.content),
-                                        policy=self._capture_policy,
-                                    )
-                                    span.set_attribute(
-                                        LANGFUSE_TRACE_OUTPUT,
-                                        output_attribute,
-                                    )
-                                    span.set_attribute(
-                                        LANGFUSE_OBSERVATION_OUTPUT,
-                                        output_attribute,
-                                    )
-                                yield event
-                        finally:
-                            self._refresh_turn_input_attributes(
-                                span,
-                                user_message,
-                            )
-
-    def build_request(self) -> ProviderRequest:
-        """透传 build_request，供测试和高级调用者使用。"""
-
-        return self._inner.build_request()
-
-    def _turn_input_payload(self, user_message: str) -> dict[str, object]:
-        """返回 root span input payload。"""
-
-        if self._capture_policy.mode == "metadata":
-            return {
-                **metadata_identity_payload(capture_policy=self._capture_policy),
-                "user_message_chars": len(user_message),
-            }
-        payload: dict[str, object] = {"user_message": user_message}
-        request_snapshot = self._latest_provider_request_snapshot()
-        if request_snapshot is not None:
-            payload["latest_provider_request"] = self._provider_request_payload(
-                request_snapshot,
-            )
-        return payload
-
-    def _refresh_turn_input_attributes(self, span: object, user_message: str) -> None:
-        """把 turn 内最新 provider request 回填到 root trace input。"""
-
-        if self._capture_policy.mode == "metadata":
-            return
-        input_attribute = json_attribute(
-            self._turn_input_payload(user_message),
-            policy=self._capture_policy,
-        )
-        span.set_attribute(LANGFUSE_TRACE_INPUT, input_attribute)
-        span.set_attribute(LANGFUSE_OBSERVATION_INPUT, input_attribute)
-
-    def _latest_provider_request_snapshot(self) -> ProviderRequestSnapshot | None:
-        """读取 instrumented request builder 保存的最近一次 provider request。"""
-
-        request_builder = getattr(self._inner, "request_builder", None)
-        snapshot = getattr(request_builder, "latest_request_snapshot", None)
-        if isinstance(snapshot, ProviderRequestSnapshot):
-            return snapshot
-        return None
-
-    def _provider_request_payload(
-        self,
-        snapshot: ProviderRequestSnapshot,
-    ) -> dict[str, object]:
-        """返回 root trace 内嵌的 provider request payload。"""
-
-        return {
-            "system": snapshot.system,
-            "messages": snapshot.messages,
-            "tools": snapshot.tools,
-        }
-
-    def _turn_output_payload(self, response: str) -> dict[str, object]:
-        """返回 root span output payload。"""
-
-        if self._capture_policy.mode == "metadata":
-            return {
-                **metadata_identity_payload(capture_policy=self._capture_policy),
-                "content_chars": len(response),
-            }
-        return {"content": response}

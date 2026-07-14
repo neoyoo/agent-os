@@ -815,7 +815,7 @@ Provider、Tool、Hook 和 Policy 的既有领域错误继续保留，不全部�
 python -m pytest -q
 python -m compileall -q src tests
 python -m ruff check src tests
-python scripts/check_module_size_baseline.py
+python -m pytest tests/architecture/test_module_size_baseline.py -q
 python scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
 python -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
 git diff --check

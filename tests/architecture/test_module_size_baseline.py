@@ -127,6 +127,35 @@ def test_module_size_baseline_matches_current_source_tree() -> None:
     assert payload["modules"] == modules
 
 
+def test_unified_query_loop_cutover_respects_module_size_targets() -> None:
+    maximum_lines = {
+        "src/agentos/builder.py": 287,
+        "src/agentos/runtime/query_loop.py": 499,
+        "src/agentos/runtime/agent.py": 249,
+        "src/agentos/runtime/agent_stream.py": 249,
+        "src/agentos/runtime/provider_attempt.py": 249,
+        "src/agentos/capabilities/skills.py": 660,
+        "src/agentos/channels/a2a_conformance.py": 1836,
+        "src/agentos/channels/asgi.py": 2200,
+        "src/agentos/channels/a2a_operations.py": 4646,
+        "src/agentos/multi/team.py": 2036,
+        "src/agentos/multi/coordinator.py": 720,
+        "src/agentos/observability/instrumented.py": 1273,
+        "src/agentos/providers/openai_compatible.py": 891,
+        "src/agentos/examples/small_openai_agent.py": 445,
+    }
+
+    actual_lines = {
+        path: len((PROJECT_ROOT / path).read_text(encoding="utf-8").splitlines())
+        for path in maximum_lines
+    }
+
+    assert actual_lines == {
+        path: min(actual_lines[path], limit)
+        for path, limit in maximum_lines.items()
+    }
+
+
 def test_module_size_generator_writes_deterministic_json(tmp_path: Path) -> None:
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"

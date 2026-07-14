@@ -185,12 +185,12 @@ def test_planner_claimed_scheduler_daemon_rejects_invalid_configuration(
         )
 
 
-def test_runtime_loops_do_not_import_planner_claimed_scheduler_daemon() -> None:
+def test_runtime_execution_core_does_not_import_planner_claimed_scheduler_daemon() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     for path in [
         project_root / "src" / "agentos" / "runtime" / "query_loop.py",
-        project_root / "src" / "agentos" / "runtime" / "async_query_loop.py",
+        project_root / "src" / "agentos" / "runtime" / "provider_attempt.py",
     ]:
         text = path.read_text(encoding="utf-8")
         assert "PlannerClaimedSchedulerDaemon" not in text

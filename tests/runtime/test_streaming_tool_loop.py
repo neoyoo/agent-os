@@ -1,5 +1,7 @@
+import asyncio
 from pathlib import Path
 
+from agentos import Agent
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
@@ -54,7 +56,12 @@ def test_streaming_query_loop_executes_tool_and_continues(tmp_path: Path) -> Non
         session_state=SessionState(id="session_stream"),
     )
 
-    events = list(loop.run_turn_stream("读取项目名"))
+    async def collect() -> list[object]:
+        stream = await Agent(loop).run("读取项目名", stream=True)
+        async with stream:
+            return [event async for event in stream]
+
+    events = asyncio.run(collect())
 
     assert ToolStreamStarted(
         tool_name="read_file",

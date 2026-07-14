@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agentos._builder_tools import assemble_tool_components
 from agentos.attachments import AttachmentRuntime
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import RegisteredTool, ToolCallRouter
 from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.context.projection import default_system_section_registry
@@ -12,7 +13,7 @@ from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
 from agentos.recall import RecallRuntime
-from agentos.runtime import Agent, AsyncQueryLoop
+from agentos.runtime import Agent
 from agentos.runtime.provider_request_builder import (
     ProviderRequestBuilder,
     SystemEnvelopeRenderer,
@@ -48,6 +49,7 @@ class AgentBuilder:
     _compression_retain_latest_tokens: int = 8000
     _compression_static_overhead_tokens: int = 0
     _compression_token_counter: TokenCounter | None = None
+    _max_parallel_calls: int | None = None
 
     def provider(self, provider: Provider) -> "AgentBuilder":
         """设置模型 provider。"""
@@ -148,6 +150,18 @@ class AgentBuilder:
         self._token_counter = counter
         return self
 
+    def max_parallel_calls(self, value: int) -> "AgentBuilder":
+        """设置单个工具批次的最大并发调用数。"""
+
+        if self._max_parallel_calls is not None:
+            raise ValueError(
+                "AgentBuilder.max_parallel_calls() called twice. Remove one call.",
+            )
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError("max_parallel_calls must be an integer greater than zero")
+        self._max_parallel_calls = value
+        return self
+
     def with_compression(
         self,
         compressor: Compressor | None = None,
@@ -183,13 +197,8 @@ class AgentBuilder:
 
         return Agent(query_loop_kwargs=self._query_loop_kwargs())
 
-    def build_async(self) -> Agent:
-        """构建使用原生 AsyncQueryLoop 的 Agent facade。"""
-
-        return Agent(query_loop=AsyncQueryLoop(**self._query_loop_kwargs()))  # type: ignore[arg-type]
-
     def _query_loop_kwargs(self) -> dict[str, object]:
-        """组装 QueryLoop / AsyncQueryLoop 共用组件。"""
+        """组装唯一 QueryLoop 使用的组件。"""
 
         if self._provider is None:
             raise ValueError(
@@ -217,38 +226,21 @@ class AgentBuilder:
             ),
             message_runtime=messages,
         )
-        tool_registry = ToolRegistry()
-        for tool in self._tools or []:
-            tool_registry.register(tool)
-        if self._tools is not None and self._tool_call_router is not None:
-            raise ValueError(
-                "AgentBuilder cannot use both .tools() and .tool_call_router(). "
-                "Choose one tool setup.",
-            )
-        tool_router = self._tool_call_router
-        if self._tools is not None:
-            tool_router = ToolCallRouter(
-                tool_registry=tool_registry,
-                context_runtime=context,
-                recall_runtime=recall_runtime,
-                attachment_runtime=attachments,
-            )
-        elif tool_router is None:
-            tool_router = ToolCallRouter(
-                tool_registry=tool_registry,
-                context_runtime=context,
-                recall_runtime=recall_runtime,
-                attachment_runtime=attachments,
-            )
-        elif getattr(tool_router, "attachment_runtime", None) is None:
-            tool_router.attachment_runtime = attachments
-        provider_tools = tool_router.tool_specs()
+        tool_components = assemble_tool_components(
+            tools=self._tools,
+            tool_call_router=self._tool_call_router,
+            context_runtime=context,
+            recall_runtime=recall_runtime,
+            attachment_runtime=attachments,
+            max_parallel_calls=self._max_parallel_calls,
+        )
         renderer = self._context_renderer or self._default_renderer()
         request_builder = ProviderRequestBuilder(
             context_renderer=renderer,
             message_runtime=messages,
-            tools=provider_tools,
+            tools=tool_components.provider_tools,
             attachment_runtime=attachments,
+            parallel_tool_calls=True,
         )
         kwargs = {
             "context_runtime": context,
@@ -257,8 +249,9 @@ class AgentBuilder:
             "provider": self._provider,
             "tool_result_budget": self._tool_result_budget or ToolResultBudget(),
             "token_counter": self._token_counter or HeuristicTokenCounter(),
+            "tool_scheduler": tool_components.scheduler,
         }
-        kwargs["tool_call_router"] = tool_router
+        kwargs["tool_call_router"] = tool_components.router
         if compression_runtime is not None:
             kwargs["compression_runtime"] = compression_runtime
         if self._event_bus is not None:

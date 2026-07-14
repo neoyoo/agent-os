@@ -77,6 +77,7 @@ class ProviderRequestBuilder:
     context_renderer: SystemEnvelopeRenderer
     message_runtime: MessageRuntime
     tools: list[ProviderToolSpec] = field(default_factory=list)
+    parallel_tool_calls: bool | None = True
     attachment_runtime: object | None = None
     snapshot_renderer: ContextSnapshotRenderer | None = None
     context_projections: ContextProjectionProvider | None = None
@@ -153,6 +154,7 @@ class ProviderRequestBuilder:
                 system=envelope.text,
                 messages=messages,
                 tools=tuple(self.tools),
+                parallel_tool_calls=self.parallel_tool_calls,
             ),
             receipt=ProviderRequestReceipt(
                 temporary_message_ids=tuple(

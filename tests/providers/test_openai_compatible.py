@@ -1,11 +1,16 @@
 import inspect
 import asyncio
 from io import BytesIO
+from collections.abc import AsyncIterator, Iterator
+from threading import Event as ThreadEvent
 from urllib.error import HTTPError
 
 import pytest
 
+from agentos import Agent
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
+from agentos.context import ContextRuntime
+from agentos.messages import MessageRuntime
 from agentos.providers import (
     AssistantMessage,
     HttpxAsyncJSONTransport,
@@ -21,6 +26,8 @@ from agentos.providers import (
     UrlLibJSONTransport,
     UserMessage,
 )
+from agentos.runtime import AgentBusyError, ProviderRequestBuilder, QueryLoop
+from tests._context_protocol_fixtures import default_context_renderer
 
 
 _FORBIDDEN_PROVIDER_METADATA = {
@@ -171,6 +178,32 @@ class FakeTransport:
             },
         )
         return self.response
+
+
+def test_openai_compatible_parallel_flag_requires_capability_opt_in() -> None:
+    tool = ProviderToolSpec(
+        function=ProviderFunctionSpec("lookup", "lookup", {"type": "object"}),
+    )
+    request = ProviderRequest(
+        system="system",
+        messages=(),
+        tools=(tool,),
+        parallel_tool_calls=True,
+    )
+    default_provider = OpenAICompatibleProvider(
+        api_key="key",
+        base_url="https://example.test",
+        model="model",
+    )
+    enabled_provider = OpenAICompatibleProvider(
+        api_key="key",
+        base_url="https://example.test",
+        model="model",
+        supports_parallel_tool_calls_parameter=True,
+    )
+
+    assert "parallel_tool_calls" not in default_provider._payload(request)
+    assert enabled_provider._payload(request)["parallel_tool_calls"] is True
 
 
 def test_openai_compatible_provider_posts_chat_completion_request() -> None:
@@ -350,6 +383,145 @@ def test_openai_compatible_provider_async_complete_uses_async_transport() -> Non
 
     assert content == "async done"
     assert calls[0]["url"] == "https://api.deepseek.example/chat/completions"
+
+
+def test_openai_compatible_sync_transport_converges_with_bound_run_tracker() -> None:
+    from agentos._sync_work import SyncWorkTracker, bind_sync_work_tracker
+
+    class BlockingTransport:
+        def __init__(self) -> None:
+            self.started = ThreadEvent()
+            self.release = ThreadEvent()
+            self.finished = ThreadEvent()
+
+        def post_json(self, **_kwargs: object) -> dict[str, object]:
+            self.started.set()
+            self.release.wait()
+            self.finished.set()
+            return {"choices": [{"message": {"content": "done"}}]}
+
+    async def scenario() -> None:
+        transport = BlockingTransport()
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            transport=transport,  # type: ignore[arg-type]
+        )
+        tracker = SyncWorkTracker()
+
+        async def events() -> AsyncIterator[object]:
+            yield await provider.async_complete(
+                ProviderRequest(system="system", messages=[]),
+            )
+
+        source = bind_sync_work_tracker(events(), tracker)
+        consumer = asyncio.create_task(anext(source))
+        try:
+            assert await asyncio.to_thread(transport.started.wait, 5)
+            consumer.cancel("transport cancellation")
+            with pytest.raises(asyncio.CancelledError):
+                await consumer
+
+            waiter = asyncio.create_task(tracker.wait_until_idle())
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(waiter), 0.05)
+        finally:
+            transport.release.set()
+            await asyncio.gather(consumer, return_exceptions=True)
+            await source.aclose()
+
+        await waiter
+        assert transport.finished.is_set()
+        assert tracker.exceptions == ()
+
+    asyncio.run(scenario())
+
+
+def test_query_loop_close_waits_for_sync_stream_transport_next() -> None:
+    class BlockingStreamTransport:
+        def __init__(self) -> None:
+            self.blocked = ThreadEvent()
+            self.release = ThreadEvent()
+            self.finished = ThreadEvent()
+            self.closed = ThreadEvent()
+
+        def post_json_stream(
+            self,
+            **_kwargs: object,
+        ) -> Iterator[dict[str, object]]:
+            try:
+                yield {
+                    "id": "stream_1",
+                    "model": "test-model",
+                    "choices": [
+                        {"finish_reason": None, "delta": {"content": "first"}},
+                    ],
+                }
+                self.blocked.set()
+                self.release.wait()
+                self.finished.set()
+                yield {
+                    "id": "stream_1",
+                    "model": "test-model",
+                    "choices": [
+                        {"finish_reason": "stop", "delta": {}},
+                    ],
+                }
+            finally:
+                self.closed.set()
+
+    async def scenario() -> None:
+        transport = BlockingStreamTransport()
+        messages = MessageRuntime()
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.example.test",
+            model="test-model",
+            transport=transport,  # type: ignore[arg-type]
+        )
+        agent = Agent(
+            QueryLoop(
+                context_runtime=ContextRuntime(),
+                message_runtime=messages,
+                request_builder=ProviderRequestBuilder(
+                    context_renderer=default_context_renderer(),
+                    message_runtime=messages,
+                ),
+                provider=provider,
+            ),
+        )
+        stream = await agent.run("hello", stream=True)
+
+        async def consume() -> None:
+            async for _event in stream:
+                pass
+
+        consumer = asyncio.create_task(consume())
+        assert await asyncio.to_thread(transport.blocked.wait, 5)
+        close_task = asyncio.create_task(stream.aclose())
+        results: list[object] = []
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(close_task), 0.05)
+            with pytest.raises(AgentBusyError):
+                await agent.run("replacement", stream=True)
+        finally:
+            transport.release.set()
+            results = await asyncio.gather(
+                close_task,
+                consumer,
+                return_exceptions=True,
+            )
+
+        assert results[0] is None
+        assert isinstance(results[1], asyncio.CancelledError)
+        assert transport.finished.is_set()
+        assert transport.closed.is_set()
+        replacement = await agent.run("replacement")
+        assert replacement.content == "first"
+
+    asyncio.run(scenario())
 
 
 def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:

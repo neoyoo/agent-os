@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agentos.persistence import BackendUnavailableError
+from agentos.channels._redis_sse_sync import RedisSseSyncClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +183,7 @@ class RedisSseEventBuffer:
         if xread_block_ms < 1:
             raise ValueError("xread_block_ms must be at least 1")
         if client is not None:
-            self._client = client
+            redis_client = client
             self._url = url
         else:
             try:
@@ -193,12 +193,13 @@ class RedisSseEventBuffer:
                     "RedisSseEventBuffer requires the optional dependency "
                     "`agentos[redis]`.",
                 ) from error
-            self._client = redis.Redis.from_url(url)
+            redis_client = redis.Redis.from_url(url)
             self._url = url
         self._key_prefix = key_prefix.rstrip(":")
         self._max_stream_length = max_stream_length
         self._ttl_seconds = ttl_seconds
         self._xread_block_ms = xread_block_ms
+        self._redis = RedisSseSyncClient(redis_client)
 
     @property
     def backend_url(self) -> str:
@@ -210,8 +211,9 @@ class RedisSseEventBuffer:
         """追加一个事件 chunk。"""
 
         key = self._redis_key(stream_key)
-        await self._redis_call(
-            self._client.xadd,
+        await self._redis.mutate(
+            key,
+            "xadd",
             key,
             {"type": "event", "sequence": str(sequence), "chunk": chunk},
             maxlen=self._max_stream_length,
@@ -223,7 +225,7 @@ class RedisSseEventBuffer:
         """返回 sequence 大于 last_sequence 的已缓存事件。"""
 
         key = self._redis_key(stream_key)
-        messages = await self._redis_call(self._client.xrange, key, min="-", max="+")
+        messages = await self._read_stream(key)
         events: list[tuple[int, str]] = []
         for _message_id, fields in messages:
             parsed = self._parse_event_fields(fields)
@@ -236,7 +238,7 @@ class RedisSseEventBuffer:
 
     async def replay_window(self, stream_key: str) -> SseReplayWindow:
         key = self._redis_key(stream_key)
-        messages = await self._redis_call(self._client.xrange, key, min="-", max="+")
+        messages = await self._read_stream(key)
         if not messages:
             return SseReplayWindow(
                 exists=False,
@@ -269,7 +271,7 @@ class RedisSseEventBuffer:
 
         key = self._redis_key(stream_key)
         last_stream_id = "0-0"
-        messages = await self._redis_call(self._client.xrange, key, min="-", max="+")
+        messages = await self._read_stream(key)
         for message_id, fields in messages:
             last_stream_id = self._message_id(message_id)
             if self._field(fields, "type") == "terminal":
@@ -283,8 +285,8 @@ class RedisSseEventBuffer:
                 yield sequence, chunk
 
         while True:
-            raw_streams = await self._redis_call(
-                self._client.xread,
+            raw_streams = await self._redis.call(
+                "xread",
                 {key: last_stream_id},
                 count=100,
                 block=self._xread_block_ms,
@@ -309,8 +311,9 @@ class RedisSseEventBuffer:
         """标记 stream 已结束并唤醒 follower。"""
 
         key = self._redis_key(stream_key)
-        await self._redis_call(
-            self._client.xadd,
+        await self._redis.mutate(
+            key,
+            "xadd",
             key,
             {"type": "terminal"},
         )
@@ -319,18 +322,15 @@ class RedisSseEventBuffer:
     async def drop(self, stream_key: str) -> None:
         """删除 stream 缓存。"""
 
-        await self._redis_call(self._client.delete, self._redis_key(stream_key))
+        key = self._redis_key(stream_key)
+        await self._redis.delete(key)
 
     async def _expire(self, key: str) -> None:
-        await self._redis_call(self._client.expire, key, self._ttl_seconds)
+        await self._redis.expire(key, self._ttl_seconds)
 
-    async def _redis_call(self, func: object, *args: object, **kwargs: object) -> object:
-        if not callable(func):
-            raise BackendUnavailableError("Redis backend unavailable")
-        try:
-            return await asyncio.to_thread(func, *args, **kwargs)
-        except Exception as error:
-            raise BackendUnavailableError("Redis backend unavailable") from error
+    async def _read_stream(self, key: str) -> object:
+        """读取当前 Redis stream 快照。"""
+        return await self._redis.call("xrange", key, min="-", max="+")
 
     def _redis_key(self, stream_key: str) -> str:
         return f"{self._key_prefix}:channels:sse:{stream_key}"

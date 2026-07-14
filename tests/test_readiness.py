@@ -42,6 +42,13 @@ def test_terminal_script_is_direct_with_no_required_app_glue() -> None:
     assert form.dimensions["auth"].level == "not-applicable"
 
 
+def test_readiness_uses_single_query_loop_vocabulary() -> None:
+    form = get_agent_form_readiness("async-web-host")
+
+    assert form.summary == "QueryLoop and ASGI/SSE primitives for a single host."
+    assert form.dimensions["concurrency"].evidence == ("QueryLoop", "AsgiAgentApp")
+
+
 def test_web_distributed_session_names_lease_and_snapshot_gap() -> None:
     form = get_agent_form_readiness("web-distributed-session")
 

@@ -1205,13 +1205,13 @@ def test_planner_tools_evidence_kind_schema_is_enumerated() -> None:
 
     parameters = registry.get("plan_record_evidence").parameters
 
-    assert parameters["properties"]["kind"]["enum"] == [
+    assert parameters["properties"]["kind"]["enum"] == (
         "text",
         "artifact",
         "task_result",
         "team_message",
         "external",
-    ]
+    )
 
 
 def test_planner_tools_fail_retryable_and_retry_handlers() -> None:

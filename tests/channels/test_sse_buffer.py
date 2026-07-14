@@ -1,8 +1,16 @@
 import asyncio
+from threading import Event as ThreadEvent
 
 import pytest
 
 from agentos.channels import InMemorySseEventBuffer, RedisSseEventBuffer, SseReplayWindow
+from agentos.persistence import BackendUnavailableError
+
+
+async def _event_loop_checkpoint() -> None:
+    checkpoint = asyncio.Event()
+    asyncio.get_running_loop().call_soon(checkpoint.set)
+    await checkpoint.wait()
 
 
 class FakeRedis:
@@ -187,6 +195,128 @@ def test_redis_sse_buffer_drop_deletes_stream() -> None:
         assert client.deleted == ["agentos:channels:sse:session_1:turn_1"]
 
     asyncio.run(run())
+
+
+def test_redis_sse_buffer_drop_waits_for_cancelled_append_worker() -> None:
+    xadd_started = ThreadEvent()
+    release_xadd = ThreadEvent()
+    delete_selected = ThreadEvent()
+    order: list[str] = []
+
+    class BlockingRedis(FakeRedis):
+        def xadd(
+            self,
+            name: str,
+            fields: dict[str, str],
+            maxlen: int | None = None,
+            approximate: bool = True,
+        ) -> str:
+            xadd_started.set()
+            release_xadd.wait()
+            result = super().xadd(
+                name,
+                fields,
+                maxlen=maxlen,
+                approximate=approximate,
+            )
+            order.append("xadd_finished")
+            return result
+
+        @property
+        def delete(self):
+            delete_selected.set()
+
+            def execute(name: str) -> int:
+                order.append("delete")
+                return super(BlockingRedis, self).delete(name)
+
+            return execute
+
+    async def run() -> None:
+        client = BlockingRedis()
+        buffer = RedisSseEventBuffer("redis://unused", client=client)
+        append_task = asyncio.create_task(
+            buffer.append("session_1:turn_1", 1, "one"),
+        )
+        loop = asyncio.get_running_loop()
+        assert await loop.run_in_executor(None, xadd_started.wait, 5)
+        append_task.cancel()
+        drop_task = asyncio.create_task(buffer.drop("session_1:turn_1"))
+        try:
+            checkpoint = asyncio.Event()
+            loop.call_soon(checkpoint.set)
+            await checkpoint.wait()
+            assert not append_task.done()
+            assert not drop_task.done()
+            assert not delete_selected.is_set()
+        finally:
+            release_xadd.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await append_task
+        await drop_task
+        assert order == ["xadd_finished", "delete"]
+        assert "agentos:channels:sse:session_1:turn_1" not in client.streams
+
+    try:
+        asyncio.run(run())
+    finally:
+        release_xadd.set()
+
+
+def test_redis_sse_buffer_drop_rejects_new_same_key_append_while_draining() -> None:
+    first_xadd_started = ThreadEvent()
+    release_first_xadd = ThreadEvent()
+    late_xadd_started = ThreadEvent()
+
+    class BlockingRedis(FakeRedis):
+        def xadd(
+            self,
+            name: str,
+            fields: dict[str, str],
+            maxlen: int | None = None,
+            approximate: bool = True,
+        ) -> str:
+            if fields.get("sequence") == "1":
+                first_xadd_started.set()
+                release_first_xadd.wait()
+            else:
+                late_xadd_started.set()
+            return super().xadd(
+                name,
+                fields,
+                maxlen=maxlen,
+                approximate=approximate,
+            )
+
+    async def run() -> None:
+        client = BlockingRedis()
+        buffer = RedisSseEventBuffer("redis://unused", client=client)
+        stream_key = "session_1:turn_1"
+        redis_key = "agentos:channels:sse:session_1:turn_1"
+        append_task = asyncio.create_task(buffer.append(stream_key, 1, "one"))
+        loop = asyncio.get_running_loop()
+        assert await loop.run_in_executor(None, first_xadd_started.wait, 5)
+        append_task.cancel()
+
+        drop_task = asyncio.create_task(buffer.drop(stream_key))
+        await _event_loop_checkpoint()
+        late_append_task = asyncio.create_task(buffer.append(stream_key, 2, "two"))
+        await _event_loop_checkpoint()
+        release_first_xadd.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await append_task
+        await drop_task
+        with pytest.raises(BackendUnavailableError):
+            await late_append_task
+        assert not late_xadd_started.is_set()
+        assert redis_key not in client.streams
+
+    try:
+        asyncio.run(run())
+    finally:
+        release_first_xadd.set()
 
 
 def test_redis_sse_buffer_terminal_marker_does_not_evict_last_event() -> None:

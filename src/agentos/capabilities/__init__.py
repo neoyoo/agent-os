@@ -2,7 +2,11 @@
 
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.builtin import BuiltinToolError, read_file_tool
-from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
+from agentos.capabilities.executor import (
+    ToolExecutionError,
+    ToolExecutionOutcome,
+    ToolExecutionResult,
+)
 from agentos.capabilities.mcp import (
     MCPClient,
     MCPRegistry,
@@ -31,7 +35,14 @@ from agentos.capabilities.skills import (
     builtin_schema_template_skill,
     register_skill_loader_tools,
 )
-from agentos.capabilities.tools import AsyncToolHandler, RegisteredTool, ToolHandler
+from agentos.capabilities.tools import (
+    AsyncToolHandler,
+    RegisteredTool,
+    ToolConcurrencyPolicy,
+    ToolHandler,
+    ToolHandlerResult,
+    WaitRequest,
+)
 
 __all__ = [
     "AsyncToolHandler",
@@ -57,10 +68,14 @@ __all__ = [
     "ToolSandboxError",
     "ToolSandboxPolicy",
     "ToolExecutionError",
+    "ToolExecutionOutcome",
     "ToolExecutionResult",
     "ToolCallRouter",
+    "ToolConcurrencyPolicy",
     "ToolHandler",
+    "ToolHandlerResult",
     "ToolRegistry",
+    "WaitRequest",
     "WorkspaceToolSandboxPolicy",
     "builtin_schema_template_skill",
     "read_file_tool",

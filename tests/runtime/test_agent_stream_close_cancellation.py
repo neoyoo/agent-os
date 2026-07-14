@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agentos.runtime.agent_stream import ExecutionLease
+from agentos.runtime._execution_lease import ExecutionLease
 from agentos.runtime.stream_events import TurnStreamCompleted, TurnStreamStarted
 
 

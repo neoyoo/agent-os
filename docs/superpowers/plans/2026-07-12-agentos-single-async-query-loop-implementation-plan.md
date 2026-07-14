@@ -950,7 +950,7 @@ Expected: 仅尚待本 Task 更新的测试/文档匹配；`src/` 中不得存�
 
 Run: `python -m pytest tests/runtime tests/capabilities tests/attachments tests/channels tests/multi tests/observability tests/examples -q`
 
-Expected: PASS。随后运行 `python scripts/check_module_size_baseline.py`；`query_loop.py < 500`、`agent.py < 250`、`agent_stream.py < 250`、`provider_attempt.py < 250`，并且 `asgi.py`、`a2a_operations.py`、`multi/team.py`、`coordinator.py`、`observability/instrumented.py` 均不得高于 cutover 前记录的行数。任何失败必须在同一工作区修复后才能提交，不允许把公共切换拆成多个红/绿交替提交。
+Expected: PASS。随后运行 `python -m pytest tests/architecture/test_module_size_baseline.py -q`；`query_loop.py < 500`、`agent.py < 250`、`agent_stream.py < 250`、`provider_attempt.py < 250`，并且 `asgi.py`、`a2a_operations.py`、`multi/team.py`、`coordinator.py`、`observability/instrumented.py` 均不得高于 cutover 前记录的行数。任何失败必须在同一工作区修复后才能提交，不允许把公共切换拆成多个红/绿交替提交。
 
 #### Task 6B: 在同一原子提交内更新 Public API、版本、规模基线和当前文档
 
@@ -1017,8 +1017,8 @@ Expected: 无匹配。另执行 `rg -n "Agent.*async_stream|agent\.async_stream|
 python -m pytest -q
 python -m compileall -q src tests
 python -m ruff check src tests
-python scripts/generate_module_size_baseline.py
-python scripts/check_module_size_baseline.py
+python scripts/generate_module_size_baseline.py --root src/agentos --output docs/governance/agentos-module-size-baseline.json
+python -m pytest tests/architecture/test_module_size_baseline.py -q
 python scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
 python -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
 git diff --check
@@ -1057,7 +1057,7 @@ git commit -m "refactor(runtime): unify agent execution on async query loop"
 python -m pytest -q
 python -m compileall -q src tests
 python -m ruff check src tests
-python scripts/check_module_size_baseline.py
+python -m pytest tests/architecture/test_module_size_baseline.py -q
 python scripts/generate_public_api_inventory.py --policy docs/public-api-stability.json --output docs/public-api-inventory.json
 python -m pytest tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
 git diff --check

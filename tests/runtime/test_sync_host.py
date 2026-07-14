@@ -1,4 +1,5 @@
 import asyncio
+from contextvars import ContextVar
 from collections.abc import Callable
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 import inspect
@@ -7,6 +8,20 @@ import threading
 import pytest
 
 from agentos.runtime._sync_host import SyncHost
+
+
+def test_sync_host_preserves_submission_context() -> None:
+    current_value: ContextVar[str] = ContextVar("current_value", default="default")
+
+    async def read_value() -> str:
+        return current_value.get()
+
+    token = current_value.set("caller")
+    try:
+        with SyncHost() as host:
+            assert host.submit(read_value()).result(timeout=1) == "caller"
+    finally:
+        current_value.reset(token)
 from agentos.runtime.errors import (
     SyncAdapterEventLoopError,
     SyncAgentClosedError,

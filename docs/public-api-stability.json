@@ -9,7 +9,6 @@
                                                    "AgentBuilder",
                                                    "AllowAllChannelAuthPolicy",
                                                    "AsgiAgentApp",
-                                                   "AsyncQueryLoop",
                                                    "ChannelAuthContext",
                                                    "ChannelAuthPolicy",
                                                    "CompareAndSavePlanStore",
@@ -523,25 +522,43 @@
                     "agentos.runtime":  {
                                             "stable":  [
                                                            "Agent",
-                                                           "AsyncQueryLoop",
+                                                           "AgentBusyError",
+                                                           "AgentResult",
+                                                           "AgentRunError",
+                                                           "AgentStream",
+                                                           "AgentStreamClosedError",
+                                                           "AgentStreamConsumerError",
+                                                           "AgentWaiting",
                                                            "ContextLoaded",
+                                                           "ContinuationUnavailableError",
                                                            "DistributedWebRuntimeProfile",
                                                            "DistributedWebSessionOperationsProfile",
                                                            "FinalResult",
+                                                           "iter_jsonl",
+                                                           "iter_sse",
                                                            "LocalRuntimeProfile",
+                                                           "LocalContinuationInput",
                                                            "PlanUpdated",
                                                            "ProviderRequestBuilder",
                                                            "QueryLoop",
+                                                           "RunInput",
+                                                           "RunOptions",
+                                                           "RunOutcome",
+                                                           "RunProtocolError",
+                                                           "RunRequest",
                                                            "RuntimeProfile",
                                                            "SkillLoaded",
                                                            "StatusUpdate",
+                                                           "TurnStreamWaiting",
+                                                           "UserTurnInput",
+                                                           "WaitingUnsupportedError",
+                                                           "WaitReason",
                                                            "WebRuntimeProfile"
                                                        ],
                                             "experimental":  [
                                                                  "AgentContinuationFailedEvent",
                                                                  "AgentEvent",
                                                                  "AgentInboxBackpressureEvent",
-                                                                 "AgentResult",
                                                                  "AgentTaskCancelledEvent",
                                                                  "AgentTaskCompletedEvent",
                                                                  "AgentTaskDispatchedEvent",
@@ -577,7 +594,6 @@
                                                                  "RecallContextInjectedEvent",
                                                                  "RecallContextRequestedEvent",
                                                                  "RetryPolicy",
-                                                                 "RunOptions",
                                                                  "RuntimeCompositionProfile",
                                                                  "SessionState",
                                                                  "SnapshotLoadedEvent",
@@ -608,6 +624,20 @@
                                                                  "WorkingStateUpdatedEvent"
                                                              ]
                                         },
+                    "agentos.sync":  {
+                                         "stable":  [
+                                                        "run",
+                                                        "SyncAdapterEventLoopError",
+                                                        "SyncAdapterReentryError",
+                                                        "SyncAgent",
+                                                        "SyncAgentClosedError",
+                                                        "SyncAgentStream",
+                                                        "SyncStreamConsumerError"
+                                                    ],
+                                         "experimental":  [
+
+                                                          ]
+                                     },
                     "agentos.testing":  {
                                             "stable":  [
                                                            "contract_envelope",

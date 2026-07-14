@@ -24,9 +24,9 @@ from agentos.runtime.run import (
     RunInput,
     RunRequest,
     UserTurnInput,
-    WaitReason,
 )
-from agentos.runtime.stream_events import RunOptions
+from agentos.runtime import WaitReason
+from agentos.runtime.run import RunOptions
 
 
 def _attachment() -> Attachment:

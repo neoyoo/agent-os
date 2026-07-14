@@ -8,6 +8,7 @@ from pathlib import Path
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.context.projection import default_system_section_registry
+from agentos.examples._stream_output import write_stream_event
 from agentos.messages import MessageRuntime
 from agentos.observability import (
     CapturePolicy,
@@ -32,16 +33,15 @@ from agentos.providers import (
 from agentos.providers.input import ProviderInputItem
 from agentos.providers.input_serialization import provider_input_to_dict
 from agentos.runtime import (
-    AssistantContentDelta,
+    Agent,
+    AgentResult,
     EventBus,
     ProviderRequestBuilder,
     QueryLoop,
     RunOptions,
     SessionState,
-    TurnStreamCompleted,
-    event_to_json,
-    event_to_sse,
 )
+from agentos.sync import SyncAgent
 from agentos.tokens import HeuristicTokenCounter
 
 
@@ -294,7 +294,7 @@ def build_agent(
     provider: Provider,
     project_root: str | Path = ".",
     observability_config: ObservabilityConfig | None = None,
-) -> QueryLoop:
+) -> Agent:
     """构建一个带 read_file 工具的小型 agent。"""
 
     context = ContextRuntime()
@@ -318,9 +318,12 @@ def build_agent(
         event_bus=EventBus(),
         session_state=SessionState(id="small_openai_agent"),
     )
-    if observability_config is not None:
-        return instrument_query_loop(loop, observability_config)  # type: ignore[return-value]
-    return loop
+    executable_loop = (
+        instrument_query_loop(loop, observability_config)
+        if observability_config is not None
+        else loop
+    )
+    return Agent(query_loop=executable_loop)  # type: ignore[arg-type]
 
 
 def observability_config_from_env() -> ObservabilityConfig:
@@ -404,40 +407,35 @@ def main(argv: list[str] | None = None) -> int:
         if args.observe_langfuse
         else None
     )
-    loop = build_agent(
+    agent = build_agent(
         provider=provider,
         project_root=Path.cwd(),
         observability_config=observability_config,
     )
     user_id = os.environ.get("AGENTOS_USER_ID")
     with use_observability_context(user_id=user_id or None):
-        if args.stream:
-            stream_options = RunOptions(
-                thinking=args.show_thinking,
-                show_thinking=args.show_thinking,
-            )
-            for event in loop.run_turn_stream(user_message, stream_options):
-                if args.output_format == "text":
-                    if isinstance(event, AssistantContentDelta):
-                        print(event.text, end="", flush=True)
-                    elif isinstance(event, TurnStreamCompleted):
-                        print()
-                elif args.output_format == "stream-json":
-                    payload = event_to_json(
-                        event,
-                        show_thinking=args.show_thinking,
-                    )
-                    if payload is not None:
-                        print(payload)
-                elif args.output_format == "sse":
-                    chunk = event_to_sse(
-                        event,
-                        show_thinking=args.show_thinking,
-                    )
-                    if chunk is not None:
-                        print(chunk, end="")
-        else:
-            print(loop.run_turn(user_message))
+        with SyncAgent(agent) as sync_agent:
+            if args.stream:
+                stream_options = RunOptions(
+                    thinking=args.show_thinking,
+                    show_thinking=args.show_thinking,
+                )
+                with sync_agent.run(
+                    user_message,
+                    stream=True,
+                    options=stream_options,
+                ) as stream:
+                    for event in stream:
+                        write_stream_event(
+                            event,
+                            output_format=args.output_format,
+                            show_thinking=args.show_thinking,
+                        )
+            else:
+                result = sync_agent.run(user_message)
+                if not isinstance(result, AgentResult):
+                    raise RuntimeError("small agent unexpectedly entered waiting state")
+                print(result.content)
     return 0
 
 

@@ -44,20 +44,21 @@ def test_provider_request_builder_accepts_context_runtime_boundary() -> None:
     assert request.messages[1].content[0].text == "hello"  # type: ignore[union-attr]
 
 
-def test_query_loop_build_request_does_not_read_context_state_directly() -> None:
+def test_query_loop_binds_request_builder_without_reading_context_state_directly() -> None:
     messages = MessageRuntime()
-    loop = QueryLoop(
+    builder = ProviderRequestBuilder(
+        context_renderer=default_context_renderer(),
+        message_runtime=messages,
+        tools=[],
+    )
+    QueryLoop(
         context_runtime=SnapshotOnlyContext(),
         message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
-            message_runtime=messages,
-            tools=[],
-        ),
+        request_builder=builder,
         provider=FakeProvider(["ok"]),
     )
 
-    request = loop.build_request()
+    request = builder.build().request
 
     assert "snapshot used" not in request.system
 

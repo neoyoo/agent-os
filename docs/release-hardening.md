@@ -28,7 +28,7 @@ The SDK-owned release evidence is:
 - `CHANGELOG.md`
 - full test suite evidence
 - diff/commit hygiene
-- boundary scan evidence for `QueryLoop` and `AsyncQueryLoop`
+- boundary scan evidence for the single async `QueryLoop` and `agentos.sync`
 
 AgentOS does not run CI/CD, signing, publishing, deployment approval. Those are
 deployment-owned release operations. The SDK owns the evidence format,
@@ -76,7 +76,7 @@ item below has evidence in the branch:
 | Changelog | `CHANGELOG.md` records Phase 96 through Phase 100 release work. |
 | Tests | `uv run pytest -q` provides full test suite evidence. |
 | Diff hygiene | `git diff --check` provides whitespace evidence. |
-| Runtime boundary | Search confirms planner/A2A/team/worker/state-plane/readiness/sandbox/release-hardening concepts are not moved into `QueryLoop` or `AsyncQueryLoop`. |
+| Runtime boundary | Search confirms planner/A2A/team/worker/state-plane/readiness/sandbox/release-hardening concepts are not moved into the single async `QueryLoop`; `agentos.sync` remains an adapter only. |
 
 ## Reference Commands
 
@@ -115,11 +115,12 @@ python -m json.tool docs/public-api-inventory.json
 uv run pytest tests/architecture/test_public_api.py -q
 uv run python -m compileall -q src tests
 git diff --check
-rg -n "ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|worker supervisor|production_design_constraints|release hardening" src/agentos/runtime/query_loop.py src/agentos/runtime/async_query_loop.py
+rg -n "ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|worker supervisor|production_design_constraints|release hardening" src/agentos/runtime/query_loop.py src/agentos/sync
 uv run pytest -q
 ```
 
-The boundary scan should produce no matches in `QueryLoop` or `AsyncQueryLoop`.
+The boundary scan should produce no matches in the single async QueryLoop or
+the `agentos.sync` adapter.
 
 When validating actual release candidate evidence, call
 `validate_release_candidate_evidence_manifest` with the expected branch, commit,

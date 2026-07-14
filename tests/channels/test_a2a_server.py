@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from agentos.multi import TaskRequest, TaskResult
 from agentos.observability import (
     InMemoryTracer,
@@ -14,7 +16,7 @@ class StaticRunner:
     def __init__(self) -> None:
         self.requests: list[TaskRequest] = []
 
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         self.requests.append(request)
         return TaskResult(
             task_id=request.task_id,
@@ -29,7 +31,7 @@ class StaticRunner:
 
 
 class ValueErrorRunner:
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         raise ValueError("secret backend detail")
 
 
@@ -39,7 +41,7 @@ class TracedRunner:
         self.trace_id: str | None = None
         self.parent_span_id: str | None = None
 
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         with self.tracer.start_span("remote-task"):
             self.trace_id = current_trace_ids().trace_id
         self.parent_span_id = self.tracer.records[-1].parent_span_id
@@ -55,11 +57,13 @@ def test_agent_a2a_task_runner_wraps_agent_run() -> None:
 
     runner = AgentA2ATaskRunner(build_agent_with_response("agent done"))
 
-    result = runner.run_task(
-        TaskRequest(
-            task_id="task_1",
-            instruction="do remote work",
-            allowed_tool_names=("read_file",),
+    result = asyncio.run(
+        runner.run_task(
+            TaskRequest(
+                task_id="task_1",
+                instruction="do remote work",
+                allowed_tool_names=("read_file",),
+            ),
         ),
     )
 
@@ -74,14 +78,16 @@ def test_a2a_server_adapter_handles_task_payload() -> None:
     runner = StaticRunner()
     adapter = A2AServerAdapter(runner)
 
-    response = adapter.handle_task(
-        {
-            "task_id": "task_1",
-            "instruction": "do remote work",
-            "required_capabilities": ["search"],
-            "allowed_tool_names": ["read_file"],
-            "timeout_seconds": 12,
-        },
+    response = asyncio.run(
+        adapter.handle_task(
+            {
+                "task_id": "task_1",
+                "instruction": "do remote work",
+                "required_capabilities": ["search"],
+                "allowed_tool_names": ["read_file"],
+                "timeout_seconds": 12,
+            },
+        ),
     )
 
     assert response == {
@@ -114,9 +120,11 @@ def test_a2a_server_adapter_extracts_incoming_trace_headers() -> None:
             inject_trace_headers(headers)
 
         runner = TracedRunner(tracer)
-        A2AServerAdapter(runner).handle_task(
-            {"task_id": "task_1", "instruction": "do remote work"},
-            headers=headers,
+        asyncio.run(
+            A2AServerAdapter(runner).handle_task(
+                {"task_id": "task_1", "instruction": "do remote work"},
+                headers=headers,
+            ),
         )
 
     assert runner.trace_id == parent_ids.trace_id
@@ -126,7 +134,7 @@ def test_a2a_server_adapter_extracts_incoming_trace_headers() -> None:
 def test_a2a_server_adapter_returns_failed_result_for_invalid_payload() -> None:
     from agentos.channels.a2a_server import A2AServerAdapter
 
-    response = A2AServerAdapter(StaticRunner()).handle_task({})
+    response = asyncio.run(A2AServerAdapter(StaticRunner()).handle_task({}))
 
     assert response["task_id"] == ""
     assert response["status"] == "failed"
@@ -136,12 +144,14 @@ def test_a2a_server_adapter_returns_failed_result_for_invalid_payload() -> None:
 def test_a2a_server_adapter_requires_capabilities_to_be_a_list() -> None:
     from agentos.channels.a2a_server import A2AServerAdapter
 
-    response = A2AServerAdapter(StaticRunner()).handle_task(
-        {
-            "task_id": "task_1",
-            "instruction": "do remote work",
-            "required_capabilities": "search",
-        },
+    response = asyncio.run(
+        A2AServerAdapter(StaticRunner()).handle_task(
+            {
+                "task_id": "task_1",
+                "instruction": "do remote work",
+                "required_capabilities": "search",
+            },
+        ),
     )
 
     assert response["task_id"] == "task_1"
@@ -152,8 +162,10 @@ def test_a2a_server_adapter_requires_capabilities_to_be_a_list() -> None:
 def test_a2a_server_adapter_redacts_runner_value_errors() -> None:
     from agentos.channels.a2a_server import A2AServerAdapter
 
-    response = A2AServerAdapter(ValueErrorRunner()).handle_task(
-        {"task_id": "task_1", "instruction": "do remote work"},
+    response = asyncio.run(
+        A2AServerAdapter(ValueErrorRunner()).handle_task(
+            {"task_id": "task_1", "instruction": "do remote work"},
+        ),
     )
 
     assert response["task_id"] == "task_1"
@@ -165,3 +177,32 @@ def test_a2a_server_adapter_health_is_ok() -> None:
     from agentos.channels.a2a_server import A2AServerAdapter
 
     assert A2AServerAdapter(StaticRunner()).handle_health() == {"status": "ok"}
+
+
+def test_agent_a2a_task_runner_preserves_waiting_metadata() -> None:
+    from agentos.channels.a2a_server import AgentA2ATaskRunner
+    from agentos.runtime import AgentWaiting, WaitReason
+
+    class WaitingAgent:
+        async def run(self, input: str) -> AgentWaiting:
+            return AgentWaiting(
+                run_id="run_1",
+                reason=WaitReason("human_input", "approval_1", "confirm"),
+            )
+
+    result = asyncio.run(
+        AgentA2ATaskRunner(WaitingAgent()).run_task(  # type: ignore[arg-type]
+            TaskRequest(task_id="task_1", instruction="do remote work"),
+        ),
+    )
+
+    assert result.status == "running"
+    assert result.summary == "task waiting"
+    assert result.artifacts == {
+        "runId": "run_1",
+        "waitReason": {
+            "kind": "human_input",
+            "handle": "approval_1",
+            "detail": "confirm",
+        },
+    }

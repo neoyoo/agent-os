@@ -265,10 +265,7 @@ class AgentBuilderLike(Protocol):
     """Local profile 需要的最小 AgentBuilder 结构。"""
 
     def build(self) -> Agent:
-        """构建同步 Agent。"""
-
-    def build_async(self) -> Agent:
-        """构建异步 Agent。"""
+        """构建统一的 async-first Agent。"""
 
 
 class AgentSessionProviderLike(Protocol):
@@ -286,7 +283,6 @@ class LocalRuntimeProfile:
     """本地 terminal/script 形态 profile。"""
 
     agent_builder: AgentBuilderLike
-    loop_mode: Literal["sync", "async"] = "sync"
     workspace_provider: WorkspaceProvider | None = None
     workspace_request: WorkspaceRequest | None = None
     name: str = "local"
@@ -303,10 +299,8 @@ class LocalRuntimeProfile:
         self.workspace_handle = self.workspace_provider.resolve_workspace(request)
 
     def build_agent(self, session_id: str | None = None) -> Agent:
-        """按 sync/async 模式构建本地 Agent。"""
+        """构建统一的 async-first Agent。"""
 
-        if self.loop_mode == "async":
-            return self.agent_builder.build_async()
         return self.agent_builder.build()
 
 

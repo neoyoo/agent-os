@@ -329,6 +329,16 @@ def test_production_readiness_doc_describes_adapter_contract_test_kits() -> None
         assert_phrase(text, expected)
 
 
+def test_production_readiness_uses_the_single_async_query_loop_contract() -> None:
+    text = (ROOT / "docs" / "production-readiness.md").read_text(
+        encoding="utf-8",
+    )
+
+    assert_phrase(text, "single async QueryLoop")
+    assert_phrase(text, "agentos.sync")
+    assert "Async" + "QueryLoop" not in text
+
+
 def test_production_readiness_doc_describes_live_backend_verification_runner_boundary() -> None:
     text = (ROOT / "docs" / "production-readiness.md").read_text(
         encoding="utf-8",

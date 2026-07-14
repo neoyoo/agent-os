@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from threading import Lock
+from threading import Condition, Lock
 from typing import TYPE_CHECKING
 
 from agentos.runtime._agent_stream_coordination import (
@@ -21,6 +21,7 @@ class ExecutionLease:
 
     def __init__(self) -> None:
         self._lock = Lock()
+        self._idle = Condition(self._lock)
         self._active: AgentStream | None = None
 
     def open_stream(
@@ -39,7 +40,7 @@ class ExecutionLease:
         try:
             if self._active is not None:
                 raise AgentBusyError("agent already has an active execution")
-            stream = AgentStream(
+            stream = AgentStream._create(
                 release=self._release,
                 events=events,
                 cleanup=cleanup,
@@ -52,10 +53,17 @@ class ExecutionLease:
             self._lock.release()
 
     def _release(self, stream: AgentStream) -> None:
-        with self._lock:
+        with self._idle:
             if self._active is not stream:
                 return
             self._active = None
+            self._idle.notify_all()
+
+    def wait_until_idle(self) -> None:
+        """阻塞调用线程，直到当前执行租约释放。"""
+
+        with self._idle:
+            self._idle.wait_for(lambda: self._active is None)
 
     def interrupt(self) -> bool:
         """中断当前 stream；空闲时立即返回 ``False``。"""

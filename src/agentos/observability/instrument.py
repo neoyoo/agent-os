@@ -5,10 +5,10 @@ from agentos.observability.instrumented import (
     InstrumentedCompressionRuntime,
     InstrumentedProvider,
     InstrumentedProviderRequestBuilder,
-    InstrumentedQueryLoop,
     InstrumentedToolCallRouter,
 )
 from agentos.observability.logging import configure_structured_logger
+from agentos.observability.query_loop import InstrumentedQueryLoop
 from agentos.runtime import QueryLoop
 
 
@@ -61,11 +61,8 @@ def instrument_query_loop(
         loop,
         **{name: value for name, value in changes.items() if name in init_fields},
     )
-    sync_loop = getattr(configured_loop, "sync_loop", None)
-    if "structured_logger" not in init_fields and sync_loop is not None:
-        sync_loop.structured_logger = structured_logger
     return InstrumentedQueryLoop(
-        configured_loop,
+        configured_loop,  # type: ignore[arg-type]
         tracer=tracer,
         capture_policy=capture_policy,
     )

@@ -22,6 +22,184 @@ PHASE0_PLAN = (
     / "plans"
     / "2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md"
 )
+_REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
+
+_ROOT_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
+    {
+        "__version__",
+        "Agent",
+        "AgentBuilder",
+        "AllowAllChannelAuthPolicy",
+        "AsgiAgentApp",
+        _REMOVED_ASYNC_LOOP_NAME,
+        "ChannelAuthContext",
+        "ChannelAuthPolicy",
+        "CompareAndSavePlanStore",
+        "DistributedWebRuntimeProfile",
+        "DistributedWebSessionOperationsProfile",
+        "DurableAgentSessionProvider",
+        "InMemoryPlanStore",
+        "LeaseFencedSessionPersistence",
+        "LocalRuntimeProfile",
+        "LocalWorkspaceExecutionBackend",
+        "LocalWorkspaceProvider",
+        "PersistentAgentRegistry",
+        "PlanConflictError",
+        "PlanStoreRecord",
+        "PostgresAgentRegistryStore",
+        "PostgresPlanStore",
+        "ProductionReadinessEvidenceBundle",
+        "ProviderRequestBuilder",
+        "QueryLoop",
+        "ReadinessEvidenceCheck",
+        "ReadinessEvidenceStatus",
+        "RedisSessionLeaseStore",
+        "RejectAllChannelAuthPolicy",
+        "RELEASE_EVIDENCE_REQUIRED_GATES",
+        "ReleaseEvidenceGateStatus",
+        "ReleaseEvidenceValidationReport",
+        "ResourceAwareChannelAuthPolicy",
+        "RuntimeProfile",
+        "SandboxBackend",
+        "SessionLeaseStore",
+        "validate_release_candidate_evidence_manifest",
+        "validate_release_evidence_manifest",
+        "WebRuntimeProfile",
+        "WorkspaceExecutionBackend",
+        "WorkspaceExecutionPolicy",
+        "WorkspaceExecutionRequest",
+        "WorkspaceExecutionResult",
+        "WorkspaceHandle",
+        "WorkspacePolicy",
+        "WorkspaceProvider",
+        "WorkspaceRequest",
+    }
+)
+_RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
+    {
+        "Agent",
+        _REMOVED_ASYNC_LOOP_NAME,
+        "ContextLoaded",
+        "DistributedWebRuntimeProfile",
+        "DistributedWebSessionOperationsProfile",
+        "FinalResult",
+        "LocalRuntimeProfile",
+        "PlanUpdated",
+        "ProviderRequestBuilder",
+        "QueryLoop",
+        "RuntimeProfile",
+        "SkillLoaded",
+        "StatusUpdate",
+        "WebRuntimeProfile",
+    }
+)
+_RUNTIME_EXPERIMENTAL_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
+    {
+        "AgentContinuationFailedEvent",
+        "AgentEvent",
+        "AgentInboxBackpressureEvent",
+        "AgentResult",
+        "AgentTaskCancelledEvent",
+        "AgentTaskCompletedEvent",
+        "AgentTaskDispatchedEvent",
+        "AgentTaskFailedEvent",
+        "AgentTaskLateResultReceivedEvent",
+        "AssistantCompleted",
+        "AssistantContentDelta",
+        "AssistantMessageAppendedEvent",
+        "AssistantThinkingDelta",
+        "ChannelRuntimeProfile",
+        "ChapterStartedEvent",
+        "CompressedSegmentAppendedEvent",
+        "CompressionCompletedEvent",
+        "CompressionFailedEvent",
+        "CompressionSkippedEvent",
+        "ContextRenderedEvent",
+        "DistributedAgentProfile",
+        "DistributedRuntimeProfile",
+        "DistributedTeamRuntimeProfile",
+        "event_payload",
+        "event_to_json",
+        "event_to_sse",
+        "event_type",
+        "EventBus",
+        "InheritedStateSetEvent",
+        "MemoryContextSetEvent",
+        "ProductionStatePlaneDeploymentProfile",
+        "ProviderCircuitOpenError",
+        "ProviderRequestBuiltEvent",
+        "ProviderResponseReceivedEvent",
+        "ProviderRetryEvent",
+        "RecallContextFailedEvent",
+        "RecallContextInjectedEvent",
+        "RecallContextRequestedEvent",
+        "RetryPolicy",
+        "RunOptions",
+        "RuntimeCompositionProfile",
+        "SessionState",
+        "SnapshotLoadedEvent",
+        "SnapshotSavedEvent",
+        "SubagentSpawnedEvent",
+        "ToolCallRequestedEvent",
+        "ToolExecutionCompletedEvent",
+        "ToolExecutionStartedEvent",
+        "ToolResultAppendedEvent",
+        "ToolResultCappedEvent",
+        "ToolStreamCompleted",
+        "ToolStreamFailed",
+        "ToolStreamStarted",
+        "TurnCompletedEvent",
+        "TurnFailedEvent",
+        "TurnNoticeProvider",
+        "TurnStartedEvent",
+        "TurnState",
+        "TurnStreamCancelled",
+        "TurnStreamCompleted",
+        "TurnStreamEvent",
+        "TurnStreamFailed",
+        "TurnStreamStarted",
+        "UserMessageAppendedEvent",
+        "WorkerProcessLifecycleDeploymentProfile",
+        "WorkingStateSchemaDeclaredEvent",
+        "WorkingStateSchemaExtendedEvent",
+        "WorkingStateUpdatedEvent",
+    }
+)
+_RUNTIME_STABLE_SINGLE_ASYNC_ADDITIONS = frozenset(
+    {
+        "AgentBusyError",
+        "AgentResult",
+        "AgentRunError",
+        "AgentStream",
+        "AgentStreamClosedError",
+        "AgentStreamConsumerError",
+        "AgentWaiting",
+        "ContinuationUnavailableError",
+        "iter_jsonl",
+        "iter_sse",
+        "LocalContinuationInput",
+        "RunInput",
+        "RunOptions",
+        "RunOutcome",
+        "RunProtocolError",
+        "RunRequest",
+        "TurnStreamWaiting",
+        "UserTurnInput",
+        "WaitingUnsupportedError",
+        "WaitReason",
+    }
+)
+_SYNC_STABLE_EXPORTS = frozenset(
+    {
+        "run",
+        "SyncAdapterEventLoopError",
+        "SyncAdapterReentryError",
+        "SyncAgent",
+        "SyncAgentClosedError",
+        "SyncAgentStream",
+        "SyncStreamConsumerError",
+    }
+)
 
 
 def _load_inventory_generator() -> ModuleType:
@@ -298,6 +476,27 @@ def test_public_api_stability_policy_contains_only_classifications() -> None:
         "StatusUpdate",
     } <= set(policy["modules"]["agentos.runtime"]["stable"])
     assert '"signature"' not in PUBLIC_API_STABILITY.read_text(encoding="utf-8")
+
+
+def test_single_async_query_loop_policy_applies_only_the_approved_delta() -> None:
+    policy = json.loads(PUBLIC_API_STABILITY.read_text(encoding="utf-8"))
+    modules = policy["modules"]
+
+    assert set(modules["agentos"]["stable"]) == (
+        _ROOT_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER - {_REMOVED_ASYNC_LOOP_NAME}
+    )
+    assert modules["agentos"]["experimental"] == []
+    assert set(modules["agentos.runtime"]["stable"]) == (
+        _RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER
+        - {_REMOVED_ASYNC_LOOP_NAME}
+        | _RUNTIME_STABLE_SINGLE_ASYNC_ADDITIONS
+    )
+    assert set(modules["agentos.runtime"]["experimental"]) == (
+        _RUNTIME_EXPERIMENTAL_BEFORE_SINGLE_ASYNC_CUTOVER
+        - {"AgentResult", "RunOptions"}
+    )
+    assert set(modules["agentos.sync"]["stable"]) == _SYNC_STABLE_EXPORTS
+    assert modules["agentos.sync"]["experimental"] == []
 
 
 @pytest.mark.parametrize(

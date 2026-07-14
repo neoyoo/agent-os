@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from agentos.context import ContextRuntime
@@ -12,6 +14,7 @@ from agentos.providers import (
     ProviderStreamStarted,
 )
 from agentos.runtime import (
+    Agent,
     AssistantCompleted,
     AssistantContentDelta,
     ContextLoaded,
@@ -20,9 +23,12 @@ from agentos.runtime import (
     ProviderRequestBuilder,
     QueryLoop,
     RunOptions,
+    RunRequest,
     StatusUpdate,
     TurnStreamCompleted,
+    TurnStreamFailed,
     TurnStreamStarted,
+    UserTurnInput,
 )
 from agentos.runtime.retry import RetryPolicy
 from tests._context_protocol_fixtures import default_context_renderer
@@ -46,6 +52,18 @@ def build_loop(
     )
 
 
+async def collect_events(
+    loop: QueryLoop,
+    user_message: str,
+    options: RunOptions | None = None,
+) -> list[object]:
+    stream = await loop.execute(
+        RunRequest(UserTurnInput(user_message), options or RunOptions()),
+    )
+    async with stream:
+        return [event async for event in stream]
+
+
 def test_query_loop_streams_content_and_completes_turn() -> None:
     messages = MessageRuntime()
     loop = build_loop(
@@ -53,7 +71,7 @@ def test_query_loop_streams_content_and_completes_turn() -> None:
         messages,
     )
 
-    events = list(loop.run_turn_stream("hi"))
+    events = asyncio.run(collect_events(loop, "hi"))
 
     assert [type(event).__name__ for event in events] == [
         "TurnStreamStarted",
@@ -161,100 +179,119 @@ class CancelsAfterDeltaProvider:
 
 
 def test_query_loop_yields_content_delta_before_provider_stream_completes() -> None:
-    provider = LiveDeltaProvider()
-    loop = build_loop(provider)  # type: ignore[arg-type]
+    async def scenario() -> None:
+        provider = LiveDeltaProvider()
+        loop = build_loop(provider)  # type: ignore[arg-type]
+        stream = await loop.execute(RunRequest(UserTurnInput("hi")))
 
-    events = loop.run_turn_stream("hi")
+        async with stream:
+            assert isinstance(await anext(stream), TurnStreamStarted)
+            assert isinstance(await anext(stream), StatusUpdate)
+            assert isinstance(await anext(stream), PlanUpdated)
+            assert isinstance(await anext(stream), StatusUpdate)
+            assert isinstance(await anext(stream), ContextLoaded)
+            assert isinstance(await anext(stream), StatusUpdate)
+            assert await anext(stream) == AssistantContentDelta(index=1, text="hel")
+            assert provider.resumed_after_content_delta is False
 
-    assert isinstance(next(events), TurnStreamStarted)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), PlanUpdated)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), ContextLoaded)
-    assert isinstance(next(events), StatusUpdate)
-    assert next(events) == AssistantContentDelta(index=1, text="hel")
-    assert provider.resumed_after_content_delta is False
+            assert [event async for event in stream][-1] == TurnStreamCompleted(
+                content="hel",
+            )
+            assert provider.resumed_after_content_delta is True
 
-    assert list(events)[-1] == TurnStreamCompleted(content="hel")
-    assert provider.resumed_after_content_delta is True
+    asyncio.run(scenario())
 
 
-def test_first_provider_attempt_build_has_no_external_yield_before_call() -> None:
-    messages = MessageRuntime()
-    provider = RecordsFirstRequestProvider()
-    loop = build_loop(provider, messages)  # type: ignore[arg-type]
-    events = loop.run_turn_stream("hi")
+def test_first_provider_attempt_starts_before_first_external_yield() -> None:
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        provider = RecordsFirstRequestProvider()
+        loop = build_loop(provider, messages)  # type: ignore[arg-type]
+        stream = await loop.execute(RunRequest(UserTurnInput("hi")))
 
-    assert isinstance(next(events), TurnStreamStarted)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), PlanUpdated)
-    assert isinstance(next(events), StatusUpdate)
-    messages.append_user("state added before the physical call")
+        async with stream:
+            assert isinstance(await anext(stream), TurnStreamStarted)
+            assert len(provider.requests) == 1
+            messages.append_user("state added after the first external yield")
+            assert [event async for event in stream][-1] == TurnStreamCompleted(
+                content="done",
+            )
 
-    assert isinstance(next(events), ContextLoaded)
-    assert len(provider.requests) == 1
-    assert [
-        item.content[0].text  # type: ignore[union-attr]
-        for item in provider.requests[0].messages
-        if item.kind == "business_message"
-    ] == ["hi", "state added before the physical call"]
+        assert [
+            item.content[0].text  # type: ignore[union-attr]
+            for item in provider.requests[0].messages
+            if item.kind == "business_message"
+        ] == ["hi"]
 
-    assert list(events)[-1] == TurnStreamCompleted(content="done")
+    asyncio.run(scenario())
 
 
 def test_query_loop_does_not_retry_after_streaming_visible_delta() -> None:
-    provider = FailsAfterDeltaProvider()
-    loop = build_loop(provider)  # type: ignore[arg-type]
-    loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+    async def scenario() -> None:
+        provider = FailsAfterDeltaProvider()
+        loop = build_loop(provider)  # type: ignore[arg-type]
+        loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+        stream = await loop.execute(RunRequest(UserTurnInput("hi")))
 
-    events = loop.run_turn_stream("hi")
+        assert isinstance(await anext(stream), TurnStreamStarted)
+        assert isinstance(await anext(stream), StatusUpdate)
+        assert isinstance(await anext(stream), PlanUpdated)
+        assert isinstance(await anext(stream), StatusUpdate)
+        assert isinstance(await anext(stream), ContextLoaded)
+        assert isinstance(await anext(stream), StatusUpdate)
+        assert await anext(stream) == AssistantContentDelta(index=1, text="partial")
+        failed = await anext(stream)
+        assert isinstance(failed, TurnStreamFailed)
+        with pytest.raises(RuntimeError, match="stream failed after partial output"):
+            await anext(stream)
+        assert provider.calls == 1
 
-    assert isinstance(next(events), TurnStreamStarted)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), PlanUpdated)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), ContextLoaded)
-    assert isinstance(next(events), StatusUpdate)
-    assert next(events) == AssistantContentDelta(index=1, text="partial")
-    with pytest.raises(RuntimeError, match="stream failed after partial output"):
-        list(events)
-    assert provider.calls == 1
+    asyncio.run(scenario())
 
 
 def test_provider_stream_cancelled_before_delta_follows_retry_policy() -> None:
-    provider = CancelsBeforeDeltaProvider()
-    loop = build_loop(provider)  # type: ignore[arg-type]
-    loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+    async def scenario() -> None:
+        provider = CancelsBeforeDeltaProvider()
+        loop = build_loop(provider)  # type: ignore[arg-type]
+        loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
 
-    events = list(loop.run_turn_stream("hi"))
+        events = await collect_events(loop, "hi")
 
-    assert events[-1] == TurnStreamCompleted(content="recovered")
-    assert provider.calls == 2
+        assert events[-1] == TurnStreamCompleted(content="recovered")
+        assert provider.calls == 2
+
+    asyncio.run(scenario())
 
 
 def test_provider_stream_cancelled_after_delta_does_not_retry() -> None:
-    provider = CancelsAfterDeltaProvider()
-    loop = build_loop(provider)  # type: ignore[arg-type]
-    loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+    async def scenario() -> None:
+        provider = CancelsAfterDeltaProvider()
+        loop = build_loop(provider)  # type: ignore[arg-type]
+        loop.retry_policy = RetryPolicy(max_retries=1, backoff_base=0, jitter=0)
+        stream = await loop.execute(RunRequest(UserTurnInput("hi")))
 
-    events = loop.run_turn_stream("hi")
+        assert isinstance(await anext(stream), TurnStreamStarted)
+        assert isinstance(await anext(stream), StatusUpdate)
+        assert isinstance(await anext(stream), PlanUpdated)
+        assert isinstance(await anext(stream), StatusUpdate)
+        assert isinstance(await anext(stream), ContextLoaded)
+        assert isinstance(await anext(stream), StatusUpdate)
+        assert await anext(stream) == AssistantContentDelta(index=1, text="partial")
+        failed = await anext(stream)
+        assert isinstance(failed, TurnStreamFailed)
+        with pytest.raises(RuntimeError, match="provider stream was cancelled"):
+            await anext(stream)
+        assert provider.calls == 1
 
-    assert isinstance(next(events), TurnStreamStarted)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), PlanUpdated)
-    assert isinstance(next(events), StatusUpdate)
-    assert isinstance(next(events), ContextLoaded)
-    assert isinstance(next(events), StatusUpdate)
-    assert next(events) == AssistantContentDelta(index=1, text="partial")
-    with pytest.raises(RuntimeError, match="provider stream was cancelled"):
-        list(events)
-    assert provider.calls == 1
+    asyncio.run(scenario())
 
 
-def test_run_turn_consumes_stream_and_returns_final_content() -> None:
+def test_agent_collector_consumes_stream_and_returns_final_content() -> None:
     loop = build_loop(FakeProvider([ProviderResponse(content="hello")]))
 
-    assert loop.run_turn("hi") == "hello"
+    outcome = asyncio.run(Agent(loop).run("hi"))
+
+    assert outcome.content == "hello"
 
 
 def test_query_loop_hides_thinking_by_default() -> None:
@@ -270,7 +307,9 @@ def test_query_loop_hides_thinking_by_default() -> None:
         ),
     )
 
-    events = list(loop.run_turn_stream("hi", RunOptions(thinking=True)))
+    events = asyncio.run(
+        collect_events(loop, "hi", RunOptions(thinking=True)),
+    )
 
     assert "AssistantThinkingDelta" not in [type(event).__name__ for event in events]
 
@@ -288,8 +327,9 @@ def test_query_loop_can_emit_thinking_when_requested() -> None:
         ),
     )
 
-    events = list(
-        loop.run_turn_stream(
+    events = asyncio.run(
+        collect_events(
+            loop,
             "hi",
             RunOptions(thinking=True, show_thinking=True),
         ),

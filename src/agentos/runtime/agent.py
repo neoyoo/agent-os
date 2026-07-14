@@ -1,129 +1,45 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field, fields
-from threading import RLock
-from typing import AsyncIterator
+from dataclasses import fields
+from typing import Literal, overload
 
-from agentos.runtime._async_bridge import iterate_sync_in_executor
+from agentos.runtime.agent_stream import AgentStream
+from agentos.runtime.errors import RunProtocolError
 from agentos.runtime.query_loop import QueryLoop
-from agentos.runtime.stream_events import (
-    AssistantContentDelta,
-    AssistantThinkingDelta,
+from agentos.runtime.run import (
+    AgentResult,
+    AgentWaiting,
+    LocalContinuationInput,
+    RunInput,
     RunOptions,
-    ToolStreamCompleted,
-    ToolStreamStarted,
-    TurnStreamCompleted,
-    TurnStreamEvent,
+    RunOutcome,
+    RunRequest,
+    UserTurnInput,
 )
-from agentos.runtime.stream_serializers import event_to_json, event_to_sse
+from agentos.runtime.stream_events import (
+    TurnStreamCompleted,
+    TurnStreamFailed,
+    TurnStreamWaiting,
+)
 
 
-@dataclass(frozen=True, slots=True)
-class AgentResult:
-    """Agent 完整响应结果。"""
-
-    content: str
-
-
-class _AgentAsyncStream:
-    """Agent async stream 适配器，负责维护 interrupt/cancel 状态。"""
-
-    def __init__(
-        self,
-        agent: "Agent",
-        stream: AsyncIterator[TurnStreamEvent],
-        turn_lock: asyncio.Lock,
-    ) -> None:
-        self._agent = agent
-        self._stream = stream
-        self._turn_lock = turn_lock
-        self._turn_lock_acquired = False
-        self._task: asyncio.Task[object] | None = None
-
-    def __aiter__(self) -> "_AgentAsyncStream":
-        return self
-
-    async def __anext__(self) -> TurnStreamEvent:
-        await self._acquire_turn_lock()
-        self._set_current_task()
-        try:
-            return await self._stream.__anext__()
-        except StopAsyncIteration:
-            self._clear_current_task()
-            self._release_turn_lock()
-            raise
-        except asyncio.CancelledError:
-            self._agent.query_loop.request_interrupt()
-            self._clear_current_task()
-            self._release_turn_lock()
-            raise
-        except BaseException:
-            self._clear_current_task()
-            self._release_turn_lock()
-            raise
-
-    async def aclose(self) -> None:
-        self._set_current_task()
-        try:
-            aclose = getattr(self._stream, "aclose", None)
-            if callable(aclose):
-                await aclose()
-        finally:
-            self._clear_current_task()
-            self._release_turn_lock()
-
-    async def _acquire_turn_lock(self) -> None:
-        if not self._turn_lock_acquired:
-            await self._turn_lock.acquire()
-            self._turn_lock_acquired = True
-
-    def _release_turn_lock(self) -> None:
-        if self._turn_lock_acquired:
-            self._turn_lock.release()
-            self._turn_lock_acquired = False
-
-    def _set_current_task(self) -> None:
-        self._task = asyncio.current_task()
-        self._agent._current_async_task = self._task
-
-    def _clear_current_task(self) -> None:
-        if self._agent._current_async_task is self._task:
-            self._agent._current_async_task = None
-
-
-@dataclass(slots=True)
 class Agent:
-    """用户侧 agent facade，隐藏 QueryLoop 装配细节。"""
-
-    query_loop: QueryLoop
-    _turn_lock: RLock
-    _async_turn_lock: asyncio.Lock
-    _current_async_task: asyncio.Task[object] | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
+    """向用户提供唯一异步执行入口的 agent facade。"""
 
     def __init__(
         self,
         query_loop: QueryLoop | None = None,
         query_loop_kwargs: dict[str, object] | None = None,
     ) -> None:
-        """从 QueryLoop 或 QueryLoop kwargs 创建 Agent。"""
-
-        self._turn_lock = RLock()
-        self._async_turn_lock = asyncio.Lock()
-        self._current_async_task = None
         if query_loop is None and query_loop_kwargs is None:
             raise ValueError("query_loop or query_loop_kwargs is required")
+        if query_loop is not None and query_loop_kwargs is not None:
+            raise ValueError("query_loop and query_loop_kwargs are mutually exclusive")
         if query_loop is not None:
             self.query_loop = query_loop
             return
-
         kwargs = dict(query_loop_kwargs or {})
-        allowed_keys = {field.name for field in fields(QueryLoop) if field.init}
+        allowed_keys = {item.name for item in fields(QueryLoop) if item.init}
         unknown_keys = sorted(set(kwargs) - allowed_keys)
         if unknown_keys:
             raise ValueError(
@@ -135,282 +51,94 @@ class Agent:
             raise ValueError(f"invalid query_loop_kwargs: {error}") from error
 
     @property
-    def interrupted(self) -> bool:
-        """判断底层 QueryLoop 是否已收到中断请求。"""
-
-        return self.query_loop.interrupted
-
-    @property
     def attachments(self) -> object:
         """返回当前 Agent 配置的 AttachmentRuntime。"""
 
-        attachment_runtime = getattr(
-            self.query_loop.request_builder,
-            "attachment_runtime",
-            None,
-        )
-        if attachment_runtime is None:
+        runtime = self.query_loop.request_builder.attachment_runtime
+        if runtime is None:
             raise RuntimeError("attachment runtime is not configured")
-        return attachment_runtime
+        return runtime
 
-    def interrupt(self) -> None:
-        """请求在下一个安全点中断运行。"""
+    def interrupt(self) -> bool:
+        """请求取消当前执行；空闲时返回 False。"""
 
-        self.query_loop.request_interrupt()
-        if self._current_async_task is not None:
-            self._current_async_task.cancel()
+        return self.query_loop.interrupt()
 
-    def clear_interrupt(self) -> None:
-        """清除中断请求。"""
+    def _wait_until_idle(self) -> None:
+        self.query_loop._wait_until_idle()
 
-        self.query_loop.clear_interrupt()
-
-    def run(
+    @overload
+    async def run(
         self,
-        user_message: str,
+        input: RunInput,
         *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> AgentResult:
-        """运行完整 turn，并返回最终内容。"""
+        stream: Literal[False] = False,
+        options: RunOptions | None = None,
+    ) -> RunOutcome: ...
 
-        final_content = ""
-        for event in self.stream(
-            user_message,
-            attachments=attachments,
-            thinking=thinking,
-            show_thinking=show_thinking,
-        ):
-            if isinstance(event, TurnStreamCompleted):
-                final_content = event.content
-        return AgentResult(content=final_content)
-
-    async def async_run(
+    @overload
+    async def run(
         self,
-        user_message: str,
+        input: RunInput,
         *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> AgentResult:
-        """异步运行完整 turn，并返回最终内容。"""
+        stream: Literal[True],
+        options: RunOptions | None = None,
+    ) -> AgentStream: ...
 
-        final_content = ""
-        async for event in self.async_stream(
-            user_message,
-            attachments=attachments,
-            thinking=thinking,
-            show_thinking=show_thinking,
-        ):
-            if isinstance(event, TurnStreamCompleted):
-                final_content = event.content
-        return AgentResult(content=final_content)
-
-    def async_stream(
+    @overload
+    async def run(
         self,
-        user_message: str,
+        input: RunInput,
         *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> AsyncIterator[TurnStreamEvent]:
-        """异步运行 turn，优先使用 native async loop，sync loop 放入 executor。"""
+        stream: bool,
+        options: RunOptions | None = None,
+    ) -> RunOutcome | AgentStream: ...
 
-        run_options = RunOptions(thinking=thinking, show_thinking=show_thinking)
-        run_turn_stream = getattr(self.query_loop, "run_turn_stream", None)
-        if callable(run_turn_stream):
-            if attachments is None:
-                maybe_async_stream = run_turn_stream(user_message, run_options)
-            else:
-                maybe_async_stream = run_turn_stream(
-                    user_message,
-                    run_options,
-                    attachments=attachments,
-                )
-            if hasattr(maybe_async_stream, "__aiter__"):
-                return _AgentAsyncStream(
-                    self,
-                    maybe_async_stream,
-                    self._async_turn_lock,
-                )
-
-        return _AgentAsyncStream(
-            self,
-            self._stream_sync_in_executor(
-                lambda: self.stream(
-                    user_message,
-                    attachments=attachments,
-                    thinking=thinking,
-                    show_thinking=show_thinking,
-                ),
-            ),
-            self._async_turn_lock,
-        )
-
-    def _stream_sync_in_executor(
+    async def run(
         self,
-        factory: Callable[[], Iterator[TurnStreamEvent]],
-    ) -> AsyncIterator[TurnStreamEvent]:
-        """在线程池中消费同步 stream，避免阻塞 asyncio event loop。"""
-
-        before_start = getattr(
-            self.query_loop,
-            "set_async_provider_event_loop",
-            None,
-        )
-        after_worker = getattr(
-            self.query_loop,
-            "clear_async_provider_event_loop",
-            None,
-        )
-        return iterate_sync_in_executor(
-            factory,
-            on_cancel=self.query_loop.request_interrupt,
-            before_start=before_start if callable(before_start) else None,
-            after_worker=after_worker if callable(after_worker) else None,
-        )
-
-    def stream(
-        self,
-        user_message: str,
+        input: RunInput,
         *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> Iterator[TurnStreamEvent]:
-        """运行 turn，并返回 typed stream events。"""
+        stream: bool = False,
+        options: RunOptions | None = None,
+    ) -> RunOutcome | AgentStream:
+        """执行一次用户 turn 或本地 continuation。"""
 
-        with self._turn_lock:
-            run_options = RunOptions(thinking=thinking, show_thinking=show_thinking)
-            if attachments is None:
-                stream = self.query_loop.run_turn_stream(user_message, run_options)
-            else:
-                stream = self.query_loop.run_turn_stream(
-                    user_message,
-                    run_options,
-                    attachments=attachments,
-                )
-            if hasattr(stream, "__aiter__"):
-                raise RuntimeError(
-                    "Agent is using an async query loop; use async_run() or "
-                    "async_stream() instead of the synchronous run()/stream() API.",
-                )
-            yield from stream
+        request = RunRequest(self._normalize_input(input), options or RunOptions())
+        events = await self.query_loop.execute(request)
+        if stream:
+            return events
+        return await self._collect_outcome(events)
 
-    def run_continuation(
-        self,
-        *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> AgentResult:
-        """运行 runtime continuation turn，并返回最终内容。"""
+    @staticmethod
+    def _normalize_input(input: RunInput) -> UserTurnInput | LocalContinuationInput:
+        if isinstance(input, str):
+            return UserTurnInput(input)
+        if type(input) in {UserTurnInput, LocalContinuationInput}:
+            return input
+        raise TypeError("agent input must be str, UserTurnInput, or LocalContinuationInput")
 
-        final_content = ""
-        for event in self.stream_continuation(
-            thinking=thinking,
-            show_thinking=show_thinking,
-        ):
-            if isinstance(event, TurnStreamCompleted):
-                final_content = event.content
-        return AgentResult(content=final_content)
-
-    def stream_continuation(
-        self,
-        *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> Iterator[TurnStreamEvent]:
-        """运行 runtime continuation turn，不追加 user 消息。"""
-
-        with self._turn_lock:
-            stream = self.query_loop.run_continuation_stream(
-                RunOptions(thinking=thinking, show_thinking=show_thinking),
-            )
-            if hasattr(stream, "__aiter__"):
-                raise RuntimeError(
-                    "Agent is using an async query loop; use async_stream() "
-                    "for user turns. Synchronous continuation turns require "
-                    "a sync QueryLoop.",
-                )
-            yield from stream
-
-    def stream_jsonl(
-        self,
-        user_message: str,
-        *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> Iterator[str]:
-        """运行 turn，并返回 JSONL 字符串。"""
-
-        for event in self.stream(
-            user_message,
-            attachments=attachments,
-            thinking=thinking,
-            show_thinking=show_thinking,
-        ):
-            chunk = event_to_json(event, show_thinking=show_thinking)
-            if chunk is not None:
-                yield f"{chunk}\n"
-
-    def stream_sse(
-        self,
-        user_message: str,
-        *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> Iterator[str]:
-        """运行 turn，并返回 SSE 字符串。"""
-
-        for event in self.stream(
-            user_message,
-            attachments=attachments,
-            thinking=thinking,
-            show_thinking=show_thinking,
-        ):
-            chunk = event_to_sse(event, show_thinking=show_thinking)
-            if chunk is not None:
-                yield chunk
-
-    def run_with_callbacks(
-        self,
-        user_message: str,
-        *,
-        attachments: list[object] | None = None,
-        thinking: bool = False,
-        show_thinking: bool = False,
-        on_event: Callable[[TurnStreamEvent], None] | None = None,
-        on_content_delta: Callable[[str], None] | None = None,
-        on_thinking_delta: Callable[[str], None] | None = None,
-        on_tool_started: Callable[[str, str], None] | None = None,
-        on_tool_completed: Callable[[str, str, str], None] | None = None,
-    ) -> AgentResult:
-        """运行 turn，并把 typed event 分发给 callback。"""
-
-        final_content = ""
-        for event in self.stream(
-            user_message,
-            attachments=attachments,
-            thinking=thinking,
-            show_thinking=show_thinking,
-        ):
-            if on_event is not None:
-                on_event(event)
-            if isinstance(event, AssistantContentDelta) and on_content_delta:
-                on_content_delta(event.text)
-            elif isinstance(event, AssistantThinkingDelta) and on_thinking_delta:
-                on_thinking_delta(event.text)
-            elif isinstance(event, ToolStreamStarted) and on_tool_started:
-                on_tool_started(event.tool_name, event.tool_call_id)
-            elif isinstance(event, ToolStreamCompleted) and on_tool_completed:
-                on_tool_completed(
-                    event.tool_name,
-                    event.tool_call_id,
-                    event.content,
-                )
-            elif isinstance(event, TurnStreamCompleted):
-                final_content = event.content
-        return AgentResult(content=final_content)
+    @staticmethod
+    async def _collect_outcome(events: AgentStream) -> RunOutcome:
+        terminal: RunOutcome | None = None
+        failure: BaseException | None = None
+        try:
+            async for event in events:
+                if isinstance(event, TurnStreamCompleted):
+                    if terminal is not None:
+                        raise RunProtocolError("run stream emitted multiple outcomes")
+                    terminal = AgentResult(event.content)
+                elif isinstance(event, TurnStreamWaiting):
+                    if terminal is not None:
+                        raise RunProtocolError("run stream emitted multiple outcomes")
+                    terminal = AgentWaiting(event.run_id, event.reason)
+                elif isinstance(event, TurnStreamFailed):
+                    if failure is not None:
+                        raise RunProtocolError("run stream emitted multiple failures")
+                    failure = event.error
+        finally:
+            await events.aclose()
+        if failure is not None:
+            raise failure
+        if terminal is None:
+            raise RunProtocolError("run stream ended without an outcome")
+        return terminal

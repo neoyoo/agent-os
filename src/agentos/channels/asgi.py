@@ -29,7 +29,6 @@ from agentos.channels.auth import (
     ChannelAuthPolicy,
     RejectAllChannelAuthPolicy,
 )
-from agentos.channels.http import HttpAgentChannel
 from agentos.channels.rate_limit import RateLimiter
 from agentos.channels.session import AgentSessionProvider
 from agentos.channels.sse_buffer import InMemorySseEventBuffer, SseEventBuffer
@@ -38,11 +37,18 @@ from agentos.channels.sse_turn_control import (
     SseTurnControlStore,
 )
 from agentos.channels.sse_turns import SseTurnEntry
+from agentos.channels._sync_adapter import run_sync_call
+from agentos.channels.turn_execution import (
+    acquire_channel_agent,
+    cancel_and_join_task,
+    release_channel_agent,
+)
 from agentos.channels.types import ChannelTurnRequest, parse_channel_turn_request
 from agentos.multi.serializers import team_ui_event_to_dict
 from agentos.multi.team import TeamUiStreamStore
 from agentos.persistence import BackendUnavailableError
-from agentos.runtime.stream_events import TurnStreamCompleted
+from agentos.runtime import Agent, AgentWaiting, RunOptions
+from agentos.runtime.stream_events import TurnStreamCompleted, TurnStreamWaiting
 from agentos.runtime.stream_serializers import event_to_sse
 from agentos.channels.durable_session import SessionLeaseError
 
@@ -143,10 +149,6 @@ class AsgiAgentApp:
         self._auth_policy = auth_policy or RejectAllChannelAuthPolicy()
         self._a2a_auth_policy = a2a_auth_policy or RejectAllA2AInboundAuthPolicy()
         self._expose_internal_errors = expose_internal_errors
-        self._http = HttpAgentChannel(
-            sessions,
-            expose_internal_errors=expose_internal_errors,
-        )
         self._a2a_server = a2a_server
         self._a2a_operations = a2a_operations
         self._a2a_agent_card = a2a_agent_card
@@ -441,124 +443,108 @@ class AsgiAgentApp:
         body: bytes,
         send: AsgiSend,
     ) -> None:
-        async_get_agent = getattr(self._sessions, "async_get_agent", None)
-        async_release_agent = getattr(self._sessions, "async_release_agent", None)
-        if callable(async_get_agent) and callable(async_release_agent):
-            try:
-                request = parse_channel_turn_request(body)
-            except ValueError as error:
-                await self._send_json(
-                    send,
-                    400,
-                    {
-                        "session_id": session_id,
-                        "status": "failed",
-                        "error": str(error),
-                    },
-                )
-                return
-            try:
-                agent = await async_get_agent(session_id)
-            except (BackendUnavailableError, SessionLeaseError) as error:
-                await self._send_json(
-                    send,
-                    self._session_acquisition_status_code(error),
-                    self._session_acquisition_error_payload(session_id, error),
-                )
-                return
-            try:
-                heartbeat_task = self._start_json_session_lease_heartbeat(session_id)
-                result = await agent.async_run(
-                    request.message,
-                    thinking=request.thinking,
-                    show_thinking=request.show_thinking,
-                )
-            except asyncio.CancelledError:
-                await self._stop_json_session_lease_heartbeat(heartbeat_task)
-                with suppress(Exception):
-                    await self._abandon_agent_for_session(session_id, agent)
-                raise
-            except Exception as caught_error:
-                error: BaseException = caught_error
-                heartbeat_error: BaseException | None = None
-                try:
-                    await self._stop_json_session_lease_heartbeat(heartbeat_task)
-                except Exception as stop_error:
-                    heartbeat_error = stop_error
-                try:
-                    if heartbeat_error is not None:
-                        await self._abandon_agent_for_session(session_id, agent)
-                        error = heartbeat_error
-                    else:
-                        await async_release_agent(session_id, agent)
-                except Exception as release_error:
-                    error = release_error
-                await self._send_json(
-                    send,
-                    500,
-                    {
-                        "session_id": session_id,
-                        "status": "failed",
-                        "content": None,
-                        "error": self._public_error_message(error),
-                    },
-                )
-                return
-            heartbeat_error: BaseException | None = None
-            try:
-                try:
-                    await self._stop_json_session_lease_heartbeat(heartbeat_task)
-                except Exception as error:
-                    heartbeat_error = error
-                if heartbeat_error is not None:
-                    await self._abandon_agent_for_session(session_id, agent)
-                else:
-                    await async_release_agent(session_id, agent)
-            except Exception as error:
-                await self._send_json(
-                    send,
-                    500,
-                    {
-                        "session_id": session_id,
-                        "status": "failed",
-                        "content": None,
-                        "error": self._public_error_message(error),
-                    },
-                )
-                return
-            if heartbeat_error is not None:
-                await self._send_json(
-                    send,
-                    500,
-                    {
-                        "session_id": session_id,
-                        "status": "failed",
-                        "content": None,
-                        "error": self._public_error_message(heartbeat_error),
-                    },
-                )
-                return
+        try:
+            request = parse_channel_turn_request(body)
+        except ValueError as error:
             await self._send_json(
                 send,
-                200,
+                400,
                 {
                     "session_id": session_id,
-                    "status": "completed",
-                    "content": result.content,
-                    "error": None,
+                    "status": "failed",
+                    "error": str(error),
+                },
+            )
+            return
+        try:
+            agent = await self._get_agent_for_session(session_id)
+        except (BackendUnavailableError, SessionLeaseError) as error:
+            await self._send_json(
+                send,
+                self._session_acquisition_status_code(error),
+                self._session_acquisition_error_payload(session_id, error),
+            )
+            return
+
+        heartbeat_task = self._start_json_session_lease_heartbeat(session_id)
+        try:
+            result = await agent.run(
+                request.message,
+                options=RunOptions(
+                    thinking=request.thinking,
+                    show_thinking=request.show_thinking,
+                ),
+            )
+        except asyncio.CancelledError:
+            with suppress(Exception):
+                await self._settle_json_session(
+                    session_id,
+                    agent,
+                    heartbeat_task,
+                    abandon=True,
+                )
+            raise
+        except Exception as caught_error:
+            cleanup_error = await self._settle_json_session(
+                session_id,
+                agent,
+                heartbeat_task,
+            )
+            await self._send_json(
+                send,
+                500,
+                {
+                    "session_id": session_id,
+                    "status": "failed",
+                    "content": None,
+                    "error": self._public_error_message(cleanup_error or caught_error),
                 },
             )
             return
 
-        result = await asyncio.to_thread(self._http.handle_turn, session_id, body)
+        cleanup_error = await self._settle_json_session(
+            session_id,
+            agent,
+            heartbeat_task,
+        )
+        if cleanup_error is not None:
+            await self._send_json(
+                send,
+                500,
+                {
+                    "session_id": session_id,
+                    "status": "failed",
+                    "content": None,
+                    "error": self._public_error_message(cleanup_error),
+                },
+            )
+            return
+        if isinstance(result, AgentWaiting):
+            await self._send_json(
+                send,
+                202,
+                {
+                    "session_id": session_id,
+                    "status": "waiting",
+                    "content": None,
+                    "error": None,
+                    "run_id": result.run_id,
+                    "wait_reason": {
+                        "kind": result.reason.kind,
+                        "handle": result.reason.handle,
+                        "detail": result.reason.detail,
+                    },
+                },
+            )
+            return
         await self._send_json(
             send,
-            result.status_code,
+            200,
             {
-                "session_id": result.session_id,
-                "status": result.status,
+                "session_id": session_id,
+                "status": "completed",
                 "content": result.content,
-                "error": result.error,
+                "error": None,
             },
         )
 
@@ -606,7 +592,7 @@ class AsgiAgentApp:
         await self._send_json(
             send,
             200,
-            self._a2a_server.handle_task(payload, headers=headers),
+            await self._a2a_server.handle_task(payload, headers=headers),
         )
 
     async def _handle_a2a_operation(
@@ -637,7 +623,10 @@ class AsgiAgentApp:
         await self._send_json(
             send,
             200,
-            self._a2a_operations.handle_message_send(payload, headers=headers),
+            await self._a2a_operations.handle_message_send(
+                payload,
+                headers=headers,
+            ),
         )
 
     async def _handle_a2a_message_stream(
@@ -666,7 +655,7 @@ class AsgiAgentApp:
             payload = {"error": str(error)}
         if not isinstance(payload, dict):
             payload = {"error": "payload must be an object"}
-        response_payload = self._a2a_operations.handle_message_stream(
+        response_payload = await self._a2a_operations.handle_message_stream(
             payload,
             headers=headers,
         )
@@ -1188,27 +1177,42 @@ class AsgiAgentApp:
             return
         await self._read_sse_entry(entry, 0, receive, send)
 
-    async def _get_agent_for_session(self, session_id: str) -> object:
-        async_get_agent = getattr(self._sessions, "async_get_agent", None)
-        if callable(async_get_agent):
-            return await async_get_agent(session_id)
-        return self._sessions.get_agent(session_id)
+    async def _get_agent_for_session(self, session_id: str) -> Agent:
+        return await acquire_channel_agent(self._sessions, session_id)
 
-    async def _release_agent_for_session(self, session_id: str, agent: object) -> None:
-        async_release_agent = getattr(self._sessions, "async_release_agent", None)
-        if callable(async_release_agent):
-            await async_release_agent(session_id, agent)
-            return
-        self._sessions.release_agent(session_id, agent)
+    async def _release_agent_for_session(self, session_id: str, agent: Agent) -> None:
+        await release_channel_agent(self._sessions, session_id, agent)
 
-    async def _abandon_agent_for_session(self, session_id: str, agent: object) -> None:
+    async def _settle_json_session(
+        self,
+        session_id: str,
+        agent: Agent,
+        heartbeat_task: asyncio.Task[None] | None,
+        *,
+        abandon: bool = False,
+    ) -> BaseException | None:
+        heartbeat_error: BaseException | None = None
+        try:
+            await self._stop_json_session_lease_heartbeat(heartbeat_task)
+        except Exception as error:
+            heartbeat_error = error
+        try:
+            if abandon or heartbeat_error is not None:
+                await self._abandon_agent_for_session(session_id, agent)
+            else:
+                await self._release_agent_for_session(session_id, agent)
+        except Exception as error:
+            return error
+        return heartbeat_error
+
+    async def _abandon_agent_for_session(self, session_id: str, agent: Agent) -> None:
         async_abandon_agent = getattr(self._sessions, "async_abandon_agent", None)
         if callable(async_abandon_agent):
             await async_abandon_agent(session_id, agent)
             return
         abandon_agent = getattr(self._sessions, "abandon_agent", None)
         if callable(abandon_agent):
-            await asyncio.to_thread(abandon_agent, session_id, agent)
+            await run_sync_call(abandon_agent, session_id, agent)
             return
         await self._release_agent_for_session(session_id, agent)
 
@@ -1219,7 +1223,7 @@ class AsgiAgentApp:
             return
         refresh_agent = getattr(self._sessions, "refresh_agent", None)
         if callable(refresh_agent):
-            await asyncio.to_thread(refresh_agent, session_id)
+            await run_sync_call(refresh_agent, session_id)
 
     def _session_acquisition_status_code(self, error: BaseException) -> int:
         if isinstance(error, SessionLeaseError):
@@ -1333,10 +1337,10 @@ class AsgiAgentApp:
         return f"turn_{uuid4().hex}"
 
     async def _run_sse_turn(self, entry: SseTurnEntry) -> None:
-        completed_event: TurnStreamCompleted | None = None
+        terminal_event: TurnStreamCompleted | TurnStreamWaiting | None = None
         terminal_error: BaseException | None = None
         try:
-            completed_event = await self._append_agent_sse_stream(entry)
+            terminal_event = await self._append_agent_sse_stream(entry)
         except asyncio.CancelledError:
             if entry.lease_error is None:
                 raise
@@ -1363,8 +1367,8 @@ class AsgiAgentApp:
                 entry,
                 self._error_sse_chunk(self._public_error_message(terminal_error)),
             )
-        elif completed_event is not None:
-            await self._append_sse_event(entry, completed_event)
+        elif terminal_event is not None:
+            await self._append_sse_event(entry, terminal_event)
         async with entry.lock:
             if entry.closed:
                 return
@@ -1410,17 +1414,7 @@ class AsgiAgentApp:
         self,
         task: asyncio.Task[None] | None,
     ) -> None:
-        if task is None:
-            return
-        if not task.done():
-            task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
-        if task.cancelled():
-            return
-        exception = task.exception()
-        if exception is not None:
-            raise exception
+        await cancel_and_join_task(task)
 
     def _start_sse_turn_control_monitor(
         self,
@@ -1432,6 +1426,11 @@ class AsgiAgentApp:
         if interval is None or interval <= 0:
             return None
         return asyncio.create_task(self._poll_sse_turn_control_until_terminal(entry))
+
+    async def _stop_sse_runner(self, entry: SseTurnEntry) -> None:
+        """在共享流清理前停止 SSE 生产任务。"""
+        task = entry.runner_task
+        await cancel_and_join_task(task)
 
     async def _stop_sse_turn_control_monitor(self, entry: SseTurnEntry) -> None:
         task = entry.turn_control_task
@@ -1513,41 +1512,28 @@ class AsgiAgentApp:
     async def _append_agent_sse_stream(
         self,
         entry: SseTurnEntry,
-    ) -> TurnStreamCompleted | None:
+    ) -> TurnStreamCompleted | TurnStreamWaiting | None:
         """消费 Agent stream 并写入 SSE buffer。"""
 
         request = entry.request
-        completed_event: TurnStreamCompleted | None = None
-        async_stream = getattr(entry.agent, "async_stream", None)
-        if callable(async_stream):
-            async for event in async_stream(
-                request.message,
+        terminal_event: TurnStreamCompleted | TurnStreamWaiting | None = None
+        stream = await entry.agent.run(
+            request.message,
+            stream=True,
+            options=RunOptions(
                 thinking=request.thinking,
                 show_thinking=request.show_thinking,
-            ):
-                await self._raise_if_sse_turn_interrupted(entry)
-                if isinstance(event, TurnStreamCompleted):
-                    completed_event = event
-                    continue
-                await self._append_sse_event(entry, event)
-            return completed_event
-
-        events = await asyncio.to_thread(
-            lambda: list(
-                entry.agent.stream(
-                    request.message,
-                    thinking=request.thinking,
-                    show_thinking=request.show_thinking,
-                ),
             ),
         )
-        for event in events:
-            await self._raise_if_sse_turn_interrupted(entry)
-            if isinstance(event, TurnStreamCompleted):
-                completed_event = event
-                continue
-            await self._append_sse_event(entry, event)
-        return completed_event
+        entry.stream = stream
+        async with stream:
+            async for event in stream:
+                await self._raise_if_sse_turn_interrupted(entry)
+                if isinstance(event, (TurnStreamCompleted, TurnStreamWaiting)):
+                    terminal_event = event
+                    continue
+                await self._append_sse_event(entry, event)
+        return terminal_event
 
     async def _raise_if_sse_turn_interrupted(self, entry: SseTurnEntry) -> None:
         if entry.lease_error is not None:
@@ -1775,8 +1761,8 @@ class AsgiAgentApp:
                 return
             entry.closed = True
         entry.agent.interrupt()
-        if entry.runner_task is not None and not entry.runner_task.done():
-            entry.runner_task.cancel()
+        await self._stop_sse_runner(entry)
+        await self._stop_session_lease_heartbeat(entry)
         await self._sse_event_buffer.drop(entry.stream_key)
         await self._forget_sse_entry(entry)
         await self._stop_sse_turn_control_monitor(entry)
@@ -1824,6 +1810,8 @@ class AsgiAgentApp:
             return
         if self._sse_turn_control is not None:
             self._sse_turn_control.release_turn(entry.session_id, entry.turn_stream_id)
+        if entry.stream is not None:
+            await entry.stream.aclose()
         if save:
             await self._release_agent_for_session(entry.session_id, entry.agent)
         else:

@@ -13,7 +13,8 @@ from agentos.multi import (
     TaskResult,
     TaskTable,
 )
-from tests.multi.helpers import build_agent_with_response
+from agentos.runtime import AgentResult
+from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -55,16 +56,22 @@ class RejectTerminalTaskTable(TaskTable):
 
 
 class CancellingAgent:
-    def __init__(self, coordinator: AgentCoordinator, task_id: str) -> None:
+    def __init__(self, coordinator: AgentCoordinator) -> None:
         self.coordinator = coordinator
+        self.task_id: str | None = None
+        self.agent = self
+
+    def bind_task(self, task_id: str) -> None:
         self.task_id = task_id
 
-    def run(self, instruction: str):
-        self.coordinator.cancel(self.task_id)
-        return type("AgentResult", (), {"content": "expert result"})()
+    def interrupt(self) -> bool:
+        return True
 
-    def interrupt(self) -> None:
-        pass
+    def run(self, instruction: str) -> AgentResult:
+        if self.task_id is None:
+            raise RuntimeError("cancelling agent has no task")
+        self.coordinator.cancel(self.task_id)
+        return AgentResult("expert result")
 
 
 def wait_for_parent_result(coordinator: AgentCoordinator):
@@ -92,7 +99,7 @@ def test_expert_runner_processes_one_task_request_and_returns_result() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -101,7 +108,7 @@ def test_expert_runner_processes_one_task_request_and_returns_result() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -138,7 +145,7 @@ def test_expert_runner_run_once_does_not_accept_new_work_after_stop() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -147,7 +154,7 @@ def test_expert_runner_run_once_does_not_accept_new_work_after_stop() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -227,7 +234,7 @@ def test_expert_runner_claims_task_before_execution_and_acks_after_terminal_save
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -236,7 +243,7 @@ def test_expert_runner_claims_task_before_execution_and_acks_after_terminal_save
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -281,7 +288,7 @@ def test_expert_runner_requeues_claimed_delivery_and_releases_lease_on_outer_fai
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -290,7 +297,7 @@ def test_expert_runner_requeues_claimed_delivery_and_releases_lease_on_outer_fai
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -341,8 +348,9 @@ def test_expert_runner_fences_cancelled_claim_before_ack() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
+    cancelling_agent = CancellingAgent(coordinator)
     coordinator.attach_agent(
         AgentCard(
             agent_id="expert",
@@ -350,14 +358,14 @@ def test_expert_runner_fences_cancelled_claim_before_ack() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        cancelling_agent,  # type: ignore[arg-type]
     )
     handle = coordinator.dispatch(
         instruction="Review this",
         required_capabilities=("code-review",),
         parent_agent_id="parent",
     )
-    coordinator._agents["expert"] = CancellingAgent(coordinator, handle.task_id)
+    cancelling_agent.bind_task(handle.task_id)
 
     runner = ExpertAgentRunner(
         coordinator=coordinator,
@@ -395,7 +403,7 @@ def test_expert_runner_does_not_ack_when_terminal_save_is_rejected() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -404,7 +412,7 @@ def test_expert_runner_does_not_ack_when_terminal_save_is_rejected() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -450,7 +458,7 @@ def test_expert_runner_rejects_wrong_target_delivery_before_claiming_task() -> N
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -459,7 +467,7 @@ def test_expert_runner_rejects_wrong_target_delivery_before_claiming_task() -> N
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -468,7 +476,7 @@ def test_expert_runner_rejects_wrong_target_delivery_before_claiming_task() -> N
             description="Other expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("wrong expert result"),
+        build_sync_agent_with_response("wrong expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -526,7 +534,7 @@ def test_expert_runner_rejects_delivery_not_addressed_to_runner() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -535,7 +543,7 @@ def test_expert_runner_rejects_delivery_not_addressed_to_runner() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -544,7 +552,7 @@ def test_expert_runner_rejects_delivery_not_addressed_to_runner() -> None:
             description="Other expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("wrong expert result"),
+        build_sync_agent_with_response("wrong expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -604,7 +612,7 @@ def test_expert_runner_acks_stale_delivery_for_terminal_task() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -613,7 +621,7 @@ def test_expert_runner_acks_stale_delivery_for_terminal_task() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -670,7 +678,7 @@ def test_expert_runner_requeues_in_memory_delivery_when_claim_is_missed() -> Non
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -679,7 +687,7 @@ def test_expert_runner_requeues_in_memory_delivery_when_claim_is_missed() -> Non
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -727,7 +735,7 @@ def test_expert_runner_backs_off_claim_missed_delivery_by_default() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -736,7 +744,7 @@ def test_expert_runner_backs_off_claim_missed_delivery_by_default() -> None:
             description="Expert agent.",
             capabilities=("code-review",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",

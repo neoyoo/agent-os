@@ -473,7 +473,7 @@ _FORMS: dict[str, AgentFormReadiness] = {
         name="Terminal / Script Agent",
         overall_level="direct",
         summary=(
-            "Single-process agent built with AgentBuilder and sync QueryLoop."
+            "Single-process agent built with AgentBuilder and SyncAgent."
         ),
         recommended_profile="LocalRuntimeProfile",
         dimensions=_dimensions(
@@ -516,7 +516,7 @@ _FORMS: dict[str, AgentFormReadiness] = {
         form_id="async-web-host",
         name="Async Web Host Agent",
         overall_level="direct",
-        summary="AsyncQueryLoop and ASGI/SSE primitives for a single host.",
+        summary="QueryLoop and ASGI/SSE primitives for a single host.",
         recommended_profile="WebRuntimeProfile",
         dimensions=_dimensions(
             {
@@ -552,7 +552,7 @@ _FORMS: dict[str, AgentFormReadiness] = {
                     "Snapshot migration policy is not yet versioned.",
                 ),
             },
-            default_evidence=("AsyncQueryLoop", "AsgiAgentApp"),
+            default_evidence=("QueryLoop", "AsgiAgentApp"),
         ),
     ),
     "web-distributed-session": AgentFormReadiness(
@@ -632,7 +632,7 @@ _FORMS: dict[str, AgentFormReadiness] = {
                     "Application rollout/version policy remains deployment-owned.",
                 ),
             },
-            default_evidence=("AsgiAgentApp", "AsyncQueryLoop"),
+            default_evidence=("AsgiAgentApp", "QueryLoop"),
         ),
     ),
     "a2a-discovery": AgentFormReadiness(

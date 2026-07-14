@@ -16,6 +16,11 @@ from types import ModuleType
 from typing import TypedDict
 
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_SOURCE_ROOT = _PROJECT_ROOT / "src"
+if str(_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SOURCE_ROOT))
+
 _FROZENSET_RE = re.compile(r"frozenset\(\{(?P<items>[^{}]*)\}\)")
 _OBJECT_REPR_ADDRESS_RE = re.compile(
     r"<(?P<qualified>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*) "

@@ -4,6 +4,7 @@ import time
 from collections.abc import Mapping
 from typing import Protocol
 
+from agentos.channels.a2a_execution import a2a_wait_metadata, execute_a2a_agent
 from agentos.multi.types import TaskRequest, TaskResult
 from agentos.observability import use_incoming_trace_headers
 from agentos.runtime import Agent
@@ -12,7 +13,7 @@ from agentos.runtime import Agent
 class A2ATaskRunner(Protocol):
     """Inbound A2A task 执行边界。"""
 
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         """执行 A2A task request。"""
 
 
@@ -24,15 +25,23 @@ class AgentA2ATaskRunner:
 
         self._agent = agent
 
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         """调用 Agent.run() 并包装成 TaskResult。"""
 
         started_at = time.time()
-        result = self._agent.run(request.instruction)
+        result = await execute_a2a_agent(self._agent, request.instruction)
+        if result.state != "completed":
+            return TaskResult(
+                task_id=request.task_id,
+                status="running",
+                summary="task waiting",
+                artifacts=a2a_wait_metadata(result),
+                elapsed_seconds=time.time() - started_at,
+            )
         return TaskResult(
             task_id=request.task_id,
             status="completed",
-            summary=result.content,
+            summary=result.content or "",
             elapsed_seconds=time.time() - started_at,
         )
 
@@ -45,7 +54,7 @@ class A2AServerAdapter:
 
         self._runner = runner
 
-    def handle_task(
+    async def handle_task(
         self,
         payload: dict[str, object],
         headers: Mapping[str, str] | None = None,
@@ -65,7 +74,7 @@ class A2AServerAdapter:
                     ),
                 )
             try:
-                result = self._runner.run_task(request)
+                result = await self._runner.run_task(request)
             except Exception:
                 result = TaskResult(
                     task_id=str(payload.get("task_id", "")),

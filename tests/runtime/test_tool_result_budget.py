@@ -47,7 +47,7 @@ def test_query_loop_caps_oversized_tool_result_before_appending_message() -> Non
         .build()
     )
 
-    result = agent.run("Use read_large_file.")
+    result = asyncio.run(agent.run("Use read_large_file."))
 
     assert result.content == "handled capped result"
     tool_message = provider.requests[1].messages[-1]
@@ -66,7 +66,7 @@ def test_query_loop_caps_oversized_tool_result_before_appending_message() -> Non
     )
 
 
-def test_async_query_loop_caps_oversized_tool_result_before_appending_message() -> None:
+def test_async_agent_caps_oversized_tool_result_before_appending_message() -> None:
     provider = provider_for_tool_call()
     agent = (
         AgentBuilder()
@@ -74,10 +74,10 @@ def test_async_query_loop_caps_oversized_tool_result_before_appending_message() 
         .tools([oversized_tool()])
         .tool_result_budget(ToolResultBudget(default_max_tokens=5))
         .token_counter(HeuristicTokenCounter(char_per_token=1))
-        .build_async()
+        .build()
     )
 
-    result = asyncio.run(agent.async_run("Use read_large_file."))
+    result = asyncio.run(agent.run("Use read_large_file."))
 
     assert result.content == "handled capped result"
     tool_message = provider.requests[1].messages[-1]

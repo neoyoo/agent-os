@@ -24,8 +24,12 @@ from agentos.providers import (
     ProviderToolCall,
 )
 from agentos.runtime import Agent, ProviderRequestBuilder
+from agentos.sync import SyncAgent
 from tests._context_protocol_fixtures import default_context_renderer
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import (
+    build_sync_agent_with_response,
+    track_sync_agent,
+)
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -171,7 +175,7 @@ def test_coordinator_invokes_continuation_trigger_on_spawn_completion() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
 
     handle = coordinator.spawn(
@@ -191,8 +195,9 @@ def test_local_continuation_trigger_runs_parent_continuation_when_idle() -> None
         FakeProvider([ProviderResponse(content="continued")]),
         notice_store,
     )
+    sync_parent = track_sync_agent(SyncAgent(parent))
     trigger = LocalContinuationTrigger(
-        agents={"parent": parent},
+        agents={"parent": sync_parent},
         notice_store=notice_store,
     )
 
@@ -210,9 +215,10 @@ def test_local_continuation_trigger_runs_parent_continuation_when_idle() -> None
 def test_local_continuation_trigger_records_and_emits_parent_failures() -> None:
     notice_store = AgentTaskNoticeStore()
     parent = build_parent_agent(FakeProvider([]), notice_store)
+    sync_parent = track_sync_agent(SyncAgent(parent))
     event_bus = EventBus()
     trigger = LocalContinuationTrigger(
-        agents={"parent": parent},
+        agents={"parent": sync_parent},
         notice_store=notice_store,
         event_bus=event_bus,
     )
@@ -254,7 +260,7 @@ def test_coordinator_trigger_failure_does_not_change_completed_expert_result() -
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -263,7 +269,7 @@ def test_coordinator_trigger_failure_does_not_change_completed_expert_result() -
             description="Expert agent.",
             capabilities=("python",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     handle = coordinator.dispatch(
         instruction="Review this",
@@ -311,7 +317,7 @@ def test_coordinator_trigger_failure_does_not_break_cancelled_task() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     task_table.create(
         TaskRecord(
@@ -350,11 +356,12 @@ def test_local_continuation_trigger_queues_while_user_turn_is_running() -> None:
     notice_store = AgentTaskNoticeStore()
     provider = BlockingProvider()
     parent = build_parent_agent(provider, notice_store)
+    sync_parent = track_sync_agent(SyncAgent(parent))
     trigger = LocalContinuationTrigger(
-        agents={"parent": parent},
+        agents={"parent": sync_parent},
         notice_store=notice_store,
     )
-    user_thread = Thread(target=lambda: parent.run("hello"))
+    user_thread = Thread(target=lambda: sync_parent.run("hello"))
 
     user_thread.start()
     assert provider.first_started.wait(timeout=1)
@@ -378,7 +385,7 @@ def test_local_continuation_trigger_queues_while_user_turn_is_running() -> None:
 
 def test_spawn_completion_triggers_continuation_and_result_collection_e2e() -> None:
     notice_store = AgentTaskNoticeStore()
-    local_agents: dict[str, Agent] = {}
+    local_agents: dict[str, SyncAgent] = {}
     trigger = LocalContinuationTrigger(
         agents=local_agents,
         notice_store=notice_store,
@@ -397,7 +404,8 @@ def test_spawn_completion_triggers_continuation_and_result_collection_e2e() -> N
         notice_store,
         coordinator,
     )
-    local_agents["parent"] = parent
+    sync_parent = track_sync_agent(SyncAgent(parent))
+    local_agents["parent"] = sync_parent
     coordinator.attach_agent(
         AgentCard(
             agent_id="parent",
@@ -405,10 +413,10 @@ def test_spawn_completion_triggers_continuation_and_result_collection_e2e() -> N
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        parent,
+        sync_parent,
     )
 
-    result = parent.run("delegate this")
+    result = sync_parent.run("delegate this")
     wait_for_request_count(provider, 4)
     assert trigger.wait_idle("parent", timeout=1)
 

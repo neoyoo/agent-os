@@ -5,7 +5,7 @@ import hashlib
 import json
 from typing import cast
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy, default_redactor
 from agentos.providers import (

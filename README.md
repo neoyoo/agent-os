@@ -34,13 +34,19 @@ for untrusted code execution. Production specs must choose one sandbox posture:
 ## Quickstart
 
 ```python
+import asyncio
+
 from agentos import AgentBuilder
 from agentos.providers import FakeProvider
 
-agent = AgentBuilder().provider(FakeProvider(["hello"])).build()
 
-result = agent.run("Say hello")
-print(result.content)
+async def main() -> None:
+    agent = AgentBuilder().provider(FakeProvider(["hello"])).build()
+    result = await agent.run("Say hello")
+    print(result.content)
+
+
+asyncio.run(main())
 ```
 
 See `docs/quickstart.md` for terminal, web, distributed web, state plane,
@@ -83,9 +89,11 @@ State plane -> registry, queue, task/plan stores, worker evidence, snapshots
 Readiness -> ProductionReadinessEvidenceBundle and backend verification records
 ```
 
-`QueryLoop` and `AsyncQueryLoop` remain turn execution loops. Planner, A2A,
-team, worker, state-plane, readiness, sandbox, and release-hardening concerns
-stay in their own modules and profiles.
+The single async `QueryLoop` is the only turn execution loop. Streaming and
+non-streaming calls both use `await agent.run(...)`; synchronous applications
+adapt that same Agent through `agentos.sync`. Planner, A2A, team, worker,
+state-plane, readiness, sandbox, and release-hardening concerns stay in their
+own modules and profiles.
 
 ## Release References
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ from threading import RLock
 from typing import Protocol
 from uuid import uuid4
 
+from agentos.channels._sync_adapter import acquire_sync_resource, run_sync_call
 from agentos.persistence import SessionPersistence, SessionSnapshot, SessionSnapshotRecord
 from agentos.persistence import BackendUnavailableError
 from agentos.runtime import Agent
@@ -565,22 +565,22 @@ class DurableAgentSessionProvider:
     async def async_get_agent(self, session_id: str) -> Agent:
         """Run synchronous hydration in a worker thread for async channels."""
 
-        return await asyncio.to_thread(self.get_agent, session_id)
+        return await acquire_sync_resource(self.get_agent, self.abandon_agent, session_id)
 
     async def async_release_agent(self, session_id: str, agent: Agent) -> None:
         """Run synchronous save/release in a worker thread for async channels."""
 
-        await asyncio.to_thread(self.release_agent, session_id, agent)
+        await run_sync_call(self.release_agent, session_id, agent)
 
     async def async_abandon_agent(self, session_id: str, agent: Agent) -> None:
         """Run synchronous no-save release in a worker thread."""
 
-        await asyncio.to_thread(self.abandon_agent, session_id, agent)
+        await run_sync_call(self.abandon_agent, session_id, agent)
 
     async def async_refresh_agent(self, session_id: str) -> SessionLease:
         """Run synchronous lease refresh in a worker thread for async channels."""
 
-        return await asyncio.to_thread(self.refresh_agent, session_id)
+        return await run_sync_call(self.refresh_agent, session_id)
 
     def shutdown(self) -> None:
         """Release leases still held by this provider."""

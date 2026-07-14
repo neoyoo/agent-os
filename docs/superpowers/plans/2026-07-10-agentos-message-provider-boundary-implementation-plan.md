@@ -1,5 +1,9 @@
 # AgentOS Message / Provider Boundary Implementation Plan
 
+> **SUPERSEDED FOR LOOP TOPOLOGY:** 本文关于双 Loop、双 Runner 和旧 Agent API
+> 的实施条款已被 `2026-07-12-agentos-single-async-query-loop-design.md` 取代。
+> 历史正文仅作为当时实施记录保留。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把业务消息真值、临时 Provider 输入、前端 Read Model 和 Provider payload 彻底分离，并保证每一次物理 Provider attempt 都从权威状态重新构建不可变双平面请求。

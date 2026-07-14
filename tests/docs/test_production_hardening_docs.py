@@ -87,7 +87,8 @@ def test_phase_100_release_hardening_gate_docs_exist_and_name_release_evidence()
         "uv run pytest -q",
         "git diff --check",
         "QueryLoop",
-        "AsyncQueryLoop",
+        "single async QueryLoop",
+        "agentos.sync",
     ]:
         assert_phrase(release_hardening, expected)
 

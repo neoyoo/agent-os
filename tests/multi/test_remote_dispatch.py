@@ -12,7 +12,7 @@ from agentos.multi import (
     TaskResult,
     TaskTable,
 )
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -122,7 +122,7 @@ def build_remote_coordinator(remote_executor) -> AgentCoordinator:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.registry.register(remote_card())
     return coordinator

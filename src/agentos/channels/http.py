@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from agentos.channels.durable_session import SessionLeaseError
 from agentos.channels.session import AgentSessionProvider
+from agentos.channels.turn_execution import run_channel_agent
 from agentos.channels.types import ChannelTurnResult, parse_channel_turn_request
 from agentos.persistence import BackendUnavailableError
+from agentos.runtime import AgentWaiting, RunOptions
 
 
 class HttpAgentChannel:
@@ -20,7 +22,11 @@ class HttpAgentChannel:
         self._sessions = sessions
         self._expose_internal_errors = expose_internal_errors
 
-    def handle_turn(self, session_id: str, body: bytes | str) -> ChannelTurnResult:
+    async def handle_turn(
+        self,
+        session_id: str,
+        body: bytes | str,
+    ) -> ChannelTurnResult:
         """执行一个 JSON turn 请求。"""
 
         try:
@@ -29,7 +35,29 @@ class HttpAgentChannel:
             return self._failed(session_id, str(error), status_code=400)
 
         try:
-            agent = self._sessions.get_agent(session_id)
+            result = await run_channel_agent(
+                self._sessions,
+                session_id,
+                request.message,
+                options=RunOptions(
+                    thinking=request.thinking,
+                    show_thinking=request.show_thinking,
+                ),
+            )
+            if isinstance(result, AgentWaiting):
+                return ChannelTurnResult(
+                    session_id=session_id,
+                    status="waiting",
+                    run_id=result.run_id,
+                    wait_reason=result.reason,
+                    status_code=202,
+                )
+            return ChannelTurnResult(
+                session_id=session_id,
+                status="completed",
+                content=result.content,
+                status_code=200,
+            )
         except SessionLeaseError as error:
             return self._failed(
                 session_id,
@@ -42,26 +70,12 @@ class HttpAgentChannel:
                 self._public_error_message(error),
                 status_code=503,
             )
-        try:
-            result = agent.run(
-                request.message,
-                thinking=request.thinking,
-                show_thinking=request.show_thinking,
-            )
-            return ChannelTurnResult(
-                session_id=session_id,
-                status="completed",
-                content=result.content,
-                status_code=200,
-            )
         except Exception as error:
             return self._failed(
                 session_id,
                 self._public_error_message(error),
                 status_code=500,
             )
-        finally:
-            self._sessions.release_agent(session_id, agent)
 
     def _failed(
         self,

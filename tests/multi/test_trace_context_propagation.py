@@ -17,7 +17,7 @@ from agentos.observability import (
     current_trace_ids,
     use_default_trace_propagator,
 )
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -54,7 +54,7 @@ def build_remote_coordinator(executor: RecordingRemoteExecutor) -> AgentCoordina
             description="Parent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     registry.register(
         AgentCard(

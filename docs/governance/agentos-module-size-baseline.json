@@ -14,7 +14,7 @@
     },
     {
       "path": "src/agentos/channels/a2a_operations.py",
-      "lines": 4646,
+      "lines": 4644,
       "gate": "no_new_responsibility"
     },
     {
@@ -24,27 +24,22 @@
     },
     {
       "path": "src/agentos/channels/asgi.py",
-      "lines": 2200,
+      "lines": 2188,
       "gate": "no_new_responsibility"
     },
     {
       "path": "src/agentos/multi/team.py",
-      "lines": 2036,
+      "lines": 2034,
       "gate": "no_new_responsibility"
     },
     {
       "path": "src/agentos/channels/a2a_conformance.py",
-      "lines": 1836,
+      "lines": 1834,
       "gate": "no_new_responsibility"
     },
     {
       "path": "src/agentos/deployment.py",
       "lines": 1460,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/observability/instrumented.py",
-      "lines": 1273,
       "gate": "no_new_responsibility"
     },
     {
@@ -68,8 +63,13 @@
       "gate": "no_new_responsibility"
     },
     {
+      "path": "src/agentos/observability/instrumented.py",
+      "lines": 931,
+      "gate": "no_new_responsibility"
+    },
+    {
       "path": "src/agentos/providers/openai_compatible.py",
-      "lines": 891,
+      "lines": 884,
       "gate": "no_new_responsibility"
     },
     {
@@ -79,12 +79,7 @@
     },
     {
       "path": "src/agentos/runtime/profile.py",
-      "lines": 795,
-      "gate": "split_or_exception"
-    },
-    {
-      "path": "src/agentos/runtime/query_loop.py",
-      "lines": 790,
+      "lines": 789,
       "gate": "split_or_exception"
     },
     {
@@ -99,12 +94,12 @@
     },
     {
       "path": "src/agentos/multi/coordinator.py",
-      "lines": 720,
+      "lines": 719,
       "gate": "split_or_exception"
     },
     {
       "path": "src/agentos/capabilities/skills.py",
-      "lines": 660,
+      "lines": 644,
       "gate": "split_or_exception"
     },
     {
@@ -133,13 +128,13 @@
       "gate": "split_or_exception"
     },
     {
-      "path": "src/agentos/runtime/async_query_loop.py",
-      "lines": 496,
+      "path": "src/agentos/multi/tasks.py",
+      "lines": 495,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/multi/tasks.py",
-      "lines": 495,
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 493,
       "gate": "responsibility_review"
     },
     {
@@ -154,12 +149,7 @@
     },
     {
       "path": "src/agentos/examples/small_openai_agent.py",
-      "lines": 445,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/runtime/agent.py",
-      "lines": 416,
+      "lines": 443,
       "gate": "responsibility_review"
     },
     {

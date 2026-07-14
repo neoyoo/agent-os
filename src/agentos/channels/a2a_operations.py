@@ -25,6 +25,7 @@ from agentos.channels.a2a import (
     UrllibA2ATransport,
     _validate_a2a_egress_url,
 )
+from agentos.channels.a2a_execution import execute_a2a_agent, project_a2a_task
 from agentos.channels.rate_limit import RateLimiter
 from agentos.multi.task_store import TaskStore
 from agentos.multi.types import TaskRecord, TaskStatus
@@ -2232,7 +2233,7 @@ class A2AExtensionNegotiationPolicy:
 class A2AOperationRunner(Protocol):
     """Boundary for executing protocol-facing A2A operations."""
 
-    def send_message(self, message: A2AMessage) -> A2ATask:
+    async def send_message(self, message: A2AMessage) -> A2ATask:
         """Execute A2A message/send and return a task projection."""
 
 
@@ -2260,22 +2261,19 @@ class AgentA2AOperationRunner:
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
 
-    def send_message(self, message: A2AMessage) -> A2ATask:
+    async def send_message(self, message: A2AMessage) -> A2ATask:
         """Run the agent with text content from the incoming message."""
 
         task_id = message.task_id or f"a2a_task_{int(time.time() * 1000)}"
-        result = self._agent.run(message.text_content())
-        assistant = A2AMessage(
-            role="agent",
-            parts=(A2AMessagePart.from_text(result.content),),
-            context_id=message.context_id,
-            task_id=task_id,
-        )
-        return A2ATask(
+        result = await execute_a2a_agent(self._agent, message.text_content())
+        return project_a2a_task(
+            result,
             task_id=task_id,
             context_id=message.context_id,
-            state="completed",
-            messages=(message, assistant),
+            request_message=message,
+            make_text_part=A2AMessagePart.from_text,
+            make_message=A2AMessage,
+            make_task=A2ATask,
         )
 
 
@@ -2370,27 +2368,27 @@ class A2AOperationServer:
             extension_negotiation_policy or A2AExtensionNegotiationPolicy()
         )
 
-    def handle_message_send(
+    async def handle_message_send(
         self,
         payload: Mapping[str, object],
         headers: Mapping[str, str] | None = None,
     ) -> dict[str, object]:
         """Handle a message/send payload and return a JSON-safe response."""
 
-        return self._handle_path_bound_operation(
+        return await self._handle_path_bound_operation(
             payload,
             headers=headers,
             expected_operation="SendMessage",
         )
 
-    def handle_message_stream(
+    async def handle_message_stream(
         self,
         payload: Mapping[str, object],
         headers: Mapping[str, str] | None = None,
     ) -> dict[str, object]:
         """Handle a message/stream payload and return an initial task response."""
 
-        return self._handle_path_bound_operation(
+        return await self._handle_path_bound_operation(
             payload,
             headers=headers,
             expected_operation="SendStreamingMessage",
@@ -2410,7 +2408,7 @@ class A2AOperationServer:
 
         return self._push_notification_configs
 
-    def handle_operation(
+    async def handle_operation(
         self,
         payload: Mapping[str, object],
         headers: Mapping[str, str] | None = None,
@@ -2437,7 +2435,7 @@ class A2AOperationServer:
                 )
             if operation_name not in {"SendMessage", "SendStreamingMessage"}:
                 return self._unsupported_method_response(request_id, request.method)
-            return self._handle_message_operation(
+            return await self._handle_message_operation(
                 request,
                 headers=headers,
             )
@@ -2467,7 +2465,7 @@ class A2AOperationServer:
                 ),
             )
 
-    def _handle_path_bound_operation(
+    async def _handle_path_bound_operation(
         self,
         payload: Mapping[str, object],
         *,
@@ -2484,7 +2482,7 @@ class A2AOperationServer:
             if operation_name != expected_operation:
                 self._authorize(headers, operation=expected_operation)
                 return self._unsupported_method_response(request_id, request.method)
-            return self._handle_message_operation(request, headers=headers)
+            return await self._handle_message_operation(request, headers=headers)
         except A2AProtocolVersionError as error:
             return self._version_not_supported_response(request_id, error)
         except A2AExtensionNegotiationError as error:
@@ -2511,7 +2509,7 @@ class A2AOperationServer:
                 ),
             )
 
-    def _handle_message_operation(
+    async def _handle_message_operation(
         self,
         request: A2AOperationRequest,
         *,
@@ -2533,7 +2531,7 @@ class A2AOperationServer:
             raise ValueError("params.message is required")
         message = a2a_message_from_dict(message_payload)
         with use_incoming_trace_headers(headers):
-            task = self._runner.send_message(message)
+            task = await self._runner.send_message(message)
         return a2a_operation_response_to_dict(
             A2AOperationResponse(request_id=request.request_id, task=task),
         )

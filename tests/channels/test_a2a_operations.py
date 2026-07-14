@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -684,11 +685,13 @@ def test_agent_a2a_operation_runner_handles_message_send() -> None:
 
     runner = AgentA2AOperationRunner(build_agent_with_response("agent ok"))
 
-    result = runner.send_message(
-        A2AMessage(
-            role="user",
-            parts=(A2AMessagePart.from_text("hello"),),
-            context_id="ctx_1",
+    result = asyncio.run(
+        runner.send_message(
+            A2AMessage(
+                role="user",
+                parts=(A2AMessagePart.from_text("hello"),),
+                context_id="ctx_1",
+            ),
         ),
     )
 
@@ -713,7 +716,7 @@ def test_a2a_operation_server_defaults_to_rejecting_unauthenticated_peers() -> N
         def __init__(self) -> None:
             self.calls = 0
 
-        def send_message(self, message: A2AMessage) -> A2ATask:
+        async def send_message(self, message: A2AMessage) -> A2ATask:
             self.calls += 1
             return A2ATask(task_id="task_1", context_id=None, state="completed")
 
@@ -726,7 +729,9 @@ def test_a2a_operation_server_defaults_to_rejecting_unauthenticated_peers() -> N
         ),
     )
 
-    response = a2a_operation_response_from_dict(server.handle_operation(payload))
+    response = a2a_operation_response_from_dict(
+        asyncio.run(server.handle_operation(payload)),
+    )
 
     assert response.error is not None
     assert response.error.code == -32030
@@ -756,7 +761,9 @@ def test_a2a_operation_server_handles_message_send() -> None:
         ),
     )
 
-    response = a2a_operation_response_from_dict(server.handle_operation(payload))
+    response = a2a_operation_response_from_dict(
+        asyncio.run(server.handle_operation(payload)),
+    )
 
     assert response.request_id == "req_1"
     assert response.error is None
@@ -780,7 +787,7 @@ def test_a2a_operation_server_message_send_path_rejects_stream_method() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def send_message(self, message: A2AMessage) -> A2ATask:
+        async def send_message(self, message: A2AMessage) -> A2ATask:
             self.calls += 1
             return A2ATask(task_id="task_1", context_id=None, state="completed")
 
@@ -797,7 +804,7 @@ def test_a2a_operation_server_message_send_path_rejects_stream_method() -> None:
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_message_send(payload),
+        asyncio.run(server.handle_message_send(payload)),
     )
 
     assert response.request_id == "req_wrong_path"
@@ -818,7 +825,7 @@ def test_a2a_operation_server_does_not_disclose_runner_exception_text() -> None:
     )
 
     class FailingRunner:
-        def send_message(self, message: A2AMessage) -> A2ATask:
+        async def send_message(self, message: A2AMessage) -> A2ATask:
             raise RuntimeError("database password=secret-token failed")
 
     server = A2AOperationServer(
@@ -832,7 +839,9 @@ def test_a2a_operation_server_does_not_disclose_runner_exception_text() -> None:
         ),
     )
 
-    response = a2a_operation_response_from_dict(server.handle_operation(payload))
+    response = a2a_operation_response_from_dict(
+        asyncio.run(server.handle_operation(payload)),
+    )
 
     assert response.error is not None
     assert response.error.code == -32603
@@ -857,14 +866,16 @@ def test_a2a_operation_server_handles_message_stream_json_rpc() -> None:
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_operation(
-            a2a_operation_request_to_dict(
-                A2AOperationRequest.message_stream(
-                    A2AMessage(
-                        role="user",
-                        parts=(A2AMessagePart.from_text("hello"),),
+        asyncio.run(
+            server.handle_operation(
+                a2a_operation_request_to_dict(
+                    A2AOperationRequest.message_stream(
+                        A2AMessage(
+                            role="user",
+                            parts=(A2AMessagePart.from_text("hello"),),
+                        ),
+                        request_id="req_stream",
                     ),
-                    request_id="req_stream",
                 ),
             ),
         ),
@@ -892,7 +903,7 @@ def test_a2a_operation_server_message_stream_path_rejects_send_method() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def send_message(self, message: A2AMessage) -> A2ATask:
+        async def send_message(self, message: A2AMessage) -> A2ATask:
             self.calls += 1
             return A2ATask(task_id="task_1", context_id=None, state="completed")
 
@@ -909,7 +920,7 @@ def test_a2a_operation_server_message_stream_path_rejects_send_method() -> None:
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_message_stream(payload),
+        asyncio.run(server.handle_message_stream(payload)),
     )
 
     assert response.request_id == "req_wrong_path"
@@ -929,9 +940,12 @@ def test_a2a_operation_server_returns_protocol_errors() -> None:
         AgentA2AOperationRunner(build_agent_with_response("unused")),
     )
 
-    invalid = a2a_operation_response_from_dict(server.handle_operation({}))
+    invalid = a2a_operation_response_from_dict(
+        asyncio.run(server.handle_operation({})),
+    )
     unsupported = a2a_operation_response_from_dict(
-        server.handle_operation(
+        asyncio.run(
+            server.handle_operation(
                 {
                     "jsonrpc": "2.0",
                     "id": "req_2",
@@ -939,7 +953,8 @@ def test_a2a_operation_server_returns_protocol_errors() -> None:
                     "params": {},
                 },
             ),
-        )
+        ),
+    )
 
     assert invalid.error is not None
     assert invalid.error.code == -32602
@@ -978,15 +993,19 @@ def test_a2a_operation_server_requires_declared_extensions() -> None:
     )
 
     missing = a2a_operation_response_from_dict(
-        server.handle_operation(payload, headers={"A2A-Version": "1.0"}),
+        asyncio.run(
+            server.handle_operation(payload, headers={"A2A-Version": "1.0"}),
+        ),
     )
     allowed = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={
-                "A2A-Version": "1.0",
-                "A2A-Extensions": required_uri,
-            },
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={
+                    "A2A-Version": "1.0",
+                    "A2A-Extensions": required_uri,
+                },
+            ),
         ),
     )
 
@@ -1041,15 +1060,17 @@ def test_a2a_operation_server_degrades_optional_unsupported_extensions() -> None
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={
-                "A2A-Version": "1.0",
-                "A2A-Extensions": (
-                    "https://extensions.example/known/v1, "
-                    "https://extensions.example/unknown/v1"
-                ),
-            },
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={
+                    "A2A-Version": "1.0",
+                    "A2A-Extensions": (
+                        "https://extensions.example/known/v1, "
+                        "https://extensions.example/unknown/v1"
+                    ),
+                },
+            ),
         ),
     )
 
@@ -1081,12 +1102,24 @@ def test_a2a_operation_server_enforces_inbound_peer_auth() -> None:
         ),
     )
 
-    missing = a2a_operation_response_from_dict(server.handle_operation(payload))
+    missing = a2a_operation_response_from_dict(
+        asyncio.run(server.handle_operation(payload)),
+    )
     wrong = a2a_operation_response_from_dict(
-        server.handle_operation(payload, headers={"Authorization": "Bearer wrong"}),
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": "Bearer wrong"},
+            ),
+        ),
     )
     allowed = a2a_operation_response_from_dict(
-        server.handle_operation(payload, headers={"Authorization": "Bearer peer-token"}),
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": "Bearer peer-token"},
+            ),
+        ),
     )
 
     assert missing.error is not None
@@ -1123,7 +1156,7 @@ def test_a2a_operation_server_rate_limits_per_peer_before_runner() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def send_message(self, message: A2AMessage) -> A2ATask:
+        async def send_message(self, message: A2AMessage) -> A2ATask:
             self.calls += 1
             return A2ATask(
                 task_id=f"task_{self.calls}",
@@ -1163,18 +1196,20 @@ def test_a2a_operation_server_rate_limits_per_peer_before_runner() -> None:
     }
 
     allowed = a2a_operation_response_from_dict(
-        server.handle_operation(payload, headers=headers),
+        asyncio.run(server.handle_operation(payload, headers=headers)),
     )
     denied = a2a_operation_response_from_dict(
-        server.handle_operation(payload, headers=headers),
+        asyncio.run(server.handle_operation(payload, headers=headers)),
     )
     other_peer = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={
-                "Authorization": "Bearer peer-token",
-                "X-A2A-Peer": "peer-b",
-            },
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={
+                    "Authorization": "Bearer peer-token",
+                    "X-A2A-Peer": "peer-b",
+                },
+            ),
         ),
     )
 
@@ -1212,32 +1247,38 @@ def test_a2a_operation_server_handles_task_resubscribe_json_rpc() -> None:
     )
 
     initial = a2a_operation_response_from_dict(
-        server.handle_operation(
-            a2a_operation_request_to_dict(
-                A2AOperationRequest.task_resubscribe(
-                    "task_1",
-                    request_id="req_subscribe",
+        asyncio.run(
+            server.handle_operation(
+                a2a_operation_request_to_dict(
+                    A2AOperationRequest.task_resubscribe(
+                        "task_1",
+                        request_id="req_subscribe",
+                    ),
                 ),
             ),
         ),
     )
     no_update = a2a_operation_response_from_dict(
-        server.handle_operation(
-            a2a_operation_request_to_dict(
-                A2AOperationRequest.task_resubscribe(
-                    "task_1",
-                    after_event_id=0,
-                    request_id="req_after",
+        asyncio.run(
+            server.handle_operation(
+                a2a_operation_request_to_dict(
+                    A2AOperationRequest.task_resubscribe(
+                        "task_1",
+                        after_event_id=0,
+                        request_id="req_after",
+                    ),
                 ),
             ),
         ),
     )
     missing = a2a_operation_response_from_dict(
-        server.handle_operation(
-            a2a_operation_request_to_dict(
-                A2AOperationRequest.task_resubscribe(
-                    "missing",
-                    request_id="req_missing",
+        asyncio.run(
+            server.handle_operation(
+                a2a_operation_request_to_dict(
+                    A2AOperationRequest.task_resubscribe(
+                        "missing",
+                        request_id="req_missing",
+                    ),
                 ),
             ),
         ),
@@ -1300,16 +1341,18 @@ def test_a2a_operation_rate_limit_keys_include_peer_operation_and_resource() -> 
     )
     headers = {"X-A2A-Peer": "peer-a"}
 
-    server.handle_operation(
-        a2a_operation_request_to_dict(
-            A2AOperationRequest.message_stream(
-                A2AMessage(
-                    role="user",
-                    parts=(A2AMessagePart.from_text("hello"),),
+    asyncio.run(
+        server.handle_operation(
+            a2a_operation_request_to_dict(
+                A2AOperationRequest.message_stream(
+                    A2AMessage(
+                        role="user",
+                        parts=(A2AMessagePart.from_text("hello"),),
+                    ),
                 ),
             ),
+            headers=headers,
         ),
-        headers=headers,
     )
     server.handle_task_get("task_1", headers=headers)
     server.handle_task_resubscribe("task_1", after_event_id=0, headers=headers)
@@ -1603,9 +1646,11 @@ def test_a2a_operation_server_accepts_oidc_claims_inbound_auth() -> None:
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={"Authorization": f"Bearer {token}"},
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": f"Bearer {token}"},
+            ),
         ),
     )
 
@@ -1644,7 +1689,7 @@ def test_a2a_operation_server_rejects_invalid_oidc_claims_before_runner(
     )
 
     class FailingRunner:
-        def send_message(self, message: object) -> object:
+        async def send_message(self, message: object) -> object:
             raise AssertionError("runner should not execute")
 
     claims: dict[str, object] = {
@@ -1674,9 +1719,11 @@ def test_a2a_operation_server_rejects_invalid_oidc_claims_before_runner(
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={"Authorization": f"Bearer {token}"},
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": f"Bearer {token}"},
+            ),
         ),
     )
 
@@ -1757,15 +1804,19 @@ def test_a2a_operation_server_enforces_claims_tenant_rbac_for_operations() -> No
     )
 
     allowed = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={"Authorization": f"Bearer {allowed_token}"},
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": f"Bearer {allowed_token}"},
+            ),
         ),
     )
     denied = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={"Authorization": f"Bearer {wrong_tenant_token}"},
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": f"Bearer {wrong_tenant_token}"},
+            ),
         ),
     )
 
@@ -1915,15 +1966,19 @@ def test_a2a_operation_server_enforces_inbound_peer_allow_list() -> None:
     )
 
     blocked = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={"Authorization": "Bearer token-blocked"},
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": "Bearer token-blocked"},
+            ),
         ),
     )
     allowed = a2a_operation_response_from_dict(
-        server.handle_operation(
-            payload,
-            headers={"Authorization": "Bearer token-researcher"},
+        asyncio.run(
+            server.handle_operation(
+                payload,
+                headers={"Authorization": "Bearer token-researcher"},
+            ),
         ),
     )
 
@@ -1976,7 +2031,7 @@ def test_a2a_operation_server_enforces_operation_aware_inbound_auth() -> None:
     )
 
     message = a2a_operation_response_from_dict(
-        server.handle_operation(message_payload, headers=headers),
+        asyncio.run(server.handle_operation(message_payload, headers=headers)),
     )
     task_get = a2a_operation_response_from_dict(
         server.handle_task_get("task_1", headers=headers),
@@ -3002,7 +3057,9 @@ def test_a2a_operation_server_rejects_unsupported_protocol_version() -> None:
     )
 
     response = a2a_operation_response_from_dict(
-        server.handle_operation(payload, headers={"A2A-Version": "0.5"}),
+        asyncio.run(
+            server.handle_operation(payload, headers={"A2A-Version": "0.5"}),
+        ),
     )
 
     assert response.request_id == "req_1"
@@ -3048,10 +3105,12 @@ def test_a2a_operation_server_treats_empty_protocol_version_as_legacy_03() -> No
     )
 
     missing = a2a_operation_response_from_dict(
-        missing_server.handle_operation(payload),
+        asyncio.run(missing_server.handle_operation(payload)),
     )
     empty = a2a_operation_response_from_dict(
-        empty_server.handle_operation(payload, headers={"A2A-Version": ""}),
+        asyncio.run(
+            empty_server.handle_operation(payload, headers={"A2A-Version": ""}),
+        ),
     )
 
     assert missing.error is None

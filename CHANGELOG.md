@@ -5,6 +5,19 @@ here.
 
 ## Unreleased
 
+### `0.2.0a1`: Single Async QueryLoop Cutover
+
+- Breaking: replaced the sync/async dual-loop topology with one native async
+  `QueryLoop`, one `ProviderAttemptRunner`, and one `await Agent.run(...)`
+  execution entry.
+- Removed the legacy async-prefixed Loop class, the duplicate Builder method,
+  duplicate Agent run/stream methods, sticky interrupt clearing, and
+  compatibility fallbacks.
+- Added typed run inputs, WAITING outcomes, `AgentStream`, async SSE/JSONL
+  serializers, stable execution errors, and the stable `agentos.sync` adapter.
+- Added `docs/migrations/0.2-single-async-query-loop.md` for the required
+  breaking migration.
+
 ### Phase 101: Production Reference Example
 
 - Added the production reference web agent at

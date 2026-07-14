@@ -67,12 +67,12 @@ def test_planner_scheduler_governance_profile_rejects_invalid_configuration(
         PlannerSchedulerGovernanceDeploymentProfile(**kwargs)
 
 
-def test_runtime_loops_do_not_import_planner_scheduler_governance_profile() -> None:
+def test_runtime_execution_core_does_not_import_planner_scheduler_governance_profile() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     for path in [
         project_root / "src" / "agentos" / "runtime" / "query_loop.py",
-        project_root / "src" / "agentos" / "runtime" / "async_query_loop.py",
+        project_root / "src" / "agentos" / "runtime" / "provider_attempt.py",
     ]:
         text = path.read_text(encoding="utf-8")
         assert "PlannerSchedulerGovernanceDeploymentProfile" not in text

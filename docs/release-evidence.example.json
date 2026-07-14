@@ -68,7 +68,7 @@
     },
     "runtime_boundary_scan": {
       "status": "unknown",
-      "command": "rg -n \"ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|worker supervisor|production_design_constraints|release hardening|production reference\" src/agentos/runtime/query_loop.py src/agentos/runtime/async_query_loop.py",
+      "command": "rg -n \"ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|worker supervisor|production_design_constraints|release hardening|production reference\" src/agentos/runtime/query_loop.py",
       "evidence_ref": "<artifact-or-log-ref>",
       "required": true,
       "last_verified_at": "<iso8601>",

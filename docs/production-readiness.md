@@ -59,8 +59,9 @@ release-candidate SDK branch instead of continuing to add runtime features. The
 release hardening gate requires release candidate evidence for public API
 audit, stable API and experimental API classification, migration index,
 README / quickstart / examples alignment, `CHANGELOG.md`, full test suite
-evidence, diff/commit hygiene, and runtime boundary scans for `QueryLoop` and
-`AsyncQueryLoop`.
+evidence, diff/commit hygiene, and runtime boundary scans for the single async
+`QueryLoop`. Synchronous hosts use the stable `agentos.sync` adapter rather
+than a second kernel loop.
 
 The canonical release-hardening files are `docs/release-hardening.md`,
 `docs/api-stability.md`, `docs/migrations/README.md`, and `CHANGELOG.md`.
@@ -472,14 +473,15 @@ Production notes:
   for production isolation.
 - OS/container sandboxing remains deployment-owned for code-interpreter style
   tools.
-- Do not force async unless the host already runs an event loop or uses native
-  async tools/providers.
+- Use `agentos.sync.SyncAgent` when the host cannot own an async event loop;
+  it adapts the same single async QueryLoop and does not create a second loop
+  implementation.
 
 ### `async-web-host`: Async Web Host Agent
 
 Recommended profile: `WebRuntimeProfile`
 
-This form covers a single-host async web agent using `AsyncQueryLoop`,
+This form covers a single-host async web agent using the single async `QueryLoop`,
 `AsgiAgentApp`, JSON/SSE endpoints, channel auth primitives, and rate limiting.
 
 Production notes:

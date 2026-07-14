@@ -4,9 +4,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
-from agentos.capabilities.tools import RegisteredTool
+from agentos.capabilities.tools import RegisteredTool, ToolConcurrencyPolicy
 from agentos.context.projection import MCPServerDeclaration
 from agentos.providers import (
     ProviderFunctionSpec,
@@ -27,6 +27,8 @@ class MCPToolInfo:
     input_schema: dict[str, object] = field(default_factory=dict)
     capability: str | None = None
     capabilities: tuple[str, ...] = ()
+    read_only_hint: bool = False
+    parallel_safe: bool = False
 
 
 class MCPClient(Protocol):
@@ -48,6 +50,7 @@ class MCPServerRegistration:
     client: MCPClient
     endpoint: str | None = None
     allowed_tools: set[str] | None = None
+    supports_parallel_tool_calls: bool = False
 
 
 class MCPRegistry:
@@ -177,6 +180,17 @@ class MCPToolAdapter:
 
         return self.registry.provider_tool_specs()
 
+    def concurrency_policy_for(self, provider_name: str) -> ToolConcurrencyPolicy:
+        """仅在 server 与 tool 双重显式授权时允许并发。"""
+
+        try:
+            server, tool = self.registry.resolve_provider_tool_info(provider_name)
+        except KeyError:
+            return ToolConcurrencyPolicy.EXCLUSIVE
+        if server.supports_parallel_tool_calls and tool.parallel_safe:
+            return ToolConcurrencyPolicy.PARALLEL_SAFE
+        return ToolConcurrencyPolicy.EXCLUSIVE
+
     def execute(
         self,
         tool_call: ProviderToolCall,
@@ -219,6 +233,7 @@ class MCPToolAdapter:
             parameters=self.registry.normalized_schema(tool.input_schema),
             handler=lambda _arguments: "",
             kind="mcp",
+            concurrency_policy=self.concurrency_policy_for(provider_name),
             metadata=metadata,
         )
 

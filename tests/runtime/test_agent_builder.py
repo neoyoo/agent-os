@@ -13,7 +13,7 @@ from agentos.policies import BudgetPolicy, TokenBudgetPolicy
 from agentos.providers import FakeProvider
 from agentos.providers import ProviderResponse, ProviderToolCall
 from agentos.providers import provider_tool_spec_to_dict
-from agentos.runtime import EventBus, TurnStartedEvent
+from agentos.runtime import EventBus, QueryLoop, TurnStartedEvent
 
 
 class StructuralContextRendererStub:
@@ -28,7 +28,7 @@ def test_agent_builder_creates_runnable_standard_agent() -> None:
     provider = FakeProvider(["Built response."])
 
     agent = AgentBuilder().provider(provider).build()
-    result = agent.run("Build an agent.")
+    result = asyncio.run(agent.run("Build an agent."))
 
     assert isinstance(agent, Agent)
     assert result.content == "Built response."
@@ -75,7 +75,7 @@ def test_agent_builder_tools_are_available_only_through_provider_tools() -> None
     )
 
     agent = AgentBuilder().provider(provider).tools([tool]).build()
-    result = agent.run("Use lookup_status.")
+    result = asyncio.run(agent.run("Use lookup_status."))
 
     assert result.content == "Tool result was handled."
     assert "lookup_status" not in provider.requests[0].system
@@ -99,7 +99,7 @@ def test_agent_builder_default_system_owns_only_required_sections() -> None:
     provider = FakeProvider(["ok"])
 
     agent = AgentBuilder().provider(provider).tools([tool]).build()
-    agent.run("Inspect the default system wiring.")
+    asyncio.run(agent.run("Inspect the default system wiring."))
 
     request = provider.requests[0]
     assert [
@@ -116,7 +116,7 @@ def test_agent_builder_default_system_owns_only_required_sections() -> None:
     assert {spec.function.name for spec in request.tools} >= {"tool_metadata_marker"}
 
 
-def test_agent_builder_build_async_runs_async_tool_handler() -> None:
+def test_agent_builder_runs_async_tool_handler() -> None:
     async def async_lookup(arguments: dict[str, object]) -> str:
         await asyncio.sleep(0)
         return "async tool status: green"
@@ -142,11 +142,11 @@ def test_agent_builder_build_async_runs_async_tool_handler() -> None:
         ],
     )
 
-    agent = AgentBuilder().provider(provider).tools([tool]).build_async()
-    result = asyncio.run(agent.async_run("Use async_lookup_status."))
+    agent = AgentBuilder().provider(provider).tools([tool]).build()
+    result = asyncio.run(agent.run("Use async_lookup_status."))
 
     assert result.content == "Async tool result was handled."
-    assert type(agent.query_loop).__name__ == "AsyncQueryLoop"
+    assert type(agent.query_loop).__name__ == "QueryLoop"
     tool_result = provider.requests[1].messages[-1]
     assert (tool_result.role, tool_result.tool_call_id) == (
         "tool",
@@ -155,18 +155,11 @@ def test_agent_builder_build_async_runs_async_tool_handler() -> None:
     assert tool_result.content[0].text == "async tool status: green"  # type: ignore[union-attr]
 
 
-def test_agent_builder_build_async_rejects_sync_run_with_clear_error() -> None:
-    agent = AgentBuilder().provider(FakeProvider(["async only"])).build_async()
+def test_agent_builder_exposes_only_the_unified_build_path() -> None:
+    agent = AgentBuilder().provider(FakeProvider(["async only"])).build()
 
-    with pytest.raises(RuntimeError, match="async_run"):
-        agent.run("Use the async facade.")
-
-
-def test_agent_builder_build_async_rejects_sync_stream_with_clear_error() -> None:
-    agent = AgentBuilder().provider(FakeProvider(["async only"])).build_async()
-
-    with pytest.raises(RuntimeError, match="async_stream"):
-        list(agent.stream("Use the async facade."))
+    assert isinstance(agent.query_loop, QueryLoop)
+    assert asyncio.iscoroutinefunction(agent.run)
 
 
 def test_agent_builder_default_path_includes_context_protocol_tools() -> None:
@@ -194,7 +187,7 @@ def test_agent_builder_default_path_includes_context_protocol_tools() -> None:
     )
 
     agent = AgentBuilder().provider(provider).build()
-    result = agent.run("Track this task.")
+    result = asyncio.run(agent.run("Track this task."))
 
     tool_names = {spec.function.name for spec in provider.requests[0].tools}
     assert CONTEXT_PROTOCOL_TOOL_NAMES.issubset(tool_names)
@@ -236,8 +229,8 @@ def test_agent_builder_wires_recall_context_to_compression_index() -> None:
         .build()
     )
 
-    agent.run("First detail")
-    result = agent.run("Current task")
+    asyncio.run(agent.run("First detail"))
+    result = asyncio.run(agent.run("Current task"))
 
     assert result.content == "recalled done"
     assert provider.requests[2].messages[1].content[0].text == "Current task"  # type: ignore[union-attr]
@@ -302,7 +295,7 @@ def test_agent_builder_uses_component_overrides() -> None:
         .event_bus(bus)
         .build()
     )
-    result = agent.run("Use overrides.")
+    result = asyncio.run(agent.run("Use overrides."))
 
     assert result.content == "override response"
     assert agent.query_loop.context_runtime is context
@@ -367,7 +360,7 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
         .tool_call_router(router)
         .build()
     )
-    result = agent.run("Use router_tool.")
+    result = asyncio.run(agent.run("Use router_tool."))
 
     assert result.content == "router done"
     assert agent.query_loop.tool_call_router is router

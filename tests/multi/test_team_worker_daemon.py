@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from pathlib import Path
 
@@ -26,7 +27,7 @@ class RecordingRunner:
         self.calls = 0
         self.second_call = threading.Event()
 
-    def run_pending(
+    async def run_pending(
         self,
         team_id: str | None = None,
     ) -> list[TeamWorkerRunResult]:
@@ -92,7 +93,7 @@ def test_team_worker_daemon_run_once_records_results_and_errors() -> None:
         poll_interval_seconds=0.01,
     )
 
-    results = daemon.run_once()
+    results = asyncio.run(daemon.run_once())
     state = daemon.state()
 
     assert results == [completed_result()]
@@ -136,7 +137,7 @@ def test_team_worker_daemon_exposes_failed_worker_results() -> None:
     )
     daemon = TeamWorkerDaemon(runner=runner)
 
-    daemon.run_once()
+    asyncio.run(daemon.run_once())
     state = daemon.state()
 
     assert state.last_results == (failed_result(),)
@@ -165,7 +166,7 @@ def test_team_worker_daemon_state_exposes_retry_records() -> None:
 
     daemon = TeamWorkerDaemon(runner=RetryRunner())
 
-    daemon.run_once()
+    asyncio.run(daemon.run_once())
 
     assert daemon.state().retry_records == (retry_record,)
 
@@ -188,17 +189,17 @@ def test_team_worker_daemon_state_exposes_cancellation_records() -> None:
 
     daemon = TeamWorkerDaemon(runner=CancellationRunner())
 
-    daemon.run_once()
+    asyncio.run(daemon.run_once())
 
     assert daemon.state().cancellation_records == (cancellation_record,)
 
 
-def test_runtime_loops_do_not_import_team_worker_daemon() -> None:
+def test_runtime_execution_core_does_not_import_team_worker_daemon() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     for path in [
         project_root / "src" / "agentos" / "runtime" / "query_loop.py",
-        project_root / "src" / "agentos" / "runtime" / "async_query_loop.py",
+        project_root / "src" / "agentos" / "runtime" / "provider_attempt.py",
     ]:
         text = path.read_text(encoding="utf-8")
         assert "TeamWorkerDaemon" not in text

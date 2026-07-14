@@ -9,7 +9,7 @@ from agentos.multi import (
     TaskResult,
     TaskTable,
 )
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -38,8 +38,8 @@ def test_coordinator_accepts_task_store_and_message_queue_boundaries() -> None:
         max_concurrent_tasks=1,
     )
 
-    coordinator.attach_agent(parent, build_agent_with_response("parent"))
-    coordinator.attach_agent(expert, build_agent_with_response("expert"))
+    coordinator.attach_agent(parent, build_sync_agent_with_response("parent"))
+    coordinator.attach_agent(expert, build_sync_agent_with_response("expert"))
     handle = coordinator.dispatch(
         instruction="Do work",
         required_capabilities=("worker",),
@@ -70,7 +70,7 @@ def test_coordinator_running_cancel_writes_cancel_intent() -> None:
             description="Parent",
             capabilities=("parent",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     task_store.create(
         TaskRecord(

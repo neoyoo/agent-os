@@ -252,7 +252,7 @@ def test_release_evidence_validator_accepts_complete_manifest() -> None:
 def test_package_and_release_manifest_versions_match() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert project["project"]["version"] == agentos.__version__ == "0.1.0rc1"
+    assert project["project"]["version"] == agentos.__version__ == "0.2.0a1"
 
 
 def test_generated_release_evidence_is_ignored_not_source_tracked() -> None:

@@ -15,8 +15,12 @@ from agentos.multi import (
 )
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import Agent, ProviderRequestBuilder
+from agentos.sync import SyncAgent
 from tests._context_protocol_fixtures import default_context_renderer
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import (
+    build_sync_agent_with_response,
+    track_sync_agent,
+)
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -83,6 +87,7 @@ def test_fake_provider_spawn_subagent_tool_end_to_end() -> None:
             ProviderResponse(content="spawn submitted"),
         ],
     )
+    sync_parent = track_sync_agent(SyncAgent(parent))
     coordinator.attach_agent(
         AgentCard(
             agent_id="parent",
@@ -90,10 +95,10 @@ def test_fake_provider_spawn_subagent_tool_end_to_end() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        parent,
+        sync_parent,
     )
 
-    result = parent.run("start spawn")
+    result = sync_parent.run("start spawn")
     task_result = wait_for_result(coordinator)
 
     assert result.content == "spawn submitted"
@@ -123,6 +128,7 @@ def test_fake_provider_dispatch_to_expert_tool_end_to_end() -> None:
             ProviderResponse(content="dispatch submitted"),
         ],
     )
+    sync_parent = track_sync_agent(SyncAgent(parent))
     coordinator.attach_agent(
         AgentCard(
             agent_id="parent",
@@ -130,7 +136,7 @@ def test_fake_provider_dispatch_to_expert_tool_end_to_end() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        parent,
+        sync_parent,
     )
     coordinator.attach_agent(
         AgentCard(
@@ -139,10 +145,10 @@ def test_fake_provider_dispatch_to_expert_tool_end_to_end() -> None:
             description="Python expert.",
             capabilities=("python",),
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
 
-    result = parent.run("start dispatch")
+    result = sync_parent.run("start dispatch")
     runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
 
     assert runner.run_once(timeout=0.1) is True

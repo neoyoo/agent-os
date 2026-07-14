@@ -1,5 +1,9 @@
 # AgentScope2 And A2A Parity Review
 
+> **SUPERSEDED FOR LOOP TOPOLOGY:** 本历史评审中的旧双 Loop 与 Agent API
+> 描述已被 `docs/superpowers/specs/2026-07-12-agentos-single-async-query-loop-design.md`
+> 取代；历史正文保留。
+>
 > Date: 2026-06-11  
 > Branch: `review/agentos-sdk-architecture-20260611`  
 > Status: architecture review note  

@@ -35,6 +35,7 @@ Every namespace listed here must be represented in
 - `agentos.multi`
 - `agentos.persistence`
 - `agentos.runtime`
+- `agentos.sync`
 - `agentos.workspace`
 - `agentos.registry`
 - `agentos.deployment`
@@ -51,8 +52,15 @@ stable surface is the set of `stable` exports in
 `docs/public-api-inventory.json`; module descriptions below summarize those
 governed exports and do not promote unlisted submodule names to stable API.
 
-- `AgentBuilder`, `Agent`, `QueryLoop`, `AsyncQueryLoop`, and
-  `ProviderRequestBuilder`
+- root `AgentBuilder`, `Agent`, `QueryLoop`, and `ProviderRequestBuilder`
+- stable `agentos.runtime` run contracts: `AgentResult`, `AgentWaiting`,
+  `RunOutcome`, `RunRequest`, `RunInput`, `UserTurnInput`,
+  `LocalContinuationInput`, `RunOptions`, `WaitReason`,
+  `TurnStreamWaiting`, `AgentStream`, `iter_jsonl`, `iter_sse`, and the
+  `AgentRunError` family
+- stable `agentos.sync` adapter exports: `SyncAgent`, `SyncAgentStream`,
+  `run`, and the `Sync*Error` types. These are not exported from root
+  `agentos` and do not create a second QueryLoop.
 - governed channel exports such as `AsgiAgentApp`, durable session provider
   protocols, session lease protocols, SSE replay/control stores, and
   `LeaseFencedSessionPersistence`
@@ -111,7 +119,8 @@ namespaces; adapter test suites should import contract runners from
   `agentos.__all__` and the root inventory are supported as root imports.
   Stable or experimental names that are governed in submodules must be imported
   from their owning namespace, for example `agentos.channels`,
-  `agentos.multi`, `agentos.registry`, or `agentos.deployment`.
+  `agentos.multi`, `agentos.runtime`, `agentos.sync`, `agentos.registry`, or
+  `agentos.deployment`.
 - boundary-first ownership stays unchanged: SDK API exposes protocols, profiles,
   reference compositions, readiness, and audit evidence; deployment code owns
   real infrastructure, credentials, migrations execution, CI/CD, signing,

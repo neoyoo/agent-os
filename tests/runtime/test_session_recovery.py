@@ -1,3 +1,5 @@
+import asyncio
+
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRuntime, ContextSnapshotRenderer, WorkingStateField
 from agentos.context.projection import project_context_state
@@ -7,7 +9,7 @@ from agentos.persistence import MemoryPersistence, SessionSnapshot
 from agentos.policies import BudgetPolicy
 from agentos.providers import FakeProvider
 from agentos.recall import RecallRuntime
-from agentos.runtime import EventBus, ProviderRequestBuilder, QueryLoop, SessionState
+from agentos.runtime import Agent, EventBus, ProviderRequestBuilder, QueryLoop, SessionState
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -65,8 +67,13 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
         event_bus=bus,
         session_state=SessionState(id="session_1"),
     )
-    loop.run_turn("old detail")
-    loop.run_turn("current task")
+    agent = Agent(loop)
+
+    async def run_turns() -> None:
+        await agent.run("old detail")
+        await agent.run("current task")
+
+    asyncio.run(run_turns())
     rendered_before_save = _request_builder(context, messages).build().request.system
     snapshot = SessionSnapshot(
         session_state=loop.session_state,

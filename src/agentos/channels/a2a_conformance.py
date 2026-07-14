@@ -14,6 +14,10 @@ from agentos.channels.a2a import (
     AllowAllA2AInboundAuthPolicy,
     a2a_card_to_dict,
 )
+from agentos.channels._a2a_conformance_execution import (
+    _StaticA2AOperationRunner,
+    _run_a2a_operation,
+)
 from agentos.channels.a2a_operations import (
     A2AArtifact,
     A2AExtensionNegotiationError,
@@ -1592,7 +1596,11 @@ class A2AConformanceHarness:
             protocol_version_policy=version_policy,
             extension_negotiation_policy=policy,
         )
-        response = server.handle_operation(operation_payload, headers=headers)
+        response = _run_a2a_operation(
+            server,
+            operation_payload,
+            headers=headers,
+        )
         error = response.get("error")
         if not isinstance(error, Mapping):
             return _passed(
@@ -1711,16 +1719,6 @@ class _A2ASamplePayloads:
                     A2ATaskSubscriptionEvent(event_id="2", task=task),
                 )
             ),
-        )
-
-
-class _StaticA2AOperationRunner:
-    def send_message(self, message: A2AMessage) -> A2ATask:
-        return A2ATask(
-            task_id=message.task_id or "task_1",
-            context_id=message.context_id,
-            state="completed",
-            messages=(message,),
         )
 
 

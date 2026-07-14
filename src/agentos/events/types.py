@@ -58,44 +58,48 @@ class AssistantMessageAppendedEvent(AgentEvent):
 
 
 @dataclass(frozen=True, slots=True)
-class ToolCallRequestedEvent(AgentEvent):
+class _ToolCallEvent(AgentEvent):
+    tool_name: str = ""
+    tool_call_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallRequestedEvent(_ToolCallEvent):
     """provider 请求执行工具。"""
 
-    tool_name: str = ""
-    tool_call_id: str = ""
+
+@dataclass(frozen=True, slots=True)
+class _ToolExecutionEvent(_ToolCallEvent):
+    batch_index: int | None = None
+    concurrency_policy: Literal["exclusive", "parallel_safe"] | None = None
+    queue_wait_seconds: float | None = None
+    max_parallel_calls: int | None = None
+    batch_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ToolExecutionStartedEvent(AgentEvent):
+class ToolExecutionStartedEvent(_ToolExecutionEvent):
     """工具执行已开始。"""
 
-    tool_name: str = ""
-    tool_call_id: str = ""
-
 
 @dataclass(frozen=True, slots=True)
-class ToolExecutionCompletedEvent(AgentEvent):
+class ToolExecutionCompletedEvent(_ToolExecutionEvent):
     """工具执行已完成。"""
 
-    tool_name: str = ""
-    tool_call_id: str = ""
+    execution_duration_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ToolResultAppendedEvent(AgentEvent):
+class ToolResultAppendedEvent(_ToolCallEvent):
     """tool result 已追加到 MessageRuntime。"""
 
-    tool_name: str = ""
-    tool_call_id: str = ""
     message_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
-class ToolResultCappedEvent(AgentEvent):
+class ToolResultCappedEvent(_ToolCallEvent):
     """tool result 因超过预算被替换为 nudge。"""
 
-    tool_name: str = ""
-    tool_call_id: str = ""
     actual_tokens: int = 0
     cap: int = 0
 

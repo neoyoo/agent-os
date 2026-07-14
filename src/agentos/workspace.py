@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 import time
@@ -8,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, Protocol
 
+from agentos._sync_work import run_sync
 from agentos._redaction import (
     is_secret_like_key,
     redact_command_argv,
@@ -366,7 +366,7 @@ class LocalWorkspaceExecutionBackend:
     ) -> WorkspaceExecutionResult:
         """Run one request in a worker thread for async callers."""
 
-        return await asyncio.to_thread(self.run, request)
+        return await run_sync(self.run, request)
 
     def _result(
         self,

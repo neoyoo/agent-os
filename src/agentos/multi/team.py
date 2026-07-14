@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections import defaultdict, deque
@@ -12,6 +13,8 @@ from uuid import uuid4
 from agentos.capabilities import RegisteredTool, ToolRegistry
 from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
 from agentos.multi.types import AgentEnvelope
+from agentos.runtime.agent import Agent
+from agentos.runtime.run import LocalContinuationInput
 from agentos.workspace import WorkspaceHandle, WorkspacePolicy, WorkspacePolicyError
 
 
@@ -421,8 +424,8 @@ class InMemoryTeamWorkerSessionProvider:
 class TeamWorkerAgentProvider(Protocol):
     """Resolve an executable agent for a team worker session."""
 
-    def get_worker_agent(self, session: TeamWorkerSession) -> object:
-        """Return an agent-like object for the worker session."""
+    def get_worker_agent(self, session: TeamWorkerSession) -> Agent:
+        """返回 worker session 使用的异步 Agent。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,14 +737,17 @@ class TeamWorkerRunner:
         self._clock = clock if callable(clock) else time.time
         self._errors: list[TeamWorkerRunError] = []
 
-    def run_pending(self, team_id: str | None = None) -> list[TeamWorkerRunResult]:
+    async def run_pending(
+        self,
+        team_id: str | None = None,
+    ) -> list[TeamWorkerRunResult]:
         """Process one current batch of team-message deliveries."""
 
         results: list[TeamWorkerRunResult] = []
         for session in self.session_provider.list_sessions(team_id):
             if session.status != "created":
                 continue
-            retry_results = self._run_retry_records(session)
+            retry_results = await self._run_retry_records(session)
             results.extend(retry_results)
             for result in retry_results:
                 self._publish_ui_result(result)
@@ -756,7 +762,7 @@ class TeamWorkerRunner:
                         and existing.delivery is not None
                     ):
                         continue
-                result = self._run_delivery(session, delivery)
+                result = await self._run_delivery(session, delivery)
                 if result is not None:
                     results.append(result)
                     self._publish_ui_result(result)
@@ -783,7 +789,7 @@ class TeamWorkerRunner:
             return ()
         return store.list_records()
 
-    def _run_retry_records(
+    async def _run_retry_records(
         self,
         session: TeamWorkerSession,
     ) -> list[TeamWorkerRunResult]:
@@ -829,7 +835,7 @@ class TeamWorkerRunner:
                 continue
             if record.delivery is None:
                 continue
-            result = self._run_delivery(
+            result = await self._run_delivery(
                 session,
                 record.delivery,
                 prior_attempts=record.attempts,
@@ -838,7 +844,7 @@ class TeamWorkerRunner:
                 results.append(result)
         return results
 
-    def _run_delivery(
+    async def _run_delivery(
         self,
         session: TeamWorkerSession,
         delivery: QueueDelivery,
@@ -867,10 +873,7 @@ class TeamWorkerRunner:
             )
         agent = self.agent_provider.get_worker_agent(session)
         try:
-            run_continuation = getattr(agent, "run_continuation", None)
-            if not callable(run_continuation):
-                raise RuntimeError("worker agent must provide run_continuation()")
-            run_continuation()
+            await agent.run(LocalContinuationInput())
         except Exception as error:
             error_text = str(error)
             attempt = prior_attempts + 1
@@ -1134,10 +1137,10 @@ class TeamWorkerDaemon:
             poll_interval_seconds=poll_interval_seconds,
         )
 
-    def run_once(self) -> list[TeamWorkerRunResult]:
+    async def run_once(self) -> list[TeamWorkerRunResult]:
         """Process one daemon iteration without starting a background thread."""
 
-        results = self.runner.run_pending(team_id=self.team_id)
+        results = await self.runner.run_pending(team_id=self.team_id)
         self._record_run(results)
         return results
 
@@ -1193,9 +1196,10 @@ class TeamWorkerDaemon:
 
     def _run_loop(self) -> None:
         try:
-            while not self._stop_event.is_set():
-                self.run_once()
-                self._stop_event.wait(self.poll_interval_seconds)
+            with asyncio.Runner() as runner:
+                while not self._stop_event.is_set():
+                    runner.run(self.run_once())
+                    self._stop_event.wait(self.poll_interval_seconds)
         finally:
             with self._lock:
                 self._state = replace(
@@ -1220,16 +1224,10 @@ class TeamWorkerDaemon:
             )
 
     def _retry_records(self) -> tuple[TeamWorkerRetryRecord, ...]:
-        retry_records = getattr(self.runner, "retry_records", None)
-        if not callable(retry_records):
-            return ()
-        return tuple(retry_records())
+        return tuple(self.runner.retry_records())
 
     def _cancellation_records(self) -> tuple[TeamWorkerCancellationRecord, ...]:
-        cancellation_records = getattr(self.runner, "cancellation_records", None)
-        if not callable(cancellation_records):
-            return ()
-        return tuple(cancellation_records())
+        return tuple(self.runner.cancellation_records())
 
 
 class TeamStore(Protocol):

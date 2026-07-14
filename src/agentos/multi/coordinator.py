@@ -21,6 +21,7 @@ from agentos.multi.continuation import ContinuationTrigger
 from agentos.multi.message_queue import AgentMessageQueue
 from agentos.multi.registry import AgentRegistry
 from agentos.multi.spawn import SpawnExecutor
+from agentos.multi.sync_agent_registry import CoordinatorSyncAgentRegistry
 from agentos.multi.task_store import TaskClaim, TaskStore
 from agentos.multi.types import (
     AgentCard,
@@ -34,6 +35,7 @@ from agentos.multi.types import (
 )
 from agentos.observability import inject_trace_headers
 from agentos.runtime import Agent
+from agentos.sync import SyncAgent
 
 
 class SubagentFactory(Protocol):
@@ -88,14 +90,20 @@ class AgentCoordinator:
         self.event_bus = event_bus
         self.continuation_trigger = continuation_trigger
         self.remote_task_executor = remote_task_executor
-        self._agents: dict[str, Agent] = {}
+        self.agents = CoordinatorSyncAgentRegistry(
+            registry=self.registry,
+            inbox=self.inbox,
+        )
 
-    def attach_agent(self, card: AgentCard, agent: Agent) -> None:
+    def attach_agent(self, card: AgentCard, agent: SyncAgent) -> None:
         """把本地 agent 实例附着到已声明 card。"""
 
-        self.registry.register(card)
-        self.inbox.create_inbox(card.agent_id)
-        self._agents[card.agent_id] = agent
+        self.agents.attach_borrowed_card(card, agent)
+
+    def detach_agent(self, agent_id: str) -> None:
+        """移除本地 agent，并按 owned/borrowed 规则处理生命周期。"""
+
+        self.agents.detach_card(agent_id)
 
     def spawn(
         self,
@@ -149,9 +157,7 @@ class AgentCoordinator:
             lifecycle="ephemeral",
             max_concurrent_tasks=1,
         )
-        self.registry.register(child_card)
-        self.inbox.create_inbox(child_agent_id)
-        self._agents[child_agent_id] = child_agent
+        child_sync_agent = self.agents.attach_owned_card(child_card, child_agent)
         self._emit(
             SubagentSpawnedEvent(
                 parent_agent_id=parent_agent_id,
@@ -165,7 +171,7 @@ class AgentCoordinator:
             lambda: self._run_spawned_subagent(
                 parent_agent_id=parent_agent_id,
                 child_agent_id=child_agent_id,
-                child_agent=child_agent,
+                child_agent=child_sync_agent,
                 request=request,
             ),
         )
@@ -400,9 +406,7 @@ class AgentCoordinator:
             return False
         if record.status in {"completed", "failed", "cancelled", "timeout"}:
             return True
-        agent = self._agents.get(record.target_agent_id)
-        if agent is not None:
-            agent.interrupt()
+        self.agents.interrupt(record.target_agent_id)
         changed = self.task_table.request_cancel(task_id, now=time.time())
         current = self.task_table.get(task_id)
         if (
@@ -454,7 +458,7 @@ class AgentCoordinator:
             )
         if envelope.to_agent_id != record.target_agent_id:
             return None
-        agent = self._agents.get(record.target_agent_id)
+        agent = self.agents.get(record.target_agent_id)
         started_at = time.time()
         try:
             if agent is None:
@@ -466,7 +470,7 @@ class AgentCoordinator:
             result = TaskResult(
                 task_id=request.task_id,
                 status="completed",
-                summary=agent_result.content,
+                summary=self.agents.completed_content(agent_result),
                 elapsed_seconds=time.time() - started_at,
             )
             if self._handle_result_after_cancel_requested(
@@ -540,7 +544,7 @@ class AgentCoordinator:
         *,
         parent_agent_id: str,
         child_agent_id: str,
-        child_agent: Agent,
+        child_agent: SyncAgent,
         request: TaskRequest,
     ) -> TaskResult:
         started_at = time.time()
@@ -564,10 +568,10 @@ class AgentCoordinator:
             result = TaskResult(
                 task_id=request.task_id,
                 status="completed",
-                summary=agent_result.content,
+                summary=self.agents.completed_content(agent_result),
                 elapsed_seconds=time.time() - started_at,
             )
-            self._detach_ephemeral_agent(child_agent_id)
+            self.detach_agent(child_agent_id)
             if self._handle_result_after_cancel_requested(record, result):
                 return result
             if self.task_table.mark_completed(request.task_id, result):
@@ -592,7 +596,7 @@ class AgentCoordinator:
                 error=str(error),
                 elapsed_seconds=time.time() - started_at,
             )
-            self._detach_ephemeral_agent(child_agent_id)
+            self.detach_agent(child_agent_id)
             if record is not None and self._handle_result_after_cancel_requested(
                 record,
                 result,
@@ -616,7 +620,7 @@ class AgentCoordinator:
                 self._store_late_result(child_agent_id, request.task_id, result)
             return result
         finally:
-            self._detach_ephemeral_agent(child_agent_id)
+            self.detach_agent(child_agent_id)
 
     def _store_late_result(
         self,
@@ -651,11 +655,6 @@ class AgentCoordinator:
             self.inbox.send(envelope)
         except AgentInboxError:
             pass
-
-    def _detach_ephemeral_agent(self, agent_id: str) -> None:
-        self._agents.pop(agent_id, None)
-        self.registry.unregister(agent_id)
-        self.inbox.remove_inbox(agent_id)
 
     def _mark_due_timeouts(self) -> None:
         for record in self.task_table.due_timeouts(time.time()):

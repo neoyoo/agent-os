@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 
 from agentos.channels.durable_session import SessionLeaseError
 from agentos.persistence import BackendUnavailableError
-from agentos.runtime import Agent, AgentResult
+from agentos.runtime import Agent, AgentResult, AgentWaiting, RunOptions, WaitReason
 from tests.multi.helpers import build_agent_with_response
 
 
@@ -21,14 +22,28 @@ class RecordingProvider:
 
 
 class FailingAgent:
-    def run(
+    async def run(
         self,
         user_message: str,
         *,
-        thinking: bool = False,
-        show_thinking: bool = False,
+        stream: bool = False,
+        options: RunOptions | None = None,
     ) -> AgentResult:
         raise RuntimeError("provider unavailable")
+
+
+class WaitingAgent:
+    async def run(
+        self,
+        user_message: str,
+        *,
+        stream: bool = False,
+        options: RunOptions | None = None,
+    ) -> AgentWaiting:
+        return AgentWaiting(
+            run_id="run_1",
+            reason=WaitReason("human_input", "approval_1", "confirm"),
+        )
 
 
 class FailingGetAgentProvider:
@@ -50,9 +65,11 @@ def test_http_channel_runs_json_turn_and_releases_agent() -> None:
     provider = RecordingProvider(agent)
     channel = HttpAgentChannel(provider)
 
-    result = channel.handle_turn(
-        "session_1",
-        b'{"message":"hello","thinking":true,"show_thinking":false}',
+    result = asyncio.run(
+        channel.handle_turn(
+            "session_1",
+            b'{"message":"hello","thinking":true,"show_thinking":false}',
+        ),
     )
 
     assert result.status_code == 200
@@ -67,7 +84,7 @@ def test_http_channel_rejects_invalid_json() -> None:
 
     channel = HttpAgentChannel(RecordingProvider(build_agent_with_response("unused")))
 
-    result = channel.handle_turn("session_1", b"{")
+    result = asyncio.run(channel.handle_turn("session_1", b"{"))
 
     assert result.status_code == 400
     assert result.status == "failed"
@@ -79,7 +96,7 @@ def test_http_channel_rejects_missing_message() -> None:
 
     channel = HttpAgentChannel(RecordingProvider(build_agent_with_response("unused")))
 
-    result = channel.handle_turn("session_1", b'{"thinking":true}')
+    result = asyncio.run(channel.handle_turn("session_1", b'{"thinking":true}'))
 
     assert result.status_code == 400
     assert result.status == "failed"
@@ -93,7 +110,9 @@ def test_http_channel_maps_agent_exception_to_failed_result() -> None:
     provider = RecordingProvider(agent)
     channel = HttpAgentChannel(provider)
 
-    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+    result = asyncio.run(
+        channel.handle_turn("session_1", b'{"message":"hello"}'),
+    )
 
     assert result.status_code == 500
     assert result.status == "failed"
@@ -108,7 +127,9 @@ def test_http_channel_can_expose_internal_errors_for_local_debug() -> None:
     provider = RecordingProvider(agent)
     channel = HttpAgentChannel(provider, expose_internal_errors=True)
 
-    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+    result = asyncio.run(
+        channel.handle_turn("session_1", b'{"message":"hello"}'),
+    )
 
     assert result.status_code == 500
     assert result.status == "failed"
@@ -122,7 +143,9 @@ def test_http_channel_maps_session_lease_acquisition_failure_to_locked_result() 
     provider = FailingGetAgentProvider(SessionLeaseError("session is locked: session_1"))
     channel = HttpAgentChannel(provider)  # type: ignore[arg-type]
 
-    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+    result = asyncio.run(
+        channel.handle_turn("session_1", b'{"message":"hello"}'),
+    )
 
     assert result.status_code == 423
     assert result.status == "failed"
@@ -138,9 +161,34 @@ def test_http_channel_maps_backend_acquisition_failure_to_unavailable_result() -
     )
     channel = HttpAgentChannel(provider)  # type: ignore[arg-type]
 
-    result = channel.handle_turn("session_1", b'{"message":"hello"}')
+    result = asyncio.run(
+        channel.handle_turn("session_1", b'{"message":"hello"}'),
+    )
 
     assert result.status_code == 503
     assert result.status == "failed"
     assert result.error == "backend unavailable"
     assert provider.release_calls == 0
+
+
+def test_http_channel_maps_waiting_outcome_to_accepted_result() -> None:
+    from agentos.channels.http import HttpAgentChannel
+
+    agent = cast(Agent, WaitingAgent())
+    provider = RecordingProvider(agent)
+    channel = HttpAgentChannel(provider)
+
+    result = asyncio.run(
+        channel.handle_turn("session_1", b'{"message":"hello"}'),
+    )
+
+    assert result.status_code == 202
+    assert result.status == "waiting"
+    assert result.content == ""
+    assert result.run_id == "run_1"
+    assert result.wait_reason == WaitReason(
+        "human_input",
+        "approval_1",
+        "confirm",
+    )
+    assert provider.released == [("session_1", agent)]

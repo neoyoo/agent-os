@@ -19,9 +19,9 @@ from agentos.providers import (
     ProviderStreamOptions,
     ProviderThinkingDelta,
 )
-from agentos.runtime.async_provider_attempt import (
-    AsyncProviderAttemptRunner,
-    async_provider_stream_events,
+from agentos.runtime.provider_attempt import (
+    ProviderAttemptRunner,
+    provider_stream_events,
 )
 from agentos.runtime.provider_request_builder import (
     ProviderRequestBuild,
@@ -85,12 +85,12 @@ def _runner(
     messages: MessageRuntime | None = None,
     retry_policy: RetryPolicy | None = None,
     retries: list[tuple[int, str]] | None = None,
-) -> AsyncProviderAttemptRunner:
+) -> ProviderAttemptRunner:
     async def on_retry(attempt: int, error: Exception) -> None:
         if retries is not None:
             retries.append((attempt, str(error)))
 
-    return AsyncProviderAttemptRunner(
+    return ProviderAttemptRunner(
         request_factory=factory,
         stream_provider=stream_provider,  # type: ignore[arg-type]
         before_call=(lambda request: request)
@@ -109,7 +109,7 @@ def _runner(
 
 
 async def _collect(
-    runner: AsyncProviderAttemptRunner,
+    runner: ProviderAttemptRunner,
     options: ProviderStreamOptions | None = None,
 ) -> list[ProviderStreamEvent]:
     return [event async for event in runner.run_stream(options)]
@@ -136,6 +136,7 @@ def test_async_retry_rebuilds_request_and_reexecutes_before_hook() -> None:
         assert provider.requests[0] is not provider.requests[1]
         assert retries == [(1, "retry me")]
         assert isinstance(events[-1], ProviderStreamCompleted)
+        assert events[-1].response.content == "done"
 
     asyncio.run(scenario())
 
@@ -155,6 +156,7 @@ def test_async_temporary_recall_survives_failed_attempt_and_consumes_after_succe
 
         await _collect(runner)
 
+        assert len(provider.requests) == 2
         assert provider.requests[1].messages == (
             ProviderInputItem.recalled_user("remember this"),
         )
@@ -276,7 +278,7 @@ def test_async_completed_event_is_validated_and_emitted_last() -> None:
         async def on_retry(_attempt: int, _error: Exception) -> None:
             raise AssertionError("retry is not expected")
 
-        runner = AsyncProviderAttemptRunner(
+        runner = ProviderAttemptRunner(
             request_factory=factory,
             stream_provider=stream,
             before_call=lambda request: calls.append("before") or request,
@@ -315,7 +317,7 @@ def test_async_missing_completion_fails_without_consuming_receipt() -> None:
         async def on_retry(_attempt: int, _error: Exception) -> None:
             raise AssertionError("retry is not expected")
 
-        runner = AsyncProviderAttemptRunner(
+        runner = ProviderAttemptRunner(
             request_factory=factory,
             stream_provider=stream,
             before_call=lambda request: request,
@@ -373,7 +375,7 @@ def test_async_hook_failure_does_not_retry_or_open_provider_circuit(
         async def on_retry(attempt: int, error: Exception) -> None:
             retries.append((attempt, str(error)))
 
-        runner = AsyncProviderAttemptRunner(
+        runner = ProviderAttemptRunner(
             request_factory=factory,
             stream_provider=stream,
             before_call=before,
@@ -463,7 +465,7 @@ def test_async_sync_provider_fallback_closes_iterator_before_late_event_error() 
         provider = SyncProvider()
         runner = _runner(
             factory=factory,
-            stream_provider=lambda request, options: async_provider_stream_events(
+            stream_provider=lambda request, options: provider_stream_events(
                 provider,  # type: ignore[arg-type]
                 request,
                 options,
@@ -515,7 +517,7 @@ def test_async_sync_provider_fallback_cancellation_closes_iterator() -> None:
             ) -> Iterator[ProviderStreamEvent]:
                 return BlockingIterator()
 
-        stream = async_provider_stream_events(
+        stream = provider_stream_events(
             SyncProvider(),  # type: ignore[arg-type]
             ProviderRequest(system="system", messages=()),
             None,
@@ -580,7 +582,7 @@ def test_async_native_stream_double_cancel_waits_for_aclose() -> None:
             ) -> AsyncIterator[ProviderStreamEvent]:
                 return BlockingAsyncIterator()
 
-        stream = async_provider_stream_events(
+        stream = provider_stream_events(
             NativeProvider(),  # type: ignore[arg-type]
             ProviderRequest(system="system", messages=()),
             None,

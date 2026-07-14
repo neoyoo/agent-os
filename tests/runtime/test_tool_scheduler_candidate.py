@@ -6,12 +6,15 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agentos.capabilities.executor import ToolExecutionResult
+from agentos.capabilities import WaitRequest
+from agentos.capabilities.executor import ToolExecutionOutcome, ToolExecutionResult
 from agentos.providers import ProviderToolCall
-from agentos.runtime._tool_scheduler import (
+from agentos.runtime import WaitReason
+from agentos.runtime.tool_scheduler import (
     ScheduledToolCallResult,
+    ToolCallScheduler,
     ToolConcurrencyPolicy,
-    ToolSchedulerCandidate,
+    ToolExecutionContext,
 )
 
 
@@ -67,7 +70,11 @@ class ConcurrencyProbe:
             return ToolConcurrencyPolicy.PARALLEL_SAFE
         return ToolConcurrencyPolicy.EXCLUSIVE
 
-    async def execute(self, call: ProviderToolCall) -> ToolExecutionResult:
+    async def execute(
+        self,
+        call: ProviderToolCall,
+        _context: ToolExecutionContext,
+    ) -> ToolExecutionResult:
         call_id = call.id
         already_active = set(self.active)
         self.start_order.append(call_id)
@@ -103,7 +110,7 @@ async def _probe_task(
     policy_for: Callable[[ProviderToolCall], ToolConcurrencyPolicy] | None = None,
 ) -> AsyncIterator[asyncio.Task[tuple[ScheduledToolCallResult, ...]]]:
     task = asyncio.create_task(
-        ToolSchedulerCandidate(max_parallel_calls=max_parallel_calls).execute_batch(
+        ToolCallScheduler(max_parallel_calls=max_parallel_calls).execute_batch(
             calls=calls,
             policy_for=policy_for or probe.policy_for,
             execute=probe.execute,
@@ -128,11 +135,93 @@ def test_candidate_rejects_invalid_parallel_limit(invalid: object) -> None:
         ValueError,
         match="max_parallel_calls must be an integer greater than zero",
     ):
-        ToolSchedulerCandidate(max_parallel_calls=invalid)
+        ToolCallScheduler(max_parallel_calls=invalid)
 
 
 def test_candidate_defaults_parallel_limit_to_eight() -> None:
-    assert ToolSchedulerCandidate().max_parallel_calls == 8
+    assert ToolCallScheduler().max_parallel_calls == 8
+
+
+def test_scheduler_reports_structured_metadata_for_queue_and_barrier() -> None:
+    async def run() -> None:
+        slow_started = asyncio.Event()
+        queued_started = asyncio.Event()
+        exclusive_started = asyncio.Event()
+        release_slow = asyncio.Event()
+        release_exclusive = asyncio.Event()
+        contexts: dict[str, ToolExecutionContext] = {}
+        completions: list[ScheduledToolCallResult] = []
+
+        async def execute(
+            call: ProviderToolCall,
+            context: ToolExecutionContext,
+        ) -> ToolExecutionResult:
+            contexts[call.id] = context
+            if call.id == "slow":
+                slow_started.set()
+                await release_slow.wait()
+            elif call.id == "queued":
+                queued_started.set()
+            elif call.id == "exclusive":
+                exclusive_started.set()
+                await release_exclusive.wait()
+            return ToolExecutionResult(call.id, call.id)
+
+        scheduler = ToolCallScheduler(max_parallel_calls=2)
+        task = asyncio.create_task(
+            scheduler.execute_batch(
+                calls=(
+                    _parallel("slow"),
+                    _parallel("fast"),
+                    _parallel("queued"),
+                    _exclusive("exclusive"),
+                ),
+                batch_indexes=(1, 2, 4, 5),
+                batch_size=6,
+                policy_for=lambda call: (
+                    ToolConcurrencyPolicy.EXCLUSIVE
+                    if call.id == "exclusive"
+                    else ToolConcurrencyPolicy.PARALLEL_SAFE
+                ),
+                execute=execute,
+                on_completed=completions.append,
+            ),
+        )
+        try:
+            async with asyncio.timeout(2):
+                await slow_started.wait()
+                await queued_started.wait()
+                assert not exclusive_started.is_set()
+
+                release_slow.set()
+                await exclusive_started.wait()
+                release_exclusive.set()
+                results = await task
+        finally:
+            release_slow.set()
+            release_exclusive.set()
+            if not task.done():
+                await _cancel_and_await(task)
+
+        assert [item.index for item in results] == [1, 2, 4, 5]
+        assert [item.index for item in completions] == [2, 4, 1, 5]
+        assert contexts["slow"].batch_index == 1
+        assert contexts["queued"].batch_index == 4
+        assert contexts["exclusive"].batch_index == 5
+        assert contexts["slow"].concurrency_policy is ToolConcurrencyPolicy.PARALLEL_SAFE
+        assert contexts["exclusive"].concurrency_policy is ToolConcurrencyPolicy.EXCLUSIVE
+        assert all(context.max_parallel_calls == 2 for context in contexts.values())
+        assert all(context.batch_size == 6 for context in contexts.values())
+        assert all(context.queue_wait_seconds >= 0 for context in contexts.values())
+        assert contexts["queued"].queue_wait_seconds >= contexts["fast"].queue_wait_seconds
+        assert contexts["exclusive"].queue_wait_seconds >= contexts["queued"].queue_wait_seconds
+        assert all(
+            item.execution_duration_seconds is not None
+            and item.execution_duration_seconds >= 0
+            for item in completions
+        )
+
+    asyncio.run(run())
 
 
 def test_scheduled_result_is_frozen_and_has_no_instance_dict() -> None:
@@ -238,7 +327,10 @@ def test_candidate_cancel_wins_when_exclusive_swallows_cancellation() -> None:
         release_first = asyncio.Event()
         started: list[str] = []
 
-        async def execute(call: ProviderToolCall) -> ToolExecutionResult:
+        async def execute(
+            call: ProviderToolCall,
+            _context: ToolExecutionContext,
+        ) -> ToolExecutionResult:
             started.append(call.id)
             if call.id == "first":
                 first_started.set()
@@ -250,7 +342,7 @@ def test_candidate_cancel_wins_when_exclusive_swallows_cancellation() -> None:
             return ToolExecutionResult(call.id, call.id)
 
         task = asyncio.create_task(
-            ToolSchedulerCandidate().execute_batch(
+            ToolCallScheduler().execute_batch(
                 calls=(_exclusive("first"), _exclusive("second")),
                 policy_for=lambda _call: ToolConcurrencyPolicy.EXCLUSIVE,
                 execute=execute,
@@ -316,7 +408,10 @@ def test_candidate_repeated_cancel_during_failure_cleanup_wins() -> None:
         started: list[str] = []
         active: set[str] = set()
 
-        async def execute(call: ProviderToolCall) -> ToolExecutionResult:
+        async def execute(
+            call: ProviderToolCall,
+            _context: ToolExecutionContext,
+        ) -> ToolExecutionResult:
             started.append(call.id)
             active.add(call.id)
             try:
@@ -336,7 +431,7 @@ def test_candidate_repeated_cancel_during_failure_cleanup_wins() -> None:
             finally:
                 active.remove(call.id)
 
-        scheduler = ToolSchedulerCandidate(max_parallel_calls=2)
+        scheduler = ToolCallScheduler(max_parallel_calls=2)
         task: asyncio.Task[tuple[ScheduledToolCallResult, ...]] | None = (
             asyncio.create_task(
                 scheduler.execute_batch(
@@ -457,7 +552,10 @@ def test_candidate_waits_for_sync_future_cleanup_before_failure_resolves() -> No
         cleanup_started = asyncio.Event()
         failure_release = asyncio.Event()
 
-        async def execute(call: ProviderToolCall) -> ToolExecutionResult:
+        async def execute(
+            call: ProviderToolCall,
+            _context: ToolExecutionContext,
+        ) -> ToolExecutionResult:
             if call.id == "failure":
                 await failure_release.wait()
                 raise RuntimeError("failed: failure")
@@ -469,7 +567,7 @@ def test_candidate_waits_for_sync_future_cleanup_before_failure_resolves() -> No
                     await asyncio.shield(asyncio.wrap_future(sync_future))
                 raise
 
-        scheduler = ToolSchedulerCandidate(max_parallel_calls=2)
+        scheduler = ToolCallScheduler(max_parallel_calls=2)
         task = asyncio.create_task(
             scheduler.execute_batch(
                 calls=(_parallel("sync"), _parallel("failure")),
@@ -496,5 +594,136 @@ def test_candidate_waits_for_sync_future_cleanup_before_failure_resolves() -> No
                 sync_future.set_result(ToolExecutionResult("sync", "sync"))
             if pending_task is not None:
                 await _cancel_and_await(pending_task)
+
+    asyncio.run(run())
+
+
+def test_candidate_exclusive_wait_stops_later_calls() -> None:
+    async def run() -> None:
+        reason = WaitReason("human_input", "approval_1")
+        started: list[str] = []
+
+        async def execute(
+            call: ProviderToolCall,
+            _context: ToolExecutionContext,
+        ) -> ToolExecutionOutcome:
+            started.append(call.id)
+            if call.id == "wait":
+                return WaitRequest(reason)
+            return ToolExecutionResult(call.id, "side effect")
+
+        results = await ToolCallScheduler().execute_batch(
+            calls=(_exclusive("wait"), _exclusive("side_effect")),
+            policy_for=lambda _call: ToolConcurrencyPolicy.EXCLUSIVE,
+            execute=execute,
+        )
+
+        assert started == ["wait"]
+        assert [item.tool_call.id for item in results] == ["wait"]
+        assert results[0].result == WaitRequest(reason)
+
+    asyncio.run(run())
+
+
+def test_candidate_parallel_wait_stops_refill_and_drains_running_calls() -> None:
+    async def run() -> None:
+        reason = WaitReason("timer", "timer_1")
+        running_started = asyncio.Event()
+        release_running = asyncio.Event()
+        started: list[str] = []
+
+        async def execute(
+            call: ProviderToolCall,
+            _context: ToolExecutionContext,
+        ) -> ToolExecutionOutcome:
+            started.append(call.id)
+            if call.id == "wait":
+                return WaitRequest(reason)
+            if call.id == "running":
+                running_started.set()
+                await release_running.wait()
+            return ToolExecutionResult(call.id, call.id)
+
+        task = asyncio.create_task(
+            ToolCallScheduler(max_parallel_calls=2).execute_batch(
+                calls=(
+                    _parallel("wait"),
+                    _parallel("running"),
+                    _parallel("queued"),
+                    _exclusive("later_segment"),
+                ),
+                policy_for=lambda call: (
+                    ToolConcurrencyPolicy.EXCLUSIVE
+                    if call.id == "later_segment"
+                    else ToolConcurrencyPolicy.PARALLEL_SAFE
+                ),
+                execute=execute,
+            ),
+        )
+        try:
+            async with asyncio.timeout(2):
+                await running_started.wait()
+                await _checkpoint()
+                assert started == ["wait", "running"]
+                release_running.set()
+                results = await task
+        finally:
+            release_running.set()
+            if not task.done():
+                await _cancel_and_await(task)
+
+        assert [item.tool_call.id for item in results] == ["wait", "running"]
+        assert results[0].result == WaitRequest(reason)
+
+    asyncio.run(run())
+
+
+def test_candidate_parallel_wait_external_cancel_preserves_reason() -> None:
+    async def run() -> None:
+        reason = WaitReason("timer", "timer_1")
+        running_started = asyncio.Event()
+        running_cancelled = asyncio.Event()
+        started: list[str] = []
+
+        async def execute(
+            call: ProviderToolCall,
+            _context: ToolExecutionContext,
+        ) -> ToolExecutionOutcome:
+            started.append(call.id)
+            if call.id == "wait":
+                return WaitRequest(reason)
+            if call.id == "running":
+                running_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    running_cancelled.set()
+                    raise
+            return ToolExecutionResult(call.id, call.id)
+
+        consumer = asyncio.create_task(
+            ToolCallScheduler(max_parallel_calls=2).execute_batch(
+                calls=(
+                    _parallel("wait"),
+                    _parallel("running"),
+                    _parallel("queued"),
+                ),
+                policy_for=lambda _call: ToolConcurrencyPolicy.PARALLEL_SAFE,
+                execute=execute,
+            ),
+        )
+        async with asyncio.timeout(2):
+            await running_started.wait()
+            await _checkpoint()
+            assert started == ["wait", "running"]
+
+            consumer.cancel("consumer-stop")
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await consumer
+
+        assert caught.value.args == ("consumer-stop",)
+        assert consumer.cancelled()
+        assert running_cancelled.is_set()
+        assert "queued" not in started
 
     asyncio.run(run())

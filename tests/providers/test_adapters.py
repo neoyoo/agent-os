@@ -249,6 +249,44 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
     )
 
 
+def test_openai_provider_forwards_parallel_tool_call_intent_with_tools() -> None:
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] = {}
+
+        def create(self, **kwargs: object) -> object:
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(content="ok", tool_calls=[]),
+                    ),
+                ],
+                usage=None,
+            )
+
+    completions = FakeCompletions()
+    provider = OpenAIProvider(
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        model="gpt-test",
+    )
+    tool = ProviderToolSpec(
+        function=ProviderFunctionSpec("lookup", "lookup", {"type": "object"}),
+    )
+
+    provider.complete(
+        ProviderRequest(
+            system="system",
+            messages=(),
+            tools=(tool,),
+            parallel_tool_calls=False,
+        ),
+    )
+
+    assert completions.kwargs["parallel_tool_calls"] is False
+
+
 def test_openai_provider_rejects_non_object_tool_arguments() -> None:
     class FakeCompletions:
         def create(self, **kwargs: object) -> object:

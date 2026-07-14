@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from agentos.runtime.run import WaitReason
+from agentos._waiting import WaitReason
 
 
 @dataclass(frozen=True, slots=True)

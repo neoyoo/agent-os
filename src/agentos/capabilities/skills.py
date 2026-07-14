@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import mimetypes
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
@@ -10,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from agentos._sync_work import run_sync
+from agentos.capabilities._skill_resources import (
+    _guess_mime_type,
+    _safe_resource_path,
+)
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.tools import RegisteredTool
 from agentos.context.projection import SkillDeclaration
@@ -183,7 +187,7 @@ class FileSystemSkillSource(SkillContentSource):
         """异步发现 skill 文件并缓存元数据。"""
 
         if self._skills is None:
-            self._skills = await asyncio.to_thread(self._discover_skills)
+            self._skills = await run_sync(self._discover_skills)
         return list(self._skills.values())
 
     async def load_skill(self, name: str) -> SkillLoadResult:
@@ -206,7 +210,7 @@ class FileSystemSkillSource(SkillContentSource):
             raise KeyError(name) from error
         if skill.path is None or skill.path.name != "SKILL.md":
             return ()
-        return await asyncio.to_thread(self._list_skill_resources, skill.path)
+        return await run_sync(self._list_skill_resources, skill.path)
 
     async def load_resource(
         self,
@@ -226,7 +230,7 @@ class FileSystemSkillSource(SkillContentSource):
         resource_path = _safe_resource_path(root, path)
         if resource_path is None or not resource_path.is_file():
             raise KeyError(path)
-        content = await asyncio.to_thread(resource_path.read_text, encoding="utf-8")
+        content = await run_sync(resource_path.read_text, encoding="utf-8")
         return SkillResourceLoadResult(
             skill_name=name,
             path=Path(path).as_posix(),
@@ -631,26 +635,6 @@ def _discover_skill_files(skills_dir: Path) -> list[tuple[Path, SkillSource]]:
         if path.is_file() and path.parent.name != "learned"
     )
     return discovered
-
-
-def _safe_resource_path(root: Path, resource_path: str) -> Path | None:
-    normalized = Path(resource_path)
-    if normalized.is_absolute() or any(part == ".." for part in normalized.parts):
-        return None
-    root_resolved = root.resolve()
-    candidate = (root / normalized).resolve()
-    try:
-        candidate.relative_to(root_resolved)
-    except ValueError:
-        return None
-    return candidate
-
-
-def _guess_mime_type(path: Path) -> str:
-    if path.suffix.lower() == ".md":
-        return "text/markdown"
-    guessed, _ = mimetypes.guess_type(path.name)
-    return guessed or "text/plain"
 
 
 def _validate_skill_name(name: str) -> None:

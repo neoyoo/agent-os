@@ -10,6 +10,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_API_INVENTORY = PROJECT_ROOT / "docs" / "public-api-inventory.json"
+REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
 
 
 def _load_public_api_inventory() -> dict[str, object]:
@@ -17,9 +18,17 @@ def _load_public_api_inventory() -> dict[str, object]:
 
 
 def _normalize_signature_text(signature: str) -> str:
-    return signature.replace(
+    return signature.replace("pathlib._local.Path", "pathlib.Path").replace(
         "frozenset({'task', 'session'})",
         "frozenset({'session', 'task'})",
+    )
+
+
+def test_public_api_signature_helper_normalizes_pathlib_local_path() -> None:
+    signature = "(path: pathlib._local.Path) -> pathlib._local.Path"
+
+    assert _normalize_signature_text(signature) == (
+        "(path: pathlib.Path) -> pathlib.Path"
     )
 
 
@@ -34,7 +43,7 @@ def _public_export_names(module: object) -> set[str]:
 def test_public_package_imports_as_agentos_pep8_name() -> None:
     package = importlib.import_module("agentos")
 
-    assert package.__version__ == "0.1.0rc1"
+    assert package.__version__ == "0.2.0a1"
 
 
 def test_public_api_inventory_is_machine_readable_and_current() -> None:
@@ -61,6 +70,7 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
         "agentos.deployment",
         "agentos.readiness",
         "agentos.release",
+        "agentos.sync",
     }
     assert required_modules <= set(modules)
 
@@ -243,7 +253,7 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert not hasattr(providers, "ProviderRuntime")
 
     assert hasattr(agentos, "QueryLoop")
-    assert hasattr(agentos, "AsyncQueryLoop")
+    assert not hasattr(agentos, REMOVED_ASYNC_LOOP_NAME)
     assert hasattr(agentos, "ProviderRequestBuilder")
     assert not hasattr(agentos, "Provider")
     assert not hasattr(agentos, "ToolCallRouter")

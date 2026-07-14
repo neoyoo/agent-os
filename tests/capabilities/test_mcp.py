@@ -1,3 +1,7 @@
+import asyncio
+from collections.abc import AsyncIterator
+from threading import Event as ThreadEvent
+
 import pytest
 
 from agentos.capabilities import (
@@ -5,6 +9,7 @@ from agentos.capabilities import (
     ToolRegistry,
     ToolSandboxError,
     WorkspaceToolSandboxPolicy,
+    ToolConcurrencyPolicy,
 )
 from agentos.capabilities.executor import ToolExecutionError
 from agentos.capabilities.mcp import (
@@ -42,6 +47,115 @@ class FakeMCPClient:
         if "title" not in arguments:
             return "ok"
         return f"{tool_name}:{arguments['title']}"
+
+
+@pytest.mark.parametrize(
+    ("server_opt_in", "tool_opt_in", "read_only", "expected"),
+    [
+        (False, False, False, ToolConcurrencyPolicy.EXCLUSIVE),
+        (True, False, False, ToolConcurrencyPolicy.EXCLUSIVE),
+        (False, True, False, ToolConcurrencyPolicy.EXCLUSIVE),
+        (False, False, True, ToolConcurrencyPolicy.EXCLUSIVE),
+        (True, True, False, ToolConcurrencyPolicy.PARALLEL_SAFE),
+    ],
+)
+def test_mcp_parallel_policy_requires_two_sided_opt_in(
+    server_opt_in: bool,
+    tool_opt_in: bool,
+    read_only: bool,
+    expected: ToolConcurrencyPolicy,
+) -> None:
+    client = FakeMCPClient(
+        [
+            MCPToolInfo(
+                name="lookup",
+                description="lookup",
+                parallel_safe=tool_opt_in,
+                read_only_hint=read_only,
+            ),
+        ],
+    )
+    registry = MCPRegistry()
+    registry.register(
+        MCPServerRegistration(
+            name="search",
+            description="search",
+            client=client,
+            supports_parallel_tool_calls=server_opt_in,
+        ),
+    )
+    router = ToolCallRouter(
+        tool_registry=ToolRegistry(),
+        mcp_adapter=MCPToolAdapter(registry),
+    )
+
+    assert router.concurrency_policy_for(
+        ProviderToolCall("call_1", "mcp__search__lookup", {}),
+    ) is expected
+
+
+def test_mcp_sync_client_work_converges_with_bound_run_tracker() -> None:
+    from agentos._sync_work import SyncWorkTracker, bind_sync_work_tracker
+
+    class BlockingMCPClient(FakeMCPClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = ThreadEvent()
+            self.release = ThreadEvent()
+            self.finished = ThreadEvent()
+
+        def call_tool(self, tool_name: str, arguments: dict[str, object]) -> str:
+            self.started.set()
+            self.release.wait()
+            self.finished.set()
+            return super().call_tool(tool_name, arguments)
+
+    async def scenario() -> None:
+        client = BlockingMCPClient()
+        registry = MCPRegistry()
+        registry.register(
+            MCPServerRegistration(
+                name="github",
+                description="Manage GitHub issues.",
+                client=client,
+            ),
+        )
+        router = ToolCallRouter(
+            tool_registry=ToolRegistry(),
+            mcp_adapter=MCPToolAdapter(registry),
+        )
+        tracker = SyncWorkTracker()
+
+        async def events() -> AsyncIterator[object]:
+            yield await router.async_execute_tool_call(
+                ProviderToolCall(
+                    id="call_1",
+                    name="mcp__github__create_issue",
+                    arguments={"title": "Bug"},
+                ),
+            )
+
+        source = bind_sync_work_tracker(events(), tracker)
+        consumer = asyncio.create_task(anext(source))
+        try:
+            assert await asyncio.to_thread(client.started.wait, 5)
+            consumer.cancel("mcp cancellation")
+            with pytest.raises(asyncio.CancelledError):
+                await consumer
+
+            waiter = asyncio.create_task(tracker.wait_until_idle())
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(waiter), 0.05)
+        finally:
+            client.release.set()
+            await asyncio.gather(consumer, return_exceptions=True)
+            await source.aclose()
+
+        await waiter
+        assert client.finished.is_set()
+        assert tracker.exceptions == ()
+
+    asyncio.run(scenario())
 
 
 def test_mcp_registry_exports_provider_specs_and_server_summaries() -> None:

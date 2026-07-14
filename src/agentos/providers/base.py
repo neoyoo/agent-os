@@ -24,6 +24,7 @@ class ProviderRequest(InternalTranscriptValue):
     system: str
     messages: tuple[_ProviderRequestMessage, ...]
     tools: tuple[ProviderToolSpec, ...] = ()
+    parallel_tool_calls: bool | None = None
 
     def __post_init__(self) -> None:
         """冻结 typed 输入并拒绝 legacy dict 边界。"""
@@ -39,6 +40,8 @@ class ProviderRequest(InternalTranscriptValue):
             raise TypeError("ProviderRequest tools must contain ProviderToolSpec")
         object.__setattr__(self, "messages", messages)
         object.__setattr__(self, "tools", tools)
+        if self.parallel_tool_calls is not None and type(self.parallel_tool_calls) is not bool:
+            raise TypeError("parallel_tool_calls must be bool or None")
 
 
 @dataclass(frozen=True, slots=True)

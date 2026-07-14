@@ -1,5 +1,7 @@
+import asyncio
 from pathlib import Path
 
+from agentos import Agent
 from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.builtin import read_file_tool
 from agentos.context import ContextRuntime
@@ -67,7 +69,7 @@ def test_small_agent_reads_project_file_with_tool_call_loop() -> None:
         session_state=SessionState(id="session_small_agent"),
     )
 
-    answer = loop.run_turn("读取 pyproject.toml 里的项目名")
+    answer = asyncio.run(Agent(loop).run("读取 pyproject.toml 里的项目名")).content
 
     assert answer == "项目名是 agent-os。"
     assert provider.requests[0].tools == tuple(capabilities.tool_specs())
@@ -142,7 +144,7 @@ def test_query_loop_rolls_back_active_assistant_tool_call_when_tool_is_denied(tm
     )
 
     try:
-        loop.run_turn("读取 pyproject.toml")
+        asyncio.run(Agent(loop).run("读取 pyproject.toml"))
     except SecurityPolicyError:
         pass
     else:

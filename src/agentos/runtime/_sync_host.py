@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable
 from concurrent.futures import Future
+from contextvars import Context, copy_context
 import threading
 from types import TracebackType
 from typing import TypeVar, cast
@@ -41,7 +42,7 @@ class SyncHost:
         self._loop: asyncio.AbstractEventLoop
         self._queue: (
             asyncio.Queue[
-                tuple[Awaitable[object], _SubmissionFuture[object]] | object
+                tuple[Awaitable[object], _SubmissionFuture[object], Context] | object
             ]
             | None
         ) = None
@@ -90,6 +91,7 @@ class SyncHost:
                     item = (
                         cast(Awaitable[object], awaitable),
                         cast(_SubmissionFuture[object], target),
+                        copy_context(),
                     )
                     assert self._queue is not None
                     try:
@@ -118,11 +120,8 @@ class SyncHost:
     def close(self) -> None:
         """拒绝新提交，收敛已接受工作并等待 owner thread 退出。"""
 
+        self._raise_if_owner_thread_reentry()
         with self._lifecycle_lock:
-            if threading.get_ident() == self._owner_thread_id:
-                raise SyncAdapterReentryError(
-                    "SyncHost cannot be closed from its owner thread",
-                )
             if self._state == _OPEN:
                 self._state = _CLOSING
                 assert self._queue is not None
@@ -139,6 +138,12 @@ class SyncHost:
 
         self._closed.wait()
         self._thread.join()
+
+    def _raise_if_owner_thread_reentry(self) -> None:
+        if threading.get_ident() == self._owner_thread_id:
+            raise SyncAdapterReentryError(
+                "SyncHost cannot be closed from its owner thread",
+            )
 
     def _owner_main(self) -> None:
         try:
@@ -166,8 +171,8 @@ class SyncHost:
             if item is _SENTINEL:
                 break
 
-            awaitable, target = cast(
-                tuple[Awaitable[object], _SubmissionFuture[object]],
+            awaitable, target, context = cast(
+                tuple[Awaitable[object], _SubmissionFuture[object], Context],
                 item,
             )
             try:
@@ -183,7 +188,7 @@ class SyncHost:
 
             completion = _complete_submission(awaitable, target)
             try:
-                task = asyncio.create_task(completion)
+                task = asyncio.create_task(completion, context=context)
             except BaseException as error:
                 completion.close()
                 _close_native_coroutine(awaitable)
@@ -229,8 +234,8 @@ class SyncHost:
                 return
             if item is _SENTINEL:
                 continue
-            awaitable, target = cast(
-                tuple[Awaitable[object], _SubmissionFuture[object]],
+            awaitable, target, _ = cast(
+                tuple[Awaitable[object], _SubmissionFuture[object], Context],
                 item,
             )
             _close_native_coroutine(awaitable)

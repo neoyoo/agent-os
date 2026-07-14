@@ -2,7 +2,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.attachments.types import (
     BytesSource,
     InlineBase64Source,

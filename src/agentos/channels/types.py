@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from typing import Literal, TypeAlias
+
+from agentos._waiting import WaitReason
+
+
+ChannelTurnStatus: TypeAlias = Literal["completed", "waiting", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,8 +24,10 @@ class ChannelTurnResult:
     """Channel 层归一化后的 turn 响应。"""
 
     session_id: str
-    status: str
+    status: ChannelTurnStatus
     content: str = ""
+    run_id: str | None = None
+    wait_reason: WaitReason | None = None
     error: str | None = None
     status_code: int = 200
 

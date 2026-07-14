@@ -1,4 +1,5 @@
 import time
+from threading import Event
 
 import pytest
 
@@ -13,9 +14,13 @@ from agentos.multi import (
     TaskAlreadySubmittedError,
     TaskRecord,
     TaskRequest,
+    TaskResult,
     TaskTable,
 )
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import (
+    build_agent_with_response,
+    build_sync_agent_with_response,
+)
 
 
 class StaticSubagentFactory:
@@ -60,7 +65,7 @@ def test_coordinator_spawn_runs_ephemeral_subagent_and_returns_result() -> None:
         spawn_executor=executor,
         subagent_factory=factory,
     )
-    parent = build_agent_with_response("parent")
+    parent = build_sync_agent_with_response("parent")
     coordinator.attach_agent(
         AgentCard(
             agent_id="parent",
@@ -113,7 +118,7 @@ def test_coordinator_spawn_accepts_reserved_task_and_child_ids() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
 
     handle = coordinator.spawn(
@@ -152,7 +157,7 @@ def test_coordinator_spawn_reports_duplicate_reserved_task_id_as_already_submitt
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.spawn(
         instruction="Review this",
@@ -179,6 +184,20 @@ def test_coordinator_cancel_queued_task_marks_cancelled() -> None:
     inbox = AgentInbox()
     task_table = TaskTable()
     executor = SpawnExecutor(max_workers=1)
+    blocker_started = Event()
+    release_blocker = Event()
+
+    def block_worker() -> TaskResult:
+        blocker_started.set()
+        release_blocker.wait()
+        return TaskResult(
+            task_id="blocker",
+            status="completed",
+            summary="blocker released",
+        )
+
+    executor.submit("blocker", block_worker)
+    assert blocker_started.wait(timeout=1)
     coordinator = AgentCoordinator(
         registry=registry,
         inbox=inbox,
@@ -193,21 +212,23 @@ def test_coordinator_cancel_queued_task_marks_cancelled() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
-    handle = coordinator.spawn(
-        instruction="Review this",
-        allowed_tool_names=(),
-        parent_agent_id="parent",
-    )
+    try:
+        handle = coordinator.spawn(
+            instruction="Review this",
+            allowed_tool_names=(),
+            parent_agent_id="parent",
+        )
 
-    assert coordinator.cancel(handle.task_id) is True
+        assert coordinator.cancel(handle.task_id) is True
 
-    record = task_table.get(handle.task_id)
-    assert record is not None
-    assert record.status in {"cancelled", "completed"}
-
-    executor.shutdown()
+        record = task_table.get(handle.task_id)
+        assert record is not None
+        assert record.status == "cancelled"
+    finally:
+        release_blocker.set()
+        executor.shutdown()
 
 
 def test_coordinator_collect_results_marks_due_timeouts() -> None:
@@ -229,7 +250,7 @@ def test_coordinator_collect_results_marks_due_timeouts() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     task_table.create(
         TaskRecord(
@@ -276,7 +297,7 @@ def test_collect_results_uses_task_table_when_parent_inbox_was_full() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     inbox.send(
         AgentEnvelope(

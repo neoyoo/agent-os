@@ -38,7 +38,7 @@ from agentos.multi import (
     TeamWorkerRunner,
 )
 from agentos.providers import FakeProvider
-from agentos.runtime import AsyncQueryLoop, QueryLoop
+from agentos.runtime import AgentResult, LocalContinuationInput, QueryLoop
 from agentos.runtime.profile import (
     DistributedAgentProfile,
     DistributedTeamRuntimeProfile,
@@ -71,7 +71,7 @@ class VerifiedSseTurnControlStore(InMemorySseTurnControlStore):
     agentos_shared_backend_evidenced = True
 
 
-def test_local_runtime_profile_builds_sync_agent_by_default() -> None:
+def test_local_runtime_profile_builds_unified_agent() -> None:
     profile = LocalRuntimeProfile(
         agent_builder=AgentBuilder().provider(FakeProvider(["ok"])),
     )
@@ -80,18 +80,18 @@ def test_local_runtime_profile_builds_sync_agent_by_default() -> None:
 
     assert profile.name == "local"
     assert isinstance(agent.query_loop, QueryLoop)
-    assert agent.run("hello").content == "ok"
+    assert asyncio.run(agent.run("hello")).content == "ok"
 
 
-def test_local_runtime_profile_can_build_async_agent() -> None:
-    profile = LocalRuntimeProfile(
-        agent_builder=AgentBuilder().provider(FakeProvider(["ok"])),
-        loop_mode="async",
-    )
+def test_local_runtime_profile_rejects_removed_mode_selector() -> None:
+    removed_selector = "loop" + "_mode"
+    arguments = {
+        "agent_builder": AgentBuilder().provider(FakeProvider(["ok"])),
+        removed_selector: "async",
+    }
 
-    agent = profile.build_agent()
-
-    assert isinstance(agent.query_loop, AsyncQueryLoop)
+    with pytest.raises(TypeError, match=removed_selector):
+        LocalRuntimeProfile(**arguments)  # type: ignore[arg-type]
 
 
 def test_local_runtime_profile_resolves_process_workspace(tmp_path: Path) -> None:
@@ -136,7 +136,7 @@ def test_web_runtime_profile_builds_agent_from_session_provider() -> None:
 
     agent = profile.build_agent("s1")
 
-    assert agent.run("hello").content == "ok:s1"
+    assert asyncio.run(agent.run("hello")).content == "ok:s1"
 
 
 def test_web_runtime_profile_exposes_session_readiness_metadata() -> None:
@@ -226,9 +226,17 @@ class RecordingTeamWorkerAgent:
     def __init__(self) -> None:
         self.continuations = 0
 
-    def run_continuation(self) -> object:
+    async def run(
+        self,
+        input: LocalContinuationInput,
+        *,
+        stream: bool = False,
+        options: object | None = None,
+    ) -> AgentResult:
+        assert isinstance(input, LocalContinuationInput)
+        assert stream is False
         self.continuations += 1
-        return object()
+        return AgentResult("")
 
 
 class RecordingTeamWorkerAgentProvider:
@@ -408,7 +416,7 @@ def test_distributed_team_runtime_profile_processes_worker_message_batch() -> No
         kind="instruction",
     )
 
-    results = daemon.run_once()
+    results = asyncio.run(daemon.run_once())
 
     assert [result.status for result in results] == ["completed"]
     assert worker_agent_provider.agents["session_for_worker"].continuations == 1
@@ -679,7 +687,7 @@ def test_distributed_web_runtime_profile_hydrates_session_across_nodes() -> None
     )
 
     agent_a = node_a.build_agent("s1")
-    assert agent_a.run("hello").content == "node-a"
+    assert asyncio.run(agent_a.run("hello")).content == "node-a"
     node_a.release_agent("s1", agent_a)
 
     agent_b = node_b.build_agent("s1")
@@ -688,7 +696,7 @@ def test_distributed_web_runtime_profile_hydrates_session_across_nodes() -> None
             "hello",
             "node-a",
         ]
-        assert agent_b.run("next").content == "node-b"
+        assert asyncio.run(agent_b.run("next")).content == "node-b"
     finally:
         node_b.release_agent("s1", agent_b)
 

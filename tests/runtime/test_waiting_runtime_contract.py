@@ -4,7 +4,7 @@ from typing import get_type_hints
 
 import pytest
 
-from agentos.runtime.run import WaitReason
+from agentos.runtime import WaitReason
 from agentos.runtime.waiting import WaitingCommit, WaitingRuntime
 
 

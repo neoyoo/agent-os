@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias, cast
 
-from agentos._frozen_json import FrozenJsonObject, freeze_json, thaw_json
+from agentos.providers.json_values import FrozenJsonObject, freeze_json, thaw_json
 from agentos.providers.input import (
     FilePart,
     ImagePart,

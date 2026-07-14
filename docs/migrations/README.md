@@ -16,6 +16,7 @@ required environment variables and idempotency behavior.
 
 | File | Backend | Purpose |
 |------|---------|---------|
+| `0.2-single-async-query-loop.md` | SDK API | Breaking migration to the single async QueryLoop and `agentos.sync` adapter. |
 | `2026-05-07-postgres-agent-registry.sql` | Postgres | Agent registry metadata. |
 | `2026-05-07-postgres-memory-backends.sql` | Postgres | Durable memory backend tables. |
 | `2026-05-07-qdrant-recall-collection.py` | Qdrant | Recall vector collection creation. |

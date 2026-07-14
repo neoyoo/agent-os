@@ -1,25 +1,12 @@
 import asyncio
 import threading
 
-import pytest
-
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderToolCall
 from agentos.providers.base import ProviderRequest, ProviderResponse
-from agentos.providers.stream import (
-    ProviderStreamCompleted,
-    ProviderStreamOptions,
-    ProviderStreamStarted,
-)
-from agentos.runtime import (
-    Agent,
-    AsyncQueryLoop,
-    ProviderRequestBuilder,
-    TurnStreamCompleted,
-    TurnStreamStarted,
-)
+from agentos.runtime import Agent, ProviderRequestBuilder, TurnStreamCompleted
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -39,41 +26,62 @@ def build_agent_with_response(content: str) -> Agent:
     )
 
 
-def test_agent_async_run_returns_agent_result() -> None:
-    agent = build_agent_with_response("async done")
+def test_agent_run_returns_agent_result() -> None:
+    async def run() -> None:
+        agent = build_agent_with_response("async done")
 
-    result = asyncio.run(agent.async_run("hello"))
+        result = await agent.run("hello")
 
-    assert result.content == "async done"
+        assert result.content == "async done"
 
-
-def test_agent_async_stream_yields_typed_events() -> None:
-    agent = build_agent_with_response("stream done")
-
-    async def collect() -> list[object]:
-        return [event async for event in agent.async_stream("hello")]
-
-    events = asyncio.run(collect())
-
-    assert any(isinstance(event, TurnStreamCompleted) for event in events)
+    asyncio.run(run())
 
 
-def test_async_query_loop_runs_sync_provider_without_blocking_event_loop() -> None:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    provider = FakeProvider(["async loop done"])
-    loop = AsyncQueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
-            message_runtime=messages,
-            tools=[],
-        ),
-        provider=provider,
-    )
+def test_agent_stream_yields_typed_events() -> None:
+    async def run() -> None:
+        agent = build_agent_with_response("stream done")
 
-    async def run_with_marker() -> tuple[str, bool]:
+        stream = await agent.run("hello", stream=True)
+        async with stream:
+            events = [event async for event in stream]
+
+        assert any(isinstance(event, TurnStreamCompleted) for event in events)
+
+    asyncio.run(run())
+
+
+def test_agent_runs_sync_provider_without_blocking_event_loop() -> None:
+    class BlockingSyncProvider:
+        timeout_seconds = None
+
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, request: ProviderRequest) -> ProviderResponse:
+            self.started.set()
+            self.release.wait(timeout=1)
+            return ProviderResponse(content="sync provider done")
+
+    async def run() -> None:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        provider = BlockingSyncProvider()
+        agent = Agent(
+            query_loop_kwargs={
+                "context_runtime": context,
+                "message_runtime": messages,
+                "request_builder": ProviderRequestBuilder(
+                    context_renderer=default_context_renderer(),
+                    message_runtime=messages,
+                    tools=[],
+                ),
+                "provider": provider,
+            },
+        )
+
+        pending = asyncio.create_task(agent.run("hello"))
+        assert await asyncio.to_thread(provider.started.wait, 1) is True
         marker_ran = False
 
         async def marker() -> None:
@@ -81,13 +89,14 @@ def test_async_query_loop_runs_sync_provider_without_blocking_event_loop() -> No
             await asyncio.sleep(0)
             marker_ran = True
 
-        result, _ = await asyncio.gather(loop.run_turn("hello"), marker())
-        return result, marker_ran
+        await marker()
+        provider.release.set()
+        result = await pending
 
-    result, marker_ran = asyncio.run(run_with_marker())
+        assert result.content == "sync provider done"
+        assert marker_ran is True
 
-    assert result == "async loop done"
-    assert marker_ran is True
+    asyncio.run(run())
 
 
 def test_tool_call_router_async_executes_external_tool() -> None:
@@ -110,303 +119,3 @@ def test_tool_call_router_async_executes_external_tool() -> None:
 
     assert result.tool_call_id == "call_1"
     assert result.content == "async tool result"
-
-
-def test_agent_can_use_explicit_async_query_loop() -> None:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    async_loop = AsyncQueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
-            message_runtime=messages,
-            tools=[],
-        ),
-        provider=FakeProvider(["explicit async loop"]),
-    )
-    agent = Agent(query_loop=async_loop.sync_loop)
-
-    result = asyncio.run(agent.async_run("hello"))
-
-    assert result.content == "explicit async loop"
-
-
-def test_agent_async_stream_cancellation_requests_interrupt_without_waiting_for_worker() -> None:
-    release_worker = threading.Event()
-    worker_blocked = threading.Event()
-
-    class BlockingLoop:
-        interrupted = False
-
-        def request_interrupt(self) -> None:
-            self.interrupted = True
-
-        def run_turn_stream(self, user_message: str, options=None):
-            yield TurnStreamStarted(user_message=user_message)
-            worker_blocked.set()
-            release_worker.wait(timeout=1)
-            yield TurnStreamCompleted(content="late")
-
-    async def cancel_after_first_event() -> tuple[bool, bool]:
-        loop = BlockingLoop()
-        agent = Agent(query_loop=loop)  # type: ignore[arg-type]
-        stream = agent.async_stream("hello")
-
-        first = await anext(stream)
-        assert first == TurnStreamStarted(user_message="hello")
-        assert await asyncio.to_thread(worker_blocked.wait, 1) is True
-
-        pending_next = asyncio.create_task(anext(stream))
-        async with asyncio.timeout(1):
-            while agent._current_async_task is not pending_next:
-                await asyncio.sleep(0)
-        pending_next.cancel()
-        await asyncio.sleep(0.05)
-        was_done_before_release = pending_next.done()
-        release_worker.set()
-
-        with pytest.raises(asyncio.CancelledError):
-            await pending_next
-        return was_done_before_release, loop.interrupted
-
-    done_before_release, interrupted = asyncio.run(cancel_after_first_event())
-
-    assert done_before_release is True
-    assert interrupted is True
-
-
-def test_agent_async_stream_close_waits_for_worker_to_finish() -> None:
-    release_worker = threading.Event()
-    worker_blocked = threading.Event()
-
-    class BlockingLoop:
-        interrupted = False
-
-        def request_interrupt(self) -> None:
-            self.interrupted = True
-
-        def run_turn_stream(self, user_message: str, options=None):
-            yield TurnStreamStarted(user_message=user_message)
-            worker_blocked.set()
-            release_worker.wait(timeout=1)
-            yield TurnStreamCompleted(content="late")
-
-    async def close_after_first_event() -> tuple[bool, bool]:
-        loop = BlockingLoop()
-        agent = Agent(query_loop=loop)  # type: ignore[arg-type]
-        stream = agent.async_stream("hello")
-
-        first = await anext(stream)
-        assert first == TurnStreamStarted(user_message="hello")
-        assert await asyncio.to_thread(worker_blocked.wait, 1) is True
-
-        close_task = asyncio.create_task(stream.aclose())
-        async with asyncio.timeout(1):
-            while agent._current_async_task is not close_task:
-                await asyncio.sleep(0)
-        await asyncio.sleep(0.05)
-        was_done_before_release = close_task.done()
-        release_worker.set()
-        await close_task
-        return was_done_before_release, loop.interrupted
-
-    done_before_release, interrupted = asyncio.run(close_after_first_event())
-
-    assert done_before_release is False
-    assert interrupted is True
-
-
-def test_agent_async_stream_cancels_running_async_provider_task() -> None:
-    provider_started = threading.Event()
-    provider_cancelled = threading.Event()
-
-    class BlockingAsyncProvider:
-        def complete(self, request: ProviderRequest) -> ProviderResponse:
-            raise AssertionError("async Agent stream must not use sync complete")
-
-        async def async_stream(
-            self,
-            request: ProviderRequest,
-            options: ProviderStreamOptions,
-        ):
-            provider_started.set()
-            yield ProviderStreamStarted(
-                request_id="async_request",
-                thinking_requested=options.thinking,
-                thinking_supported=False,
-            )
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                provider_cancelled.set()
-                raise
-            yield ProviderStreamCompleted(
-                request_id="async_request",
-                response=ProviderResponse(content="late"),
-            )
-
-    async def cancel_after_provider_starts() -> bool:
-        context = ContextRuntime()
-        messages = MessageRuntime()
-        agent = Agent(
-            query_loop=AsyncQueryLoop(
-                context_runtime=context,
-                message_runtime=messages,
-                request_builder=ProviderRequestBuilder(
-                    context_renderer=default_context_renderer(),
-                    message_runtime=messages,
-                    tools=[],
-                ),
-                provider=BlockingAsyncProvider(),  # type: ignore[arg-type]
-            ).sync_loop,
-        )
-        stream = agent.async_stream("hello")
-
-        first = await anext(stream)
-        assert isinstance(first, TurnStreamStarted)
-
-        pending_next: asyncio.Task[object]
-        while True:
-            pending_next = asyncio.create_task(anext(stream))
-            started_wait = asyncio.create_task(
-                asyncio.to_thread(provider_started.wait, 1),
-            )
-            done, pending = await asyncio.wait(
-                {pending_next, started_wait},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if started_wait in done and started_wait.result():
-                if pending_next.done():
-                    await pending_next
-                    continue
-                break
-            await pending_next
-            for task in pending:
-                task.cancel()
-        started_wait.cancel()
-        assert provider_started.is_set() is True
-        pending_next.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await pending_next
-        return await asyncio.to_thread(provider_cancelled.wait, 1)
-
-    assert asyncio.run(cancel_after_provider_starts()) is True
-
-
-def test_agent_async_stream_uses_async_complete_when_stream_is_unavailable() -> None:
-    class AsyncCompleteProvider:
-        complete_called = False
-
-        def complete(self, request: ProviderRequest) -> ProviderResponse:
-            self.complete_called = True
-            raise AssertionError("async Agent stream must not use sync complete")
-
-        async def async_complete(self, request: ProviderRequest) -> ProviderResponse:
-            return ProviderResponse(content="async complete")
-
-    async def collect() -> tuple[list[object], bool]:
-        context = ContextRuntime()
-        messages = MessageRuntime()
-        provider = AsyncCompleteProvider()
-        agent = Agent(
-            query_loop=AsyncQueryLoop(
-                context_runtime=context,
-                message_runtime=messages,
-                request_builder=ProviderRequestBuilder(
-                    context_renderer=default_context_renderer(),
-                    message_runtime=messages,
-                    tools=[],
-                ),
-                provider=provider,  # type: ignore[arg-type]
-            ).sync_loop,
-        )
-        events = [event async for event in agent.async_stream("hello")]
-        return events, provider.complete_called
-
-    events, complete_called = asyncio.run(collect())
-
-    assert complete_called is False
-    assert events[-1] == TurnStreamCompleted(content="async complete")
-
-
-def test_agent_async_run_serializes_native_async_turns() -> None:
-    class BlockingAsyncProvider:
-        def __init__(self) -> None:
-            self.active = 0
-            self.max_active = 0
-            self.first_started = asyncio.Event()
-            self.second_started = asyncio.Event()
-            self.release_first = asyncio.Event()
-
-        def complete(self, request: ProviderRequest) -> ProviderResponse:
-            raise AssertionError("async Agent stream must not use sync complete")
-
-        async def async_stream(
-            self,
-            request: ProviderRequest,
-            options: ProviderStreamOptions,
-        ):
-            user_message = request.messages[-1].content[0].text
-            self.active += 1
-            self.max_active = max(self.max_active, self.active)
-            try:
-                if user_message == "first":
-                    self.first_started.set()
-                    await self.release_first.wait()
-                elif user_message == "second":
-                    self.second_started.set()
-                yield ProviderStreamStarted(
-                    request_id=f"async_request_{user_message}",
-                    thinking_requested=options.thinking,
-                    thinking_supported=False,
-                )
-                yield ProviderStreamCompleted(
-                    request_id=f"async_request_{user_message}",
-                    response=ProviderResponse(content=f"done:{user_message}"),
-                )
-            finally:
-                self.active -= 1
-
-    async def run_two_turns() -> tuple[str, str, bool, int]:
-        context = ContextRuntime()
-        messages = MessageRuntime()
-        provider = BlockingAsyncProvider()
-        agent = Agent(
-            query_loop=AsyncQueryLoop(
-                context_runtime=context,
-                message_runtime=messages,
-                request_builder=ProviderRequestBuilder(
-                    context_renderer=default_context_renderer(),
-                    message_runtime=messages,
-                    tools=[],
-                ),
-                provider=provider,  # type: ignore[arg-type]
-            ),  # type: ignore[arg-type]
-        )
-
-        first = asyncio.create_task(agent.async_run("first"))
-        async with asyncio.timeout(1):
-            await provider.first_started.wait()
-
-        second = asyncio.create_task(agent.async_run("second"))
-        await asyncio.sleep(0.05)
-        second_entered_before_first_released = provider.second_started.is_set()
-        provider.release_first.set()
-        first_result, second_result = await asyncio.gather(first, second)
-
-        return (
-            first_result.content,
-            second_result.content,
-            second_entered_before_first_released,
-            provider.max_active,
-        )
-
-    first_content, second_content, second_entered_early, max_active = asyncio.run(
-        run_two_turns(),
-    )
-
-    assert first_content == "done:first"
-    assert second_content == "done:second"
-    assert second_entered_early is False
-    assert max_active == 1

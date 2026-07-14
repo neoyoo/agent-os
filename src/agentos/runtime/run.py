@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias
+from typing import TypeAlias
 
+from agentos._waiting import AgentWaiting
 from agentos.attachments.types import Attachment
-from agentos.runtime.stream_events import RunOptions
+
+
+@dataclass(frozen=True, slots=True)
+class RunOptions:
+    """单次 agent run 的交互选项。"""
+
+    thinking: bool = False
+    show_thinking: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,37 +42,11 @@ class RunRequest:
     options: RunOptions = field(default_factory=RunOptions)
 
 
-WaitReasonKind: TypeAlias = Literal[
-    "human_input",
-    "timer",
-    "remote_result",
-    "resource_availability",
-    "retry_backoff",
-]
-
-
-@dataclass(frozen=True, slots=True)
-class WaitReason:
-    """一次运行进入等待状态的原因。"""
-
-    kind: WaitReasonKind
-    handle: str
-    detail: str | None = None
-
-
 @dataclass(frozen=True, slots=True)
 class AgentResult:
     """一次运行已完成的最终结果。"""
 
     content: str
-
-
-@dataclass(frozen=True, slots=True)
-class AgentWaiting:
-    """一次运行已提交等待的结果。"""
-
-    run_id: str
-    reason: WaitReason
 
 
 RunOutcome: TypeAlias = AgentResult | AgentWaiting

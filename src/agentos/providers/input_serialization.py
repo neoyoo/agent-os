@@ -1,6 +1,6 @@
 """ProviderInputItem 的内部 JSON-safe 投影。"""
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.providers.input import (
     FilePart,
     ImagePart,

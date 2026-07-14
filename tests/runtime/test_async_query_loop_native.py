@@ -1,4 +1,6 @@
 import asyncio
+from collections.abc import AsyncIterator
+from threading import Event as ThreadEvent
 
 import pytest
 
@@ -7,16 +9,17 @@ from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     ProviderContentDelta,
+    ProviderRequest,
     ProviderResponse,
     ProviderStreamCompleted,
+    ProviderStreamEvent,
     ProviderStreamOptions,
     ProviderStreamStarted,
     ProviderToolCall,
-    ProviderRequest,
 )
 from agentos.runtime import (
     Agent,
-    AsyncQueryLoop,
+    AgentBusyError,
     ProviderRequestBuilder,
     QueryLoop,
     RetryPolicy,
@@ -54,15 +57,15 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=context,
             message_runtime=messages,
             request_builder=_request_builder(messages, router),
             provider=_TwoStepProvider("lookup"),
             tool_call_router=router,
         )
-        result = await loop.run_turn("hello")
-        return result, messages.materialize_active()
+        outcome = await Agent(loop).run("hello")
+        return outcome.content, messages.materialize_active()
 
     result, provider_messages = asyncio.run(run())
 
@@ -71,7 +74,7 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
     assert provider_messages[-2].content == "async-ok"
 
 
-def test_sync_handler_still_works_in_async_loop() -> None:
+def test_sync_handler_still_works_in_unified_query_loop() -> None:
     calls: list[dict[str, object]] = []
 
     def lookup(arguments: dict[str, object]) -> str:
@@ -91,47 +94,20 @@ def test_sync_handler_still_works_in_async_loop() -> None:
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=context,
             message_runtime=messages,
             request_builder=_request_builder(messages, router),
             provider=_TwoStepProvider("lookup"),
             tool_call_router=router,
         )
-        return await loop.run_turn("hello")
+        outcome = await Agent(loop).run("hello")
+        return outcome.content
 
     result = asyncio.run(run())
 
     assert result == "done"
     assert calls == [{"value": "same"}]
-
-
-def test_sync_loop_rejects_async_handler() -> None:
-    async def lookup(arguments: dict[str, object]) -> str:
-        return "async-ok"
-
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    registry = ToolRegistry()
-    registry.register(
-        RegisteredTool(
-            name="lookup",
-            description="Lookup.",
-            parameters={"type": "object", "properties": {}},
-            handler=lookup,  # type: ignore[arg-type]
-        ),
-    )
-    router = ToolCallRouter(tool_registry=registry, context_runtime=context)
-    loop = QueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=_request_builder(messages, router),
-        provider=_TwoStepProvider("lookup"),
-        tool_call_router=router,
-    )
-
-    with pytest.raises(RuntimeError, match="async handler requires AsyncQueryLoop"):
-        loop.run_turn("hello")
 
 
 def test_async_provider_stream_is_awaited_without_executor_bridge() -> None:
@@ -162,13 +138,15 @@ def test_async_provider_stream_is_awaited_without_executor_bridge() -> None:
         context = ContextRuntime()
         messages = MessageRuntime()
         provider = AsyncOnlyProvider()
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=context,
             message_runtime=messages,
             request_builder=_request_builder(messages),
             provider=provider,  # type: ignore[arg-type]
         )
-        events = [event async for event in loop.run_turn_stream("hello")]
+        stream = await Agent(loop).run("hello", stream=True)
+        async with stream:
+            events = [event async for event in stream]
         return events, provider.complete_called
 
     events, complete_called = asyncio.run(collect())
@@ -177,7 +155,7 @@ def test_async_provider_stream_is_awaited_without_executor_bridge() -> None:
     assert events[-1] == TurnStreamCompleted(content="async")
 
 
-def test_async_first_attempt_build_has_no_external_yield_before_call() -> None:
+def test_first_provider_attempt_starts_before_first_external_yield() -> None:
     class RecordingAsyncProvider:
         def __init__(self) -> None:
             self.requests: list[ProviderRequest] = []
@@ -203,22 +181,16 @@ def test_async_first_attempt_build_has_no_external_yield_before_call() -> None:
         context = ContextRuntime()
         messages = MessageRuntime()
         provider = RecordingAsyncProvider()
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=context,
             message_runtime=messages,
             request_builder=_request_builder(messages),
             provider=provider,  # type: ignore[arg-type]
         )
-        stream = loop.run_turn_stream("hello")
-        events = [
-            await anext(stream),
-            await anext(stream),
-            await anext(stream),
-            await anext(stream),
-        ]
-        messages.append_user("state added before the physical call")
-        events.append(await anext(stream))
+        stream = await Agent(loop).run("hello", stream=True)
+        events = [await anext(stream)]
         assert len(provider.requests) == 1
+        messages.append_user("state added after the first external yield")
         events.extend([event async for event in stream])
         return events, provider
 
@@ -228,8 +200,74 @@ def test_async_first_attempt_build_has_no_external_yield_before_call() -> None:
         item.content[0].text  # type: ignore[union-attr]
         for item in provider.requests[0].messages
         if item.kind == "business_message"
-    ] == ["hello", "state added before the physical call"]
+    ] == ["hello"]
     assert events[-1] == TurnStreamCompleted(content="done")
+
+
+def test_close_after_first_external_event_closes_provider_and_releases_lease() -> None:
+    class CloseAwareProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.started = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def async_stream(
+            self,
+            _request: ProviderRequest,
+            _options: ProviderStreamOptions | None,
+        ) -> AsyncIterator[ProviderStreamEvent]:
+            self.calls += 1
+            if self.calls > 1:
+                yield ProviderStreamStarted(request_id="replacement")
+                yield ProviderStreamCompleted(
+                    request_id="replacement",
+                    response=ProviderResponse(content="replacement"),
+                )
+                return
+            try:
+                self.started.set()
+                yield ProviderStreamStarted(request_id="first")
+                await asyncio.Event().wait()
+            finally:
+                self.closed.set()
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        close_errors: list[BaseException | None] = []
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(
+            lambda _loop, context: close_errors.append(context.get("exception")),
+        )
+        try:
+            messages = MessageRuntime()
+            provider = CloseAwareProvider()
+            agent = Agent(
+                QueryLoop(
+                    context_runtime=ContextRuntime(),
+                    message_runtime=messages,
+                    request_builder=_request_builder(messages),
+                    provider=provider,  # type: ignore[arg-type]
+                ),
+            )
+            stream = await agent.run("hello", stream=True)
+
+            await anext(stream)
+            assert provider.started.is_set()
+            await stream.aclose()
+
+            assert provider.closed.is_set()
+            outcome = await agent.run("replacement")
+            assert outcome.content == "replacement"
+            await asyncio.sleep(0)
+            assert not any(
+                isinstance(error, RuntimeError)
+                and "asynchronous generator is already running" in str(error)
+                for error in close_errors
+            )
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+    asyncio.run(scenario())
 
 
 def test_async_provider_stream_retries_failure_before_visible_delta() -> None:
@@ -263,14 +301,16 @@ def test_async_provider_stream_retries_failure_before_visible_delta() -> None:
         context = ContextRuntime()
         messages = MessageRuntime()
         provider = FlakyAsyncProvider()
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=context,
             message_runtime=messages,
             request_builder=_request_builder(messages),
             provider=provider,  # type: ignore[arg-type]
             retry_policy=RetryPolicy(max_retries=1, backoff_base=0, jitter=0),
         )
-        events = [event async for event in loop.run_turn_stream("hello")]
+        stream = await Agent(loop).run("hello", stream=True)
+        async with stream:
+            events = [event async for event in stream]
         return events, provider.calls
 
     events, calls = asyncio.run(collect())
@@ -279,26 +319,28 @@ def test_async_provider_stream_retries_failure_before_visible_delta() -> None:
     assert calls == 2
 
 
-def test_agent_async_stream_uses_native_async_query_loop() -> None:
+def test_agent_stream_uses_unified_query_loop() -> None:
     async def collect() -> list[object]:
         context = ContextRuntime()
         messages = MessageRuntime()
         agent = Agent(
-            query_loop=AsyncQueryLoop(
+            query_loop=QueryLoop(
                 context_runtime=context,
                 message_runtime=messages,
                 request_builder=_request_builder(messages),
                 provider=_AsyncCompleteProvider(),
             ),  # type: ignore[arg-type]
         )
-        return [event async for event in agent.async_stream("hello")]
+        stream = await agent.run("hello", stream=True)
+        async with stream:
+            return [event async for event in stream]
 
     events = asyncio.run(collect())
 
     assert events[-1] == TurnStreamCompleted(content="async complete")
 
 
-def test_duplicate_tool_call_suppression_matches_sync_loop() -> None:
+def test_duplicate_tool_call_suppression_uses_unified_query_loop() -> None:
     calls: list[dict[str, object]] = []
 
     def lookup(arguments: dict[str, object]) -> str:
@@ -318,20 +360,131 @@ def test_duplicate_tool_call_suppression_matches_sync_loop() -> None:
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=context,
             message_runtime=messages,
             request_builder=_request_builder(messages, router),
             provider=_DuplicateToolProvider(),
             tool_call_router=router,
         )
-        await loop.run_turn("hello")
+        await Agent(loop).run("hello")
         return messages.materialize_active()
 
     provider_messages = asyncio.run(run())
 
     assert calls == [{"value": "same"}]
     assert "duplicate tool call ignored" in provider_messages[-2].content
+
+
+def test_native_provider_cancellation_propagates_and_closes_stream() -> None:
+    class BlockingProvider:
+        def __init__(self) -> None:
+            self.blocked = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def async_stream(
+            self,
+            _request: ProviderRequest,
+            _options: ProviderStreamOptions | None,
+        ) -> AsyncIterator[ProviderStreamEvent]:
+            try:
+                yield ProviderStreamStarted(request_id="async_cancel")
+                self.blocked.set()
+                await asyncio.Event().wait()
+            finally:
+                self.closed.set()
+
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        provider = BlockingProvider()
+        agent = Agent(
+            QueryLoop(
+                context_runtime=ContextRuntime(),
+                message_runtime=messages,
+                request_builder=_request_builder(messages),
+                provider=provider,  # type: ignore[arg-type]
+            ),
+        )
+        stream = await agent.run("hello", stream=True)
+
+        async def consume() -> None:
+            async for _event in stream:
+                pass
+
+        consumer = asyncio.create_task(consume())
+        await provider.blocked.wait()
+        consumer.cancel("provider consumer cancelled")
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await consumer
+
+        assert caught.value.args == ("provider consumer cancelled",)
+        assert provider.closed.is_set()
+        assert stream.closed
+
+    asyncio.run(scenario())
+
+
+def test_external_close_waits_for_sync_provider_before_releasing_lease() -> None:
+    class BlockingSyncProvider:
+        timeout_seconds = None
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.started = ThreadEvent()
+            self.release = ThreadEvent()
+            self.finished = ThreadEvent()
+
+        def complete(self, _request: ProviderRequest) -> ProviderResponse:
+            self.calls += 1
+            if self.calls > 1:
+                return ProviderResponse(content="replacement")
+            self.started.set()
+            self.release.wait()
+            self.finished.set()
+            return ProviderResponse(content="discarded")
+
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        provider = BlockingSyncProvider()
+        agent = Agent(
+            QueryLoop(
+                context_runtime=ContextRuntime(),
+                message_runtime=messages,
+                request_builder=_request_builder(messages),
+                provider=provider,
+            ),
+        )
+        stream = await agent.run("hello", stream=True)
+
+        async def consume() -> None:
+            async for _event in stream:
+                pass
+
+        consumer = asyncio.create_task(consume())
+        assert await asyncio.to_thread(provider.started.wait, 5)
+        close_task = asyncio.create_task(stream.aclose())
+        results: list[object] = []
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(close_task), 0.05)
+            with pytest.raises(AgentBusyError):
+                await agent.run("replacement", stream=True)
+        finally:
+            provider.release.set()
+            results = await asyncio.gather(
+                close_task,
+                consumer,
+                return_exceptions=True,
+            )
+
+        assert results[0] is None
+        assert isinstance(results[1], asyncio.CancelledError)
+        assert provider.finished.is_set()
+        replacement = await agent.run("replacement")
+        assert replacement.content == "replacement"
+
+    asyncio.run(scenario())
 
 
 class _TwoStepProvider:

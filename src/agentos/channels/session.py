@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import RLock
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from agentos.runtime import Agent
 
@@ -17,6 +17,7 @@ class AgentSessionProvider(Protocol):
         """标记本轮 channel 调用结束。"""
 
 
+@runtime_checkable
 class AsyncAgentSessionProvider(Protocol):
     """Async channel session provider extension."""
 

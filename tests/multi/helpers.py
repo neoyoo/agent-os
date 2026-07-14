@@ -2,7 +2,11 @@ from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse
 from agentos.runtime import Agent, ProviderRequestBuilder
+from agentos.sync import SyncAgent
 from tests._context_protocol_fixtures import default_context_renderer
+
+
+_SYNC_AGENTS: list[SyncAgent] = []
 
 
 def build_agent_with_response(content: str) -> Agent:
@@ -21,3 +25,23 @@ def build_agent_with_response(content: str) -> Agent:
             "provider": FakeProvider([ProviderResponse(content=content)]),
         },
     )
+
+
+def track_sync_agent(agent: SyncAgent) -> SyncAgent:
+    """Register a SyncAgent for deterministic test cleanup."""
+
+    _SYNC_AGENTS.append(agent)
+    return agent
+
+
+def build_sync_agent_with_response(content: str) -> SyncAgent:
+    """Build a tracked SyncAgent with one deterministic provider response."""
+
+    return track_sync_agent(SyncAgent(build_agent_with_response(content)))
+
+
+def close_tracked_sync_agents() -> None:
+    """Close all SyncAgent instances created by multi-agent tests."""
+
+    while _SYNC_AGENTS:
+        _SYNC_AGENTS.pop().close()

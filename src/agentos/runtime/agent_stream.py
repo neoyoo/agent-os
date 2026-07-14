@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from collections.abc import AsyncIterator, Callable
 from threading import RLock
 from types import TracebackType
@@ -18,29 +17,42 @@ from agentos.runtime._agent_stream_coordination import (
     StreamState,
     TaskIdentity,
 )
-from agentos.runtime._execution_lease import ExecutionLease as ExecutionLease
+from agentos.runtime._agent_stream_cleanup import (
+    finish_stream_close,
+    wait_for_stream_close,
+)
 from agentos.runtime.errors import AgentStreamClosedError, AgentStreamConsumerError
 from agentos.runtime.stream_events import (
     TurnStreamCancelled,
     TurnStreamCompleted,
     TurnStreamEvent,
     TurnStreamFailed,
+    TurnStreamWaiting,
 )
 _Release: TypeAlias = Callable[["AgentStream"], None]
+_EventTransform: TypeAlias = Callable[
+    [AsyncIterator[TurnStreamEvent]],
+    AsyncIterator[TurnStreamEvent],
+]
 
 
 class AgentStream(AsyncIterator[TurnStreamEvent]):
     """拥有确定性关闭语义的单消费者异步事件流。"""
 
-    def __init__(
-        self,
+    def __init__(self) -> None:
+        raise TypeError("AgentStream instances are created by the agent runtime")
+
+    @classmethod
+    def _create(
+        cls,
         *,
         release: _Release,
         events: AsyncIterator[TurnStreamEvent],
         cleanup: CleanupCallback,
         pending_sync_work: PendingSyncWork | None,
         created_loop: asyncio.AbstractEventLoop,
-    ) -> None:
+    ) -> Self:
+        self = cls.__new__(cls)
         self._release = release
         self._events = events
         self._cleanup = cleanup
@@ -58,6 +70,7 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
             created_loop=created_loop,
         )
         self._terminal_failure: PendingTerminalFailure | None = None
+        return self
 
     @property
     def closed(self) -> bool:
@@ -95,12 +108,10 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
         if wait_for_close:
             if cleanup_owner:
                 raise StopAsyncIteration
-            try:
-                await self._close_coordinator.wait()
-            except asyncio.CancelledError:
-                raise
-            except BaseException:
-                pass
+            await wait_for_stream_close(
+                self._close_coordinator,
+                suppress_failure=True,
+            )
             with self._state_lock:
                 terminal_failure = self._terminal_failure
                 if terminal_failure is not None and terminal_failure.belongs_to(
@@ -135,7 +146,10 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
                     consumer=TaskIdentity(current_task, current_loop),
                 )
             await self._finish_close(close_events=True, original_error=event.error)
-        elif isinstance(event, (TurnStreamCompleted, TurnStreamCancelled)):
+        elif isinstance(
+            event,
+            (TurnStreamCompleted, TurnStreamWaiting, TurnStreamCancelled),
+        ):
             await self._finish_close(close_events=True, original_error=None)
         return event
 
@@ -156,6 +170,14 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
     async def aclose(self) -> None:
         """幂等关闭流并等待 cleanup 完成。"""
         await self._close(original_error=None)
+
+    def _transform_events(self, transform: _EventTransform) -> None:
+        """在首次消费前替换事件投影，同时保留当前 Stream 句柄。"""
+
+        with self._state_lock:
+            if self._state is not StreamState.CREATED:
+                raise RuntimeError("agent stream events are already active")
+            self._events = transform(self._events)
 
     async def _close(self, *, original_error: BaseException | None) -> None:
         current_task = asyncio.current_task()
@@ -203,13 +225,10 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
                 if can_take_over:
                     await self._finish_close(close_events=True, original_error=original_error)
                     return
-            try:
-                await self._close_coordinator.wait()
-            except asyncio.CancelledError:
-                raise
-            except BaseException:
-                if original_error is None:
-                    raise
+            await wait_for_stream_close(
+                self._close_coordinator,
+                suppress_failure=original_error is not None,
+            )
             return
 
         await self._finish_close(close_events=True, original_error=original_error)
@@ -220,78 +239,11 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
         close_events: bool,
         original_error: BaseException | None,
     ) -> None:
-        current_task = asyncio.current_task()
-        current_loop = asyncio.get_running_loop()
-        with self._state_lock:
-            if self._state is StreamState.CLOSED:
-                owns_cleanup = False
-            else:
-                self._state = StreamState.CLOSING
-                owns_cleanup = self._close_coordinator.claim(
-                    current_task,
-                    current_loop,
-                )
-
-            cleanup_owner = self._close_coordinator.is_owner(current_task, current_loop)
-
-        if not owns_cleanup:
-            if cleanup_owner:
-                return
-            try:
-                await self._close_coordinator.wait()
-            except asyncio.CancelledError:
-                raise
-            except BaseException:
-                if original_error is None:
-                    raise
-            return
-
-        cancellation: asyncio.CancelledError | None = None
-        cleanup_error: BaseException | None = None
-        if close_events:
-            close = getattr(self._events, "aclose", None)
-            if close is not None:
-                try:
-                    await close()
-                except asyncio.CancelledError as error:
-                    cancellation = cancellation or error
-                except BaseException as error:
-                    cleanup_error = error
-        if self._pending_sync_work is not None:
-            try:
-                await self._pending_sync_work.wait_until_idle()
-            except asyncio.CancelledError as error:
-                cancellation = cancellation or error
-            except BaseException as error:
-                if cleanup_error is None:
-                    cleanup_error = error
-        try:
-            result = self._cleanup()
-            if inspect.isawaitable(result):
-                await result
-        except asyncio.CancelledError as error:
-            cancellation = cancellation or error
-        except BaseException as error:
-            if cleanup_error is None:
-                cleanup_error = error
-
-        with self._state_lock:
-            self._state = StreamState.CLOSED
-            self._consumer_task = None
-            self._consumer_loop = None
-        try:
-            self._release(self)
-        except BaseException as error:
-            if cleanup_error is None:
-                cleanup_error = error
-        with self._state_lock:
-            published_error = cleanup_error if original_error is None else None
-            self._close_coordinator.publish(published_error)
-
-        if cancellation is not None:
-            raise cancellation
-        if cleanup_error is not None and original_error is None:
-            raise cleanup_error
+        await finish_stream_close(
+            self,
+            close_events=close_events,
+            original_error=original_error,
+        )
 
     def _interrupt(self) -> bool:
         return self._interrupt_controller.interrupt()

@@ -3,7 +3,8 @@ from threading import Event as ThreadEvent
 
 import pytest
 
-from agentos.runtime.agent_stream import AgentStream, ExecutionLease
+from agentos.runtime._execution_lease import ExecutionLease
+from agentos.runtime.agent_stream import AgentStream
 from agentos.runtime.errors import AgentBusyError
 from agentos.runtime.stream_events import (
     TurnStreamCompleted,

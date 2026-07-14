@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from agentos._frozen_json import FrozenJsonObject, freeze_json
+from agentos.providers.json_values import FrozenJsonObject, freeze_json
 from agentos._internal_transcript import InternalTranscriptValue
 
 

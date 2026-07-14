@@ -30,10 +30,10 @@ from agentos.observability.instrumented import (
     InstrumentedCompressionRuntime,
     InstrumentedProvider,
     InstrumentedProviderRequestBuilder,
-    InstrumentedQueryLoop,
     InstrumentedToolCallRouter,
 )
 from agentos.observability.instrument import instrument_query_loop
+from agentos.observability.query_loop import InstrumentedQueryLoop
 from agentos.observability.logging import (
     PythonStructuredLogger,
     StructuredLogFormatter,

@@ -1,11 +1,12 @@
-import asyncio
 from dataclasses import dataclass, field
 from typing import cast
 
-from agentos._frozen_json import thaw_json
+from agentos._sync_work import run_sync
+from agentos.providers.json_values import thaw_json
 from agentos.attachments.types import AttachmentError
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.executor import (
+    ToolExecutionOutcome,
     ToolExecutionResult,
     ToolExecutor,
     validate_tool_arguments,
@@ -13,6 +14,7 @@ from agentos.capabilities.executor import (
 from agentos.capabilities.mcp import MCPToolAdapter
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.sandbox import ToolSandboxPolicy
+from agentos.capabilities.tools import ToolConcurrencyPolicy
 from agentos.context import ContextRuntime, WorkingStateField
 from agentos.context_protocol import (
     CONTEXT_PROTOCOL_TOOL_NAMES,
@@ -52,7 +54,24 @@ class ToolCallRouter:
             ),
         ]
 
-    def execute_tool_call(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
+    def concurrency_policy_for(
+        self,
+        tool_call: ProviderToolCall,
+    ) -> ToolConcurrencyPolicy:
+        """保守返回单个工具调用的正式并发策略。"""
+
+        if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
+            return ToolConcurrencyPolicy.EXCLUSIVE
+        if tool_call.name.startswith("mcp__"):
+            if self.mcp_adapter is None:
+                return ToolConcurrencyPolicy.EXCLUSIVE
+            return self.mcp_adapter.concurrency_policy_for(tool_call.name)
+        try:
+            return self.tool_registry.get(tool_call.name).concurrency_policy
+        except KeyError:
+            return ToolConcurrencyPolicy.EXCLUSIVE
+
+    def execute_tool_call(self, tool_call: ProviderToolCall) -> ToolExecutionOutcome:
         """执行 provider tool call，并按工具类型路由。"""
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
@@ -68,13 +87,13 @@ class ToolCallRouter:
     async def async_execute_tool_call(
         self,
         tool_call: ProviderToolCall,
-    ) -> ToolExecutionResult:
+    ) -> ToolExecutionOutcome:
         """异步执行 provider tool call；阻塞外部工具放入线程执行。"""
 
         if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
             return self.execute_tool_call(tool_call)
         if tool_call.name.startswith("mcp__"):
-            return await asyncio.to_thread(self.execute_tool_call, tool_call)
+            return await run_sync(self.execute_tool_call, tool_call)
         self.security_policy.ensure_tool_allowed(tool_call.name)
         return await self._tool_executor().async_execute(tool_call)
 

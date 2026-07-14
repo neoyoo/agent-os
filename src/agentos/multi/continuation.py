@@ -9,7 +9,8 @@ from threading import Condition, RLock
 from typing import Protocol
 
 from agentos.events import AgentContinuationFailedEvent, EventBus
-from agentos.runtime import Agent
+from agentos.multi.continuation_runner import run_local_continuation
+from agentos.sync import SyncAgent
 
 
 class ContinuationTrigger(Protocol):
@@ -81,7 +82,7 @@ class LocalContinuationTrigger:
     def __init__(
         self,
         *,
-        agents: Mapping[str, Agent],
+        agents: Mapping[str, SyncAgent],
         notice_store: AgentTaskNoticeStore,
         event_bus: EventBus | None = None,
         max_workers: int = 1,
@@ -148,7 +149,7 @@ class LocalContinuationTrigger:
             try:
                 agent = self._agents.get(parent_agent_id)
                 if agent is not None:
-                    agent.run_continuation()
+                    run_local_continuation(agent)
             except Exception as error:
                 self._record_error(parent_agent_id, error)
             finally:

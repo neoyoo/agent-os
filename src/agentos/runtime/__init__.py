@@ -1,5 +1,6 @@
 """运行时请求构建、typed events 与 loop 调度。"""
 
+from agentos._waiting import AgentWaiting, WaitReason
 from agentos.events import (
     AgentContinuationFailedEvent,
     AgentInboxBackpressureEvent,
@@ -41,8 +42,17 @@ from agentos.events import (
     WorkingStateSchemaExtendedEvent,
     WorkingStateUpdatedEvent,
 )
-from agentos.runtime.agent import Agent, AgentResult
-from agentos.runtime.async_query_loop import AsyncQueryLoop
+from agentos.runtime.agent import Agent
+from agentos.runtime.agent_stream import AgentStream
+from agentos.runtime.errors import (
+    AgentBusyError,
+    AgentRunError,
+    AgentStreamClosedError,
+    AgentStreamConsumerError,
+    ContinuationUnavailableError,
+    RunProtocolError,
+    WaitingUnsupportedError,
+)
 from agentos.runtime.profile import (
     ChannelRuntimeProfile,
     DistributedAgentProfile,
@@ -60,6 +70,15 @@ from agentos.runtime.profile import (
 from agentos.runtime.provider_request_builder import ProviderRequestBuilder
 from agentos.runtime.query_loop import QueryLoop, TurnNoticeProvider
 from agentos.runtime.retry import ProviderCircuitOpenError, RetryPolicy
+from agentos.runtime.run import (
+    AgentResult,
+    LocalContinuationInput,
+    RunInput,
+    RunOptions,
+    RunOutcome,
+    RunRequest,
+    UserTurnInput,
+)
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -68,7 +87,6 @@ from agentos.runtime.stream_events import (
     ContextLoaded,
     FinalResult,
     PlanUpdated,
-    RunOptions,
     SkillLoaded,
     StatusUpdate,
     ToolStreamCompleted,
@@ -79,17 +97,21 @@ from agentos.runtime.stream_events import (
     TurnStreamEvent,
     TurnStreamFailed,
     TurnStreamStarted,
+    TurnStreamWaiting,
 )
 from agentos.runtime.stream_serializers import (
     event_payload,
     event_to_json,
     event_to_sse,
     event_type,
+    iter_jsonl,
+    iter_sse,
 )
 from agentos.runtime.turn import TurnState
 
 __all__ = [
     "Agent",
+    "AgentBusyError",
     "AgentContinuationFailedEvent",
     "AgentInboxBackpressureEvent",
     "AgentTaskCancelledEvent",
@@ -102,7 +124,11 @@ __all__ = [
     "AssistantMessageAppendedEvent",
     "AssistantThinkingDelta",
     "AgentResult",
-    "AsyncQueryLoop",
+    "AgentRunError",
+    "AgentStream",
+    "AgentStreamClosedError",
+    "AgentStreamConsumerError",
+    "AgentWaiting",
     "ChapterStartedEvent",
     "ChannelRuntimeProfile",
     "CompressedSegmentAppendedEvent",
@@ -111,6 +137,7 @@ __all__ = [
     "CompressionSkippedEvent",
     "ContextRenderedEvent",
     "ContextLoaded",
+    "ContinuationUnavailableError",
     "DistributedAgentProfile",
     "DistributedRuntimeProfile",
     "DistributedTeamRuntimeProfile",
@@ -119,6 +146,7 @@ __all__ = [
     "EventBus",
     "InheritedStateSetEvent",
     "LocalRuntimeProfile",
+    "LocalContinuationInput",
     "MemoryContextSetEvent",
     "ProductionStatePlaneDeploymentProfile",
     "ProviderRequestBuilder",
@@ -129,6 +157,10 @@ __all__ = [
     "QueryLoop",
     "RetryPolicy",
     "RunOptions",
+    "RunInput",
+    "RunOutcome",
+    "RunProtocolError",
+    "RunRequest",
     "RuntimeCompositionProfile",
     "RuntimeProfile",
     "AgentEvent",
@@ -158,10 +190,14 @@ __all__ = [
     "TurnStreamEvent",
     "TurnStreamFailed",
     "TurnStreamStarted",
+    "TurnStreamWaiting",
     "TurnStartedEvent",
     "TurnState",
     "TurnNoticeProvider",
     "UserMessageAppendedEvent",
+    "UserTurnInput",
+    "WaitingUnsupportedError",
+    "WaitReason",
     "WebRuntimeProfile",
     "WorkerProcessLifecycleDeploymentProfile",
     "WorkingStateSchemaDeclaredEvent",
@@ -171,4 +207,6 @@ __all__ = [
     "event_to_json",
     "event_to_sse",
     "event_type",
+    "iter_jsonl",
+    "iter_sse",
 ]

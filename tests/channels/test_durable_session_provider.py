@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from threading import Event as ThreadEvent
 
 import pytest
 
@@ -8,8 +10,10 @@ from agentos import AgentBuilder
 from agentos.channels.durable_session import (
     DurableAgentSessionProvider,
     InMemorySessionLeaseStore,
+    SessionLease,
     SessionLeaseError,
 )
+from agentos.channels.turn_execution import acquire_channel_agent
 from agentos.compression import CompressionIndex
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
@@ -127,6 +131,63 @@ class SnapshotTestFactory:
         )
 
 
+def test_cancelled_async_acquire_abandons_agent_returned_by_sync_worker() -> None:
+    worker_started = ThreadEvent()
+    release_worker = ThreadEvent()
+
+    class BlockingAcquireLeaseStore(InMemorySessionLeaseStore):
+        def acquire(
+            self,
+            session_id: str,
+            *,
+            owner_id: str,
+            ttl_seconds: float,
+            wait_timeout_seconds: float | None = None,
+        ) -> SessionLease:
+            lease = super().acquire(
+                session_id,
+                owner_id=owner_id,
+                ttl_seconds=ttl_seconds,
+                wait_timeout_seconds=wait_timeout_seconds,
+            )
+            worker_started.set()
+            release_worker.wait()
+            return lease
+
+    lease_store = BlockingAcquireLeaseStore()
+    provider = DurableAgentSessionProvider(
+        agent_factory=SnapshotTestFactory(responses={"s1": ["node-a"]}),
+        persistence=MemoryPersistence(),
+        lease_store=lease_store,
+        owner_id="node-a",
+        acquire_timeout_seconds=0,
+        allow_unfenced_single_process_persistence=True,
+    )
+
+    async def run() -> None:
+        task = asyncio.create_task(acquire_channel_agent(provider, "s1"))
+        loop = asyncio.get_running_loop()
+        assert await loop.run_in_executor(None, worker_started.wait, 5)
+        task.cancel()
+        try:
+            cancellation_checkpoint = asyncio.Event()
+            loop.call_soon(cancellation_checkpoint.set)
+            await cancellation_checkpoint.wait()
+            assert not task.done()
+        finally:
+            release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        replacement = await provider.async_get_agent("s1")
+        await provider.async_abandon_agent("s1", replacement)
+
+    try:
+        asyncio.run(run())
+    finally:
+        release_worker.set()
+
+
 def test_durable_session_provider_hydrates_from_shared_persistence() -> None:
     persistence = MemoryPersistence()
     lease_store = InMemorySessionLeaseStore()
@@ -147,7 +208,7 @@ def test_durable_session_provider_hydrates_from_shared_persistence() -> None:
     )
 
     agent_a = node_a.get_agent("s1")
-    assert agent_a.run("hello").content == "node-a"
+    assert asyncio.run(agent_a.run("hello")).content == "node-a"
     node_a.release_agent("s1", agent_a)
 
     agent_b = node_b.get_agent("s1")
@@ -156,7 +217,7 @@ def test_durable_session_provider_hydrates_from_shared_persistence() -> None:
             "hello",
             "node-a",
         ]
-        assert agent_b.run("next").content == "node-b"
+        assert asyncio.run(agent_b.run("next")).content == "node-b"
     finally:
         node_b.release_agent("s1", agent_b)
 
@@ -330,7 +391,7 @@ def test_durable_session_provider_uses_fenced_snapshot_save_when_supported() -> 
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
     provider.release_agent("s1", agent)
 
     assert len(persistence.fenced_save_calls) == 1
@@ -352,7 +413,7 @@ def test_durable_session_provider_rejects_snapshot_save_when_lease_expires_durin
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
 
     with pytest.raises(SessionLeaseError, match="session lease is not owned"):
         provider.release_agent("s1", agent)
@@ -374,7 +435,7 @@ def test_durable_session_provider_rejects_snapshot_save_when_lease_is_lost_after
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
 
     with pytest.raises(SessionLeaseError, match="session lease is not owned"):
         provider.release_agent("s1", agent)
@@ -399,7 +460,7 @@ def test_durable_session_provider_rejects_unfenced_snapshot_persistence_by_defau
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
 
     with pytest.raises(BackendUnavailableError, match="lease-fenced persistence"):
         provider.release_agent("s1", agent)
@@ -425,7 +486,7 @@ def test_durable_session_provider_rejects_cas_only_persistence_by_default() -> N
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
 
     with pytest.raises(BackendUnavailableError, match="lease-fenced persistence"):
         provider.release_agent("s1", agent)
@@ -447,7 +508,7 @@ def test_durable_session_provider_uses_snapshot_cas_when_explicitly_allowed() ->
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
     provider.release_agent("s1", agent)
 
     assert persistence.save_if_unchanged_calls == [("s1", 0)]
@@ -476,7 +537,7 @@ def test_durable_session_provider_rejects_stale_snapshot_before_release() -> Non
         allow_unfenced_single_process_persistence=True,
     )
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
     persistence.save(
         SnapshotTestFactory(responses={"s1": ["external"]}).create_snapshot(
             session_id="s1",
@@ -521,7 +582,7 @@ def test_durable_session_provider_fences_snapshot_save_with_live_lease_token(
     )
 
     agent_a = node_a.get_agent("s1")
-    agent_a.run("hello")
+    asyncio.run(agent_a.run("hello"))
 
     now = 102.0
     node_b_lease = lease_store.acquire(
@@ -553,7 +614,7 @@ def test_durable_session_provider_abandons_session_without_snapshot_save() -> No
     )
 
     agent = provider.get_agent("s1")
-    agent.run("hello")
+    asyncio.run(agent.run("hello"))
     provider.abandon_agent("s1", agent)
 
     with pytest.raises(KeyError):

@@ -1,6 +1,6 @@
 import pytest
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy

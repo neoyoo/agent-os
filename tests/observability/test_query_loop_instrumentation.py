@@ -1,5 +1,8 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.capabilities.skills import (
@@ -16,7 +19,7 @@ from agentos.observability import (
     use_observability_context,
 )
 from agentos.observability.instrument import instrument_query_loop
-from agentos.observability.instrumented import InstrumentedQueryLoop
+from agentos.observability.query_loop import InstrumentedQueryLoop
 from agentos.providers import (
     FakeProvider,
     ProviderRequest,
@@ -24,13 +27,19 @@ from agentos.providers import (
     ProviderToolCall,
 )
 from agentos.runtime import (
+    AgentStream,
     AssistantContentDelta,
-    AsyncQueryLoop,
     ProviderRequestBuilder,
     QueryLoop,
+    RunRequest,
     SessionState,
     TurnStreamCompleted,
+    TurnStreamFailed,
+    TurnStreamWaiting,
+    UserTurnInput,
+    WaitReason,
 )
+from agentos.runtime._execution_lease import ExecutionLease
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -91,6 +100,25 @@ def _build_loop(tmp_path: Path) -> tuple[QueryLoop, FakeProvider, NoOpCompressio
     return loop, provider, compression
 
 
+async def _collect_turn(
+    instrumented: InstrumentedQueryLoop,
+    user_message: str,
+) -> list[object]:
+    stream = await instrumented.execute(
+        RunRequest(UserTurnInput(user_message)),
+    )
+    assert type(stream) is AgentStream
+    async with stream:
+        return [event async for event in stream]
+
+
+def _run_turn(
+    instrumented: InstrumentedQueryLoop,
+    user_message: str,
+) -> list[object]:
+    return asyncio.run(_collect_turn(instrumented, user_message))
+
+
 def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> None:
     loop, provider, compression = _build_loop(tmp_path)
     tracer = InMemoryTracer()
@@ -102,7 +130,8 @@ def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> No
             capture_policy=CapturePolicy.metadata_only(),
         ),
     )
-    answer = instrumented.run_turn("读取项目名")
+    events = _run_turn(instrumented, "读取项目名")
+    answer = events[-1].content
 
     assert isinstance(instrumented, InstrumentedQueryLoop)
     assert answer == "项目名是 agent-os。"
@@ -155,7 +184,7 @@ def test_instrument_query_loop_records_streaming_turn_span_tree(
         ),
     )
 
-    events = list(instrumented.run_turn_stream("读取项目名"))
+    events = _run_turn(instrumented, "读取项目名")
 
     assert any(
         isinstance(event, AssistantContentDelta) and event.text == "项目名是 agent-os。"
@@ -221,7 +250,7 @@ def test_instrument_query_loop_records_native_async_skill_stream(
                 ProviderResponse(content="reviewed"),
             ],
         )
-        loop = AsyncQueryLoop(
+        loop = QueryLoop(
             context_runtime=ContextRuntime(),
             message_runtime=messages,
             request_builder=ProviderRequestBuilder(
@@ -242,7 +271,7 @@ def test_instrument_query_loop_records_native_async_skill_stream(
             ),
         )
 
-        events = [event async for event in instrumented.run_turn_stream("review")]
+        events = await _collect_turn(instrumented, "review")
         return events, [record.name for record in tracer.records], provider.requests
 
     events, record_names, provider_requests = asyncio.run(collect())
@@ -263,12 +292,10 @@ def test_instrument_query_loop_records_native_async_skill_stream(
         assert "code-review" not in request.system
 
 
-def test_instrumented_query_loop_keeps_attachment_runtime_accessible(
+def test_instrumented_query_loop_exposes_only_the_static_execution_contract(
     tmp_path: Path,
 ) -> None:
     loop, _, _ = _build_loop(tmp_path)
-    attachment_runtime = object()
-    loop.request_builder.attachment_runtime = attachment_runtime  # type: ignore[attr-defined]
 
     instrumented = instrument_query_loop(
         loop,
@@ -278,7 +305,11 @@ def test_instrumented_query_loop_keeps_attachment_runtime_accessible(
         ),
     )
 
-    assert instrumented.request_builder.attachment_runtime is attachment_runtime
+    assert not hasattr(type(instrumented), "__getattr__")
+    assert {
+        name for name in vars(type(instrumented)) if not name.startswith("_")
+    } == {"execute", "interrupt", "request_builder"}
+    assert _run_turn(instrumented, "读取项目名")[-1].content == "项目名是 agent-os。"
 
 
 def test_instrument_query_loop_metadata_mode_records_trace_input_output_summaries(tmp_path: Path) -> None:
@@ -292,7 +323,7 @@ def test_instrument_query_loop_metadata_mode_records_trace_input_output_summarie
             capture_policy=CapturePolicy.metadata_only(),
         ),
     )
-    instrumented.run_turn("读取项目名")
+    _run_turn(instrumented, "读取项目名")
 
     root = tracer.records[0]
     assert "user_message_chars" in str(root.attributes["langfuse.trace.input"])
@@ -316,7 +347,7 @@ def test_instrument_query_loop_full_mode_records_trace_input_output_content(tmp_
             capture_policy=CapturePolicy.full_for_local_development(),
         ),
     )
-    instrumented.run_turn("读取项目名")
+    _run_turn(instrumented, "读取项目名")
 
     root = tracer.records[0]
     trace_input = str(root.attributes["langfuse.trace.input"])
@@ -341,7 +372,7 @@ def test_instrument_query_loop_stream_full_mode_records_latest_provider_request_
             capture_policy=CapturePolicy.full_for_local_development(),
         ),
     )
-    list(instrumented.run_turn_stream("读取项目名"))
+    _run_turn(instrumented, "读取项目名")
 
     trace_input = str(tracer.records[0].attributes["langfuse.trace.input"])
     assert "latest_provider_request" in trace_input
@@ -385,7 +416,7 @@ def test_query_loop_records_trace_session_turn_and_user_metadata_on_all_spans(tm
     )
 
     with use_observability_context(user_id="u_1"):
-        instrumented.run_turn("读取项目名")
+        _run_turn(instrumented, "读取项目名")
 
     root_trace_id = tracer.records[0].attributes["agentos.trace.id"]
     for record in tracer.records:
@@ -419,8 +450,101 @@ def test_query_loop_inherits_incoming_traceparent(tmp_path: Path) -> None:
             "traceparent": f"00-{incoming_trace_id}-{'2' * 16}-01",
         },
     ):
-        instrumented.run_turn("读取项目名")
+        _run_turn(instrumented, "读取项目名")
 
     assert tracer.records[0].trace_id == incoming_trace_id
     assert tracer.records[0].attributes["agentos.trace.id"] == incoming_trace_id
     assert all(record.trace_id == incoming_trace_id for record in tracer.records)
+
+
+def test_instrumented_query_loop_returns_original_stream_and_preserves_waiting() -> None:
+    async def run() -> None:
+        reason = WaitReason("human_input", "approval_1")
+
+        async def events():
+            yield TurnStreamWaiting("run_1", reason)
+
+        lease = ExecutionLease()
+        stream = lease.open_stream(events(), cleanup=lambda: None)
+        inner = SimpleNamespace(
+            execute=lambda request: _return_stream(stream),
+            max_tool_iterations=8,
+            request_builder=SimpleNamespace(latest_request_snapshot=None),
+            session_state=None,
+        )
+        instrumented = InstrumentedQueryLoop(
+            inner,  # type: ignore[arg-type]
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        )
+
+        returned = await instrumented.execute(RunRequest(UserTurnInput("wait")))
+
+        assert returned is stream
+        async with returned:
+            assert [event async for event in returned] == [
+                TurnStreamWaiting("run_1", reason),
+            ]
+        assert returned.closed
+
+    asyncio.run(run())
+
+
+def test_instrumented_query_loop_preserves_failure_rethrow() -> None:
+    async def run() -> None:
+        error = RuntimeError("provider failed")
+
+        async def events():
+            yield TurnStreamFailed(error)
+            raise error
+
+        lease = ExecutionLease()
+        stream = lease.open_stream(events(), cleanup=lambda: None)
+        inner = SimpleNamespace(
+            execute=lambda request: _return_stream(stream),
+            max_tool_iterations=8,
+            request_builder=SimpleNamespace(latest_request_snapshot=None),
+            session_state=None,
+        )
+        instrumented = InstrumentedQueryLoop(
+            inner,  # type: ignore[arg-type]
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        )
+        returned = await instrumented.execute(RunRequest(UserTurnInput("fail")))
+
+        assert returned is stream
+        assert await anext(returned) == TurnStreamFailed(error)
+        with pytest.raises(RuntimeError, match="provider failed"):
+            await anext(returned)
+        assert returned.closed
+
+    asyncio.run(run())
+
+
+def test_instrumented_query_loop_unconsumed_close_releases_inner_lease(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        loop, _, _ = _build_loop(tmp_path)
+        instrumented = instrument_query_loop(
+            loop,
+            ObservabilityConfig(
+                tracer=InMemoryTracer(),
+                capture_policy=CapturePolicy.metadata_only(),
+            ),
+        )
+        stream = await instrumented.execute(RunRequest(UserTurnInput("first")))
+
+        await stream.aclose()
+
+        replacement = await instrumented.execute(RunRequest(UserTurnInput("second")))
+        await replacement.aclose()
+        assert stream.closed
+        assert replacement.closed
+
+    asyncio.run(run())
+
+
+async def _return_stream(stream: AgentStream) -> AgentStream:
+    return stream

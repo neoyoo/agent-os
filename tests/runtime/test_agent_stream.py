@@ -1,8 +1,9 @@
 import asyncio
+from threading import Event, Thread
 
 import pytest
 
-from agentos.runtime.agent_stream import ExecutionLease
+from agentos.runtime._execution_lease import ExecutionLease
 from agentos.runtime.errors import (
     AgentBusyError,
     AgentStreamClosedError,
@@ -14,6 +15,34 @@ from agentos.runtime.stream_events import (
     TurnStreamFailed,
     TurnStreamStarted,
 )
+
+
+def test_execution_lease_wait_until_idle_returns_after_stream_release() -> None:
+    async def run() -> None:
+        async def events():
+            yield TurnStreamStarted("hello")
+
+        lease = ExecutionLease()
+        stream = lease.open_stream(events(), cleanup=lambda: None)
+        waiting = Event()
+        returned = Event()
+
+        def wait_until_idle() -> None:
+            waiting.set()
+            lease.wait_until_idle()
+            returned.set()
+
+        waiter = Thread(target=wait_until_idle)
+        waiter.start()
+        assert waiting.wait(timeout=1)
+        assert not returned.is_set()
+
+        await stream.aclose()
+
+        assert returned.wait(timeout=1)
+        waiter.join(timeout=1)
+
+    asyncio.run(run())
 
 
 def test_stream_is_lazy_and_busy_conflicts_are_immediate() -> None:

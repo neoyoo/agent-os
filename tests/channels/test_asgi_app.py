@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
 
 from agentos.channels.a2a import AllowAllA2AInboundAuthPolicy
@@ -12,13 +12,25 @@ from agentos.channels.auth import AllowAllChannelAuthPolicy, ChannelAuthError
 from agentos.channels.session import InMemoryAgentSessionProvider
 from agentos.multi import TaskRecord, TaskRequest, TaskResult, TaskTable
 from agentos.multi.team import InMemoryTeamUiStreamStore
-from agentos.runtime import Agent, AgentResult
+from agentos.runtime import (
+    Agent,
+    AgentResult,
+    RunInput,
+    RunOptions,
+    TurnStreamEvent,
+)
+from agentos.runtime._execution_lease import ExecutionLease
+from agentos.runtime.agent_stream import AgentStream
 from agentos.runtime.stream_events import AssistantContentDelta, TurnStreamCompleted
 from tests.multi.helpers import build_agent_with_response
 
 
+def build_test_stream(events: AsyncIterator[TurnStreamEvent]) -> AgentStream:
+    return ExecutionLease().open_stream(events, cleanup=lambda: None)
+
+
 class StaticRunner:
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         return TaskResult(
             task_id=request.task_id,
             status="completed",
@@ -27,7 +39,7 @@ class StaticRunner:
 
 
 class FailingA2ATaskRunner:
-    def run_task(self, request: TaskRequest) -> TaskResult:
+    async def run_task(self, request: TaskRequest) -> TaskResult:
         raise RuntimeError("database password=secret-token failed")
 
 
@@ -35,7 +47,7 @@ class HeaderRecordingA2AServer:
     def __init__(self) -> None:
         self.headers: dict[str, str] | None = None
 
-    def handle_task(
+    async def handle_task(
         self,
         payload: dict[str, object],
         headers: dict[str, str] | None = None,
@@ -104,22 +116,21 @@ class InterruptRecordingAgent:
     def __init__(self) -> None:
         self.interrupt_calls = 0
 
-    def run(
+    async def run(
         self,
-        user_message: str,
+        input: RunInput,
         *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> AgentResult:
+        stream: bool = False,
+        options: RunOptions | None = None,
+    ) -> AgentResult | AgentStream:
+        if stream:
+            return build_test_stream(self._stream_events())
+        return await self._run_result()
+
+    async def _run_result(self) -> AgentResult:
         return AgentResult(content="unused")
 
-    def stream(
-        self,
-        user_message: str,
-        *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ):
+    async def _stream_events(self) -> AsyncIterator[TurnStreamEvent]:
         yield AssistantContentDelta(index=0, text="first")
         yield TurnStreamCompleted(content="first")
 
@@ -128,34 +139,19 @@ class InterruptRecordingAgent:
 
 
 class FailingRunAgent(InterruptRecordingAgent):
-    def run(
-        self,
-        user_message: str,
-        *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ) -> AgentResult:
+    async def _run_result(self) -> AgentResult:
         raise RuntimeError("provider token=secret-token unavailable")
 
 
-class BlockingAsyncStreamAgent:
+class BlockingAsyncStreamAgent(InterruptRecordingAgent):
     def __init__(self) -> None:
-        self.interrupt_calls = 0
+        super().__init__()
         self.started = asyncio.Event()
 
-    async def async_stream(
-        self,
-        user_message: str,
-        *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ):
+    async def _stream_events(self) -> AsyncIterator[TurnStreamEvent]:
         yield AssistantContentDelta(index=1, text="first")
         self.started.set()
         await asyncio.Event().wait()
-
-    def interrupt(self) -> None:
-        self.interrupt_calls += 1
 
 
 class NonCachingProvider:
@@ -174,25 +170,16 @@ class NonCachingProvider:
         self.released.append(cast(InterruptRecordingAgent, agent))
 
 
-class ResumableAsyncStreamAgent:
+class ResumableAsyncStreamAgent(InterruptRecordingAgent):
     def __init__(self) -> None:
-        self.interrupt_calls = 0
+        super().__init__()
         self.continue_stream = asyncio.Event()
 
-    async def async_stream(
-        self,
-        user_message: str,
-        *,
-        thinking: bool = False,
-        show_thinking: bool = False,
-    ):
+    async def _stream_events(self) -> AsyncIterator[TurnStreamEvent]:
         yield AssistantContentDelta(index=0, text="first")
         await self.continue_stream.wait()
         yield AssistantContentDelta(index=1, text="second")
         yield TurnStreamCompleted(content="firstsecond")
-
-    def interrupt(self) -> None:
-        self.interrupt_calls += 1
 
 
 async def call_asgi(
@@ -1238,7 +1225,7 @@ def test_asgi_app_a2a_message_stream_follows_task_updates() -> None:
         def __init__(self, store: TaskTable) -> None:
             self.store = store
 
-        def send_message(self, message: A2AMessage) -> A2ATask:
+        async def send_message(self, message: A2AMessage) -> A2ATask:
             task_id = message.task_id or "task_stream"
             self.store.create(
                 TaskRecord(
@@ -2127,7 +2114,9 @@ def test_asgi_app_keeps_sse_turn_alive_during_disconnect_grace() -> None:
         )
         assert stream_agent.interrupt_calls == 0
         assert provider.released == []
-        await asyncio.sleep(0.03)
+        deadline = asyncio.get_running_loop().time() + 0.2
+        while not provider.released and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.001)
         return sent
 
     sent = asyncio.run(run())

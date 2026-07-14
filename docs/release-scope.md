@@ -23,7 +23,7 @@ promise physical isolation for untrusted code execution.
 
 - Terminal and script agents using `LocalRuntimeProfile`, `AgentBuilder`, sync
   `QueryLoop`, async loop support where useful, and trusted tools.
-- Single-node web agents using `WebRuntimeProfile`, `AsyncQueryLoop`,
+- Single-node web agents using `WebRuntimeProfile`, the single async `QueryLoop`,
   `AsgiAgentApp`, and app-owned auth/rate-limit/workspace policy.
 - Distributed web agents using `DistributedWebRuntimeProfile`,
   durable session hydration, Redis lease, Postgres session snapshots, and
@@ -85,4 +85,5 @@ A release candidate should be considered in scope only when:
   profile, state plane, readiness evidence, release gate evidence, and sandbox
   posture decisions.
 - Runtime boundary scans show planner/A2A/team/worker/state-plane/readiness and
-  sandbox concepts have not been moved into `QueryLoop` or `AsyncQueryLoop`.
+  sandbox concepts have not been moved into the single async `QueryLoop` or
+  the `agentos.sync` adapter.

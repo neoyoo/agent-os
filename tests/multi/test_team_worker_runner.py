@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agentos.multi import AgentInbox
@@ -23,12 +25,19 @@ class RecordingAgent:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.continuations = 0
+        self.inputs: list[object] = []
+        self.outcomes: list[object] = []
 
-    def run_continuation(self) -> object:
+    async def run(self, input: object) -> object:
+        self.inputs.append(input)
         self.continuations += 1
         if self.fail:
             raise RuntimeError("worker failed")
-        return object()
+        from agentos.runtime import AgentResult
+
+        outcome = AgentResult("continued")
+        self.outcomes.append(outcome)
+        return outcome
 
 
 class MapAgentProvider:
@@ -116,6 +125,14 @@ def send_team_message(inbox: AgentInbox) -> str:
     )
 
 
+def run_pending(
+    runner: TeamWorkerRunner,
+    *,
+    team_id: str | None = None,
+):
+    return asyncio.run(runner.run_pending(team_id=team_id))
+
+
 def test_team_worker_runner_scopes_shared_worker_delivery_to_team() -> None:
     provider = make_session_provider()
     provider.create_worker_session(
@@ -163,8 +180,8 @@ def test_team_worker_runner_scopes_shared_worker_delivery_to_team() -> None:
         message_queue=inbox,
     )
 
-    team_1_results = runner.run_pending(team_id="team_1")
-    team_2_results = runner.run_pending(team_id="team_2")
+    team_1_results = run_pending(runner, team_id="team_1")
+    team_2_results = run_pending(runner, team_id="team_2")
 
     assert [result.delivery_id for result in team_1_results] == [
         team_1_delivery_id,
@@ -207,7 +224,7 @@ def test_team_worker_runner_requires_team_scoped_queue_collection() -> None:
     )
 
     with pytest.raises(TeamError, match="team-scoped"):
-        runner.run_pending(team_id="team_1")
+        run_pending(runner, team_id="team_1")
     assert agent.continuations == 0
 
 
@@ -222,7 +239,7 @@ def test_team_worker_runner_runs_continuation_and_acks_team_message() -> None:
         message_queue=inbox,
     )
 
-    results = runner.run_pending(team_id="team_1")
+    results = run_pending(runner, team_id="team_1")
 
     assert len(results) == 1
     assert results[0].agent_id == "worker"
@@ -246,7 +263,7 @@ def test_team_worker_runner_publishes_completed_ui_event() -> None:
         ui_stream=ui_stream,
     )
 
-    results = runner.run_pending(team_id="team_1")
+    results = run_pending(runner, team_id="team_1")
 
     events = ui_stream.list_events("team_1")
     assert len(results) == 1
@@ -277,7 +294,7 @@ def test_team_worker_runner_ignores_non_team_message_deliveries() -> None:
         message_queue=inbox,
     )
 
-    assert runner.run_pending(team_id="team_1") == []
+    assert run_pending(runner, team_id="team_1") == []
     assert agent.continuations == 0
     assert inbox.ack("worker", delivery_id) is True
 
@@ -293,7 +310,7 @@ def test_team_worker_runner_records_failure_and_leaves_delivery_unacked() -> Non
         message_queue=inbox,
     )
 
-    results = runner.run_pending(team_id="team_1")
+    results = run_pending(runner, team_id="team_1")
 
     assert len(results) == 1
     assert results[0].status == "failed"
@@ -322,8 +339,8 @@ def test_team_worker_runner_schedules_retry_and_skips_until_due() -> None:
         clock=clock,
     )
 
-    failed = runner.run_pending(team_id="team_1")
-    skipped = runner.run_pending(team_id="team_1")
+    failed = run_pending(runner, team_id="team_1")
+    skipped = run_pending(runner, team_id="team_1")
 
     record = retry_store.get("worker", delivery_id)
     assert len(failed) == 1
@@ -360,10 +377,10 @@ def test_team_worker_runner_retries_due_delivery_and_clears_on_success() -> None
         clock=clock,
     )
 
-    runner.run_pending(team_id="team_1")
+    run_pending(runner, team_id="team_1")
     agent.fail = False
     clock.now = 15.0
-    retried = runner.run_pending(team_id="team_1")
+    retried = run_pending(runner, team_id="team_1")
 
     assert len(retried) == 1
     assert retried[0].status == "completed"
@@ -394,9 +411,9 @@ def test_team_worker_runner_marks_exhausted_after_max_attempts() -> None:
         clock=clock,
     )
 
-    runner.run_pending(team_id="team_1")
+    run_pending(runner, team_id="team_1")
     clock.now = 15.0
-    exhausted = runner.run_pending(team_id="team_1")
+    exhausted = run_pending(runner, team_id="team_1")
 
     record = retry_store.get("worker", delivery_id)
     assert len(exhausted) == 1
@@ -433,7 +450,7 @@ def test_team_worker_runner_cancels_queued_delivery_before_continuation() -> Non
         cancellation_store=cancellation_store,
     )
 
-    results = runner.run_pending(team_id="team_1")
+    results = run_pending(runner, team_id="team_1")
     record = cancellation_store.list_records()[0]
 
     assert len(results) == 1
@@ -468,7 +485,7 @@ def test_team_worker_runner_worker_scope_cancel_stays_requested() -> None:
         cancellation_store=cancellation_store,
     )
 
-    results = runner.run_pending(team_id="team_1")
+    results = run_pending(runner, team_id="team_1")
     record = cancellation_store.list_records()[0]
 
     assert len(results) == 1
@@ -500,7 +517,7 @@ def test_team_worker_runner_cancels_due_retry_and_clears_retry_record() -> None:
         clock=clock,
     )
 
-    runner.run_pending(team_id="team_1")
+    run_pending(runner, team_id="team_1")
     cancellation_store.request_cancel(
         TeamWorkerCancellationRecord(
             team_id="team_1",
@@ -512,7 +529,7 @@ def test_team_worker_runner_cancels_due_retry_and_clears_retry_record() -> None:
         ),
     )
     clock.now = 12.0
-    cancelled = runner.run_pending(team_id="team_1")
+    cancelled = run_pending(runner, team_id="team_1")
 
     assert len(cancelled) == 1
     assert cancelled[0].status == "cancelled"
@@ -545,8 +562,8 @@ def test_team_worker_runner_publishes_failed_retry_skipped_and_cancelled_ui_even
         clock=clock,
     )
 
-    failed = runner.run_pending(team_id="team_1")
-    skipped = runner.run_pending(team_id="team_1")
+    failed = run_pending(runner, team_id="team_1")
+    skipped = run_pending(runner, team_id="team_1")
     cancellation_store.request_cancel(
         TeamWorkerCancellationRecord(
             team_id="team_1",
@@ -557,7 +574,7 @@ def test_team_worker_runner_publishes_failed_retry_skipped_and_cancelled_ui_even
             delivery_id=delivery_id,
         ),
     )
-    cancelled = runner.run_pending(team_id="team_1")
+    cancelled = run_pending(runner, team_id="team_1")
 
     events = ui_stream.list_events("team_1")
     assert [result.status for result in failed + skipped + cancelled] == [

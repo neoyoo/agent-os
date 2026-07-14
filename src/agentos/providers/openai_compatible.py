@@ -1,5 +1,3 @@
-import asyncio
-import copy
 import json
 import socket
 import time
@@ -10,7 +8,11 @@ from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from agentos._frozen_json import thaw_json
+from agentos._sync_work import run_sync
+from agentos.providers._openai_compatible_payload import (
+    build_chat_completions_payload,
+)
+from agentos.providers.json_values import thaw_json
 from agentos.providers._tool_arguments import (
     parse_json_object_arguments,
     require_tool_call_id,
@@ -30,7 +32,6 @@ from agentos.providers.messages import (
     AssistantMessage,
     ToolResultMessage,
     UserMessage,
-    provider_tool_spec_to_dict,
 )
 from agentos.providers.stream import (
     ProviderContentDelta,
@@ -317,6 +318,7 @@ class OpenAICompatibleProvider:
     async_transport: AsyncOpenAICompatibleTransport | None = None
     thinking: dict[str, object] | None = None
     extra_body: dict[str, object] | None = None
+    supports_parallel_tool_calls_parameter: bool = False
     _fallback_tool_call_ids: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -351,7 +353,7 @@ class OpenAICompatibleProvider:
         """异步调用 OpenAI-compatible `/chat/completions`。"""
 
         if self.async_transport is None and self.transport is not None:
-            return await asyncio.to_thread(self.complete, request)
+            return await run_sync(self.complete, request)
         transport = self.async_transport or HttpxAsyncJSONTransport()
         response = await transport.post_json(
             url=self._chat_completions_url(),
@@ -634,25 +636,16 @@ class OpenAICompatibleProvider:
 
     def _payload(self, request: ProviderRequest) -> dict[str, object]:
         """构造 OpenAI-compatible chat completions payload。"""
-        payload: dict[str, object] = (
-            copy.deepcopy(self.extra_body) if self.extra_body else {}
+        return build_chat_completions_payload(
+            model=self.model,
+            request=request,
+            message_to_dict=self._message,
+            thinking=self.thinking,
+            extra_body=self.extra_body,
+            supports_parallel_tool_calls_parameter=(
+                self.supports_parallel_tool_calls_parameter
+            ),
         )
-        payload.update(
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": request.system},
-                    *[self._message(message) for message in request.messages],
-                ],
-            },
-        )
-        if request.tools:
-            payload["tools"] = [
-                provider_tool_spec_to_dict(tool) for tool in request.tools
-            ]
-        if self.thinking is not None:
-            payload["thinking"] = dict(self.thinking)
-        return payload
 
     def _chat_completions_url(self) -> str:
         """返回 chat completions endpoint URL。"""
@@ -885,7 +878,7 @@ async def _iterate_sync_stream(
 ) -> AsyncIterator[ProviderStreamEvent]:
     iterator = factory()
     while True:
-        event = await asyncio.to_thread(_next_sync_stream_event, iterator)
+        event = await run_sync(_next_sync_stream_event, iterator)
         if event is _SYNC_STREAM_DONE:
             return
         yield event

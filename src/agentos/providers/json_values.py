@@ -8,7 +8,7 @@ from typing import TypeAlias
 JsonScalar: TypeAlias = None | bool | int | float | str
 
 
-class FrozenJsonObject(Mapping[str, "JsonValue"]):
+class FrozenJsonObject(Mapping[str, "FrozenJsonValue"]):
     """只读、保持插入顺序且可比较、可哈希的 JSON object。"""
 
     __slots__ = ("_items",)
@@ -16,24 +16,18 @@ class FrozenJsonObject(Mapping[str, "JsonValue"]):
     def __init_subclass__(cls, **kwargs: object) -> None:
         raise TypeError("FrozenJsonObject cannot be subclassed")
 
-    def __init__(
-        self,
-        items: Iterable[tuple[str, object]] = (),
-    ) -> None:
+    def __init__(self, items: Iterable[tuple[str, object]] = ()) -> None:
         raw_items = tuple(items)
         keys = tuple(key for key, _ in raw_items)
         if any(type(key) is not str for key in keys):
             raise TypeError("JSON object requires string keys")
         if len(set(keys)) != len(keys):
             raise ValueError("JSON object keys must be unique")
-        active_container_ids: set[int] = set()
+        active: set[int] = set()
         object.__setattr__(
             self,
             "_items",
-            tuple(
-                (key, _freeze_json(value, active_container_ids))
-                for key, value in raw_items
-            ),
+            tuple((key, _freeze_json_value(value, active)) for key, value in raw_items),
         )
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -42,7 +36,7 @@ class FrozenJsonObject(Mapping[str, "JsonValue"]):
     def __delattr__(self, name: str) -> None:
         raise AttributeError("FrozenJsonObject is immutable")
 
-    def __getitem__(self, key: str) -> JsonValue:
+    def __getitem__(self, key: str) -> FrozenJsonValue:
         for candidate, value in self._items:
             if candidate == key:
                 return value
@@ -60,21 +54,18 @@ class FrozenJsonObject(Mapping[str, "JsonValue"]):
         if type(other) is not dict:
             return NotImplemented
         try:
-            frozen_other = freeze_json(other)
+            frozen = freeze_json_value(other)
         except (TypeError, ValueError):
             return False
-        return (
-            isinstance(frozen_other, FrozenJsonObject)
-            and _json_values_equal(self, frozen_other)
-        )
+        return isinstance(frozen, FrozenJsonObject) and _json_values_equal(self, frozen)
 
     def __hash__(self) -> int:
         return _json_value_hash(self)
 
-    def __copy__(self) -> "FrozenJsonObject":
+    def __copy__(self) -> FrozenJsonObject:
         return self
 
-    def __deepcopy__(self, memo: dict[int, object]) -> "FrozenJsonObject":
+    def __deepcopy__(self, memo: dict[int, object]) -> FrozenJsonObject:
         memo[id(self)] = self
         return self
 
@@ -85,32 +76,35 @@ class FrozenJsonObject(Mapping[str, "JsonValue"]):
         return f"FrozenJsonObject({self._items!r})"
 
 
-JsonValue: TypeAlias = (
-    JsonScalar | tuple["JsonValue", ...] | FrozenJsonObject
+FrozenJsonValue: TypeAlias = (
+    JsonScalar | tuple["FrozenJsonValue", ...] | FrozenJsonObject
 )
+JsonValue: TypeAlias = FrozenJsonValue
 
 
-def _json_values_equal(left: JsonValue, right: JsonValue) -> bool:
+def _json_values_equal(left: FrozenJsonValue, right: FrozenJsonValue) -> bool:
     if type(left) is FrozenJsonObject:
-        if type(right) is not FrozenJsonObject or len(left) != len(right):
-            return False
-        return all(
-            key in right and _json_values_equal(value, right[key])
-            for key, value in left.items()
+        return (
+            type(right) is FrozenJsonObject
+            and len(left) == len(right)
+            and all(
+                key in right and _json_values_equal(value, right[key])
+                for key, value in left.items()
+            )
         )
     if type(left) is tuple:
         return (
             type(right) is tuple
             and len(left) == len(right)
             and all(
-                _json_values_equal(left_item, right_item)
-                for left_item, right_item in zip(left, right, strict=True)
+                _json_values_equal(a, b)
+                for a, b in zip(left, right, strict=True)
             )
         )
     return type(left) is type(right) and left == right
 
 
-def _json_value_hash(value: JsonValue) -> int:
+def _json_value_hash(value: FrozenJsonValue) -> int:
     if type(value) is FrozenJsonObject:
         return hash(
             (
@@ -130,13 +124,26 @@ def _json_value_hash(value: JsonValue) -> int:
     return hash((type(value).__name__, value))
 
 
-def freeze_json(value: object) -> JsonValue:
+def freeze_json_value(value: object) -> FrozenJsonValue:
     """递归复制并冻结 JSON-compatible 值。"""
 
-    return _freeze_json(value, set())
+    return _freeze_json_value(value, set())
 
 
-def _freeze_json(value: object, active_container_ids: set[int]) -> JsonValue:
+def freeze_json_mapping(value: Mapping[str, object]) -> FrozenJsonObject:
+    """递归复制并冻结 JSON object。"""
+
+    if isinstance(value, FrozenJsonObject):
+        return value
+    if not isinstance(value, Mapping):
+        raise TypeError("JSON object requires a mapping")
+    frozen = freeze_json_value(dict(value))
+    if not isinstance(frozen, FrozenJsonObject):
+        raise TypeError("JSON object requires a mapping")
+    return frozen
+
+
+def _freeze_json_value(value: object, active: set[int]) -> FrozenJsonValue:
     value_type = type(value)
     if value is None or value_type in (bool, int, str):
         return value
@@ -147,64 +154,62 @@ def _freeze_json(value: object, active_container_ids: set[int]) -> JsonValue:
     if value_type is FrozenJsonObject:
         return value
     if value_type in (list, tuple):
-        return _freeze_json_sequence(value, active_container_ids)
+        return _freeze_sequence(value, active)
     if value_type is dict:
-        return _freeze_json_object(value, active_container_ids)
+        return _freeze_object(value, active)
     if isinstance(value, Mapping):
         raise TypeError("JSON-compatible objects must use dict")
-    raise TypeError(
-        "value must be JSON-compatible: "
-        "None, bool, int, finite float, str, list, tuple, or dict",
-    )
+    raise TypeError("value must be JSON-compatible")
 
 
-def _freeze_json_sequence(
+def _freeze_sequence(
     value: list[object] | tuple[object, ...],
-    active_container_ids: set[int],
-) -> tuple[JsonValue, ...]:
+    active: set[int],
+) -> tuple[FrozenJsonValue, ...]:
     container_id = id(value)
-    if container_id in active_container_ids:
+    if container_id in active:
         raise ValueError("circular JSON value")
-    active_container_ids.add(container_id)
+    active.add(container_id)
     try:
-        return tuple(
-            _freeze_json(item, active_container_ids)
-            for item in value
-        )
+        return tuple(_freeze_json_value(item, active) for item in value)
     finally:
-        active_container_ids.remove(container_id)
+        active.remove(container_id)
 
 
-def _freeze_json_object(
+def _freeze_object(
     value: dict[str, object],
-    active_container_ids: set[int],
+    active: set[int],
 ) -> FrozenJsonObject:
     if any(type(key) is not str for key in value):
         raise TypeError("JSON object requires string keys")
     container_id = id(value)
-    if container_id in active_container_ids:
+    if container_id in active:
         raise ValueError("circular JSON value")
-    active_container_ids.add(container_id)
+    active.add(container_id)
     try:
         items = tuple(
-            (key, _freeze_json(item, active_container_ids))
+            (key, _freeze_json_value(item, active))
             for key, item in value.items()
         )
     finally:
-        active_container_ids.remove(container_id)
+        active.remove(container_id)
     frozen = object.__new__(FrozenJsonObject)
     object.__setattr__(frozen, "_items", items)
     return frozen
 
 
-def thaw_json(value: JsonValue) -> object:
-    """把冻结值复制为新的 JSON wire dict/list。"""
+def thaw_json_value(value: FrozenJsonValue) -> object:
+    """把冻结值递归复制为新的 JSON wire dict/list。"""
 
     value_type = type(value)
     if value is None or value_type in (bool, int, float, str):
         return value
     if value_type is tuple:
-        return [thaw_json(item) for item in value]
+        return [thaw_json_value(item) for item in value]
     if value_type is FrozenJsonObject:
-        return {key: thaw_json(item) for key, item in value.items()}
+        return {key: thaw_json_value(item) for key, item in value.items()}
     raise TypeError("value is not a frozen JSON value")
+
+
+freeze_json = freeze_json_value
+thaw_json = thaw_json_value

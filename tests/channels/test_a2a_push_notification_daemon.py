@@ -447,12 +447,12 @@ def test_a2a_push_notification_deployment_profile_maps_degraded_readiness() -> N
     assert permissive_readiness["ok"] is True
 
 
-def test_runtime_loops_do_not_import_a2a_push_notification_daemon() -> None:
+def test_runtime_execution_core_does_not_import_a2a_push_notification_daemon() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     for path in [
         project_root / "src" / "agentos" / "runtime" / "query_loop.py",
-        project_root / "src" / "agentos" / "runtime" / "async_query_loop.py",
+        project_root / "src" / "agentos" / "runtime" / "provider_attempt.py",
     ]:
         text = path.read_text(encoding="utf-8")
         assert "A2APushNotificationDaemon" not in text

@@ -8,6 +8,56 @@ import pytest
 from agentos.runtime._async_bridge import SyncIteratorAsyncBridge
 
 
+def test_iterator_advances_only_for_explicit_async_demand() -> None:
+    async def run() -> None:
+        second_next_started = threading.Event()
+        first_next_started = threading.Event()
+        iterator_closed = threading.Event()
+        release_second_next = threading.Event()
+
+        class DemandObservedIterator:
+            def __init__(self) -> None:
+                self.index = 0
+
+            def __iter__(self) -> Iterator[str]:
+                return self
+
+            def __next__(self) -> str:
+                self.index += 1
+                if self.index == 1:
+                    first_next_started.set()
+                    return "first"
+                second_next_started.set()
+                release_second_next.wait()
+                raise StopIteration
+
+            def close(self) -> None:
+                iterator_closed.set()
+
+        bridge = SyncIteratorAsyncBridge(DemandObservedIterator)
+        try:
+            bridge.__aiter__()
+            assert await asyncio.to_thread(bridge._waiting_for_demand.wait, 2)
+            assert not first_next_started.is_set()
+
+            assert await anext(bridge) == "first"
+            assert await asyncio.to_thread(bridge._waiting_for_demand.wait, 2)
+            assert not second_next_started.is_set()
+
+            second_pull = asyncio.create_task(anext(bridge))
+            assert await asyncio.to_thread(second_next_started.wait, 2)
+            release_second_next.set()
+            with pytest.raises(StopAsyncIteration):
+                await second_pull
+        finally:
+            release_second_next.set()
+            await bridge.aclose()
+
+        assert iterator_closed.is_set()
+
+    asyncio.run(run())
+
+
 def test_aclose_preserves_pending_cancels_under_nested_taskgroup() -> None:
     async def run() -> tuple[int, int, list[int]]:
         result: asyncio.Future[tuple[int, int, list[int]]] = asyncio.Future()

@@ -1,5 +1,9 @@
 # AgentOS Level 1 并行工具调用设计
 
+> **SUPERSEDED FOR LOOP TOPOLOGY:** 本文关于同步/异步双 Loop 的条款已被
+> `2026-07-12-agentos-single-async-query-loop-design.md` 取代。历史正文保留，
+> Tool 并发契约仍有效。
+
 > 状态：已批准，进入实施规划
 >
 > 日期：2026-07-11

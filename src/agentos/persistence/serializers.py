@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.compression.index import CompressionIndex
 from agentos.context.schema import WorkingStateField, WorkingStateSchema
 from agentos.context.state import (

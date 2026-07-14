@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from agentos._frozen_json import thaw_json
+from agentos.providers.json_values import thaw_json
 from agentos.providers._content_parts import openai_chat_user_content
 from agentos.providers._tool_arguments import (
     parse_json_object_arguments,
@@ -51,6 +51,8 @@ class OpenAIProvider:
         }
         if self.timeout_seconds is not None:
             kwargs["timeout"] = self.timeout_seconds
+        if request.tools and request.parallel_tool_calls is not None:
+            kwargs["parallel_tool_calls"] = request.parallel_tool_calls
         response = self.client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         message = choice.message

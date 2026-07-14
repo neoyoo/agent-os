@@ -1,5 +1,9 @@
 # AgentOS Context-First SDK 总体实施计划
 
+> **SUPERSEDED FOR LOOP TOPOLOGY:** 本文保留双 Loop API 的阶段性描述已被
+> `2026-07-12-agentos-single-async-query-loop-design.md` 取代。历史正文保留，
+> 其余 context-first 和依赖边界继续有效。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不保留旧错误边界的前提下，把现有 AgentOS RC 代码迁移为统一支持 Local、Durable 和 Distributed Profile 的 context-first SDK，并以 Context Protocol v1 作为所有 LLM 可见上下文的唯一协议锚点。

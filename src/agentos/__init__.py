@@ -27,7 +27,6 @@ from agentos.release import ReleaseEvidenceValidationReport as ReleaseEvidenceVa
 from agentos.release import validate_release_candidate_evidence_manifest as validate_release_candidate_evidence_manifest
 from agentos.release import validate_release_evidence_manifest as validate_release_evidence_manifest
 from agentos.runtime import Agent as Agent
-from agentos.runtime import AsyncQueryLoop as AsyncQueryLoop
 from agentos.runtime import DistributedWebSessionOperationsProfile as DistributedWebSessionOperationsProfile
 from agentos.runtime import DistributedWebRuntimeProfile as DistributedWebRuntimeProfile
 from agentos.runtime import LocalRuntimeProfile as LocalRuntimeProfile
@@ -51,7 +50,6 @@ __all__ = [
     "Agent",
     "AgentBuilder",
     "AllowAllChannelAuthPolicy",
-    "AsyncQueryLoop",
     "AsgiAgentApp",
     "ChannelAuthContext",
     "ChannelAuthPolicy",
@@ -97,4 +95,4 @@ __all__ = [
     "validate_release_evidence_manifest",
 ]
 
-__version__ = "0.1.0rc1"
+__version__ = "0.2.0a1"

@@ -6,6 +6,7 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
 
 
 def _root_facade_contract_violations(
@@ -259,3 +260,12 @@ def test_root_facade_only_imports_declared_public_exports() -> None:
     )
 
     assert violations == ()
+
+
+def test_root_facade_excludes_removed_loop_and_sync_adapter_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    sync = importlib.import_module("agentos.sync")
+
+    assert REMOVED_ASYNC_LOOP_NAME not in agentos.__all__
+    assert not hasattr(agentos, REMOVED_ASYNC_LOOP_NAME)
+    assert set(agentos.__all__).isdisjoint(sync.__all__)

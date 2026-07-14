@@ -171,34 +171,46 @@ ProviderRequest(
 涓嶄緷璧栫涓夋柟鏈嶅姟鐨勬渶灏忕ず渚嬪彲浠ヤ娇鐢?`FakeProvider`锛?
 
 ```python
+import asyncio
+
 from agentos import AgentBuilder
 from agentos.providers import FakeProvider
 
-agent = (
-    AgentBuilder()
-    .provider(FakeProvider(["Hello from agentos."]))
-    .build()
-)
 
-result = agent.run("Hello")
-print(result.content)
+async def main() -> None:
+    agent = (
+        AgentBuilder()
+        .provider(FakeProvider(["Hello from agentos."]))
+        .build()
+    )
+    result = await agent.run("Hello")
+    print(result.content)
+
+
+asyncio.run(main())
 ```
 
 鐪熷疄 OpenAI-compatible endpoint 鍙娇鐢細
 
 ```python
+import asyncio
+
 from agentos import AgentBuilder
 from agentos.providers.openai_compatible import OpenAICompatibleProvider
 
-provider = OpenAICompatibleProvider(
-    api_key="...",
-    base_url="https://api.openai.com/v1",
-    model="gpt-4o",
-)
 
-agent = AgentBuilder().provider(provider).build()
-result = agent.run("Hello")
-print(result.content)
+async def main() -> None:
+    provider = OpenAICompatibleProvider(
+        api_key="...",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o",
+    )
+    agent = AgentBuilder().provider(provider).build()
+    result = await agent.run("Hello")
+    print(result.content)
+
+
+asyncio.run(main())
 ```
 
 婧愮爜鏉ユ簮锛歔`src/agentos/builder.py`](../src/agentos/builder.py)锛孾`src/agentos/runtime/agent.py`](../src/agentos/runtime/agent.py)锛孾`src/agentos/providers/fake.py`](../src/agentos/providers/fake.py)锛孾`src/agentos/providers/openai_compatible.py`](../src/agentos/providers/openai_compatible.py)锛孾`tests/runtime/test_agent_builder.py`](../tests/runtime/test_agent_builder.py)锛孾`tests/providers/test_openai_compatible.py`](../tests/providers/test_openai_compatible.py)
@@ -270,7 +282,7 @@ app = AsgiAgentApp(sessions=sessions)
 | `GET` | `/v1/health` | 杩斿洖 `{"status": "ok"}` |
 | `GET` | `/ready` / `/v1/ready` | 杩愯娉ㄥ叆鐨?readiness checks锛屽け璐ユ椂杩斿洖 503 |
 | `POST` | `/v1/sessions/{session_id}/turns` | JSON turn锛屽唴閮ㄨ皟鐢?`HttpAgentChannel.handle_turn()` |
-| `POST` | `/v1/sessions/{session_id}/turns/stream` | SSE turn锛屾秷璐?`agent.async_stream()` 鎴?fallback 鍒板悓姝?stream |
+| `POST` | `/v1/sessions/{session_id}/turns/stream` | SSE turn锛屾秷璐?`await agent.run(..., stream=True)` 杩斿洖鐨勪簨浠舵祦 |
 | `POST` | `/v1/sessions/{session_id}/interrupt` | 璇锋眰涓柇褰撳墠 session 鐨勮繍琛屼腑 turn |
 | `POST` | `/a2a/tasks` | 褰撻厤缃?`a2a_server` 鏃跺鐞?inbound A2A task |
 | `GET` | `/a2a/health` | 褰撻厤缃?`a2a_server` 鏃惰繑鍥?A2A health |

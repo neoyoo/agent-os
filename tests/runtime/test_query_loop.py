@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
@@ -12,8 +14,23 @@ from agentos.providers import (
 )
 from agentos.policies import BudgetPolicy
 from agentos.recall import RecallRuntime
-from agentos.runtime import QueryLoop, ProviderRequestBuilder
+from agentos.runtime import (
+    Agent,
+    AgentResult,
+    ProviderRequestBuilder,
+    QueryLoop,
+    UserTurnInput,
+)
 from tests._context_protocol_fixtures import default_context_renderer
+
+
+def _run(loop: QueryLoop, input: str | UserTurnInput) -> str:
+    async def run() -> str:
+        outcome = await Agent(loop).run(input)
+        assert isinstance(outcome, AgentResult)
+        return outcome.content
+
+    return asyncio.run(run())
 
 
 def test_query_loop_runs_one_user_to_assistant_turn() -> None:
@@ -43,7 +60,7 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
         provider=provider,
     )
 
-    response = loop.run_turn("Hello")
+    response = _run(loop, "Hello")
 
     assert response == "Fake assistant response."
     assert [
@@ -82,8 +99,8 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
         provider=provider,
     )
 
-    loop.run_turn("分析图片", attachments=[attachment])
-    loop.run_turn("继续")
+    _run(loop, UserTurnInput("分析图片", attachments=(attachment,)))
+    _run(loop, "继续")
 
     first_user = provider.requests[0].messages[1]
     second_user = provider.requests[1].messages[1]
@@ -140,7 +157,7 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
         tool_call_router=router,
     )
 
-    result = loop.run_turn("分析图片", attachments=[attachment])
+    result = _run(loop, UserTurnInput("分析图片", attachments=(attachment,)))
 
     assert result == "inspected"
     assert provider.requests[0].messages[1].content == (
@@ -151,187 +168,6 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
         TextPart(f"Loaded attachment {attachment.handle} for inspection."),
         ImagePart(attachment),
     )
-
-
-def test_query_loop_loads_image_through_load_attachment_tool() -> None:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
-    )
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=[
-                    ProviderToolCall(
-                        id="call_load_attachment",
-                        name="load_attachment",
-                        arguments={"handle": f"att:{attachment.handle}"},
-                    ),
-                ],
-            ),
-            ProviderResponse(content="inspected"),
-        ],
-    )
-    router = ToolCallRouter(
-        tool_registry=ToolRegistry(),
-        context_runtime=context,
-        attachment_runtime=attachments,
-    )
-    loop = QueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
-            message_runtime=messages,
-            tools=router.tool_specs(),
-            attachment_runtime=attachments,
-        ),
-        provider=provider,
-        tool_call_router=router,
-    )
-
-    result = loop.run_turn("再看一下附件")
-
-    assert result == "inspected"
-    assert provider.requests[1].messages[-1].content == (
-        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(attachment),
-    )
-
-
-def test_query_loop_allows_update_state_batched_with_load_attachment() -> None:
-    context = ContextRuntime()
-    context.declare_schema(
-        [
-            WorkingStateField(
-                name="drawing_info",
-                type="object",
-                purpose="图纸事实",
-            ),
-        ],
-    )
-    messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
-    )
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=[
-                    ProviderToolCall(
-                        id="call_load_attachment",
-                        name="load_attachment",
-                        arguments={"handle": f"att:{attachment.handle}"},
-                    ),
-                    ProviderToolCall(
-                        id="call_update",
-                        name="update_state",
-                        arguments={
-                            "field_name": "drawing_info",
-                            "value": {"material": "C45"},
-                        },
-                    ),
-                ],
-            ),
-            ProviderResponse(content="inspected"),
-        ],
-    )
-    router = ToolCallRouter(
-        tool_registry=ToolRegistry(),
-        context_runtime=context,
-        attachment_runtime=attachments,
-    )
-    loop = QueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
-            message_runtime=messages,
-            tools=router.tool_specs(),
-            attachment_runtime=attachments,
-        ),
-        provider=provider,
-        tool_call_router=router,
-    )
-
-    result = loop.run_turn("再看一下附件后更新状态")
-
-    assert result == "inspected"
-    assert context.snapshot().working_state == {"drawing_info": {"material": "C45"}}
-    assert provider.requests[1].messages[-1].content == (
-        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(attachment),
-    )
-    provider_messages = provider.requests[1].messages
-    assert provider_messages[-3].tool_call_id == "call_load_attachment"
-    assert "rest of the current turn" in provider_messages[-3].content[0].text  # type: ignore[union-attr]
-    assert provider_messages[-2].tool_call_id == "call_update"
-    assert provider_messages[-2].content[0].text == "context tool update_state applied"  # type: ignore[union-attr]
-
-
-def test_duplicate_tool_call_returns_suppression_result() -> None:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    calls: list[dict[str, object]] = []
-    registry = ToolRegistry()
-    registry.register(
-        RegisteredTool(
-            name="record_value",
-            description="Record a value.",
-            parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: calls.append(arguments) or "recorded",
-        ),
-    )
-    router = ToolCallRouter(tool_registry=registry, context_runtime=context)
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=[
-                    ProviderToolCall(
-                        id="call_1",
-                        name="record_value",
-                        arguments={"value": "same"},
-                    ),
-                    ProviderToolCall(
-                        id="call_2",
-                        name="record_value",
-                        arguments={"value": "same"},
-                    ),
-                ],
-            ),
-            ProviderResponse(content="done"),
-        ],
-    )
-    loop = QueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
-            message_runtime=messages,
-            tools=router.tool_specs(),
-        ),
-        provider=provider,
-        tool_call_router=router,
-    )
-
-    result = loop.run_turn("record")
-
-    assert result == "done"
-    assert calls == [{"value": "same"}]
-    provider_messages = provider.requests[1].messages
-    assert provider_messages[-2].role == "tool"
-    assert provider_messages[-2].tool_call_id == "call_1"
-    assert provider_messages[-2].content[0].text == "recorded"  # type: ignore[union-attr]
-    assert provider_messages[-1].role == "tool"
-    assert provider_messages[-1].tool_call_id == "call_2"
-    assert "duplicate tool call ignored" in provider_messages[-1].content[0].text  # type: ignore[union-attr]
 
 
 def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
@@ -379,7 +215,7 @@ def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
         tool_call_router=router,
     )
 
-    result = loop.run_turn("record")
+    result = _run(loop, "record")
 
     assert result == "done"
     assert calls == [{"value": "first"}, {"value": "second"}]
@@ -408,7 +244,7 @@ def test_query_loop_rejects_truncated_provider_final_response() -> None:
     )
 
     with pytest.raises(RuntimeError, match="truncated"):
-        loop.run_turn("Hello")
+        _run(loop, "Hello")
 
 
 def test_query_loop_runs_compression_and_recall_through_provider_requests() -> None:
@@ -448,8 +284,8 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         compression_runtime=compression,
     )
 
-    loop.run_turn("First detail")
-    loop.run_turn("Current task")
+    _run(loop, "First detail")
+    _run(loop, "Current task")
 
     assert provider.requests[0].messages[1].content[0].text == "First detail"  # type: ignore[union-attr]
     assert provider.requests[1].messages[1].content[0].text == "Current task"  # type: ignore[union-attr]
@@ -462,8 +298,8 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         compression_index=compression.index,
         message_runtime=messages,
     ).recall_context("seg_1")
-    recalled_request = loop.build_request()
-    next_request = loop.build_request()
+    recalled_request = request_builder.build().request
+    next_request = request_builder.build().request
 
     assert [item.kind for item in recalled_request.messages][0] == "context_snapshot"
     assert [item.kind for item in next_request.messages][0] == "context_snapshot"

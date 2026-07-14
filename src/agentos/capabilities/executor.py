@@ -1,7 +1,9 @@
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import cast
+from typing import TypeAlias, cast
 
-from agentos._frozen_json import thaw_json
+from agentos._waiting import WaitRequest
+from agentos.providers.json_values import thaw_json
 from agentos._redaction import is_secret_like_key
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.registry import ToolRegistry
@@ -23,28 +25,31 @@ class ToolExecutionResult:
     content: str
 
 
+ToolExecutionOutcome: TypeAlias = ToolExecutionResult | WaitRequest
+
+
 def validate_tool_arguments(
     tool_name: str,
     arguments: dict[str, object],
-    schema: dict[str, object],
+    schema: Mapping[str, object],
 ) -> None:
     """按 SDK 支持的最小 JSON schema 子集校验工具参数。"""
 
     if schema.get("type") not in {None, "object"}:
         raise ToolExecutionError("tool schema root must be an object")
     required = schema.get("required", [])
-    if isinstance(required, list):
+    if isinstance(required, Sequence) and not isinstance(required, str):
         for name in required:
             if isinstance(name, str) and name not in arguments:
                 raise ToolExecutionError(
                     f"missing required tool argument: {name}",
                 )
     properties = schema.get("properties", {})
-    if not isinstance(properties, dict):
+    if not isinstance(properties, Mapping):
         return
     for name, value in arguments.items():
         spec = properties.get(name)
-        if not isinstance(spec, dict):
+        if not isinstance(spec, Mapping):
             continue
         expected = spec.get("type")
         if expected is None or _matches_json_type(value, expected):
@@ -65,7 +70,7 @@ class ToolExecutor:
     resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
     sandbox_policy: ToolSandboxPolicy | None = None
 
-    def execute(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
+    def execute(self, tool_call: ProviderToolCall) -> ToolExecutionOutcome:
         """执行 provider tool call 对应的外部工具。"""
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
@@ -73,17 +78,19 @@ class ToolExecutor:
         arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
         self._validate_arguments(tool_call.name, arguments, tool.parameters)
         self._ensure_sandbox_allowed(tool, arguments)
-        content = self.backend.run(
+        outcome = self.backend.run(
             tool,
             arguments,
             resource_policy=self.resource_policy,
         )
+        if isinstance(outcome, WaitRequest):
+            return outcome
         return ToolExecutionResult(
             tool_call_id=tool_call.id,
-            content=content,
+            content=outcome,
         )
 
-    async def async_execute(self, tool_call: ProviderToolCall) -> ToolExecutionResult:
+    async def async_execute(self, tool_call: ProviderToolCall) -> ToolExecutionOutcome:
         """异步执行 provider tool call。"""
 
         self.security_policy.ensure_tool_allowed(tool_call.name)
@@ -91,12 +98,14 @@ class ToolExecutor:
         arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
         self._validate_arguments(tool_call.name, arguments, tool.parameters)
         self._ensure_sandbox_allowed(tool, arguments)
-        content = await self.backend.async_run(
+        outcome = await self.backend.async_run(
             tool,
             arguments,
             resource_policy=self.resource_policy,
         )
-        return ToolExecutionResult(tool_call_id=tool_call.id, content=content)
+        if isinstance(outcome, WaitRequest):
+            return outcome
+        return ToolExecutionResult(tool_call_id=tool_call.id, content=outcome)
 
     def _tool_for_call(self, tool_call: ProviderToolCall) -> RegisteredTool:
         try:
@@ -125,7 +134,7 @@ class ToolExecutor:
 
 
 def _matches_json_type(value: object, expected: object) -> bool:
-    if isinstance(expected, list):
+    if isinstance(expected, (list, tuple)):
         return any(_matches_json_type(value, item) for item in expected)
     if expected == "string":
         return isinstance(value, str)

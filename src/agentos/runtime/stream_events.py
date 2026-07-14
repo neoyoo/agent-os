@@ -3,15 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
+from agentos._waiting import WaitReason
 from agentos.providers import ProviderResponse
-
-
-@dataclass(frozen=True, slots=True)
-class RunOptions:
-    """单次 agent run 的交互选项。"""
-
-    thinking: bool = False
-    show_thinking: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +112,14 @@ class TurnStreamCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnStreamWaiting:
+    """当前执行切片已提交权威等待状态。"""
+
+    run_id: str
+    reason: WaitReason
+
+
+@dataclass(frozen=True, slots=True)
 class TurnStreamFailed:
     """agent turn stream 失败。"""
 
@@ -146,6 +147,7 @@ TurnStreamEvent: TypeAlias = (
     | ToolStreamCompleted
     | ToolStreamFailed
     | TurnStreamCompleted
+    | TurnStreamWaiting
     | TurnStreamFailed
     | TurnStreamCancelled
 )

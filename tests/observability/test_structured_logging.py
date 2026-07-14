@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from io import StringIO
@@ -8,7 +9,7 @@ from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.observability import CapturePolicy, ObservabilityConfig, StructuredLogFormatter, configure_structured_logger
 from agentos.providers import FakeProvider
-from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime import ProviderRequestBuilder, QueryLoop, RunRequest, UserTurnInput
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -49,7 +50,12 @@ def test_query_loop_writes_structured_logs_when_enabled() -> None:
         structured_logger=configure_structured_logger(config),
     )
 
-    loop.run_turn("hello")
+    async def run() -> None:
+        agent_stream = await loop.execute(RunRequest(UserTurnInput("hello")))
+        async with agent_stream:
+            _ = [event async for event in agent_stream]
+
+    asyncio.run(run())
 
     events = [json.loads(line)["event"] for line in stream.getvalue().splitlines()]
     assert events == ["turn_start", "provider_call", "turn_end"]

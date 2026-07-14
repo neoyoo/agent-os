@@ -6,7 +6,8 @@ from agentos.context import ContextState
 from agentos.messages import MessageRuntime
 from agentos.persistence import MemoryPersistence, SessionSnapshot
 from agentos.providers import FakeProvider
-from agentos.runtime import SessionState
+from agentos.runtime import AgentResult, SessionState
+from agentos.sync import SyncAgent
 
 
 def build_agent():
@@ -27,7 +28,11 @@ def main() -> None:
             compression_index=CompressionIndex(),
         ),
     )
-    print(build_agent().run("hello").content)
+    with SyncAgent(build_agent()) as sync_agent:
+        result = sync_agent.run("hello")
+    if not isinstance(result, AgentResult):
+        raise RuntimeError("example agent unexpectedly entered waiting state")
+    print(result.content)
 
 
 if __name__ == "__main__":

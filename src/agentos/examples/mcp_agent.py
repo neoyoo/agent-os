@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from agentos import AgentBuilder
 from agentos.providers import FakeProvider
+from agentos.runtime import AgentResult
+from agentos.sync import SyncAgent
 
 
 def build_agent():
@@ -13,7 +15,11 @@ def build_agent():
 def main() -> None:
     """运行 MCP-ready agent 示例。"""
 
-    print(build_agent().run("hello").content)
+    with SyncAgent(build_agent()) as sync_agent:
+        result = sync_agent.run("hello")
+    if not isinstance(result, AgentResult):
+        raise RuntimeError("example agent unexpectedly entered waiting state")
+    print(result.content)
 
 
 if __name__ == "__main__":

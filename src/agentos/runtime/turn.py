@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-TurnStatus = Literal["running", "completed", "failed"]
+TurnStatus = Literal["running", "completed", "waiting", "failed", "cancelled"]
 
 
 @dataclass(slots=True)
@@ -24,6 +24,16 @@ class TurnState:
         """标记 turn 成功完成。"""
 
         self.status = "completed"
+
+    def mark_waiting(self) -> None:
+        """标记当前执行切片已进入权威等待状态。"""
+
+        self.status = "waiting"
+
+    def cancel(self) -> None:
+        """标记当前 turn 已取消。"""
+
+        self.status = "cancelled"
 
     def fail(self, error: str) -> None:
         """标记 turn 失败并保存错误摘要。"""

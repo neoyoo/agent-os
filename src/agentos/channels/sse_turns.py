@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from agentos.channels.types import ChannelTurnRequest
 from agentos.runtime import Agent
+from agentos.runtime.agent_stream import AgentStream
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class SseTurnEntry:
     stream_key: str
     agent: Agent
     request: ChannelTurnRequest
+    stream: AgentStream | None = None
     next_sequence: int = 1
     terminal: bool = False
     active_readers: int = 0

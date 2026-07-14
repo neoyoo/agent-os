@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 import inspect
 from typing import Protocol
 
-from agentos.capabilities.tools import RegisteredTool
+from agentos._sync_work import run_sync
+from agentos.capabilities.tools import RegisteredTool, ToolHandlerResult
 from agentos.policies.resource_policy import ResourcePolicy
 
 
@@ -18,7 +18,7 @@ class ExecutionBackend(Protocol):
         arguments: dict[str, object],
         *,
         resource_policy: ResourcePolicy,
-    ) -> str:
+    ) -> ToolHandlerResult:
         """同步执行 tool handler。"""
         ...
 
@@ -28,7 +28,7 @@ class ExecutionBackend(Protocol):
         arguments: dict[str, object],
         *,
         resource_policy: ResourcePolicy,
-    ) -> str:
+    ) -> ToolHandlerResult:
         """异步执行 tool handler。"""
         ...
 
@@ -43,7 +43,7 @@ class InProcessExecutionBackend:
         arguments: dict[str, object],
         *,
         resource_policy: ResourcePolicy,
-    ) -> str:
+    ) -> ToolHandlerResult:
         """同步执行 tool handler；ResourcePolicy 由未来沙箱后端消费。"""
 
         content = tool.handler(arguments)
@@ -51,7 +51,7 @@ class InProcessExecutionBackend:
             close = getattr(content, "close", None)
             if callable(close):
                 close()
-            raise RuntimeError("async handler requires AsyncQueryLoop")
+            raise RuntimeError("async handler requires ExecutionBackend.async_run")
         return content
 
     async def async_run(
@@ -60,12 +60,12 @@ class InProcessExecutionBackend:
         arguments: dict[str, object],
         *,
         resource_policy: ResourcePolicy,
-    ) -> str:
+    ) -> ToolHandlerResult:
         """异步执行 tool handler；同步 handler 放入线程。"""
 
         if inspect.iscoroutinefunction(tool.handler):
             return await tool.handler(arguments)
-        return await asyncio.to_thread(
+        return await run_sync(
             self.run,
             tool,
             arguments,

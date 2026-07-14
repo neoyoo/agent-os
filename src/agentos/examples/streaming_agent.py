@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agentos import AgentBuilder
 from agentos.providers import FakeProvider
+from agentos.sync import SyncAgent
 
 
 def build_agent():
@@ -14,8 +15,10 @@ def main() -> None:
     """打印 typed stream events。"""
 
     agent = build_agent()
-    for event in agent.stream("hello"):
-        print(event)
+    with SyncAgent(agent) as sync_agent:
+        with sync_agent.run("hello", stream=True) as stream:
+            for event in stream:
+                print(event)
 
 
 if __name__ == "__main__":

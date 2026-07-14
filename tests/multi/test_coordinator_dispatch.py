@@ -12,7 +12,7 @@ from agentos.multi import (
     TaskRequest,
     TaskTable,
 )
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 
 
@@ -34,7 +34,7 @@ def attach_parent_and_expert(coordinator: AgentCoordinator) -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -44,7 +44,7 @@ def attach_parent_and_expert(coordinator: AgentCoordinator) -> None:
             capabilities=("code-review", "python"),
             max_concurrent_tasks=1,
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
 
 
@@ -104,7 +104,7 @@ def test_dispatch_reports_duplicate_reserved_task_id_as_already_submitted() -> N
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -114,7 +114,7 @@ def test_dispatch_reports_duplicate_reserved_task_id_as_already_submitted() -> N
             capabilities=("code-review", "python"),
             max_concurrent_tasks=2,
         ),
-        build_agent_with_response("expert result"),
+        build_sync_agent_with_response("expert result"),
     )
     coordinator.dispatch(
         instruction="Review Python code",
@@ -144,7 +144,7 @@ def test_dispatch_can_target_specific_matching_expert() -> None:
             description="Parent agent.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("parent"),
+        build_sync_agent_with_response("parent"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -154,7 +154,7 @@ def test_dispatch_can_target_specific_matching_expert() -> None:
             capabilities=("code-review",),
             max_concurrent_tasks=1,
         ),
-        build_agent_with_response("expert a result"),
+        build_sync_agent_with_response("expert a result"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -164,7 +164,7 @@ def test_dispatch_can_target_specific_matching_expert() -> None:
             capabilities=("code-review",),
             max_concurrent_tasks=1,
         ),
-        build_agent_with_response("expert b result"),
+        build_sync_agent_with_response("expert b result"),
     )
 
     handle = coordinator.dispatch(

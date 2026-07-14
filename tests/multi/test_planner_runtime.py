@@ -41,7 +41,7 @@ from agentos.multi.planner import (
     SubAgentTemplate,
 )
 from agentos.multi.postgres_tasks import PostgresTaskStore
-from tests.multi.helpers import build_agent_with_response
+from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 from tests.multi.test_postgres_task_store import FakeConnection
 
@@ -2050,7 +2050,7 @@ def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() ->
             description="Plan owner.",
             capabilities=("coordinate",),
         ),
-        build_agent_with_response("leader"),
+        build_sync_agent_with_response("leader"),
     )
     coordinator.attach_agent(
         AgentCard(
@@ -2060,7 +2060,7 @@ def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() ->
             capabilities=("architecture-review",),
             max_concurrent_tasks=2,
         ),
-        build_agent_with_response("expert"),
+        build_sync_agent_with_response("expert"),
     )
     accepted = coordinator.dispatch(
         instruction="Previously submitted task.",
