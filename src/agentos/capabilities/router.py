@@ -20,7 +20,7 @@ from agentos.context_protocol import (
     CONTEXT_PROTOCOL_TOOL_NAMES,
     context_protocol_tool_specs,
 )
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 from agentos.policies import ResourcePolicy, SecurityPolicy
 from agentos.providers import ProviderToolCall, ProviderToolSpec
 from agentos.recall import RecallRuntime
@@ -195,7 +195,7 @@ class ToolCallRouter:
         *,
         handle: str | None,
         query: str | None,
-        messages: list[Message],
+        messages: tuple[StoredMessage, ...],
     ) -> str:
         source = "compressed_history" if handle is not None else "semantic_recall"
         identifier = handle if handle is not None else query or ""

@@ -1,5 +1,9 @@
+import inspect
+from typing import get_type_hints
+
 import pytest
 
+import agentos.capabilities.router as router_module
 from agentos.attachments import AttachmentRuntime
 from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
 from agentos.context_protocol import context_protocol_tool_specs
@@ -13,11 +17,41 @@ from agentos.memory.in_memory import (
     InMemoryHotSessionStore,
     InMemoryRecallIndex,
 )
-from agentos.messages import Message, MessageRuntime
+from agentos.messages import MessageRuntime, StoredMessage
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.policies import BudgetPolicy
 from agentos.providers import ProviderToolCall
 from agentos.recall import RecallRuntime
+
+
+def test_tool_call_router_uses_stored_message_truth() -> None:
+    assert "from agentos.messages import Message" not in inspect.getsource(router_module)
+    hints = get_type_hints(ToolCallRouter._format_recalled_context)
+    assert hints["messages"] == tuple[StoredMessage, ...]
+
+
+def test_tool_call_router_result_persists_as_stored_message() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="echo",
+            description="Echo text.",
+            parameters={"type": "object"},
+            handler=lambda arguments: str(arguments["text"]),
+        ),
+    )
+    result = ToolCallRouter(tool_registry=registry).execute_tool_call(
+        ProviderToolCall(id="call_1", name="echo", arguments={"text": "hello"}),
+    )
+    messages = MessageRuntime()
+    stored = messages.append_tool_result(result.tool_call_id, result.content)
+
+    assert type(stored) is StoredMessage
+    assert (stored.role, stored.tool_call_id, stored.content) == (
+        "tool",
+        "call_1",
+        "hello",
+    )
 
 
 def test_tool_registry_exports_provider_tool_specs() -> None:
@@ -436,7 +470,7 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
     memory_runtime.record_compressed_segment(package)
     durable_store.append_message(
         "session_1",
-        Message(id="msg_1", role="user", content="读取 pyproject.toml"),
+        StoredMessage(id="msg_1", role="user", content="读取 pyproject.toml"),
     )
     runtime = ToolCallRouter(
         tool_registry=ToolRegistry(),

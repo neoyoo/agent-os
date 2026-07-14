@@ -1,17 +1,17 @@
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Protocol
 
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 from agentos.tokens import TokenCounter
 
 
 class CompressionBudget(Protocol):
     """Compression evictor 依赖的预算协议。"""
 
-    def should_compress(self, messages: Sequence[Message]) -> bool:
+    def should_compress(self, messages: tuple[StoredMessage, ...]) -> bool:
         """判断 active window 是否超过预算。"""
 
-    def oldest_prefix_size(self, messages: Sequence[Message]) -> int:
+    def oldest_prefix_size(self, messages: tuple[StoredMessage, ...]) -> int:
         """返回应优先压缩的最旧消息前缀长度。"""
 
 
@@ -34,12 +34,12 @@ class BudgetPolicy:
                 "retain_latest_messages must not exceed max_active_messages",
             )
 
-    def should_compress(self, messages: Sequence[Message]) -> bool:
+    def should_compress(self, messages: tuple[StoredMessage, ...]) -> bool:
         """判断 active window 是否超过预算。"""
 
         return len(messages) > self.max_active_messages
 
-    def oldest_prefix_size(self, messages: Sequence[Message]) -> int:
+    def oldest_prefix_size(self, messages: tuple[StoredMessage, ...]) -> int:
         """返回应优先压缩的最旧消息前缀长度。"""
 
         if not self.should_compress(messages):
@@ -77,12 +77,12 @@ class TokenBudgetPolicy:
 
         return self.context_window - self.reserve_output_tokens
 
-    def should_compress(self, messages: Sequence[Message]) -> bool:
+    def should_compress(self, messages: tuple[StoredMessage, ...]) -> bool:
         """判断 active window 是否超过 token 预算。"""
 
         return self._message_tokens(messages) + self.static_overhead_tokens > self.effective_window
 
-    def oldest_prefix_size(self, messages: Sequence[Message]) -> int:
+    def oldest_prefix_size(self, messages: tuple[StoredMessage, ...]) -> int:
         """返回应优先压缩的最旧消息前缀长度。"""
 
         if not self.should_compress(messages):
@@ -97,8 +97,8 @@ class TokenBudgetPolicy:
             retained_count += 1
         return max(0, len(messages) - retained_count)
 
-    def _message_tokens(self, messages: Sequence[Message]) -> int:
+    def _message_tokens(self, messages: tuple[StoredMessage, ...]) -> int:
         return sum(self._single_message_tokens(message) for message in messages)
 
-    def _single_message_tokens(self, message: Message) -> int:
+    def _single_message_tokens(self, message: StoredMessage) -> int:
         return self.token_counter.count_text(message.content)
