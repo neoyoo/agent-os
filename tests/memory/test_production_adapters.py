@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from agentos.artifacts import ArtifactRef
 from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, HotSessionState, SegmentRecallDocument
-from agentos.messages import Message, MessageRef, ToolCall
+from agentos.messages import MessageRef, StoredMessage, ToolCall
 from agentos.runtime.session import SessionState
 
 
@@ -100,11 +102,27 @@ def test_redis_hot_session_store_round_trips_hot_state_and_refs() -> None:
         key_prefix="test",
         ttl_seconds=60,
     )
-    message = Message(
+    message = StoredMessage(
         id="msg_1",
         role="assistant",
         content="done",
-        tool_calls=[ToolCall(id="call_1", name="read_file", arguments={"path": "pyproject.toml"})],
+        artifact_refs=(
+            ArtifactRef(
+                artifact_id="art_1",
+                filename="pyproject.toml",
+                media_type="text/plain",
+            ),
+        ),
+        tool_calls=[
+            ToolCall(
+                id="call_1",
+                name="read_file",
+                arguments={
+                    "path": "pyproject.toml",
+                    "options": {"encoding": "utf-8", "fallbacks": ["latin-1"]},
+                },
+            ),
+        ],
     )
     state = HotSessionState(
         session_id="session_1",
@@ -117,9 +135,28 @@ def test_redis_hot_session_store_round_trips_hot_state_and_refs() -> None:
 
     store.save_hot_state(state)
 
+    expected_artifact_refs = [
+        {
+            "artifact_id": "art_1",
+            "filename": "pyproject.toml",
+            "media_type": "text/plain",
+        },
+    ]
+    message_payload = json.loads(
+        client.hashes["test:hot:session_1:messages"]["msg_1"],
+    )
+    state_payload = json.loads(client.values["test:hot:session_1:state"])
+    assert message_payload["artifact_refs"] == expected_artifact_refs
+    assert state_payload["recent_messages"][0]["artifact_refs"] == (
+        expected_artifact_refs
+    )
+
     loaded = store.load_hot_state("session_1")
     assert loaded == state
-    assert store.get_hot_messages("session_1", ["msg_1"]) == [message]
+    stored_messages = store.get_hot_messages("session_1", ["msg_1"])
+    assert stored_messages == [message]
+    assert stored_messages is not None
+    assert all(type(item) is StoredMessage for item in stored_messages)
     assert store.get_hot_messages("session_1", ["missing"]) is None
     assert store.get_segment_refs("session_1", "seg_1") == ("msg_1",)
     assert store.consume_temporary_recalled_refs("session_1") == ("msg_1",)
@@ -295,8 +332,8 @@ def test_postgres_durable_session_store_round_trips_protocol_state() -> None:
     session.start()
     session.new_turn("hello")
     messages = [
-        Message(id="msg_1", role="user", content="hello"),
-        Message(id="msg_2", role="assistant", content="world"),
+        StoredMessage(id="msg_1", role="user", content="hello"),
+        StoredMessage(id="msg_2", role="assistant", content="world"),
     ]
 
     store.save_session(session)
@@ -355,7 +392,10 @@ def test_postgres_durable_session_store_reports_missing_message_from_batch() -> 
 
     connection = FakePostgresConnection()
     store = PostgresDurableSessionStore(dsn="postgresql://unused", connection=connection)
-    store.append_message("session_1", Message(id="msg_1", role="user", content="hello"))
+    store.append_message(
+        "session_1",
+        StoredMessage(id="msg_1", role="user", content="hello"),
+    )
 
     with pytest.raises(KeyError) as error:
         store.get_messages("session_1", ["msg_1", "missing"])

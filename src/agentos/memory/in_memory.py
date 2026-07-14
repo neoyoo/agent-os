@@ -11,7 +11,7 @@ from agentos.memory.types import (
     RecallCandidate,
     SegmentRecallDocument,
 )
-from agentos.messages import Message, MessageRef
+from agentos.messages import MessageRef, StoredMessage
 from agentos.runtime.session import SessionState
 
 
@@ -20,7 +20,7 @@ class InMemoryHotSessionStore:
     """测试和 local profile 使用的热点 session store。"""
 
     _states: dict[str, HotSessionState] = field(default_factory=dict)
-    _messages: dict[str, dict[str, Message]] = field(default_factory=dict)
+    _messages: dict[str, dict[str, StoredMessage]] = field(default_factory=dict)
     _segment_refs: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
     _temporary_refs: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -43,7 +43,7 @@ class InMemoryHotSessionStore:
                 state.temporary_recalled_refs,
             )
 
-    def append_hot_message(self, session_id: str, message: Message) -> None:
+    def append_hot_message(self, session_id: str, message: StoredMessage) -> None:
         """追加一条热点原文消息。"""
 
         self._messages.setdefault(session_id, {})[message.id] = message
@@ -52,11 +52,11 @@ class InMemoryHotSessionStore:
         self,
         session_id: str,
         message_ids: Sequence[str],
-    ) -> list[Message] | None:
+    ) -> list[StoredMessage] | None:
         """按 ids 读取热点消息；任一缺失返回 None。"""
 
         session_messages = self._messages.get(session_id, {})
-        messages: list[Message] = []
+        messages: list[StoredMessage] = []
         for message_id in message_ids:
             message = session_messages.get(message_id)
             if message is None:
@@ -103,7 +103,7 @@ class InMemoryDurableSessionStore:
     """测试和 local profile 使用的 durable session store。"""
 
     _sessions: dict[str, SessionState] = field(default_factory=dict)
-    _messages: dict[str, dict[str, Message]] = field(default_factory=dict)
+    _messages: dict[str, dict[str, StoredMessage]] = field(default_factory=dict)
     _active_refs: dict[str, tuple[MessageRef, ...]] = field(default_factory=dict)
     _packages: dict[str, dict[str, CompressedSegmentPackage]] = field(
         default_factory=dict,
@@ -122,7 +122,7 @@ class InMemoryDurableSessionStore:
         except KeyError as error:
             raise KeyError(session_id) from error
 
-    def append_message(self, session_id: str, message: Message) -> None:
+    def append_message(self, session_id: str, message: StoredMessage) -> None:
         """追加原始消息。"""
 
         self._messages.setdefault(session_id, {})[message.id] = message
@@ -131,11 +131,11 @@ class InMemoryDurableSessionStore:
         self,
         session_id: str,
         message_ids: Sequence[str],
-    ) -> list[Message]:
+    ) -> list[StoredMessage]:
         """按 ids 读取原始消息。"""
 
         session_messages = self._messages.get(session_id, {})
-        messages: list[Message] = []
+        messages: list[StoredMessage] = []
         for message_id in message_ids:
             try:
                 messages.append(session_messages[message_id])

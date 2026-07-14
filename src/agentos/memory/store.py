@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Protocol, Sequence
 
 from agentos.context import CompressedSegment
 from agentos.memory.types import CompressedSegmentPackage, HotSessionState
-from agentos.messages import Message, MessageRef
+from agentos.messages import MessageRef, StoredMessage
 
 if TYPE_CHECKING:
     from agentos.runtime.session import SessionState
@@ -19,14 +19,14 @@ class HotSessionStore(Protocol):
     def save_hot_state(self, state: HotSessionState) -> None:
         """保存热点 session state。"""
 
-    def append_hot_message(self, session_id: str, message: Message) -> None:
+    def append_hot_message(self, session_id: str, message: StoredMessage) -> None:
         """追加一条热点原文消息。"""
 
     def get_hot_messages(
         self,
         session_id: str,
         message_ids: Sequence[str],
-    ) -> list[Message] | None:
+    ) -> list[StoredMessage] | None:
         """按 ids 读取热点消息；任一缺失返回 None。"""
 
     def save_segment_refs(
@@ -64,14 +64,14 @@ class DurableSessionStore(Protocol):
     def load_session(self, session_id: str) -> "SessionState":
         """读取 session state。"""
 
-    def append_message(self, session_id: str, message: Message) -> None:
+    def append_message(self, session_id: str, message: StoredMessage) -> None:
         """追加原始消息。"""
 
     def get_messages(
         self,
         session_id: str,
         message_ids: Sequence[str],
-    ) -> list[Message]:
+    ) -> list[StoredMessage]:
         """按 ids 读取原始消息。"""
 
     def save_active_refs(

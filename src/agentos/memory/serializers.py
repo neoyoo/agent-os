@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentos.providers.json_values import thaw_json
+from agentos.artifacts import ArtifactRef
 from agentos.context import CompressedSegment
 from agentos.memory.types import (
     CompressedSegmentPackage,
     HotSessionState,
     SegmentRecallDocument,
 )
-from agentos.messages import Message, MessageRef, ToolCall
+from agentos.messages import MessageRef, StoredMessage, ToolCall
+from agentos.providers.json_values import thaw_json
 
 
 JsonDict = dict[str, Any]
@@ -53,13 +54,33 @@ def tool_call_from_dict(data: JsonDict) -> ToolCall:
     )
 
 
-def message_to_dict(message: Message) -> JsonDict:
+def _artifact_ref_to_dict(ref: ArtifactRef) -> JsonDict:
+    return {
+        "artifact_id": ref.artifact_id,
+        "filename": ref.filename,
+        "media_type": ref.media_type,
+    }
+
+
+def _artifact_ref_from_dict(data: JsonDict) -> ArtifactRef:
+    filename = data.get("filename")
+    return ArtifactRef(
+        artifact_id=str(data["artifact_id"]),
+        filename=None if filename is None else str(filename),
+        media_type=str(data["media_type"]),
+    )
+
+
+def message_to_dict(message: StoredMessage) -> JsonDict:
     """序列化原始 message。"""
 
     return {
         "id": message.id,
         "role": message.role,
         "content": message.content,
+        "artifact_refs": [
+            _artifact_ref_to_dict(ref) for ref in message.artifact_refs
+        ],
         "tool_calls": [
             tool_call_to_dict(tool_call) for tool_call in message.tool_calls
         ],
@@ -67,17 +88,21 @@ def message_to_dict(message: Message) -> JsonDict:
     }
 
 
-def message_from_dict(data: JsonDict) -> Message:
+def message_from_dict(data: JsonDict) -> StoredMessage:
     """反序列化原始 message。"""
 
-    return Message(
+    return StoredMessage(
         id=str(data["id"]),
         role=data["role"],
         content=str(data["content"]),
-        tool_calls=[
+        artifact_refs=tuple(
+            _artifact_ref_from_dict(ref)
+            for ref in data.get("artifact_refs", [])
+        ),
+        tool_calls=tuple(
             tool_call_from_dict(tool_call)
             for tool_call in data.get("tool_calls", [])
-        ],
+        ),
         tool_call_id=(
             None
             if data.get("tool_call_id") is None

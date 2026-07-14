@@ -1,3 +1,4 @@
+from agentos.artifacts import ArtifactRef
 from agentos.context import CompressedSegment
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.memory.in_memory import (
@@ -6,7 +7,7 @@ from agentos.memory.in_memory import (
     InMemoryRecallIndex,
 )
 from agentos.memory.runtime import MemoryRuntime
-from agentos.messages import Message
+from agentos.messages import StoredMessage, ToolCall
 
 
 def build_package(segment_id: str = "seg_1") -> CompressedSegmentPackage:
@@ -66,22 +67,26 @@ def test_recall_by_handle_prefers_hot_messages_when_available() -> None:
     runtime, hot_store, durable_store, _ = build_runtime()
     package = build_package()
     runtime.record_compressed_segment(package)
-    hot_store.append_hot_message("session_1", Message(id="msg_1", role="user", content="hot user"))
     hot_store.append_hot_message(
         "session_1",
-        Message(id="msg_2", role="assistant", content="hot assistant"),
+        StoredMessage(id="msg_1", role="user", content="hot user"),
+    )
+    hot_store.append_hot_message(
+        "session_1",
+        StoredMessage(id="msg_2", role="assistant", content="hot assistant"),
     )
     durable_store.append_message(
         "session_1",
-        Message(id="msg_1", role="user", content="durable user"),
+        StoredMessage(id="msg_1", role="user", content="durable user"),
     )
     durable_store.append_message(
         "session_1",
-        Message(id="msg_2", role="assistant", content="durable assistant"),
+        StoredMessage(id="msg_2", role="assistant", content="durable assistant"),
     )
 
     messages = runtime.recall_by_handle("session_1", "seg_1")
 
+    assert all(type(message) is StoredMessage for message in messages)
     assert [message.content for message in messages] == ["hot user", "hot assistant"]
 
 
@@ -89,17 +94,51 @@ def test_recall_by_handle_falls_back_to_durable_messages() -> None:
     runtime, _, durable_store, _ = build_runtime()
     package = build_package()
     runtime.record_compressed_segment(package)
-    durable_store.append_message(
-        "session_1",
-        Message(id="msg_1", role="user", content="durable user"),
+    artifact = ArtifactRef(
+        artifact_id="art_1",
+        filename="result.json",
+        media_type="application/json",
     )
-    durable_store.append_message(
-        "session_1",
-        Message(id="msg_2", role="assistant", content="durable assistant"),
-    )
+    durable_messages = [
+        StoredMessage(
+            id="msg_1",
+            role="user",
+            content="durable user",
+            artifact_refs=(artifact,),
+        ),
+        StoredMessage(
+            id="msg_2",
+            role="assistant",
+            content="durable assistant",
+            artifact_refs=(artifact,),
+            tool_calls=(
+                ToolCall(
+                    id="call_1",
+                    name="inspect",
+                    arguments={
+                        "filters": {
+                            "tags": ["phase2", "memory"],
+                            "metadata": {"source": "artifact"},
+                        },
+                    },
+                ),
+            ),
+        ),
+    ]
+    for message in durable_messages:
+        durable_store.append_message("session_1", message)
 
     messages = runtime.recall_by_handle("session_1", "seg_1")
 
+    assert all(type(message) is StoredMessage for message in messages)
+    assert messages == durable_messages
+    assert messages[0].artifact_refs == (artifact,)
+    assert messages[1].tool_calls[0].arguments == {
+        "filters": {
+            "tags": ["phase2", "memory"],
+            "metadata": {"source": "artifact"},
+        },
+    }
     assert [message.content for message in messages] == [
         "durable user",
         "durable assistant",
@@ -128,12 +167,13 @@ def test_recall_by_query_uses_recall_index_and_deduplicates_messages() -> None:
     runtime.record_compressed_segment(first)
     runtime.record_compressed_segment(second)
     for message in [
-        Message(id="msg_1", role="user", content="question"),
-        Message(id="msg_2", role="assistant", content="agent-os"),
-        Message(id="msg_3", role="user", content="confirm"),
+        StoredMessage(id="msg_1", role="user", content="question"),
+        StoredMessage(id="msg_2", role="assistant", content="agent-os"),
+        StoredMessage(id="msg_3", role="user", content="confirm"),
     ]:
         durable_store.append_message("session_1", message)
 
     messages = runtime.recall_by_query("session_1", "pyproject agent-os", limit=2)
 
+    assert all(type(message) is StoredMessage for message in messages)
     assert [message.id for message in messages] == ["msg_1", "msg_2", "msg_3"]

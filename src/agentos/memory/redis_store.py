@@ -10,7 +10,7 @@ from agentos.memory.serializers import (
     message_to_dict,
 )
 from agentos.memory.types import HotSessionState
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 
 
 class RedisHotSessionStore:
@@ -97,7 +97,7 @@ class RedisHotSessionStore:
         self._queue_ttl_refresh(pipeline, state.session_id)
         pipeline.execute()
 
-    def append_hot_message(self, session_id: str, message: Message) -> None:
+    def append_hot_message(self, session_id: str, message: StoredMessage) -> None:
         """追加一条热点原文消息。"""
 
         self._client.hset(
@@ -111,7 +111,7 @@ class RedisHotSessionStore:
         self,
         session_id: str,
         message_ids: Sequence[str],
-    ) -> list[Message] | None:
+    ) -> list[StoredMessage] | None:
         """按 ids 读取热点消息；任一缺失返回 None。"""
 
         raw_messages = self._client.hmget(

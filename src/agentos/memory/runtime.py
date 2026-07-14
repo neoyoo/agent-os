@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from agentos.memory.recall_index import RecallIndex
 from agentos.memory.store import DurableSessionStore, HotSessionStore
 from agentos.memory.types import CompressedSegmentPackage
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 
 
 @dataclass(slots=True)
@@ -26,7 +26,7 @@ class MemoryRuntime:
         self.durable_store.save_compressed_segment(session_id, package)
         self.recall_index.index_segment(package.recall_document)
 
-    def recall_by_handle(self, session_id: str, handle: str) -> list[Message]:
+    def recall_by_handle(self, session_id: str, handle: str) -> list[StoredMessage]:
         """按 segment handle 恢复原文消息。"""
 
         source_refs = self.hot_store.get_segment_refs(session_id, handle)
@@ -43,10 +43,10 @@ class MemoryRuntime:
         session_id: str,
         query: str,
         limit: int,
-    ) -> list[Message]:
+    ) -> list[StoredMessage]:
         """按 query 检索相关 segment 并恢复原文消息。"""
 
-        messages: list[Message] = []
+        messages: list[StoredMessage] = []
         seen_message_ids: set[str] = set()
         candidates = self.recall_index.search_segments(session_id, query, limit)
         for candidate in candidates:

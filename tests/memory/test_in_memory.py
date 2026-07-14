@@ -7,7 +7,7 @@ from agentos.memory.in_memory import (
     InMemoryHotSessionStore,
     InMemoryRecallIndex,
 )
-from agentos.messages import Message, MessageRef
+from agentos.messages import MessageRef, StoredMessage
 from agentos.runtime import SessionState
 
 
@@ -35,7 +35,7 @@ def build_package(segment_id: str = "seg_1") -> CompressedSegmentPackage:
 
 def test_in_memory_hot_store_saves_hot_messages_refs_and_temporary_refs() -> None:
     store = InMemoryHotSessionStore()
-    message = Message(id="msg_1", role="user", content="hello")
+    message = StoredMessage(id="msg_1", role="user", content="hello")
 
     store.save_hot_state(
         HotSessionState(
@@ -44,15 +44,21 @@ def test_in_memory_hot_store_saves_hot_messages_refs_and_temporary_refs() -> Non
             recent_messages=[message],
         ),
     )
-    store.append_hot_message("session_1", Message(id="msg_2", role="assistant", content="ok"))
+    store.append_hot_message(
+        "session_1",
+        StoredMessage(id="msg_2", role="assistant", content="ok"),
+    )
     store.save_segment_refs("session_1", "seg_1", ["msg_1", "msg_2"])
     store.set_temporary_recalled_refs("session_1", ["msg_1"])
 
     assert store.load_hot_state("session_1") is not None
-    assert store.get_hot_messages("session_1", ["msg_1", "msg_2"]) == [
+    hot_messages = store.get_hot_messages("session_1", ["msg_1", "msg_2"])
+    assert hot_messages == [
         message,
-        Message(id="msg_2", role="assistant", content="ok"),
+        StoredMessage(id="msg_2", role="assistant", content="ok"),
     ]
+    assert hot_messages is not None
+    assert all(type(item) is StoredMessage for item in hot_messages)
     assert store.get_segment_refs("session_1", "seg_1") == ("msg_1", "msg_2")
     assert store.consume_temporary_recalled_refs("session_1") == ("msg_1",)
     assert store.consume_temporary_recalled_refs("session_1") == ()
@@ -60,7 +66,10 @@ def test_in_memory_hot_store_saves_hot_messages_refs_and_temporary_refs() -> Non
 
 def test_in_memory_hot_store_returns_none_when_any_hot_message_is_missing() -> None:
     store = InMemoryHotSessionStore()
-    store.append_hot_message("session_1", Message(id="msg_1", role="user", content="hello"))
+    store.append_hot_message(
+        "session_1",
+        StoredMessage(id="msg_1", role="user", content="hello"),
+    )
 
     assert store.get_hot_messages("session_1", ["msg_1", "missing"]) is None
 
@@ -70,8 +79,8 @@ def test_in_memory_durable_store_saves_messages_segments_and_active_refs() -> No
     session = SessionState(id="session_1")
     package = build_package()
     messages = [
-        Message(id="msg_1", role="user", content="Read pyproject"),
-        Message(id="msg_2", role="assistant", content="agent-os"),
+        StoredMessage(id="msg_1", role="user", content="Read pyproject"),
+        StoredMessage(id="msg_2", role="assistant", content="agent-os"),
     ]
 
     store.save_session(session)
@@ -81,7 +90,9 @@ def test_in_memory_durable_store_saves_messages_segments_and_active_refs() -> No
     store.save_compressed_segment("session_1", package)
 
     assert store.load_session("session_1") == session
-    assert store.get_messages("session_1", ["msg_1", "msg_2"]) == messages
+    stored_messages = store.get_messages("session_1", ["msg_1", "msg_2"])
+    assert stored_messages == messages
+    assert all(type(item) is StoredMessage for item in stored_messages)
     assert store.load_active_refs("session_1") == (MessageRef("msg_2"),)
     assert store.get_segment_refs("session_1", "seg_1") == ("msg_1", "msg_2")
     assert store.list_compressed_segments("session_1") == (package.segment,)

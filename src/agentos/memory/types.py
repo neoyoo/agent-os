@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import Mapping, Sequence
 
 from agentos.context import CompressedSegment
-from agentos.messages import Message, MessageRef
+from agentos.messages import MessageRef, StoredMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +89,7 @@ class HotSessionState:
 
     session_id: str
     active_refs: tuple[MessageRef, ...]
-    recent_messages: tuple[Message, ...]
+    recent_messages: tuple[StoredMessage, ...]
     temporary_recalled_refs: tuple[str, ...]
     segment_refs: Mapping[str, tuple[str, ...]]
     metadata: Mapping[str, object]
@@ -98,7 +98,7 @@ class HotSessionState:
         self,
         session_id: str,
         active_refs: Sequence[MessageRef] | None = None,
-        recent_messages: Sequence[Message] | None = None,
+        recent_messages: Sequence[StoredMessage] | None = None,
         temporary_recalled_refs: Sequence[str] | None = None,
         segment_refs: Mapping[str, Sequence[str]] | None = None,
         metadata: Mapping[str, object] | None = None,
