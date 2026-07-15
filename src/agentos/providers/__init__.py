@@ -10,18 +10,21 @@ from agentos.providers.base import (
     ProviderUsage,
 )
 from agentos.providers.fake import FakeProvider
-from agentos.providers.input import (
+from agentos.providers.content import (
     FilePart,
     ImagePart,
+    ProviderBinaryPayload,
+    ProviderContentPart,
+    TextPart,
+)
+from agentos.providers.input import (
     InputAuthority,
     InputOrigin,
     PersistencePolicy,
-    ProviderContentPart,
     ProviderInputItem,
     ProviderInputKind,
     ProviderRole,
     ProviderToolCall,
-    TextPart,
     VisibilityPolicy,
 )
 from agentos.providers.tool_specs import (
@@ -81,6 +84,7 @@ __all__ = [
     "ProviderToolSpec",
     "ProviderUsage",
     "PersistencePolicy",
+    "ProviderBinaryPayload",
     "ProviderContentDelta",
     "ProviderStreamCancelled",
     "ProviderStreamCompleted",

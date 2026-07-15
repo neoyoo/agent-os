@@ -1,6 +1,6 @@
 import pytest
 
-from agentos.attachments import AttachmentRuntime, BytesSource
+from agentos.attachments import AttachmentRuntime
 from agentos.context import (
     ContextRuntime,
     ContextSnapshotRenderer,
@@ -15,6 +15,7 @@ from agentos.runtime.message_projection import project_stored_message
 from agentos.runtime.provider_request_builder import ProviderRequestReceipt
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
+from tests._provider_binary import payload_from_attachment
 
 
 class MutableProjectionProvider:
@@ -235,7 +236,7 @@ def test_initial_uploaded_image_extends_the_business_user_item() -> None:
     assert user_item.kind == "business_message"
     assert user_item.content == (
         TextPart("Analyze the image"),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )
 
 
@@ -265,7 +266,7 @@ def test_uploaded_image_remains_mounted_on_later_builds_in_the_turn() -> None:
     ]
     assert second.request.messages[-1].content == (
         TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )
 
 
@@ -293,5 +294,4 @@ def test_loaded_image_is_appended_as_context_mount() -> None:
     )
     image = mount.content[1]
     assert isinstance(image, ImagePart)
-    assert isinstance(image.attachment.source, BytesSource)
-    assert image.attachment.source.data == b"image-bytes"
+    assert image.payload.data == b"image-bytes"

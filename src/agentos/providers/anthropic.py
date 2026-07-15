@@ -3,26 +3,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentos._json_values import thaw_json
-from agentos.attachments.types import (
-    BytesSource,
-    InlineBase64Source,
-    LocalFileSource,
-    ProviderFileSource,
-    UrlSource,
-)
 from agentos.providers.base import (
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderUsage,
 )
-from agentos.providers.input import (
+from agentos.providers.content import (
     FilePart,
     ImagePart,
+    ProviderBinaryPayload,
     ProviderContentPart,
-    ProviderInputItem,
     TextPart,
 )
+from agentos.providers.input import ProviderInputItem
 from agentos.providers.tool_specs import ProviderToolSpec
 
 
@@ -150,55 +144,32 @@ class AnthropicProvider:
         if isinstance(part, ImagePart):
             return {
                 "type": "image",
-                "source": self._source_block(part.attachment, require_image=True),
+                "source": self._source_block(part.payload, require_image=True),
             }
         if isinstance(part, FilePart):
-            mime_type = str(getattr(part.attachment, "mime_type", ""))
-            if mime_type != "application/pdf":
+            if part.payload.media_type != "application/pdf":
                 raise ValueError("Anthropic file attachments only support PDF in v1")
             return {
                 "type": "document",
-                "source": self._source_block(part.attachment),
+                "source": self._source_block(part.payload),
             }
         raise ValueError(f"unsupported Anthropic content part: {type(part).__name__}")
 
     def _source_block(
         self,
-        attachment: object,
+        payload: ProviderBinaryPayload,
         *,
         require_image: bool = False,
     ) -> dict[str, object]:
-        """把附件 source 转为 Anthropic source block。"""
+        """把二进制载荷转为 Anthropic source block。"""
 
-        mime_type = str(getattr(attachment, "mime_type", ""))
-        if require_image and not mime_type.startswith("image/"):
+        if require_image and not payload.media_type.startswith("image/"):
             raise ValueError("Anthropic image parts require image MIME")
-        source = getattr(attachment, "source", None)
-        if isinstance(source, UrlSource):
-            return {"type": "url", "url": source.url}
-        if isinstance(source, InlineBase64Source):
-            return {
-                "type": "base64",
-                "media_type": source.mime_type,
-                "data": source.data,
-            }
-        if isinstance(source, BytesSource):
-            return {
-                "type": "base64",
-                "media_type": mime_type,
-                "data": base64.b64encode(source.data).decode("ascii"),
-            }
-        if isinstance(source, LocalFileSource):
-            return {
-                "type": "base64",
-                "media_type": mime_type,
-                "data": base64.b64encode(source.path.read_bytes()).decode("ascii"),
-            }
-        if isinstance(source, ProviderFileSource):
-            if source.state != "ready":
-                raise ValueError(f"provider file is not ready: {source.state}")
-            return {"type": "file", "file_id": source.file_id}
-        raise ValueError("unsupported Anthropic attachment source")
+        return {
+            "type": "base64",
+            "media_type": payload.media_type,
+            "data": base64.b64encode(payload.data).decode("ascii"),
+        }
 
     def _messages(
         self,

@@ -1,13 +1,14 @@
 """ProviderInputItem 的内部 JSON-safe 投影。"""
 
 from agentos._json_values import thaw_json
-from agentos.providers.input import (
+from agentos.providers.content import (
     FilePart,
     ImagePart,
+    ProviderBinaryPayload,
     ProviderContentPart,
-    ProviderInputItem,
     TextPart,
 )
+from agentos.providers.input import ProviderInputItem
 
 
 def provider_input_to_dict(item: ProviderInputItem) -> dict[str, object]:
@@ -40,21 +41,20 @@ def _content_part_to_dict(part: ProviderContentPart) -> dict[str, object]:
     if isinstance(part, ImagePart):
         return {
             "type": "image",
-            "attachment": _attachment_metadata(part.attachment),
+            "payload": _payload_metadata(part.payload),
             "detail": part.detail,
         }
     if isinstance(part, FilePart):
         return {
             "type": "file",
-            "attachment": _attachment_metadata(part.attachment),
+            "payload": _payload_metadata(part.payload),
         }
     raise TypeError(f"unsupported provider content part: {type(part).__name__}")
 
 
-def _attachment_metadata(attachment: object) -> dict[str, object]:
+def _payload_metadata(payload: ProviderBinaryPayload) -> dict[str, object]:
     return {
-        "handle": str(getattr(attachment, "handle", "")),
-        "filename": getattr(attachment, "filename", None),
-        "mime_type": str(getattr(attachment, "mime_type", "")),
-        "size_bytes": int(getattr(attachment, "size_bytes", 0)),
+        "handle": payload.handle,
+        "filename": payload.filename,
+        "media_type": payload.media_type,
     }

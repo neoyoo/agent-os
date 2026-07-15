@@ -15,7 +15,8 @@ from agentos.providers.base import (
     ProviderToolCall,
     ProviderUsage,
 )
-from agentos.providers.input import ProviderInputItem, TextPart
+from agentos.providers.content import TextPart
+from agentos.providers.input import ProviderInputItem
 from agentos.providers.tool_specs import provider_tool_spec_to_dict
 
 

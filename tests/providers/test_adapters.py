@@ -2,15 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentos.attachments import (
-    Attachment,
-    BytesSource,
-    FilePart,
-    ImagePart,
-    TextPart,
-)
 from agentos.providers import (
     AnthropicProvider,
+    FilePart,
+    ImagePart,
     OpenAIProvider,
     ProviderFunctionSpec,
     ProviderInputItem,
@@ -18,7 +13,9 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
+    TextPart,
 )
+from tests._provider_binary import binary_payload
 
 
 _FORBIDDEN_PROVIDER_METADATA = {
@@ -105,7 +102,7 @@ def test_provider_input_wire_excludes_internal_metadata(
     [
         pytest.param((), id="empty"),
         pytest.param((TextPart("one"), TextPart("two")), id="multiple"),
-        pytest.param((ImagePart(object()),), id="non-text"),
+        pytest.param((ImagePart(binary_payload()),), id="non-text"),
     ],
 )
 def test_provider_input_rejects_non_single_text_assistant_and_tool_content(
@@ -133,14 +130,13 @@ def test_provider_input_rejects_non_single_text_assistant_and_tool_content(
 def test_context_mount_maps_directly_to_multimodal_user(
     provider: OpenAIProvider | AnthropicProvider,
 ) -> None:
-    attachment = Attachment(
+    payload = binary_payload(
         handle="att_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        data=b"image-bytes",
     )
-    content = (TextPart("inspect"), ImagePart(attachment))
+    content = (TextPart("inspect"), ImagePart(payload))
 
     wire = provider._message(ProviderInputItem.context_mount(content))
 
@@ -370,12 +366,11 @@ def test_openai_provider_maps_image_parts_to_chat_image_url() -> None:
         client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
         model="gpt-test",
     )
-    attachment = Attachment(
+    payload = binary_payload(
         handle="att_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        data=b"image-bytes",
     )
 
     provider.complete(
@@ -385,7 +380,7 @@ def test_openai_provider_maps_image_parts_to_chat_image_url() -> None:
                 ProviderInputItem.context_mount(
                     (
                         TextPart("分析图片"),
-                        ImagePart(attachment),
+                        ImagePart(payload),
                     ),
                 ),
             ],
@@ -417,19 +412,22 @@ def test_openai_provider_rejects_file_parts_for_chat_completions() -> None:
         client=SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
         model="gpt-test",
     )
-    attachment = Attachment(
+    payload = binary_payload(
         handle="att_1",
         filename="doc.pdf",
-        mime_type="application/pdf",
-        size_bytes=8,
-        source=BytesSource(b"pdf data"),
+        media_type="application/pdf",
+        data=b"pdf data",
     )
 
     with pytest.raises(ValueError, match="does not support file attachments"):
         provider.complete(
             ProviderRequest(
                 system="system",
-                messages=[ProviderInputItem.context_mount((FilePart(attachment),))],
+                messages=[
+                    ProviderInputItem.context_mount(
+                        (FilePart(payload),),
+                    ),
+                ],
             ),
         )
 
@@ -610,19 +608,17 @@ def test_anthropic_provider_maps_image_and_pdf_parts_to_content_blocks() -> None
         client=SimpleNamespace(messages=messages),
         model="claude-test",
     )
-    image = Attachment(
+    image = binary_payload(
         handle="att_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        data=b"image-bytes",
     )
-    pdf = Attachment(
+    pdf = binary_payload(
         handle="att_2",
         filename="doc.pdf",
-        mime_type="application/pdf",
-        size_bytes=8,
-        source=BytesSource(b"pdf data"),
+        media_type="application/pdf",
+        data=b"pdf data",
     )
 
     provider.complete(

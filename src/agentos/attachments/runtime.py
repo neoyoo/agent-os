@@ -9,7 +9,12 @@ from agentos.attachments.types import (
     AttachmentError,
     BytesSource,
 )
-from agentos.providers.input import ImagePart, ProviderInputItem, TextPart
+from agentos.providers.content import (
+    ImagePart,
+    ProviderBinaryPayload,
+    TextPart,
+)
+from agentos.providers.input import ProviderInputItem
 
 
 DEFAULT_ALLOWED_MIME_TYPES = frozenset(
@@ -216,7 +221,16 @@ class AttachmentRuntime:
         """按 MIME type 选择 canonical provider content part。"""
 
         self._ensure_image_attachment(attachment)
-        return ImagePart(attachment)
+        if not isinstance(attachment.source, BytesSource):
+            raise AttachmentError("attachment provider projection requires bytes")
+        return ImagePart(
+            ProviderBinaryPayload(
+                handle=attachment.handle,
+                media_type=attachment.mime_type,
+                data=attachment.source.data,
+                filename=attachment.filename,
+            ),
+        )
 
     def _ensure_image_attachment(self, attachment: Attachment) -> None:
         if attachment.mime_type not in self.allowed_mime_types:

@@ -11,6 +11,7 @@ from agentos.attachments import (
     TextPart,
 )
 from agentos.providers import ProviderInputItem
+from tests._provider_binary import payload_from_attachment
 
 
 def test_upload_bytes_creates_private_placeholder() -> None:
@@ -50,13 +51,13 @@ def test_prepare_user_message_expands_attachment_for_rest_of_turn() -> None:
         ProviderInputItem.business_user(user_text),
         content=(
             TextPart(user_text),
-            ImagePart(attachment),
+            ImagePart(payload_from_attachment(attachment)),
         ),
     )
     turn_loaded = ProviderInputItem.context_mount(
         (
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
+            ImagePart(payload_from_attachment(attachment)),
         ),
     )
     assert isinstance(first_request[0], ProviderInputItem)
@@ -80,7 +81,7 @@ def test_load_attachment_handle_projects_for_rest_of_turn() -> None:
     loaded = ProviderInputItem.context_mount(
         (
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
+            ImagePart(payload_from_attachment(attachment)),
         ),
     )
     assert first_request[-1] == loaded

@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError
-from typing import get_args
+from typing import get_args, get_type_hints
 
 import pytest
 
@@ -11,6 +11,7 @@ from agentos.providers import (
     InputAuthority,
     InputOrigin,
     PersistencePolicy,
+    ProviderBinaryPayload,
     ProviderFunctionSpec,
     ProviderInputItem,
     ProviderInputKind,
@@ -36,6 +37,44 @@ def _raw_provider_input(**overrides: object) -> ProviderInputItem:
     }
     values.update(overrides)
     return ProviderInputItem(**values)  # type: ignore[arg-type]
+
+
+def _binary_payload(media_type: str = "image/png") -> ProviderBinaryPayload:
+    return ProviderBinaryPayload(
+        handle="art_1",
+        media_type=media_type,
+        data=b"content",
+    )
+
+
+def test_provider_binary_payload_is_the_public_content_boundary() -> None:
+    payload = ProviderBinaryPayload(
+        handle="art_1",
+        media_type="image/png",
+        data=b"image-bytes",
+        filename="diagram.png",
+    )
+
+    assert get_type_hints(ImagePart)["payload"] is ProviderBinaryPayload
+    assert get_type_hints(FilePart)["payload"] is ProviderBinaryPayload
+    assert "image-bytes" not in repr(payload)
+    with pytest.raises(FrozenInstanceError):
+        payload.handle = "art_2"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("part_type", [ImagePart, FilePart])
+def test_binary_content_parts_reject_non_payload_values(part_type: object) -> None:
+    with pytest.raises(TypeError, match="ProviderBinaryPayload"):
+        part_type(object())  # type: ignore[operator]
+
+
+def test_provider_binary_payload_rejects_mutable_or_external_sources() -> None:
+    with pytest.raises(TypeError, match="data must be bytes"):
+        ProviderBinaryPayload(
+            handle="art_1",
+            media_type="image/png",
+            data=bytearray(b"mutable"),  # type: ignore[arg-type]
+        )
 
 
 def test_provider_input_literal_sets_are_closed() -> None:
@@ -156,7 +195,7 @@ def test_provider_input_literal_sets_are_closed() -> None:
             ),
         ),
         (
-            lambda: ProviderInputItem.context_mount((ImagePart("art_1"),)),
+            lambda: ProviderInputItem.context_mount((ImagePart(_binary_payload()),)),
             (
                 "user",
                 "context_mount",
@@ -356,4 +395,6 @@ def test_provider_content_rejects_unknown_parts() -> None:
     with pytest.raises(TypeError, match="content parts"):
         _raw_provider_input(content=(object(),))
     with pytest.raises(TypeError, match="content parts"):
-        ProviderInputItem.context_mount((FilePart("art_1"), object()))  # type: ignore[arg-type]
+        ProviderInputItem.context_mount(
+            (FilePart(_binary_payload("application/pdf")), object()),  # type: ignore[arg-type]
+        )

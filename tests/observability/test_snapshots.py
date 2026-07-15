@@ -22,6 +22,7 @@ from agentos.providers import (
     provider_tool_spec_to_dict,
 )
 from agentos.providers.input_serialization import provider_input_to_dict
+from tests._provider_binary import payload_from_attachment
 
 
 def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only() -> None:
@@ -107,7 +108,7 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
             ProviderInputItem.context_mount(
                 (
                     TextPart("分析图片"),
-                    ImagePart(attachment),
+                    ImagePart(payload_from_attachment(attachment)),
                 ),
             ),
         ],
@@ -125,11 +126,10 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
                 {"type": "text", "text": "分析图片"},
                 {
                     "type": "image",
-                    "attachment": {
+                    "payload": {
                         "handle": "att_1",
                         "filename": "diagram.png",
-                        "mime_type": "image/png",
-                        "size_bytes": 11,
+                        "media_type": "image/png",
                     },
                     "detail": "auto",
                 },

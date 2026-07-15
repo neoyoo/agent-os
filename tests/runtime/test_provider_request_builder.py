@@ -19,6 +19,7 @@ from agentos.providers import (
     ProviderFunctionSpec,
     ProviderToolSpec,
 )
+from tests._provider_binary import payload_from_attachment
 from agentos.runtime import ProviderRequestBuilder
 from agentos.tokens import HeuristicTokenCounter
 
@@ -191,9 +192,9 @@ def test_provider_request_builder_preserves_existing_attachment_projection() -> 
 
     assert first_request.messages[1].content == (
         TextPart("Analyze the image"),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )
     assert second_request.messages[-1].content == (
         TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )

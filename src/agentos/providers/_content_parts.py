@@ -1,15 +1,9 @@
 import base64
 
-from agentos.attachments.types import (
-    BytesSource,
-    InlineBase64Source,
-    LocalFileSource,
-    ProviderFileSource,
-    UrlSource,
-)
-from agentos.providers.input import (
+from agentos.providers.content import (
     FilePart,
     ImagePart,
+    ProviderBinaryPayload,
     ProviderContentPart,
     TextPart,
 )
@@ -34,7 +28,7 @@ def openai_chat_content_part(part: ProviderContentPart) -> dict[str, object]:
         return {
             "type": "image_url",
             "image_url": {
-                "url": image_url(part.attachment),
+                "url": image_url(part.payload),
                 "detail": part.detail,
             },
         }
@@ -45,25 +39,10 @@ def openai_chat_content_part(part: ProviderContentPart) -> dict[str, object]:
     raise ValueError(f"unsupported OpenAI content part: {type(part).__name__}")
 
 
-def image_url(attachment: object) -> str:
-    """把图片附件 source 转为 OpenAI image_url 字符串。"""
+def image_url(payload: ProviderBinaryPayload) -> str:
+    """把图片载荷转为 OpenAI image_url 字符串。"""
 
-    mime_type = str(getattr(attachment, "mime_type", ""))
-    if not mime_type.startswith("image/"):
+    if not payload.media_type.startswith("image/"):
         raise ValueError("OpenAI-compatible image parts require image MIME")
-    source = getattr(attachment, "source", None)
-    if isinstance(source, UrlSource):
-        return source.url
-    if isinstance(source, InlineBase64Source):
-        return f"data:{source.mime_type};base64,{source.data}"
-    if isinstance(source, BytesSource):
-        data = base64.b64encode(source.data).decode("ascii")
-        return f"data:{mime_type};base64,{data}"
-    if isinstance(source, LocalFileSource):
-        data = base64.b64encode(source.path.read_bytes()).decode("ascii")
-        return f"data:{mime_type};base64,{data}"
-    if isinstance(source, ProviderFileSource):
-        raise ValueError(
-            "OpenAI-compatible chat completions does not support provider file attachments",
-        )
-    raise ValueError("unsupported OpenAI-compatible image attachment source")
+    data = base64.b64encode(payload.data).decode("ascii")
+    return f"data:{payload.media_type};base64,{data}"

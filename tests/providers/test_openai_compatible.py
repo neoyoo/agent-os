@@ -8,11 +8,11 @@ from urllib.error import HTTPError
 import pytest
 
 from agentos import Agent
-from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     HttpxAsyncJSONTransport,
+    ImagePart,
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
     ProviderFunctionSpec,
@@ -21,8 +21,10 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
+    TextPart,
     UrlLibJSONTransport,
 )
+from tests._provider_binary import binary_payload
 from agentos.runtime import AgentBusyError, ProviderRequestBuilder, QueryLoop
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -97,7 +99,7 @@ def test_openai_compatible_provider_input_wire_excludes_internal_metadata(
     [
         pytest.param((), id="empty"),
         pytest.param((TextPart("one"), TextPart("two")), id="multiple"),
-        pytest.param((ImagePart(object()),), id="non-text"),
+        pytest.param((ImagePart(binary_payload()),), id="non-text"),
     ],
 )
 def test_openai_compatible_provider_input_rejects_non_single_text_content(
@@ -124,14 +126,13 @@ def test_openai_compatible_context_mount_maps_to_multimodal_user() -> None:
         base_url="https://api.example.test",
         model="test-model",
     )
-    attachment = Attachment(
+    payload = binary_payload(
         handle="att_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        data=b"image-bytes",
     )
-    content = (TextPart("inspect"), ImagePart(attachment))
+    content = (TextPart("inspect"), ImagePart(payload))
 
     assert provider._message(ProviderInputItem.context_mount(content)) == {
         "role": "user",
@@ -848,12 +849,11 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
         model="deepseek-chat",
         transport=transport,
     )
-    attachment = Attachment(
+    payload = binary_payload(
         handle="att_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        data=b"image-bytes",
     )
 
     provider.complete(
@@ -863,7 +863,7 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
                 ProviderInputItem.context_mount(
                     (
                         TextPart("分析图片"),
-                        ImagePart(attachment),
+                        ImagePart(payload),
                     ),
                 ),
             ],

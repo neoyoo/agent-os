@@ -19,6 +19,7 @@ from agentos.runtime import (
     iter_jsonl,
     iter_sse,
 )
+from tests._provider_binary import payload_from_attachment
 from agentos.runtime.errors import AgentBusyError, ContinuationUnavailableError
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -130,7 +131,7 @@ def test_agent_run_accepts_uploaded_attachments() -> None:
         assert result.content == "ok"
         assert provider.requests[0].messages[1].content == (
             TextPart("inspect image"),
-            ImagePart(attachment),
+            ImagePart(payload_from_attachment(attachment)),
         )
 
     asyncio.run(run())

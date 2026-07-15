@@ -3,17 +3,18 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.context import ContextRuntime, ContextSnapshotRenderer
 from agentos.context.projection import project_context_state
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
+    ImagePart,
     ProviderFunctionSpec,
     ProviderInputItem,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
+    TextPart,
     provider_tool_spec_from_dict,
     provider_tool_spec_to_dict,
 )
@@ -21,6 +22,7 @@ from agentos.providers.input_serialization import provider_input_to_dict
 from agentos.runtime import ProviderRequestBuilder
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
+from tests._provider_binary import binary_payload
 
 
 def test_provider_input_items_are_frozen_slotted_dataclasses() -> None:
@@ -37,19 +39,18 @@ def test_legacy_provider_message_module_is_removed() -> None:
 
 
 def test_provider_input_serialization_redacts_attachment_content_parts() -> None:
-    attachment = Attachment(
+    payload = binary_payload(
         handle="att_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        data=b"image-bytes",
     )
 
     result = provider_input_to_dict(
         ProviderInputItem.context_mount(
             (
                 TextPart("分析图片"),
-                ImagePart(attachment),
+                ImagePart(payload),
             ),
         ),
     )
@@ -60,11 +61,10 @@ def test_provider_input_serialization_redacts_attachment_content_parts() -> None
             {"type": "text", "text": "分析图片"},
             {
                 "type": "image",
-                "attachment": {
+                "payload": {
                     "handle": "att_1",
                     "filename": "diagram.png",
-                    "mime_type": "image/png",
-                    "size_bytes": 11,
+                    "media_type": "image/png",
                 },
                 "detail": "auto",
             },

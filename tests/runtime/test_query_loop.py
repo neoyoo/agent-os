@@ -21,6 +21,7 @@ from agentos.runtime import (
     QueryLoop,
     UserTurnInput,
 )
+from tests._provider_binary import payload_from_attachment
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -106,7 +107,7 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
     second_user = provider.requests[1].messages[1]
     assert first_user.content == (
         TextPart("分析图片"),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )
     assert "Attachment att_1" in second_user.content[0].text  # type: ignore[union-attr]
 
@@ -162,11 +163,11 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
     assert result == "inspected"
     assert provider.requests[0].messages[1].content == (
         TextPart("分析图片"),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )
     assert provider.requests[1].messages[-1].content == (
         TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(attachment),
+        ImagePart(payload_from_attachment(attachment)),
     )
 
 

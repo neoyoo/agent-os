@@ -16,6 +16,7 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderInputItem,
 )
+from tests._provider_binary import payload_from_attachment
 from agentos.runtime import LocalContinuationInput, ProviderRequestBuilder, QueryLoop
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -106,7 +107,7 @@ def test_load_attachment_projects_to_rest_of_turn_provider_requests() -> None:
         assert result.content == "done"
         loaded = (
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
+            ImagePart(payload_from_attachment(attachment)),
         )
         assert provider.requests[1].messages[-1].content == loaded
         assert provider.requests[2].messages[-1].content == loaded
@@ -176,7 +177,7 @@ def test_context_tool_and_attachment_load_share_unified_turn() -> None:
         }
         loaded = (
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-            ImagePart(attachment),
+            ImagePart(payload_from_attachment(attachment)),
         )
         assert provider.requests[1].messages[-1].content == loaded
         applied = [

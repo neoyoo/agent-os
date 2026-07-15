@@ -8,6 +8,12 @@ from typing import Literal, TypeAlias
 
 from agentos._internal_transcript import InternalTranscriptValue
 from agentos._json_values import FrozenJsonObject, freeze_json
+from agentos.providers.content import (
+    FilePart,
+    ImagePart,
+    ProviderContentPart,
+    TextPart,
+)
 
 
 ProviderRole: TypeAlias = Literal["user", "assistant", "tool"]
@@ -33,31 +39,6 @@ InputAuthority: TypeAlias = Literal[
 ]
 PersistencePolicy: TypeAlias = Literal["stored", "ephemeral"]
 VisibilityPolicy: TypeAlias = Literal["conversation", "internal"]
-
-
-@dataclass(frozen=True, slots=True)
-class TextPart:
-    """Provider 输入中的文本片段。"""
-
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class ImagePart:
-    """Provider 输入中的一次性图片片段。"""
-
-    attachment: object
-    detail: Literal["auto", "low", "high"] = "auto"
-
-
-@dataclass(frozen=True, slots=True)
-class FilePart:
-    """Provider 输入中的一次性文件片段。"""
-
-    attachment: object
-
-
-ProviderContentPart: TypeAlias = TextPart | ImagePart | FilePart
 
 
 _MODEL_TASK_FACTORY_TOKEN = object()
