@@ -19,6 +19,9 @@ class InMemoryMemoryStore:
     def put(self, record: MemoryRecord) -> None:
         if not isinstance(record, MemoryRecord):
             raise TypeError("record must be a MemoryRecord")
+        existing = self._records.get(record.handle)
+        if existing is not None and existing.session_id != record.session_id:
+            raise ValueError("memory handle already belongs to another session")
         self._records[record.handle] = record
 
     def get(self, handle: str) -> MemoryRecord:
@@ -32,7 +35,9 @@ class InMemoryMemoryStore:
         context: MemorySelectionContext,
         candidate_limit: int,
     ) -> tuple[MemoryCandidate, ...]:
-        if candidate_limit <= 0:
+        if type(candidate_limit) is not int or candidate_limit < 0:
+            raise ValueError("candidate_limit must be a non-negative integer")
+        if candidate_limit == 0:
             return ()
 
         query_tokens = self._tokens(context.query)

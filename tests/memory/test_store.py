@@ -50,6 +50,20 @@ def test_in_memory_store_put_get_and_replace_by_handle() -> None:
         store.get("missing")
 
 
+def test_in_memory_store_rejects_cross_session_handle_replacement() -> None:
+    store = InMemoryMemoryStore()
+    original = record("mem_1")
+    store.put(original)
+
+    with pytest.raises(
+        ValueError,
+        match="memory handle already belongs to another session",
+    ):
+        store.put(record("mem_1", session_id="session_2"))
+
+    assert store.get("mem_1") is original
+
+
 def test_in_memory_store_search_isolates_session_candidates() -> None:
     store = InMemoryMemoryStore()
     store.put(record("mem_local"))
@@ -90,3 +104,19 @@ def test_in_memory_store_search_bounds_and_empty_query_are_deterministic() -> No
 
     assert [candidate.record.handle for candidate in candidates] == ["mem_a"]
     assert candidates[0].score == 0.0
+
+
+@pytest.mark.parametrize("candidate_limit", [-1, True, 1.5])
+def test_in_memory_store_rejects_invalid_candidate_limit(
+    candidate_limit: object,
+) -> None:
+    store = InMemoryMemoryStore()
+
+    with pytest.raises(
+        ValueError,
+        match="candidate_limit must be a non-negative integer",
+    ):
+        store.search(
+            selection_context(),
+            candidate_limit=candidate_limit,  # type: ignore[arg-type]
+        )
