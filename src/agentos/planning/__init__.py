@@ -8,6 +8,18 @@ from agentos.planning.errors import (
     PlanStepNotFoundError,
     PlannerToolAuthorizationError,
 )
+from agentos.planning.decomposition import (
+    PlanDecomposition,
+    PlanDecompositionGatePolicy,
+    PlanDecompositionGateReport,
+    PlanDecompositionValidationReport,
+    PlanStepSpec,
+)
+from agentos.planning.decomposition_governance import (
+    PLANNER_LLM_GOVERNANCE_EXECUTION_REQUIRED_EVIDENCE,
+    PlannerLlmGovernanceEvidenceGateReport,
+    PlannerLlmGovernanceEvidenceRecord,
+)
 from agentos.planning.in_memory import InMemoryPlanClaimStore, InMemoryPlanStore
 from agentos.planning.models import (
     EVIDENCE_KINDS,
@@ -45,6 +57,7 @@ __all__ = [
     "InMemoryPlanClaimStore",
     "InMemoryPlanStore",
     "PLAN_STATUSES",
+    "PLANNER_LLM_GOVERNANCE_EXECUTION_REQUIRED_EVIDENCE",
     "PlanAssignment",
     "PlanAssignmentDispatchStatus",
     "PlanClaimLostError",
@@ -54,17 +67,24 @@ __all__ = [
     "PlanClaimStore",
     "PlanClaimSweepStore",
     "PlanConflictError",
+    "PlanDecomposition",
+    "PlanDecompositionGatePolicy",
+    "PlanDecompositionGateReport",
+    "PlanDecompositionValidationReport",
     "PlanError",
     "PlanNotFoundError",
     "PlanRetryPolicy",
     "PlanState",
     "PlanStatus",
     "PlanStep",
+    "PlanStepSpec",
     "PlanStepNotFoundError",
     "PlanStepRetryStatus",
     "PlanStepStatus",
     "PlanStore",
     "PlanStoreRecord",
     "PlannerToolAuthorizationError",
+    "PlannerLlmGovernanceEvidenceGateReport",
+    "PlannerLlmGovernanceEvidenceRecord",
     "SubAgentTemplate",
 ]

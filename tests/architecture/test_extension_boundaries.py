@@ -104,7 +104,15 @@ def test_memory_domain_does_not_import_recall_or_session_storage() -> None:
 
 def test_planning_domain_foundation_exists_without_multi_dependency() -> None:
     planning_root = PROJECT_ROOT / "src" / "agentos" / "planning"
-    required = ("__init__.py", "errors.py", "models.py", "store.py", "in_memory.py")
+    required = (
+        "__init__.py",
+        "decomposition.py",
+        "decomposition_governance.py",
+        "errors.py",
+        "models.py",
+        "store.py",
+        "in_memory.py",
+    )
     assert all((planning_root / name).is_file() for name in required)
 
     forbidden_infrastructure_prefixes = ("postgres", "redis", "psycopg")
@@ -166,15 +174,22 @@ def test_multi_planner_uses_planning_foundation_class_identity() -> None:
         "PlanClaimStore",
         "PlanClaimSweepStore",
         "PlanConflictError",
+        "PlanDecomposition",
+        "PlanDecompositionGatePolicy",
+        "PlanDecompositionGateReport",
+        "PlanDecompositionValidationReport",
         "PlanError",
         "PlanNotFoundError",
         "PlanRetryPolicy",
         "PlanState",
         "PlanStep",
+        "PlanStepSpec",
         "PlanStepNotFoundError",
         "PlanStore",
         "PlanStoreRecord",
         "PlannerToolAuthorizationError",
+        "PlannerLlmGovernanceEvidenceGateReport",
+        "PlannerLlmGovernanceEvidenceRecord",
         "SubAgentTemplate",
     )
 

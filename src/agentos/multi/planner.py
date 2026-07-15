@@ -17,6 +17,7 @@ from agentos.multi.types import (
 from agentos.planning import (
     EVIDENCE_KINDS,
     PLAN_STATUSES,
+    PLANNER_LLM_GOVERNANCE_EXECUTION_REQUIRED_EVIDENCE,
     ClaimGuardedPlanStore as ClaimGuardedPlanStore,
     CompareAndSavePlanStore as CompareAndSavePlanStore,
     EvidenceHandle,
@@ -32,19 +33,34 @@ from agentos.planning import (
     PlanClaimStore,
     PlanClaimSweepStore,
     PlanConflictError,
+    PlanDecomposition,
+    PlanDecompositionGatePolicy,
+    PlanDecompositionGateReport,
+    PlanDecompositionValidationReport,
     PlanError as PlanError,
     PlanNotFoundError,
     PlanRetryPolicy,
     PlanState,
     PlanStatus,
     PlanStep,
+    PlanStepSpec,
     PlanStepNotFoundError,
     PlanStepRetryStatus,
     PlanStepStatus as PlanStepStatus,
     PlanStore,
     PlanStoreRecord,
     PlannerToolAuthorizationError,
+    PlannerLlmGovernanceEvidenceGateReport,
+    PlannerLlmGovernanceEvidenceRecord,
     SubAgentTemplate,
+)
+from agentos.planning.decomposition import (
+    gate_decomposition_proposal as _gate_decomposition_proposal,
+    materialize_decomposition as _materialize_decomposition,
+    validate_decomposition as _validate_decomposition,
+)
+from agentos.planning.decomposition_governance import (
+    gate_llm_governance_evidence as _gate_llm_governance_evidence,
 )
 from agentos.workspace import WorkspaceHandle
 
@@ -99,13 +115,6 @@ PLANNER_LLM_DECOMPOSITION_GOVERNANCE_REQUIRED_COMPONENTS: tuple[str, ...] = (
     "template_mapping_policy",
     "budget_policy",
     "live_backend_verification",
-)
-PLANNER_LLM_GOVERNANCE_EXECUTION_REQUIRED_EVIDENCE: tuple[str, ...] = (
-    "prompt_evidence",
-    "model_evidence",
-    "approval_evidence",
-    "evaluation_evidence",
-    "validation_evidence",
 )
 PLANNER_WORKER_DISPATCH_SUPERVISION_REQUIRED_COMPONENTS: tuple[str, ...] = (
     "claimed_scheduler_tick_loop",
@@ -932,271 +941,6 @@ class PlannerStaleClaimSweepProfile:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanStepSpec:
-    """One structured step proposed by a decomposition policy."""
-
-    instruction: str
-    step_id: str | None = None
-    required_capabilities: tuple[str, ...] = ()
-    template_id: str | None = None
-    depends_on: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class PlanDecomposition:
-    """Structured plan proposal produced by an app-owned decomposition policy."""
-
-    objective: str
-    steps: tuple[PlanStepSpec, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class PlanDecompositionValidationReport:
-    """Validation result for an app-owned planner decomposition proposal."""
-
-    ok: bool
-    errors: tuple[str, ...] = ()
-    step_count: int = 0
-    required_templates: tuple[str, ...] = ()
-    unknown_templates: tuple[str, ...] = ()
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a JSON-safe validation report payload."""
-
-        return {
-            "ok": self.ok,
-            "errors": self.errors,
-            "step_count": self.step_count,
-            "required_templates": self.required_templates,
-            "unknown_templates": self.unknown_templates,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PlanDecompositionGatePolicy:
-    """Policy for gating raw LLM decomposition proposals before persistence."""
-
-    max_steps: int | None = None
-    require_template: bool = False
-    require_approval: bool = False
-    approved: bool = False
-    allowed_template_ids: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.max_steps is not None and self.max_steps < 1:
-            raise ValueError("max_steps must be >= 1")
-        if any(not template_id.strip() for template_id in self.allowed_template_ids):
-            raise ValueError("allowed_template_ids must not contain empty names")
-
-
-@dataclass(frozen=True, slots=True)
-class PlanDecompositionGateReport:
-    """JSON-safe report for a raw planner decomposition proposal gate."""
-
-    accepted: bool
-    requires_approval: bool = False
-    errors: tuple[str, ...] = ()
-    validation: PlanDecompositionValidationReport | None = None
-    step_count: int = 0
-    required_templates: tuple[str, ...] = ()
-    unknown_templates: tuple[str, ...] = ()
-    missing_templates: tuple[str, ...] = ()
-    disallowed_templates: tuple[str, ...] = ()
-    normalized_decomposition: PlanDecomposition | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a JSON-safe gate report payload."""
-
-        return {
-            "accepted": self.accepted,
-            "requires_approval": self.requires_approval,
-            "errors": self.errors,
-            "validation": (
-                self.validation.as_dict()
-                if self.validation is not None
-                else None
-            ),
-            "step_count": self.step_count,
-            "required_templates": self.required_templates,
-            "unknown_templates": self.unknown_templates,
-            "missing_templates": self.missing_templates,
-            "disallowed_templates": self.disallowed_templates,
-            "normalized_decomposition": (
-                self._decomposition_to_dict(self.normalized_decomposition)
-                if self.normalized_decomposition is not None
-                else None
-            ),
-            "metadata": dict(self.metadata),
-        }
-
-    def _decomposition_to_dict(
-        self,
-        decomposition: PlanDecomposition,
-    ) -> dict[str, object]:
-        return {
-            "objective": decomposition.objective,
-            "steps": [
-                {
-                    "step_id": step.step_id,
-                    "instruction": step.instruction,
-                    "required_capabilities": step.required_capabilities,
-                    "template_id": step.template_id,
-                    "depends_on": step.depends_on,
-                }
-                for step in decomposition.steps
-            ],
-        }
-
-
-_PLANNER_LLM_GOVERNANCE_METADATA_BLOCKED_KEYS = (
-    "raw_prompt",
-    "prompt_text",
-    "secret",
-    "token",
-    "password",
-    "credential",
-    "api_key",
-    "apikey",
-    "provider_output",
-    "model_output",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class PlannerLlmGovernanceEvidenceRecord:
-    """JSON-safe per-proposal evidence for deployment-owned LLM governance."""
-
-    proposal_id: str
-    objective: str
-    prompt_ref: str | None = None
-    prompt_hash: str | None = None
-    model_ref: str | None = None
-    model_version: str | None = None
-    approval_ref: str | None = None
-    approved: bool | None = None
-    evaluation_ref: str | None = None
-    evaluation_passed: bool | None = None
-    validation_ref: str | None = None
-    validation_passed: bool | None = None
-    output_schema_ref: str | None = None
-    trace_ref: str | None = None
-    budget_ref: str | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        self._validate_required_text(self.proposal_id, field_name="proposal_id")
-        self._validate_required_text(self.objective, field_name="objective")
-        for field_name, value in (
-            ("prompt_ref", self.prompt_ref),
-            ("prompt_hash", self.prompt_hash),
-            ("model_ref", self.model_ref),
-            ("model_version", self.model_version),
-            ("approval_ref", self.approval_ref),
-            ("evaluation_ref", self.evaluation_ref),
-            ("validation_ref", self.validation_ref),
-            ("output_schema_ref", self.output_schema_ref),
-            ("trace_ref", self.trace_ref),
-            ("budget_ref", self.budget_ref),
-        ):
-            self._validate_optional_text(value, field_name=field_name)
-        self._validate_metadata(self.metadata, field_name="metadata")
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a JSON-safe governance evidence payload."""
-
-        return {
-            "proposal_id": self.proposal_id,
-            "objective": self.objective,
-            "prompt_ref": self.prompt_ref,
-            "prompt_hash": self.prompt_hash,
-            "model_ref": self.model_ref,
-            "model_version": self.model_version,
-            "approval_ref": self.approval_ref,
-            "approved": self.approved,
-            "evaluation_ref": self.evaluation_ref,
-            "evaluation_passed": self.evaluation_passed,
-            "validation_ref": self.validation_ref,
-            "validation_passed": self.validation_passed,
-            "output_schema_ref": self.output_schema_ref,
-            "trace_ref": self.trace_ref,
-            "budget_ref": self.budget_ref,
-            "metadata": dict(self.metadata),
-        }
-
-    def _validate_required_text(self, value: str, *, field_name: str) -> None:
-        if not value.strip():
-            raise ValueError(f"{field_name} must not be empty")
-
-    def _validate_optional_text(
-        self,
-        value: str | None,
-        *,
-        field_name: str,
-    ) -> None:
-        if value is not None and not value.strip():
-            raise ValueError(f"{field_name} must not be empty")
-
-    def _validate_metadata(
-        self,
-        metadata: Mapping[str, object],
-        *,
-        field_name: str,
-    ) -> None:
-        _validate_planner_llm_governance_metadata(metadata, field_name=field_name)
-
-
-@dataclass(frozen=True, slots=True)
-class PlannerLlmGovernanceEvidenceGateReport:
-    """JSON-safe gate report for planner LLM governance execution evidence."""
-
-    accepted: bool
-    block_plan_creation: bool
-    errors: tuple[str, ...] = ()
-    missing_evidence: tuple[str, ...] = ()
-    failed_evidence: tuple[str, ...] = ()
-    record: PlannerLlmGovernanceEvidenceRecord | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        _validate_planner_llm_governance_metadata(
-            self.metadata,
-            field_name="metadata",
-        )
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a JSON-safe evidence gate report payload."""
-
-        return {
-            "accepted": self.accepted,
-            "block_plan_creation": self.block_plan_creation,
-            "errors": self.errors,
-            "missing_evidence": self.missing_evidence,
-            "failed_evidence": self.failed_evidence,
-            "record": self.record.as_dict() if self.record is not None else None,
-            "metadata": dict(self.metadata),
-        }
-
-
-def _validate_planner_llm_governance_metadata(
-    metadata: Mapping[str, object],
-    *,
-    field_name: str,
-) -> None:
-    try:
-        json.dumps(dict(metadata))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be JSON serializable") from exc
-
-    for key in metadata:
-        normalized = key.lower()
-        if any(blocked in normalized for blocked in _PLANNER_LLM_GOVERNANCE_METADATA_BLOCKED_KEYS):
-            raise ValueError(
-                f"{field_name} must not include raw prompts or secrets",
-            )
-
-
-@dataclass(frozen=True, slots=True)
 class PlanDispatchSkip:
     """One ready step that was not submitted during a dispatch batch."""
 
@@ -1499,16 +1243,11 @@ class PlannerRuntime:
     ) -> PlanState:
         """Create a draft plan from a structured decomposition proposal."""
 
-        objective = decomposition.objective.strip()
-        if not objective:
-            raise ValueError("decomposition objective is required")
-        if not decomposition.steps:
-            raise ValueError("decomposition must include at least one step")
-        steps = tuple(
-            self._step_from_spec(spec)
-            for spec in decomposition.steps
+        objective, steps = _materialize_decomposition(
+            decomposition,
+            templates=self.templates,
+            id_factory=self._id_factory,
         )
-        self._validate_step_dependencies(steps)
         now = float(self._clock())
         plan = PlanState(
             plan_id=plan_id or str(self._id_factory("plan")),
@@ -1528,58 +1267,9 @@ class PlannerRuntime:
     ) -> PlanDecompositionValidationReport:
         """Validate a structured decomposition without creating a plan."""
 
-        errors: list[str] = []
-        objective = decomposition.objective.strip()
-        if not objective:
-            errors.append("decomposition objective is required")
-        if not decomposition.steps:
-            errors.append("decomposition must include at least one step")
-
-        required_templates = tuple(
-            dict.fromkeys(
-                spec.template_id
-                for spec in decomposition.steps
-                if spec.template_id is not None
-            ),
-        )
-        unknown_templates = tuple(
-            template_id
-            for template_id in required_templates
-            if template_id not in self.templates
-        )
-        for template_id in unknown_templates:
-            errors.append(f"unknown template: {template_id}")
-
-        steps: list[PlanStep] = []
-        for index, spec in enumerate(decomposition.steps, start=1):
-            instruction = spec.instruction.strip()
-            if not instruction:
-                errors.append("decomposition step instruction is required")
-            if spec.template_id is not None and spec.template_id not in self.templates:
-                if spec.template_id not in unknown_templates:
-                    errors.append(f"unknown template: {spec.template_id}")
-            steps.append(
-                PlanStep(
-                    step_id=spec.step_id or f"__generated_step_{index}",
-                    instruction=instruction,
-                    required_capabilities=tuple(spec.required_capabilities),
-                    template_id=spec.template_id,
-                    depends_on=tuple(spec.depends_on),
-                ),
-            )
-
-        try:
-            self._validate_step_dependencies(tuple(steps))
-        except ValueError as error:
-            errors.append(str(error))
-
-        deduped_errors = tuple(dict.fromkeys(errors))
-        return PlanDecompositionValidationReport(
-            ok=not deduped_errors,
-            errors=deduped_errors,
-            step_count=len(decomposition.steps),
-            required_templates=required_templates,
-            unknown_templates=unknown_templates,
+        return _validate_decomposition(
+            decomposition,
+            templates=self.templates,
         )
 
     def gate_decomposition_proposal(
@@ -1595,64 +1285,11 @@ class PlannerRuntime:
         workflow, and follow-up call to create_plan_from_decomposition().
         """
 
-        gate_policy = policy or PlanDecompositionGatePolicy()
-        errors: list[str] = []
-        try:
-            decomposition = self._decomposition_from_proposal(proposal)
-        except ValueError as error:
-            return PlanDecompositionGateReport(
-                accepted=False,
-                errors=(str(error),),
-                metadata={} if metadata is None else dict(metadata),
-            )
-
-        validation = self.validate_decomposition(decomposition)
-        errors.extend(validation.errors)
-        step_count = len(decomposition.steps)
-        missing_templates = self._proposal_steps_missing_templates(
-            decomposition,
-            require_template=gate_policy.require_template,
-        )
-        disallowed_templates = self._proposal_disallowed_templates(
-            validation.required_templates,
-            allowed_template_ids=gate_policy.allowed_template_ids,
-        )
-
-        if gate_policy.max_steps is not None and step_count > gate_policy.max_steps:
-            errors.append(
-                f"decomposition exceeds max_steps: "
-                f"{step_count} > {gate_policy.max_steps}",
-            )
-        for step_id in missing_templates:
-            errors.append(f"step {step_id} requires a template_id")
-        for template_id in disallowed_templates:
-            errors.append(f"template not allowed: {template_id}")
-
-        requires_approval = (
-            gate_policy.require_approval
-            and not gate_policy.approved
-        )
-        if requires_approval:
-            errors.append("decomposition approval is required")
-
-        deduped_errors = tuple(dict.fromkeys(errors))
-        accepted = not deduped_errors and validation.ok
-        return PlanDecompositionGateReport(
-            accepted=accepted,
-            requires_approval=requires_approval,
-            errors=deduped_errors,
-            validation=validation,
-            step_count=step_count,
-            required_templates=validation.required_templates,
-            unknown_templates=validation.unknown_templates,
-            missing_templates=missing_templates,
-            disallowed_templates=disallowed_templates,
-            normalized_decomposition=(
-                decomposition
-                if accepted
-                else None
-            ),
-            metadata={} if metadata is None else dict(metadata),
+        return _gate_decomposition_proposal(
+            proposal,
+            templates=self.templates,
+            policy=policy,
+            metadata=metadata,
         )
 
     def gate_llm_governance_evidence(
@@ -1666,44 +1303,10 @@ class PlannerRuntime:
     ) -> PlannerLlmGovernanceEvidenceGateReport:
         """Gate per-proposal LLM governance evidence before plan creation."""
 
-        self._validate_llm_governance_required_evidence(required_evidence)
-        gate_metadata = {} if metadata is None else dict(metadata)
-        _validate_planner_llm_governance_metadata(
-            gate_metadata,
-            field_name="metadata",
-        )
-
-        missing: list[str] = []
-        failed: list[str] = []
-        errors: list[str] = []
-        for evidence_name in required_evidence:
-            ref_present, status_present, status_passed = (
-                self._llm_governance_evidence_state(record, evidence_name)
-            )
-            if not ref_present or not status_present:
-                missing.append(evidence_name)
-                errors.append(
-                    f"{evidence_name.removesuffix('_evidence')} evidence is required",
-                )
-                continue
-            if not status_passed:
-                failed.append(evidence_name)
-                errors.append(
-                    f"{evidence_name.removesuffix('_evidence')} evidence did not pass",
-                )
-
-        deduped_errors = tuple(dict.fromkeys(errors))
-        missing_evidence = tuple(dict.fromkeys(missing))
-        failed_evidence = tuple(dict.fromkeys(failed))
-        accepted = not deduped_errors
-        return PlannerLlmGovernanceEvidenceGateReport(
-            accepted=accepted,
-            block_plan_creation=not accepted,
-            errors=deduped_errors,
-            missing_evidence=missing_evidence,
-            failed_evidence=failed_evidence,
-            record=record,
-            metadata=gate_metadata,
+        return _gate_llm_governance_evidence(
+            record,
+            required_evidence=required_evidence,
+            metadata=metadata,
         )
 
     def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]:
@@ -2601,185 +2204,6 @@ class PlannerRuntime:
         statuses: tuple[PlanStatus, ...],
     ) -> tuple[PlanStatus, ...]:
         return _validate_plan_status_tuple(statuses)
-
-    def _step_from_spec(self, spec: PlanStepSpec) -> PlanStep:
-        instruction = spec.instruction.strip()
-        if not instruction:
-            raise ValueError("decomposition step instruction is required")
-        if spec.template_id is not None:
-            self._require_template(spec.template_id)
-        return PlanStep(
-            step_id=spec.step_id or str(self._id_factory("step")),
-            instruction=instruction,
-            required_capabilities=tuple(spec.required_capabilities),
-            template_id=spec.template_id,
-            depends_on=tuple(spec.depends_on),
-        )
-
-    def _decomposition_from_proposal(
-        self,
-        proposal: Mapping[str, object],
-    ) -> PlanDecomposition:
-        if not isinstance(proposal, MappingABC):
-            raise ValueError("decomposition proposal must be an object")
-        objective_value = proposal.get("objective")
-        if objective_value is None:
-            raise ValueError("decomposition objective is required")
-        steps_value = proposal.get("steps")
-        if not isinstance(steps_value, list | tuple):
-            raise ValueError("decomposition steps must be a list")
-        return PlanDecomposition(
-            objective=str(objective_value).strip(),
-            steps=self._proposal_step_specs(steps_value),
-        )
-
-    def _proposal_step_specs(
-        self,
-        value: list[object] | tuple[object, ...],
-    ) -> tuple[PlanStepSpec, ...]:
-        specs: list[PlanStepSpec] = []
-        for index, item in enumerate(value, start=1):
-            if not isinstance(item, MappingABC):
-                raise ValueError(f"step {index} must be an object")
-            instruction_value = item.get("instruction")
-            if instruction_value is None:
-                raise ValueError(f"step {index} instruction is required")
-            specs.append(
-                PlanStepSpec(
-                    instruction=str(instruction_value).strip(),
-                    step_id=self._optional_string(item.get("step_id")),
-                    required_capabilities=self._string_tuple_from_raw(
-                        item.get("required_capabilities", ()),
-                        field_name=f"step {index} required_capabilities",
-                    ),
-                    template_id=self._optional_string(item.get("template_id")),
-                    depends_on=self._string_tuple_from_raw(
-                        item.get("depends_on", ()),
-                        field_name=f"step {index} depends_on",
-                    ),
-                ),
-            )
-        return tuple(specs)
-
-    def _optional_string(self, value: object) -> str | None:
-        if value is None:
-            return None
-        return str(value)
-
-    def _string_tuple_from_raw(
-        self,
-        value: object,
-        *,
-        field_name: str,
-    ) -> tuple[str, ...]:
-        if value is None:
-            return ()
-        if isinstance(value, str):
-            return (value,)
-        if not isinstance(value, list | tuple):
-            raise ValueError(f"{field_name} must be a list")
-        return tuple(str(item) for item in value)
-
-    def _proposal_steps_missing_templates(
-        self,
-        decomposition: PlanDecomposition,
-        *,
-        require_template: bool,
-    ) -> tuple[str, ...]:
-        if not require_template:
-            return ()
-        missing: list[str] = []
-        for index, step in enumerate(decomposition.steps, start=1):
-            if step.template_id is None or not step.template_id.strip():
-                missing.append(step.step_id or f"step_{index}")
-        return tuple(missing)
-
-    def _proposal_disallowed_templates(
-        self,
-        required_templates: tuple[str, ...],
-        *,
-        allowed_template_ids: tuple[str, ...],
-    ) -> tuple[str, ...]:
-        if not allowed_template_ids:
-            return ()
-        allowed = set(allowed_template_ids)
-        return tuple(
-            template_id
-            for template_id in required_templates
-            if template_id not in allowed
-        )
-
-    def _validate_llm_governance_required_evidence(
-        self,
-        required_evidence: tuple[str, ...],
-    ) -> None:
-        if not required_evidence:
-            raise ValueError("required_evidence must not be empty")
-        allowed = set(PLANNER_LLM_GOVERNANCE_EXECUTION_REQUIRED_EVIDENCE)
-        for evidence_name in required_evidence:
-            if not evidence_name.strip():
-                raise ValueError("required_evidence must not contain empty names")
-            if evidence_name not in allowed:
-                raise ValueError(f"unknown required evidence: {evidence_name}")
-
-    def _llm_governance_evidence_state(
-        self,
-        record: PlannerLlmGovernanceEvidenceRecord,
-        evidence_name: str,
-    ) -> tuple[bool, bool, bool]:
-        if evidence_name == "prompt_evidence":
-            return (record.prompt_ref is not None, True, True)
-        if evidence_name == "model_evidence":
-            return (record.model_ref is not None, True, True)
-        if evidence_name == "approval_evidence":
-            return (
-                record.approval_ref is not None,
-                record.approved is not None,
-                record.approved is True,
-            )
-        if evidence_name == "evaluation_evidence":
-            return (
-                record.evaluation_ref is not None,
-                record.evaluation_passed is not None,
-                record.evaluation_passed is True,
-            )
-        if evidence_name == "validation_evidence":
-            return (
-                record.validation_ref is not None,
-                record.validation_passed is not None,
-                record.validation_passed is True,
-            )
-        raise ValueError(f"unknown required evidence: {evidence_name}")
-
-    def _validate_step_dependencies(self, steps: tuple[PlanStep, ...]) -> None:
-        by_id = {step.step_id: step for step in steps}
-        if len(by_id) != len(steps):
-            raise ValueError("decomposition step ids must be unique")
-        for step in steps:
-            unknown = sorted(set(step.depends_on).difference(by_id))
-            if unknown:
-                raise ValueError(
-                    f"unknown dependency for {step.step_id}: {', '.join(unknown)}",
-                )
-            if step.step_id in step.depends_on:
-                raise ValueError(f"dependency cycle includes {step.step_id}")
-
-        visiting: set[str] = set()
-        visited: set[str] = set()
-
-        def visit(step_id: str) -> None:
-            if step_id in visited:
-                return
-            if step_id in visiting:
-                raise ValueError(f"dependency cycle includes {step_id}")
-            visiting.add(step_id)
-            for dependency_id in by_id[step_id].depends_on:
-                visit(dependency_id)
-            visiting.remove(step_id)
-            visited.add(step_id)
-
-        for step in steps:
-            visit(step.step_id)
 
     def _replace_step(
         self,
