@@ -46,7 +46,7 @@ class ArtifactRecord:
 
     def __post_init__(self) -> None:
         validate_artifact_id(self.id)
-        _validate_session_id(self.session_id)
+        validate_artifact_session_id(self.session_id)
         validate_artifact_filename(self.filename)
         validate_artifact_media_type(self.media_type)
         if type(self.size_bytes) is not int or self.size_bytes < 0:
@@ -154,7 +154,9 @@ def validate_artifact_media_type(media_type: str) -> None:
         raise ArtifactValidationError("artifact media type is invalid")
 
 
-def _validate_session_id(session_id: str) -> None:
+def validate_artifact_session_id(session_id: str) -> None:
+    """校验 Artifact 操作使用的 Session Scope。"""
+
     if (
         type(session_id) is not str
         or not session_id
