@@ -1221,7 +1221,7 @@
           "stability": "experimental"
         },
         "InMemoryMemoryStore": {
-          "signature": "(_records: 'dict[str, MemoryRecord]' = <factory>) -> None",
+          "signature": "() -> None",
           "stability": "experimental"
         },
         "MemoryAccessPolicy": {

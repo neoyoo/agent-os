@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from threading import RLock
 
 from agentos.memory.records import (
     MemoryCandidate,
@@ -14,27 +15,38 @@ from agentos.memory.records import (
 class InMemoryMemoryStore:
     """Level 1 deterministic MemoryStore adapter."""
 
-    _records: dict[str, MemoryRecord] = field(default_factory=dict)
+    _records: dict[str, MemoryRecord] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def put(self, record: MemoryRecord) -> None:
         if not isinstance(record, MemoryRecord):
             raise TypeError("record must be a MemoryRecord")
-        existing = self._records.get(record.handle)
-        if existing is not None and existing.session_id != record.session_id:
-            raise ValueError("memory handle already belongs to another session")
-        self._records[record.handle] = record
+        with self._lock:
+            existing = self._records.get(record.handle)
+            if existing is not None and existing.session_id != record.session_id:
+                raise ValueError("memory handle already belongs to another session")
+            self._records[record.handle] = record
 
     def get(self, handle: str) -> MemoryRecord:
-        try:
-            return self._records[handle]
-        except KeyError as error:
-            raise KeyError(handle) from error
+        if not isinstance(handle, str) or not handle.strip():
+            raise ValueError("handle must be a non-empty string")
+        with self._lock:
+            try:
+                return self._records[handle]
+            except KeyError as error:
+                raise KeyError(handle) from error
 
     def search(
         self,
         context: MemorySelectionContext,
         candidate_limit: int,
     ) -> tuple[MemoryCandidate, ...]:
+        if not isinstance(context, MemorySelectionContext):
+            raise TypeError("context must be a MemorySelectionContext")
         if type(candidate_limit) is not int or candidate_limit < 0:
             raise ValueError("candidate_limit must be a non-negative integer")
         if candidate_limit == 0:
@@ -42,7 +54,9 @@ class InMemoryMemoryStore:
 
         query_tokens = self._tokens(context.query)
         candidates: list[MemoryCandidate] = []
-        for record in self._records.values():
+        with self._lock:
+            records = tuple(self._records.values())
+        for record in records:
             if record.session_id != context.session_id:
                 continue
             score, reason = self._score(record, query_tokens)

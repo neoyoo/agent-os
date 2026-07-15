@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from threading import Barrier, Lock, Thread
 
 import pytest
 
@@ -64,6 +65,53 @@ def test_in_memory_store_rejects_cross_session_handle_replacement() -> None:
     assert store.get("mem_1") is original
 
 
+def test_in_memory_store_does_not_accept_preloaded_internal_records() -> None:
+    with pytest.raises(TypeError, match="_records"):
+        InMemoryMemoryStore(  # type: ignore[call-arg]
+            _records={"mem_1": record("mem_1")},
+        )
+
+
+def test_in_memory_store_cross_session_handle_claim_is_atomic() -> None:
+    store = InMemoryMemoryStore()
+    barrier = Barrier(3)
+    result_lock = Lock()
+    results: list[str] = []
+
+    def claim(memory_record: MemoryRecord) -> None:
+        barrier.wait()
+        try:
+            store.put(memory_record)
+        except ValueError:
+            result = "rejected"
+        else:
+            result = "stored"
+        with result_lock:
+            results.append(result)
+
+    threads = (
+        Thread(target=claim, args=(record("mem_1", session_id="session_1"),)),
+        Thread(target=claim, args=(record("mem_1", session_id="session_2"),)),
+    )
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert sorted(results) == ["rejected", "stored"]
+    assert store.get("mem_1").session_id in {"session_1", "session_2"}
+
+
+@pytest.mark.parametrize("handle", [None, "", "  "])
+def test_in_memory_store_get_rejects_invalid_handle(handle: object) -> None:
+    store = InMemoryMemoryStore()
+
+    with pytest.raises(ValueError, match="handle must be a non-empty string"):
+        store.get(handle)  # type: ignore[arg-type]
+
+
 def test_in_memory_store_search_isolates_session_candidates() -> None:
     store = InMemoryMemoryStore()
     store.put(record("mem_local"))
@@ -120,3 +168,10 @@ def test_in_memory_store_rejects_invalid_candidate_limit(
             selection_context(),
             candidate_limit=candidate_limit,  # type: ignore[arg-type]
         )
+
+
+def test_in_memory_store_validates_context_before_zero_limit_shortcut() -> None:
+    store = InMemoryMemoryStore()
+
+    with pytest.raises(TypeError, match="context must be a MemorySelectionContext"):
+        store.search(object(), candidate_limit=0)  # type: ignore[arg-type]
