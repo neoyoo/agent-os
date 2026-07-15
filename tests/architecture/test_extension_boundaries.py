@@ -73,6 +73,35 @@ def test_recall_domain_does_not_import_memory() -> None:
     assert matches == []
 
 
+def test_memory_domain_does_not_import_recall_or_session_storage() -> None:
+    forbidden = (
+        "agentos.compression",
+        "agentos.messages",
+        "agentos.persistence",
+        "agentos.providers",
+        "agentos.recall",
+        "agentos.runtime",
+    )
+    memory_root = PROJECT_ROOT / "src" / "agentos" / "memory"
+    matches: list[str] = []
+
+    for path in memory_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            imports: tuple[str, ...] = ()
+            if isinstance(node, ast.ImportFrom) and node.module is not None:
+                imports = (node.module,)
+            elif isinstance(node, ast.Import):
+                imports = tuple(alias.name for alias in node.names)
+            for imported in imports:
+                if imported.startswith(forbidden):
+                    matches.append(
+                        f"{path.relative_to(PROJECT_ROOT)} imports {imported}",
+                    )
+
+    assert matches == []
+
+
 def test_recall_and_session_storage_have_single_domain_owners() -> None:
     removed_memory_modules = (
         "embeddings.py",

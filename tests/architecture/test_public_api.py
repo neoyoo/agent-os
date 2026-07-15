@@ -387,11 +387,25 @@ def test_phase5_phase6_public_api_exports() -> None:
     assert observability.EventSubscriber is events.EventSubscriber
 
 
-def test_recall_and_session_storage_public_api_exports() -> None:
+def test_memory_recall_and_session_storage_public_api_exports() -> None:
     agentos = importlib.import_module("agentos")
     memory = importlib.import_module("agentos.memory")
     persistence = importlib.import_module("agentos.persistence")
     recall = importlib.import_module("agentos.recall")
+
+    for name in [
+        "EpisodicCategory",
+        "InMemoryMemoryStore",
+        "MemoryAccessPolicy",
+        "MemoryCandidate",
+        "MemoryCategory",
+        "MemoryKind",
+        "MemoryRecord",
+        "MemorySelectionContext",
+        "MemoryStore",
+        "SemanticCategory",
+    ]:
+        assert hasattr(memory, name)
 
     for name in [
         "CompressedSegmentPackage",
@@ -432,6 +446,10 @@ def test_recall_and_session_storage_public_api_exports() -> None:
 
     for name in [
         "CompressedSegmentPackage",
+        "MemoryRecord",
+        "MemoryRuntime",
+        "MemorySelectionContext",
+        "MemoryStore",
         "PostgresDurableSessionStore",
         "QdrantRecallIndex",
         "RedisHotSessionStore",

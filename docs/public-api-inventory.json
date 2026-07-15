@@ -1210,6 +1210,58 @@
         }
       }
     },
+    "agentos.memory": {
+      "exports": {
+        "EpisodicCategory": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "InMemoryMemoryStore": {
+          "signature": "(_records: 'dict[str, MemoryRecord]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "MemoryAccessPolicy": {
+          "methods": {
+            "allows": "(self, record: agentos.memory.records.MemoryRecord, context: agentos.memory.records.MemorySelectionContext) -> bool"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "MemoryCandidate": {
+          "signature": "(record: 'MemoryRecord', score: 'float', reason: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "MemoryCategory": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "MemoryKind": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "MemoryRecord": {
+          "signature": "(handle: 'str', session_id: 'str', kind: 'MemoryKind', category: 'MemoryCategory', content: 'str', artifact_handles: 'tuple[str, ...]' = (), expires_at: 'datetime | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "MemorySelectionContext": {
+          "signature": "(session_id: 'str', principal_id: 'str', permissions: 'Iterable[str]', query: 'str', now: 'datetime') -> 'None'",
+          "stability": "experimental"
+        },
+        "MemoryStore": {
+          "methods": {
+            "get": "(self, handle: str) -> agentos.memory.records.MemoryRecord",
+            "put": "(self, record: agentos.memory.records.MemoryRecord) -> None",
+            "search": "(self, context: agentos.memory.records.MemorySelectionContext, candidate_limit: int) -> tuple[agentos.memory.records.MemoryCandidate, ...]"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "SemanticCategory": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        }
+      }
+    },
     "agentos.multi": {
       "exports": {
         "AgentCard": {

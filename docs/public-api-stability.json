@@ -465,6 +465,23 @@
                                                                 "TextEmbeddingProvider"
                                                             ]
                                        },
+                    "agentos.memory":  {
+                                           "stable":  [
+
+                                                      ],
+                                           "experimental":  [
+                                                                "EpisodicCategory",
+                                                                "InMemoryMemoryStore",
+                                                                "MemoryAccessPolicy",
+                                                                "MemoryCandidate",
+                                                                "MemoryCategory",
+                                                                "MemoryKind",
+                                                                "MemoryRecord",
+                                                                "MemorySelectionContext",
+                                                                "MemoryStore",
+                                                                "SemanticCategory"
+                                                            ]
+                                       },
                     "agentos.persistence":  {
                                                 "stable":  [
                                                                "FileSystemPersistence",
