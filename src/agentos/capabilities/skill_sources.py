@@ -24,6 +24,8 @@ from agentos.capabilities.skill_types import (
 
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
 class SkillContentSource(ABC):
     """异步 Skill 内容来源。"""
 

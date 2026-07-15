@@ -81,7 +81,10 @@ class SkillDefinition:
         if self.source not in ("builtin", "filesystem", "learned"):
             raise ValueError("invalid skill source")
         _require_skill_trust(self.trust)
-        if not isinstance(self.source_revision, str) or not self.source_revision.strip():
+        if (
+            not isinstance(self.source_revision, str)
+            or not self.source_revision.strip()
+        ):
             raise ValueError("skill source_revision must be a non-empty string")
 
     def descriptor(self) -> SkillDescriptor:
@@ -139,6 +142,14 @@ class SkillLoadResult:
             raise ValueError("skill load verification subject is invalid")
         if self.metadata.name != self.name or self.subject.skill_name != self.name:
             raise ValueError("skill load identity mismatch")
+        expected_subject = SkillVerificationSubject.from_content(
+            source_id=self.subject.source_id,
+            skill_name=self.name,
+            source_revision=self.subject.source_revision,
+            content=self.content,
+        )
+        if self.subject != expected_subject:
+            raise ValueError("skill load content digest mismatch")
 
     def render_tool_result(
         self,

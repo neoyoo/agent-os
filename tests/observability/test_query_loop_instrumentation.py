@@ -56,7 +56,9 @@ class NoOpCompressionRuntime:
         return None
 
 
-def _build_loop(tmp_path: Path) -> tuple[QueryLoop, FakeProvider, NoOpCompressionRuntime]:
+def _build_loop(
+    tmp_path: Path,
+) -> tuple[QueryLoop, FakeProvider, NoOpCompressionRuntime]:
     (tmp_path / "pyproject.toml").write_text('name = "agent-os"', encoding="utf-8")
     provider = FakeProvider(
         [
@@ -155,10 +157,7 @@ def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> No
     assert root.attributes["langfuse.trace.name"] == "agentos.turn"
     assert root.attributes["agentos.session.id"] == "s1"
     assert root.attributes["agentos.capture.mode"] == "metadata"
-    assert all(
-        record.parent_span_id == root.span_id
-        for record in tracer.records[1:]
-    )
+    assert all(record.parent_span_id == root.span_id for record in tracer.records[1:])
     request_span = tracer.records[2]
     assert request_span.attributes["langfuse.observation.type"] == "span"
     assert request_span.attributes["agentos.provider_request.messages.count"] == 2
@@ -319,13 +318,17 @@ def test_instrumented_query_loop_exposes_only_the_static_execution_contract(
     )
 
     assert not hasattr(type(instrumented), "__getattr__")
-    assert {
-        name for name in vars(type(instrumented)) if not name.startswith("_")
-    } == {"execute", "interrupt", "request_builder"}
+    assert {name for name in vars(type(instrumented)) if not name.startswith("_")} == {
+        "execute",
+        "interrupt",
+        "request_builder",
+    }
     assert _run_turn(instrumented, "读取项目名")[-1].content == "项目名是 agent-os。"
 
 
-def test_instrument_query_loop_metadata_mode_records_trace_input_output_summaries(tmp_path: Path) -> None:
+def test_instrument_query_loop_metadata_mode_records_trace_input_output_summaries(
+    tmp_path: Path,
+) -> None:
     loop, _, _ = _build_loop(tmp_path)
     tracer = InMemoryTracer()
 
@@ -349,7 +352,9 @@ def test_instrument_query_loop_metadata_mode_records_trace_input_output_summarie
     assert "项目名是 agent-os。" not in str(root.attributes["langfuse.trace.output"])
 
 
-def test_instrument_query_loop_full_mode_records_trace_input_output_content(tmp_path: Path) -> None:
+def test_instrument_query_loop_full_mode_records_trace_input_output_content(
+    tmp_path: Path,
+) -> None:
     loop, _, _ = _build_loop(tmp_path)
     tracer = InMemoryTracer()
 
@@ -417,7 +422,9 @@ def test_instrument_query_loop_does_not_mutate_original_loop(tmp_path: Path) -> 
     assert loop.compression_runtime is original_compression
 
 
-def test_query_loop_records_trace_session_turn_and_user_metadata_on_all_spans(tmp_path: Path) -> None:
+def test_query_loop_records_trace_session_turn_and_user_metadata_on_all_spans(
+    tmp_path: Path,
+) -> None:
     loop, _, _ = _build_loop(tmp_path)
     tracer = InMemoryTracer()
     instrumented = instrument_query_loop(
@@ -470,7 +477,9 @@ def test_query_loop_inherits_incoming_traceparent(tmp_path: Path) -> None:
     assert all(record.trace_id == incoming_trace_id for record in tracer.records)
 
 
-def test_instrumented_query_loop_returns_original_stream_and_preserves_waiting() -> None:
+def test_instrumented_query_loop_returns_original_stream_and_preserves_waiting() -> (
+    None
+):
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
 

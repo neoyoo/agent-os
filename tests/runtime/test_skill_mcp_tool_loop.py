@@ -18,6 +18,8 @@ from agentos.capabilities.skills import (
     FileSystemSkillSource,
     SkillDefinition,
     SkillRegistry,
+    SkillRuntime,
+    SkillTrustDecision,
     register_skill_loader_tools,
 )
 from agentos.context import ContextRuntime
@@ -50,6 +52,11 @@ class FakeMCPClient:
         return f"{tool_name}:{arguments['key']}"
 
 
+class RejectingTrustPolicy:
+    def verify(self, metadata, subject):  # type: ignore[no-untyped-def]
+        return SkillTrustDecision(False, "tests", subject)
+
+
 def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None:
     (tmp_path / "review.md").write_text(
         (
@@ -63,12 +70,17 @@ def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None
         ),
         encoding="utf-8",
     )
+
     async def load_registry() -> SkillRegistry:
         return await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
 
     skill_registry = asyncio.run(load_registry())
     tool_registry = ToolRegistry()
-    register_skill_loader_tools(tool_registry, skill_registry)
+    register_skill_loader_tools(
+        tool_registry,
+        SkillRuntime(skill_registry, RejectingTrustPolicy()),
+        "session-1",
+    )
     messages = MessageRuntime()
     router = ToolCallRouter(tool_registry=tool_registry)
     provider = FakeProvider(
@@ -142,7 +154,7 @@ def _assert_agent_close_waits_for_filesystem_skill_worker(
 
         if worker_kind == "discovery":
             original_discover_skills = source._discover_skills
-            source._skills = None
+            source._records = None
 
             def blocking_discover_skills() -> dict[str, SkillDefinition]:
                 worker_started.set()
@@ -168,7 +180,9 @@ def _assert_agent_close_waits_for_filesystem_skill_worker(
                 finally:
                     worker_finished.set()
 
-            monkeypatch.setattr(source, "_list_skill_resources", blocking_list_resources)
+            monkeypatch.setattr(
+                source, "_list_skill_resources", blocking_list_resources
+            )
             tool_name = "load_skill"
             arguments = {"skill_name": "code-review"}
         else:
@@ -196,7 +210,11 @@ def _assert_agent_close_waits_for_filesystem_skill_worker(
             }
 
         tool_registry = ToolRegistry()
-        register_skill_loader_tools(tool_registry, skill_registry)
+        register_skill_loader_tools(
+            tool_registry,
+            SkillRuntime(skill_registry, RejectingTrustPolicy()),
+            "session-1",
+        )
         router = ToolCallRouter(tool_registry=tool_registry)
         messages = MessageRuntime()
         provider = FakeProvider(

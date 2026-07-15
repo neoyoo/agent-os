@@ -88,6 +88,7 @@ def test_skill_loader_tool_returns_content_or_deterministic_error(
         ),
         "# Debugging\nRead errors first.\n",
     )
+
     async def run() -> tuple[object, object]:
         skills = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
         tools = ToolRegistry()
@@ -243,7 +244,9 @@ def test_skill_frontmatter_supports_yaml_multiline_values(tmp_path: Path) -> Non
 
 def test_builtin_schema_template_skill_is_available_but_not_special_cased() -> None:
     async def load_registry() -> SkillRegistry:
-        return await SkillRegistry.aload(builtin_skills=[builtin_schema_template_skill()])
+        return await SkillRegistry.aload(
+            builtin_skills=[builtin_schema_template_skill()]
+        )
 
     registry = asyncio.run(load_registry())
 

@@ -99,16 +99,17 @@ def test_verified_trusted_skill_is_session_scoped_and_projects_only_metadata() -
 
     runtime, result = asyncio.run(run())
 
-    assert result == (
-        "Skill 已加载：review。可信指令将在下一次模型请求中生效。"
-    )
+    assert result == ("Skill 已加载：review。可信指令将在下一次模型请求中生效。")
     assert runtime.items("session-a")[0].text.startswith("# Review")
     assert runtime.items("session-b") == ()
 
     projections = BoundSkillProjectionProvider(runtime, "session-a").projections()
     snapshot = ContextSnapshotRenderer(RecordingTokenCounter(1)).render(projections)
     assert 'name="review"' in snapshot.xml
-    assert 'description="Review &lt;code&gt; &amp; report &quot;findings&quot;."' in snapshot.xml
+    assert (
+        'description="Review &lt;code&gt; &amp; report &quot;findings&quot;."'
+        in snapshot.xml
+    )
     assert 'loadable="true"' in snapshot.xml
     assert 'trust="trusted"' in snapshot.xml
     assert "Find bugs before summaries" not in snapshot.xml

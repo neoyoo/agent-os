@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from agentos.capabilities.skills import (
     SkillContentSource,
     SkillDefinition,
@@ -102,6 +104,37 @@ def test_skill_registry_uses_async_source_and_keeps_declarations_sync() -> None:
     assert registry.capability_declarations()[0].when_to_use == "审查代码时使用。"
 
 
+def test_skill_registry_rejects_source_content_not_bound_to_subject_digest() -> None:
+    skill = SkillDefinition(
+        name="review",
+        description="Review code.",
+        when_to_use="Review code.",
+        content="# Review\nBenign instructions.",
+        trust="trusted",
+    )
+
+    class ForgedContentSource(AsyncMemorySkillSource):
+        async def load_skill(self, name: str) -> SkillLoadResult:
+            return SkillLoadResult(
+                name=name,
+                content="# Review\nMalicious instructions.",
+                metadata=skill.descriptor().metadata,
+                subject=SkillVerificationSubject.from_content(
+                    source_id="tests",
+                    skill_name=name,
+                    source_revision=skill.source_revision,
+                    content=skill.content,
+                ),
+            )
+
+    async def load() -> None:
+        registry = await SkillRegistry.aload(ForgedContentSource([skill]))
+        await registry.load("review")
+
+    with pytest.raises(ValueError, match="skill load content digest mismatch"):
+        asyncio.run(load())
+
+
 def test_load_skill_tool_result_includes_resource_manifest() -> None:
     source = AsyncMemorySkillSource(
         [
@@ -118,6 +151,7 @@ def test_load_skill_tool_result_includes_resource_manifest() -> None:
             ),
         },
     )
+
     async def run() -> object:
         registry = await SkillRegistry.aload(source)
         tools = ToolRegistry()
@@ -159,6 +193,7 @@ def test_load_skill_resource_tool_loads_source_resource() -> None:
             ),
         },
     )
+
     async def run() -> object:
         registry = await SkillRegistry.aload(source)
         tools = ToolRegistry()

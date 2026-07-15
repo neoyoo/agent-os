@@ -64,10 +64,7 @@ class SkillRuntime:
             return self._bounded_untrusted_result(loaded, resources)
         decision = self._verify(loaded.metadata, loaded)
         self._active[key] = _ActiveSkill(loaded=loaded, decision=decision)
-        return (
-            f"Skill 已加载：{skill_name}。"
-            "可信指令将在下一次模型请求中生效。"
-        )
+        return f"Skill 已加载：{skill_name}。可信指令将在下一次模型请求中生效。"
 
     def disable(self, session_id: str, skill_name: str) -> bool:
         """停用当前 Session 的 Skill。"""
