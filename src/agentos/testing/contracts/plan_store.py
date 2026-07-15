@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from agentos.multi import (
+from agentos.planning import (
     EvidenceHandle,
     PlanAssignment,
     PlanClaimRecord,
     PlanNotFoundError,
     PlanState,
+    PlanStore,
     PlanStep,
 )
-from agentos.multi.planner import PlanStore
 from agentos.testing.contracts._checks import (
     check_equal,
     check_in,

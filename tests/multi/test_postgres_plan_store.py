@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agentos.multi.planner import (
+from agentos.planning import (
     EvidenceHandle,
     PlanClaimRecord,
     PlanAssignment,

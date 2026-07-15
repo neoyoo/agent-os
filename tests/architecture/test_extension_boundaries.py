@@ -102,6 +102,89 @@ def test_memory_domain_does_not_import_recall_or_session_storage() -> None:
     assert matches == []
 
 
+def test_planning_domain_foundation_exists_without_multi_dependency() -> None:
+    planning_root = PROJECT_ROOT / "src" / "agentos" / "planning"
+    required = ("__init__.py", "errors.py", "models.py", "store.py", "in_memory.py")
+    assert all((planning_root / name).is_file() for name in required)
+
+    forbidden_infrastructure_prefixes = ("postgres", "redis", "psycopg")
+    allowed_workspace_names = {"WorkspaceHandle", "WorkspaceScope"}
+    matches: list[str] = []
+    for path in planning_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            imports: tuple[str, ...] = ()
+            if isinstance(node, ast.ImportFrom) and node.module is not None:
+                imports = (node.module,)
+            elif isinstance(node, ast.Import):
+                imports = tuple(alias.name for alias in node.names)
+            for imported in imports:
+                segments = imported.split(".")
+                imports_forbidden_infrastructure = any(
+                    segment.startswith(forbidden_infrastructure_prefixes)
+                    for segment in segments
+                )
+                imports_workspace_module = imported.startswith("agentos.workspace")
+                if (
+                    imported.startswith("agentos.multi")
+                    or imports_forbidden_infrastructure
+                    or (isinstance(node, ast.Import) and imports_workspace_module)
+                    or (
+                        isinstance(node, ast.ImportFrom)
+                        and imported != "agentos.workspace"
+                        and imports_workspace_module
+                    )
+                ):
+                    matches.append(
+                        f"{path.relative_to(PROJECT_ROOT)} imports {imported}",
+                    )
+            if isinstance(node, ast.ImportFrom) and node.module == "agentos.workspace":
+                for alias in node.names:
+                    if alias.name not in allowed_workspace_names:
+                        matches.append(
+                            f"{path.relative_to(PROJECT_ROOT)} imports "
+                            f"agentos.workspace.{alias.name}",
+                        )
+
+    assert matches == []
+
+
+def test_multi_planner_uses_planning_foundation_class_identity() -> None:
+    from agentos import planning
+    from agentos.multi import planner
+
+    names = (
+        "ClaimGuardedPlanStore",
+        "CompareAndSavePlanStore",
+        "EvidenceHandle",
+        "InMemoryPlanClaimStore",
+        "InMemoryPlanStore",
+        "PlanAssignment",
+        "PlanClaimLostError",
+        "PlanClaimRecord",
+        "PlanClaimResult",
+        "PlanClaimStore",
+        "PlanClaimSweepStore",
+        "PlanConflictError",
+        "PlanError",
+        "PlanNotFoundError",
+        "PlanRetryPolicy",
+        "PlanState",
+        "PlanStep",
+        "PlanStepNotFoundError",
+        "PlanStore",
+        "PlanStoreRecord",
+        "PlannerToolAuthorizationError",
+        "SubAgentTemplate",
+    )
+
+    assert all(getattr(planner, name) is getattr(planning, name) for name in names)
+    assert (
+        inspect.signature(planning.PlanState.with_status).return_annotation
+        == "'PlanState'"
+    )
+
+
 def test_recall_and_session_storage_have_single_domain_owners() -> None:
     removed_memory_modules = (
         "embeddings.py",

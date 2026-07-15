@@ -14,7 +14,7 @@ from agentos.multi.team import (
     TeamUiEvent,
     TeamUiEventKind,
 )
-from agentos.multi.planner import (
+from agentos.planning import (
     EvidenceHandle,
     EvidenceKind,
     PlanAssignment,

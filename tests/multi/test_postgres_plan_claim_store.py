@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agentos.multi.planner import PlanClaimRecord
+from agentos.planning import PlanClaimRecord
 from agentos.multi.postgres_plan import PostgresPlanClaimStore
 from agentos.testing.contracts.plan_claim_store import run_plan_claim_store_contract
 

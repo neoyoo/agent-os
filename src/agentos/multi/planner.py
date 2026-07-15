@@ -14,28 +14,41 @@ from agentos.multi.types import (
     TaskAlreadySubmittedError as PlanDispatchAlreadySubmittedError,
     TaskHandle,
 )
-from agentos.workspace import WorkspaceHandle, WorkspaceScope
-
-
-PlanStatus = Literal["draft", "running", "completed", "failed", "cancelled"]
-PLAN_STATUSES: tuple[PlanStatus, ...] = (
-    "draft",
-    "running",
-    "completed",
-    "failed",
-    "cancelled",
+from agentos.planning import (
+    EVIDENCE_KINDS,
+    PLAN_STATUSES,
+    ClaimGuardedPlanStore as ClaimGuardedPlanStore,
+    CompareAndSavePlanStore as CompareAndSavePlanStore,
+    EvidenceHandle,
+    EvidenceKind,
+    InMemoryPlanClaimStore as InMemoryPlanClaimStore,
+    InMemoryPlanStore as InMemoryPlanStore,
+    PlanAssignment,
+    PlanAssignmentDispatchStatus as PlanAssignmentDispatchStatus,
+    PlanClaimLostError,
+    PlanClaimRecord,
+    PlanClaimResult,
+    PlanClaimStatus as PlanClaimStatus,
+    PlanClaimStore,
+    PlanClaimSweepStore,
+    PlanConflictError,
+    PlanError as PlanError,
+    PlanNotFoundError,
+    PlanRetryPolicy,
+    PlanState,
+    PlanStatus,
+    PlanStep,
+    PlanStepNotFoundError,
+    PlanStepRetryStatus,
+    PlanStepStatus as PlanStepStatus,
+    PlanStore,
+    PlanStoreRecord,
+    PlannerToolAuthorizationError,
+    SubAgentTemplate,
 )
-PlanStepStatus = Literal[
-    "pending",
-    "assigned",
-    "running",
-    "completed",
-    "failed",
-    "blocked",
-    "cancelled",
-]
-PlanStepRetryStatus = Literal["scheduled", "exhausted"]
-PlanAssignmentDispatchStatus = Literal["pending", "submitted", "failed"]
+from agentos.workspace import WorkspaceHandle
+
+
 PlannerSchedulerDaemonStatus = Literal["idle", "running", "stopping", "stopped"]
 PlannerClaimedSchedulerDaemonStatus = Literal[
     "idle",
@@ -48,7 +61,6 @@ PlannerSchedulablePlanReason = Literal[
     "due-retries",
     "pending-dispatch",
 ]
-PlanClaimStatus = Literal["claimed", "busy"]
 PlanClaimedSchedulerTickSkipReason = Literal["busy", "tick-failed", "claim-lost"]
 PlanClaimSweepSkipReason = Literal["release-race"]
 PlanDispatchSkipReason = Literal[
@@ -56,14 +68,6 @@ PlanDispatchSkipReason = Literal[
     "unknown-template",
     "dispatch-failed",
 ]
-EvidenceKind = Literal["text", "artifact", "task_result", "team_message", "external"]
-EVIDENCE_KINDS: tuple[str, ...] = (
-    "text",
-    "artifact",
-    "task_result",
-    "team_message",
-    "external",
-)
 PLANNER_ORCHESTRATION_REQUIRED_COMPONENTS: tuple[str, ...] = (
     "decomposition_policy",
     "dag_scheduler",
@@ -133,26 +137,6 @@ PLANNER_SCHEDULER_GOVERNANCE_REQUIRED_COMPONENTS: tuple[str, ...] = (
 )
 
 
-class PlanError(RuntimeError):
-    """planner 基础错误。"""
-
-
-class PlanNotFoundError(PlanError):
-    """plan 不存在。"""
-
-
-class PlanStepNotFoundError(PlanError):
-    """plan step 不存在。"""
-
-
-class PlanClaimLostError(PlanError):
-    """Scheduler worker lost the exact plan claim before mutation save."""
-
-
-class PlannerToolAuthorizationError(PlanError, PermissionError):
-    """Planner tool authorization policy rejected an LLM-callable operation."""
-
-
 class PlannerToolAuthorizationPolicy(Protocol):
     """Authorization boundary for LLM-callable planner tools."""
 
@@ -204,10 +188,6 @@ class AllowAllPlannerToolAuthorizationPolicy:
         plan_id: str | None,
     ) -> None:
         """Allow all planner tool calls."""
-
-
-class PlanConflictError(PlanError):
-    """Plan changed after it was read; callers must reload before retrying."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -952,57 +932,6 @@ class PlannerStaleClaimSweepProfile:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanRetryPolicy:
-    """Retry/backoff policy for failed planner steps."""
-
-    max_attempts: int = 1
-    backoff_seconds: float = 0.0
-    backoff_multiplier: float = 1.0
-
-    def __post_init__(self) -> None:
-        if self.max_attempts < 1:
-            raise ValueError("max_attempts must be >= 1")
-        if self.backoff_seconds < 0:
-            raise ValueError("backoff_seconds must be >= 0")
-        if self.backoff_multiplier < 1:
-            raise ValueError("backoff_multiplier must be >= 1")
-
-    def delay_for_attempt(self, attempt: int) -> float:
-        """Return retry delay after the given failed attempt."""
-
-        return self.backoff_seconds * (
-            self.backoff_multiplier ** max(0, attempt - 1)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SubAgentTemplate:
-    """可复用 subagent 执行模板。"""
-
-    template_id: str
-    name: str
-    role: str
-    capabilities: tuple[str, ...] = ()
-    allowed_tool_names: tuple[str, ...] = ()
-    context_seed: tuple[str, ...] = ()
-    workspace_scope: WorkspaceScope = "task"
-    target_agent_id: str | None = None
-    timeout_seconds: float = 300
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceHandle:
-    """plan 中引用的 evidence/artifact 句柄。"""
-
-    evidence_id: str
-    kind: EvidenceKind
-    summary: str
-    uri: str | None = None
-    producer_agent_id: str | None = None
-    metadata: Mapping[str, str] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
 class PlanStepSpec:
     """One structured step proposed by a decomposition policy."""
 
@@ -1268,42 +1197,6 @@ def _validate_planner_llm_governance_metadata(
 
 
 @dataclass(frozen=True, slots=True)
-class PlanStep:
-    """plan 中的一个可分配步骤。"""
-
-    step_id: str
-    instruction: str
-    status: PlanStepStatus = "pending"
-    required_capabilities: tuple[str, ...] = ()
-    assigned_agent_id: str | None = None
-    template_id: str | None = None
-    task_id: str | None = None
-    depends_on: tuple[str, ...] = ()
-    evidence_ids: tuple[str, ...] = ()
-    error: str | None = None
-    attempts: int = 0
-    last_failed_at: float | None = None
-    next_retry_at: float | None = None
-    retry_status: PlanStepRetryStatus | None = None
-    retry_exhausted_at: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PlanAssignment:
-    """step -> task/subagent 的分配记录。"""
-
-    plan_id: str
-    step_id: str
-    template_id: str
-    task_id: str
-    target_agent_id: str
-    created_at: float
-    dispatch_status: PlanAssignmentDispatchStatus = "pending"
-    submitted_at: float | None = None
-    dispatch_error: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class PlanDispatchSkip:
     """One ready step that was not submitted during a dispatch batch."""
 
@@ -1400,56 +1293,6 @@ class PlannerSchedulablePlan:
             "retryable_step_ids": list(self.retryable_step_ids),
             "reasons": list(self.reasons),
             "updated_at": self.updated_at,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PlanClaimRecord:
-    """Lease record for one schedulable planner plan."""
-
-    plan_id: str
-    owner_agent_id: str
-    worker_id: str
-    claimed_at: float
-    lease_expires_at: float
-    generation: int
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a JSON-safe claim record."""
-
-        return {
-            "plan_id": self.plan_id,
-            "owner_agent_id": self.owner_agent_id,
-            "worker_id": self.worker_id,
-            "claimed_at": self.claimed_at,
-            "lease_expires_at": self.lease_expires_at,
-            "generation": self.generation,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PlanClaimResult:
-    """Result from attempting to claim one planner plan."""
-
-    status: PlanClaimStatus
-    claim: PlanClaimRecord | None = None
-    existing_claim: PlanClaimRecord | None = None
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a JSON-safe claim result."""
-
-        return {
-            "status": self.status,
-            "claim": (
-                self.claim.as_dict()
-                if self.claim is not None
-                else None
-            ),
-            "existing_claim": (
-                self.existing_claim.as_dict()
-                if self.existing_claim is not None
-                else None
-            ),
         }
 
 
@@ -1560,128 +1403,6 @@ class PlannerClaimedSchedulerDaemonState:
     errors: tuple[PlannerClaimedSchedulerDaemonError, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class PlanState:
-    """planner state 的 truth projection。"""
-
-    plan_id: str
-    objective: str
-    owner_agent_id: str
-    status: PlanStatus = "draft"
-    steps: tuple[PlanStep, ...] = ()
-    evidence: tuple[EvidenceHandle, ...] = ()
-    assignments: tuple[PlanAssignment, ...] = ()
-    created_at: float = 0
-    updated_at: float = 0
-    workspace: WorkspaceHandle | None = None
-
-    def with_status(self, status: PlanStatus, *, now: float) -> "PlanState":
-        """返回更新状态后的 plan。"""
-
-        return replace(self, status=status, updated_at=now)
-
-
-class PlanStore(Protocol):
-    """plan state 的 truth source。"""
-
-    def create_plan(self, plan: PlanState) -> None:
-        """创建 plan。"""
-
-    def save_plan(self, plan: PlanState) -> None:
-        """保存 plan。"""
-
-    def get_plan(self, plan_id: str) -> PlanState | None:
-        """返回 plan。"""
-
-    def list_plans(self, owner_agent_id: str | None = None) -> list[PlanState]:
-        """列出 plans。"""
-
-
-@dataclass(frozen=True, slots=True)
-class PlanStoreRecord:
-    """Plan payload plus store-owned optimistic concurrency revision."""
-
-    plan: PlanState
-    revision: int
-
-
-class CompareAndSavePlanStore(Protocol):
-    """Optional PlanStore API for optimistic concurrency control."""
-
-    def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None:
-        """Return a plan and the revision that must be used for CAS saves."""
-
-    def save_plan_if_unchanged(
-        self,
-        plan: PlanState,
-        *,
-        expected_revision: int,
-    ) -> bool:
-        """Save only when the current revision matches expected_revision."""
-
-
-class ClaimGuardedPlanStore(Protocol):
-    """Optional plan store API for atomic claim-guarded mutation saves."""
-
-    def save_plan_if_claimed(
-        self,
-        plan: PlanState,
-        claim: "PlanClaimRecord",
-        *,
-        expected_revision: int,
-        now: float,
-    ) -> bool:
-        """Save only when the exact claim and read revision are still current."""
-
-
-class PlanClaimStore(Protocol):
-    """Transient claim/lease boundary for planner scheduler workers."""
-
-    def claim_plan(
-        self,
-        *,
-        plan_id: str,
-        owner_agent_id: str,
-        worker_id: str,
-        lease_seconds: float,
-        now: float,
-    ) -> PlanClaimResult:
-        """Attempt to claim a plan lease for one worker."""
-
-    def release_plan(
-        self,
-        *,
-        plan_id: str,
-        worker_id: str,
-        owner_agent_id: str | None = None,
-    ) -> bool:
-        """Release a plan lease if owned by the worker and optional owner."""
-
-    def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
-        """Return the current claim record when present."""
-
-
-class PlanClaimSweepStore(Protocol):
-    """Optional boundary for listing and releasing expired plan claims."""
-
-    def expired_claims(
-        self,
-        *,
-        now: float,
-        owner_agent_id: str | None = None,
-        limit: int | None = None,
-    ) -> tuple[PlanClaimRecord, ...]:
-        """Return expired claims ordered deterministically."""
-
-    def release_expired_claim(
-        self,
-        claim: PlanClaimRecord,
-        *,
-        now: float,
-    ) -> bool:
-        """Release the exact expired claim if it has not changed."""
-
-
 class PlanCoordinator(Protocol):
     """PlannerRuntime 需要的 coordinator 子集。"""
 
@@ -1690,234 +1411,6 @@ class PlanCoordinator(Protocol):
 
     def dispatch(self, **kwargs: object) -> TaskHandle:
         """派发 persistent expert task。"""
-
-
-class InMemoryPlanStore:
-    """线程安全的本地 plan store。"""
-
-    def __init__(self) -> None:
-        self._plans: dict[str, PlanState] = {}
-        self._revisions: dict[str, int] = {}
-        self._claim_store: object | None = None
-        self._lock = RLock()
-
-    def create_plan(self, plan: PlanState) -> None:
-        with self._lock:
-            if plan.plan_id in self._plans:
-                raise ValueError(f"plan already exists: {plan.plan_id}")
-            self._plans[plan.plan_id] = plan
-            self._revisions[plan.plan_id] = 0
-
-    def save_plan(self, plan: PlanState) -> None:
-        with self._lock:
-            if plan.plan_id not in self._plans:
-                raise PlanNotFoundError(plan.plan_id)
-            self._plans[plan.plan_id] = plan
-            self._revisions[plan.plan_id] += 1
-
-    def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None:
-        with self._lock:
-            plan = self._plans.get(plan_id)
-            if plan is None:
-                return None
-            return PlanStoreRecord(
-                plan=plan,
-                revision=self._revisions[plan_id],
-            )
-
-    def save_plan_if_unchanged(
-        self,
-        plan: PlanState,
-        *,
-        expected_revision: int,
-    ) -> bool:
-        with self._lock:
-            if plan.plan_id not in self._plans:
-                raise PlanNotFoundError(plan.plan_id)
-            if self._revisions[plan.plan_id] != expected_revision:
-                return False
-            self._plans[plan.plan_id] = plan
-            self._revisions[plan.plan_id] += 1
-            return True
-
-    def save_plan_if_claimed(
-        self,
-        plan: PlanState,
-        claim: PlanClaimRecord,
-        *,
-        expected_revision: int,
-        now: float,
-    ) -> bool:
-        claim_store = self._claim_store
-        if not isinstance(claim_store, InMemoryPlanClaimStore):
-            return False
-        with claim_store._lock:
-            with self._lock:
-                if plan.plan_id not in self._plans:
-                    raise PlanNotFoundError(plan.plan_id)
-                current_claim = claim_store._claims.get(plan.plan_id)
-                if current_claim != claim or claim.lease_expires_at <= float(now):
-                    return False
-                if self._revisions[plan.plan_id] != expected_revision:
-                    return False
-                self._plans[plan.plan_id] = plan
-                self._revisions[plan.plan_id] += 1
-                return True
-
-    def bind_claim_store(self, claim_store: object) -> None:
-        """Bind the local claim store used for in-memory atomic save checks."""
-
-        self._claim_store = claim_store
-
-    def get_plan(self, plan_id: str) -> PlanState | None:
-        with self._lock:
-            return self._plans.get(plan_id)
-
-    def list_plans(self, owner_agent_id: str | None = None) -> list[PlanState]:
-        with self._lock:
-            plans = list(self._plans.values())
-        if owner_agent_id is None:
-            return plans
-        return [plan for plan in plans if plan.owner_agent_id == owner_agent_id]
-
-
-class InMemoryPlanClaimStore:
-    """Thread-safe local plan claim/lease store."""
-
-    def __init__(self) -> None:
-        self._claims: dict[str, PlanClaimRecord] = {}
-        self._lock = RLock()
-
-    def claim_plan(
-        self,
-        *,
-        plan_id: str,
-        owner_agent_id: str,
-        worker_id: str,
-        lease_seconds: float,
-        now: float,
-    ) -> PlanClaimResult:
-        """Claim or renew a plan lease when it is free or expired."""
-
-        self._validate_non_empty(plan_id, field_name="plan_id")
-        self._validate_non_empty(owner_agent_id, field_name="owner_agent_id")
-        self._validate_non_empty(worker_id, field_name="worker_id")
-        lease_seconds = float(lease_seconds)
-        now = float(now)
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be > 0")
-
-        with self._lock:
-            existing = self._claims.get(plan_id)
-            if (
-                existing is not None
-                and existing.lease_expires_at > now
-                and (
-                    existing.owner_agent_id != owner_agent_id
-                    or existing.worker_id != worker_id
-                )
-            ):
-                return PlanClaimResult(
-                    status="busy",
-                    existing_claim=existing,
-                )
-            generation = 1 if existing is None else existing.generation + 1
-            claim = PlanClaimRecord(
-                plan_id=plan_id,
-                owner_agent_id=owner_agent_id,
-                worker_id=worker_id,
-                claimed_at=now,
-                lease_expires_at=now + lease_seconds,
-                generation=generation,
-            )
-            self._claims[plan_id] = claim
-            return PlanClaimResult(status="claimed", claim=claim)
-
-    def release_plan(
-        self,
-        *,
-        plan_id: str,
-        worker_id: str,
-        owner_agent_id: str | None = None,
-    ) -> bool:
-        """Release the claim for this worker and optional owner only."""
-
-        self._validate_non_empty(plan_id, field_name="plan_id")
-        self._validate_non_empty(worker_id, field_name="worker_id")
-        if owner_agent_id is not None:
-            self._validate_non_empty(owner_agent_id, field_name="owner_agent_id")
-        with self._lock:
-            existing = self._claims.get(plan_id)
-            if (
-                existing is None
-                or existing.worker_id != worker_id
-                or (
-                    owner_agent_id is not None
-                    and existing.owner_agent_id != owner_agent_id
-                )
-            ):
-                return False
-            del self._claims[plan_id]
-            return True
-
-    def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
-        """Return a claim without evaluating lease expiry."""
-
-        self._validate_non_empty(plan_id, field_name="plan_id")
-        with self._lock:
-            return self._claims.get(plan_id)
-
-    def expired_claims(
-        self,
-        *,
-        now: float,
-        owner_agent_id: str | None = None,
-        limit: int | None = None,
-    ) -> tuple[PlanClaimRecord, ...]:
-        """Return expired claims without mutating the store."""
-
-        now = float(now)
-        if owner_agent_id is not None:
-            self._validate_non_empty(
-                owner_agent_id,
-                field_name="owner_agent_id",
-            )
-        if limit is not None and limit < 1:
-            raise ValueError("limit must be >= 1")
-        with self._lock:
-            claims = [
-                claim
-                for claim in self._claims.values()
-                if claim.lease_expires_at <= now
-                and (
-                    owner_agent_id is None
-                    or claim.owner_agent_id == owner_agent_id
-                )
-            ]
-        claims.sort(key=lambda claim: (claim.lease_expires_at, claim.plan_id))
-        if limit is not None:
-            claims = claims[:limit]
-        return tuple(claims)
-
-    def release_expired_claim(
-        self,
-        claim: PlanClaimRecord,
-        *,
-        now: float,
-    ) -> bool:
-        """Release the exact expired claim only when it has not changed."""
-
-        now = float(now)
-        with self._lock:
-            existing = self._claims.get(claim.plan_id)
-            if existing != claim or existing.lease_expires_at > now:
-                return False
-            del self._claims[claim.plan_id]
-            return True
-
-    def _validate_non_empty(self, value: str, *, field_name: str) -> None:
-        if not value.strip():
-            raise ValueError(f"{field_name} must not be empty")
 
 
 class PlannerRuntime:

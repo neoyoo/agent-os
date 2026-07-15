@@ -1,4 +1,4 @@
-from agentos.multi import InMemoryPlanClaimStore
+from agentos.planning import InMemoryPlanClaimStore
 from agentos.testing.contracts.plan_claim_store import run_plan_claim_store_contract
 
 
