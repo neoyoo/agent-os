@@ -4,7 +4,7 @@ import pickle
 
 import pytest
 
-from agentos.providers.json_values import FrozenJsonObject, freeze_json, thaw_json
+from agentos._json_values import FrozenJsonObject, freeze_json, thaw_json
 
 
 def test_freeze_json_recursively_detaches_mutable_inputs() -> None:

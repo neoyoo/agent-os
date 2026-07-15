@@ -17,6 +17,19 @@ Provider message DTO/serializer surface are removed without compatibility
 facades. Provider tool schema values remain available from `agentos.providers`
 and are owned by the dedicated `agentos.providers.tool_specs` module.
 
+The Phase 2 message/provider contract is frozen by the cross-boundary matrix in
+`tests/runtime/test_message_provider_boundary_contract.py`, together with the
+closed input matrix in `tests/providers/test_provider_input_contract.py` and
+the focused runtime contract tests. They cover the isolated `model_task`
+request plane, request rebuild and temporary-recall consumption, Provider
+capability adaptation, frontend transcript rejection, deep immutability, and
+the rule that `AgentBuilder` does not depend on a concrete Provider adapter.
+
+Deeply immutable JSON values are a private kernel primitive owned by
+`agentos._json_values`; they are not a Provider API. `StoredMessage` and
+`MessageStore` reject Provider transcript values at runtime, and business
+`ToolCall` no longer owns a Provider serialization method.
+
 The machine-readable stability policy is `docs/public-api-stability.json`. It
 contains only governed modules and the stable or experimental classification of
 each export. The generated `docs/public-api-inventory.json` records the current

@@ -7,7 +7,7 @@ from dataclasses import InitVar, dataclass
 from typing import Literal, TypeAlias
 
 from agentos._internal_transcript import InternalTranscriptValue
-from agentos.providers.json_values import FrozenJsonObject, freeze_json
+from agentos._json_values import FrozenJsonObject, freeze_json
 
 
 ProviderRole: TypeAlias = Literal["user", "assistant", "tool"]

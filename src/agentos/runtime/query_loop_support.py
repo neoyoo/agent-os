@@ -13,7 +13,7 @@ from agentos.context import ContextState
 from agentos.policies import ToolResultBudget
 from agentos.policies.tool_result_budget import cap_tool_result_content
 from agentos.providers import ProviderToolCall
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 from agentos.runtime.event_bus import ToolResultCappedEvent
 from agentos.runtime.stream_events import SkillLoaded, ToolStreamCompleted
 from agentos.runtime.tool_scheduler import ScheduledToolCallResult

@@ -12,7 +12,7 @@ from agentos._sync_work import run_sync
 from agentos.providers._openai_compatible_payload import (
     build_chat_completions_payload,
 )
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 from agentos.providers._tool_arguments import (
     parse_json_object_arguments,
     require_tool_call_id,

@@ -8,7 +8,7 @@ from agentos.providers import (
     ProviderFunctionSpec,
     ProviderToolSpec,
 )
-from agentos.providers.json_values import (
+from agentos._json_values import (
     FrozenJsonValue,
     freeze_json_mapping,
 )

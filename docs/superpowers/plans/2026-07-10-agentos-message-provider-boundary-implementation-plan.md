@@ -1288,6 +1288,46 @@ git commit -m "refactor: remove legacy provider messages"
 **Files:**
 - Create: `tests/runtime/test_message_provider_boundary_contract.py`
 - Modify: `docs/api-stability.md`
+- Modify: `docs/superpowers/specs/2026-07-11-agentos-level1-parallel-tool-calls-design.md`（2026-07-15 JSON Owner re-baseline）
+- Modify: `docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md`（审计发现、精确 allowlist 和提交范围）
+- Move: `src/agentos/providers/json_values.py` -> `src/agentos/_json_values.py`（Contract Matrix 审计修复：共享深不可变 JSON 值不归 Provider 所有）
+- Modify: `src/agentos/messages/store.py`
+- Modify: `src/agentos/messages/runtime.py`
+- Modify: `src/agentos/messages/types.py`
+- Modify imports only: `src/agentos/capabilities/executor.py`
+- Modify imports only: `src/agentos/capabilities/mcp.py`
+- Modify imports only: `src/agentos/capabilities/router.py`
+- Modify imports only: `src/agentos/capabilities/tools.py`
+- Modify imports only: `src/agentos/memory/serializers.py`
+- Modify imports only: `src/agentos/observability/snapshots.py`
+- Modify imports only: `src/agentos/persistence/serializers.py`
+- Modify imports only: `src/agentos/providers/anthropic.py`
+- Modify imports only: `src/agentos/providers/input.py`
+- Modify imports only: `src/agentos/providers/input_serialization.py`
+- Modify imports only: `src/agentos/providers/openai.py`
+- Modify imports only: `src/agentos/providers/openai_compatible.py`
+- Modify imports only: `src/agentos/providers/tool_specs.py`
+- Modify imports only: `src/agentos/runtime/query_loop_support.py`
+- Modify: `src/agentos/runtime/provider_request_builder.py`
+- Modify: `src/agentos/tokens/counter.py`（删除无生产者的旧 `to_provider_dict()` 兼容探测）
+- Modify: `docs/governance/agentos-module-size-baseline.json`
+- Modify imports only: `tests/test_frozen_json.py`
+- Modify: `tests/messages/test_stored_message.py`
+- Modify imports only: `tests/messages/test_runtime.py`
+- Modify imports only: `tests/observability/test_snapshots.py`
+- Modify imports only: `tests/persistence/test_postgres_session_snapshot_persistence.py`
+- Modify imports only: `tests/persistence/test_serializers.py`
+- Modify: `tests/tokens/test_counter.py`
+
+Task 14 Contract Matrix 首轮 Green 后的独立审计发现多个未被既有测试封死的边界：
+`messages` 仍反向导入 `providers.json_values`，且 `MessageStore.put()` /
+`MessageStore.from_messages()` 可接收非 `StoredMessage` 对象。上述文件范围只允许完成
+共享 JSON 值归属迁移、删除 `ToolCall.to_provider_dict()` 的 Provider 序列化职责，
+删除 TokenCounter 中已经没有生产者的同名兼容探测，以及 Store/StoredMessage/
+temporary receipt 的运行时类型封锁。Code Quality Review 还发现 `StoredMessage`
+如果在 tuple 化前校验一次性迭代器会静默丢失合法输入，因此冻结复制必须先于元素
+校验；不得借机改变 JSON 语义、token 计算策略、Provider payload、Message ID、
+持久化 schema 或其他 Public API。
 
 - [ ] **Step 1: 增加跨边界契约矩阵**
 
@@ -1296,7 +1336,7 @@ Contract Matrix 必须覆盖：六种 ProviderInput kind 的全部合法矩阵�
 - [ ] **Step 2: 运行目标和全量验证**
 
 ```powershell
-python -m pytest tests/context tests/messages tests/providers/test_provider_input_contract.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py tests/runtime/test_provider_attempt_candidate.py tests/runtime/test_query_loop_contract.py tests/runtime/test_agent_api.py tests/runtime/test_agent_stream_api.py tests/runtime/test_message_provider_boundary_contract.py -q
+python -m pytest tests/context tests/messages tests/tokens/test_counter.py tests/providers/test_provider_input_contract.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py tests/runtime/test_provider_attempt_candidate.py tests/runtime/test_query_loop_contract.py tests/runtime/test_agent_api.py tests/runtime/test_agent_stream_api.py tests/runtime/test_message_provider_boundary_contract.py -q
 python -m pytest -q
 python -m compileall -q src tests
 python -m ruff check src tests
@@ -1330,12 +1370,7 @@ if ($LASTEXITCODE -eq 0) {
 if ($LASTEXITCODE -ne 1) {
     throw "legacy Message/Provider drift scan failed"
 }
-$legacyTestAllowlist = @(
-    "tests/architecture/test_public_api.py"
-    "tests/messages/test_stored_message.py"
-    "tests/providers/test_provider_messages.py"
-    "tests/runtime/test_message_provider_boundary_contract.py"
-)
+$legacyTestAllowlist = @("tests/architecture/test_public_api.py")
 $legacyTestMatches = rg -n $legacyPattern tests
 if ($LASTEXITCODE -gt 1) {
     throw "legacy Message/Provider test scan failed"
@@ -1350,19 +1385,57 @@ if ($unexpectedLegacyTests.Count -gt 0) {
     $unexpectedLegacyTests
     throw "legacy Message/Provider usage remains outside negative-test allowlist"
 }
+$architectureAllowlist = @(
+    "src/agentos/attachments/types.py"                 # Phase 3A 明确延后的 Attachment API
+    "tests/context/test_context_state_projection.py"  # 旧 XML 标签的负向断言
+    "tests/architecture/test_module_size_baseline.py" # 旧 system 语义的负向断言
+)
 $architectureDrift = rg -n 'system: rendered context|AttachmentLifecycle|<task_goal>|<constraints>' src tests
-if ($LASTEXITCODE -eq 0) {
-    $architectureDrift
-    throw "legacy context architecture symbols remain in src/tests"
-}
-if ($LASTEXITCODE -ne 1) {
+if ($LASTEXITCODE -gt 1) {
     throw "context architecture drift scan failed"
 }
-$docLegacy = rg -n $legacyPattern docs --glob "!docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md" --glob "!docs/superpowers/specs/2026-07-11-agentos-message-provider-boundary-contract-addendum.md"
+$unexpectedArchitectureDrift = @(
+    $architectureDrift | Where-Object {
+        $path = (($_ -split ':', 2)[0] -replace '\\', '/')
+        $path -notin $architectureAllowlist
+    }
+)
+if ($unexpectedArchitectureDrift.Count -gt 0) {
+    $unexpectedArchitectureDrift
+    throw "context architecture drift remains outside the exact allowlist"
+}
+$docLegacyAllowlist = @(
+    "docs/plans/skill-async-refactor-plan.md"
+    "docs/superpowers/plans/2026-05-03-phase1-completion.md"
+    "docs/superpowers/plans/2026-05-03-phase2-compression-recall.md"
+    "docs/superpowers/plans/2026-05-05-streaming-thinking-otel.md"
+    "docs/superpowers/plans/2026-05-06-phase-8-multi-agent-coordination.md"
+    "docs/superpowers/plans/2026-05-12-sdk-production-harness-iteration.md"
+    "docs/superpowers/plans/2026-05-15-phase-7.1-review-fixes.md"
+    "docs/superpowers/plans/2026-05-16-ephemeral-attachment-lifecycle.md"
+    "docs/superpowers/plans/2026-07-10-agentos-context-first-sdk-master-implementation-plan.md"
+    "docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md"
+    "docs/superpowers/specs/2026-05-05-phase-8-multi-agent-coordination-design.md"
+    "docs/superpowers/specs/2026-05-12-llm-compressor-design.md"
+    "docs/superpowers/specs/2026-05-12-strong-typed-provider-message-design.md"
+    "docs/superpowers/specs/2026-05-16-ephemeral-attachment-lifecycle-design.md"
+    "docs/superpowers/specs/2026-07-11-agentos-level1-parallel-tool-calls-design.md"
+    "docs/superpowers/specs/2026-07-11-agentos-message-provider-boundary-contract-addendum.md"
+)
+$docLegacy = rg -n $legacyPattern docs
 if ($LASTEXITCODE -gt 1) {
     throw "documentation legacy-name scan failed"
 }
-$docLegacy
+$unexpectedDocLegacy = @(
+    $docLegacy | Where-Object {
+        $path = (($_ -split ':', 2)[0] -replace '\\', '/')
+        $path -notin $docLegacyAllowlist
+    }
+)
+if ($unexpectedDocLegacy.Count -gt 0) {
+    $unexpectedDocLegacy
+    throw "documentation legacy names remain outside the exact historical/negative allowlist"
+}
 $loopDrift = rg -n 'class\s+(AsyncQueryLoop|AsyncProviderAttemptRunner)|def\s+(build_async|run_turn_stream|run_continuation_stream|clear_interrupt)\b|sync_loop\s*[:=]' src tests
 if ($LASTEXITCODE -eq 0) {
     $loopDrift
@@ -1387,7 +1460,7 @@ if ($modelTaskProducerPath -ne "src/agentos/compression/llm_compressor.py") {
 git diff --check
 ```
 
-Expected: 全部 PASS；`src` 的旧 Message/Provider DTO、serializer 和投影桥严格零命中；`tests` 只允许四个明确文件中的负向断言，其他测试不得继续消费旧 DTO；旧 Loop/Runner 在 `src tests` 零命中；Phase 2 的 `.model_task()` 源码 producer 只有 `LlmCompressor`。Docs scan 的命中必须逐条列入人工允许清单，仅允许历史迁移说明；不得用一个宽泛 glob 跳过全部活跃文档。最终规模：`query_loop.py <= 493`、`provider_attempt.py <= 145`、`agent.py <= 144`、`agent_stream.py <= 249`、`providers/tool_specs.py < 200`；`providers/messages.py` 不存在；`builder.py` 不净增职责且不超过 `280` 行。自动生成的 module-size baseline 和门禁是最终规模证据。
+Expected: 全部 PASS；`src` 的旧 Message/Provider DTO、serializer 和投影桥严格零命中；`tests` 只允许 `tests/architecture/test_public_api.py` 中的 Public API 负向断言，其他测试不得继续消费旧 DTO；Context drift 只允许 Phase 3A 的 `AttachmentLifecycle` 和两个明确负向测试；旧 Loop/Runner 在 `src tests` 零命中；Phase 2 的 `.model_task()` 源码 producer 只有 `LlmCompressor`。Docs scan 的命中必须逐条落在上述精确历史/负向允许清单，不得用宽泛 glob 跳过全部活跃文档。最终规模：`query_loop.py <= 493`、`provider_attempt.py <= 145`、`agent.py <= 144`、`agent_stream.py <= 249`、`providers/tool_specs.py < 200`；`providers/messages.py` 不存在；`builder.py` 不净增职责且不超过 `280` 行。自动生成的 module-size baseline 和门禁是最终规模证据。
 
 - [ ] **Step 3: Spec Compliance Review**
 
@@ -1400,8 +1473,8 @@ Reviewer 独立检查：Store/Runtime/Projection 单一职责；`model_task` 不
 - [ ] **Step 5: 阶段提交**
 
 ```powershell
-git add -- tests/runtime/test_message_provider_boundary_contract.py docs/api-stability.md docs/governance/agentos-module-size-baseline.json
-git commit -m "test: freeze message provider boundary contract"
+git add -- src/agentos/_json_values.py src/agentos/providers/json_values.py src/agentos/capabilities/executor.py src/agentos/capabilities/mcp.py src/agentos/capabilities/router.py src/agentos/capabilities/tools.py src/agentos/memory/serializers.py src/agentos/messages/runtime.py src/agentos/messages/store.py src/agentos/messages/types.py src/agentos/observability/snapshots.py src/agentos/persistence/serializers.py src/agentos/providers/anthropic.py src/agentos/providers/input.py src/agentos/providers/input_serialization.py src/agentos/providers/openai.py src/agentos/providers/openai_compatible.py src/agentos/providers/tool_specs.py src/agentos/runtime/provider_request_builder.py src/agentos/runtime/query_loop_support.py src/agentos/tokens/counter.py tests/messages/test_runtime.py tests/messages/test_stored_message.py tests/observability/test_snapshots.py tests/persistence/test_postgres_session_snapshot_persistence.py tests/persistence/test_serializers.py tests/runtime/test_message_provider_boundary_contract.py tests/tokens/test_counter.py tests/test_frozen_json.py docs/api-stability.md docs/governance/agentos-module-size-baseline.json docs/superpowers/specs/2026-07-11-agentos-level1-parallel-tool-calls-design.md docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md
+git commit -m "refactor: enforce message provider boundary contract"
 ```
 
 ---

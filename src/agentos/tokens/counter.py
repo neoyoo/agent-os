@@ -77,9 +77,6 @@ class HeuristicTokenCounter:
         return json.dumps(safe_value, ensure_ascii=False, sort_keys=True)
 
     def _json_safe(self, value: object) -> object:
-        to_provider_dict = getattr(value, "to_provider_dict", None)
-        if callable(to_provider_dict):
-            return self._json_safe(to_provider_dict())
         if is_dataclass(value):
             return self._json_safe(asdict(value))
         if isinstance(value, Mapping):

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
 from agentos.capabilities.tools import RegisteredTool, ToolConcurrencyPolicy
 from agentos.context.projection import MCPServerDeclaration

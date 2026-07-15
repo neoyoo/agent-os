@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from agentos._sync_work import run_sync
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 from agentos.attachments.types import AttachmentError
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.executor import (

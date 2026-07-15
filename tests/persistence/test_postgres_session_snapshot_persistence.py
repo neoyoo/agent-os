@@ -16,7 +16,7 @@ from agentos.persistence import (
     SessionSnapshot,
 )
 from agentos.persistence.serializers import session_snapshot_to_dict
-from agentos.providers.json_values import FrozenJsonObject
+from agentos._json_values import FrozenJsonObject
 from agentos.runtime import SessionState
 from agentos.channels import SessionLease, SessionLeaseError
 

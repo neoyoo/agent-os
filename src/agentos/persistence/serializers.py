@@ -20,7 +20,7 @@ from agentos.persistence.base import (
     SessionSnapshot,
     SnapshotVersionError,
 )
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 from agentos.runtime.session import SessionState
 
 

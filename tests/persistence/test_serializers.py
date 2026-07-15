@@ -22,7 +22,7 @@ from agentos.persistence.serializers import (
     session_snapshot_to_dict,
     tool_call_to_dict,
 )
-from agentos.providers.json_values import FrozenJsonObject
+from agentos._json_values import FrozenJsonObject
 from agentos.runtime import SessionState, TurnStartedEvent
 
 

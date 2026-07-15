@@ -48,10 +48,15 @@ class ProviderRequestReceipt:
     def __post_init__(self) -> None:
         """复制临时消息标识，避免保留调用方的可变别名。"""
 
+        if isinstance(self.temporary_message_ids, (str, bytes)):
+            raise TypeError("temporary message IDs must be a sequence of str")
+        temporary_message_ids = tuple(self.temporary_message_ids)
+        if any(type(message_id) is not str for message_id in temporary_message_ids):
+            raise TypeError("temporary message IDs must contain str values")
         object.__setattr__(
             self,
             "temporary_message_ids",
-            tuple(self.temporary_message_ids),
+            temporary_message_ids,
         )
 
 

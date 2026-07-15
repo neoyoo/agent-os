@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from agentos.messages.types import MessageRole, StoredMessage, ToolCall
 
 
@@ -40,6 +42,7 @@ class MessageStore:
     def put(self, message: StoredMessage) -> None:
         """按原始 id 水合一条已存在的消息。"""
 
+        self._validate_messages((message,))
         for existing in self._messages:
             if existing.id == message.id:
                 if existing != message:
@@ -61,8 +64,10 @@ class MessageStore:
     ) -> "MessageStore":
         """从持久化 snapshot 恢复 MessageStore。"""
 
+        copied_messages = list(messages)
+        cls._validate_messages(copied_messages)
         store = cls()
-        store._messages = list(messages)
+        store._messages = copied_messages
         store._next_id = next_id
         return store
 
@@ -88,3 +93,8 @@ class MessageStore:
         except ValueError:
             return
         self._next_id = max(self._next_id, number + 1)
+
+    @staticmethod
+    def _validate_messages(messages: Iterable[object]) -> None:
+        if any(type(message) is not StoredMessage for message in messages):
+            raise TypeError("MessageStore requires StoredMessage values")

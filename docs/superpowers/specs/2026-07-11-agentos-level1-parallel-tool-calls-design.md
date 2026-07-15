@@ -4,6 +4,11 @@
 > `2026-07-12-agentos-single-async-query-loop-design.md` 取代。历史正文保留，
 > Tool 并发契约仍有效。
 
+> **2026-07-15 TASK 14 RE-BASELINE:** 第 4.2 节共享深不可变 JSON 值的
+> Owner 修订为 Provider 无关的私有内核模块 `agentos._json_values`。
+> `agentos.providers.json_values` 与已删除的 `agentos.providers.messages` 不再是
+> 有效架构路径，也不得为它们增加兼容层；本修订不改变 Tool 并发语义。
+
 > 状态：已批准，进入实施规划
 >
 > 日期：2026-07-11
@@ -150,7 +155,7 @@ class RegisteredTool:
 
 `FrozenJsonValue` 只允许 JSON 标量、递归只读 `Mapping` 和不可变 `tuple`。`freeze_json_mapping()` 必须 defensive-copy 整个嵌套结构：输入 dict 的后续修改不能改变注册结果，嵌套 list 转为 tuple，嵌套 mapping 复制后只读暴露。Provider Adapter 在序列化边界按需物化新的 JSON dict/list，不得把内部只读对象反向暴露给调用方。
 
-canonical helper 的 Owner 固定为叶子模块 `agentos.providers.json_values`，该模块只依赖 Python 标准库，导出内部使用的 `FrozenJsonValue`、`freeze_json_value()`、`freeze_json_mapping()` 和 `thaw_json_value()`。`agentos.capabilities` 与 `agentos.providers.messages` 可以共同依赖该叶子模块；`providers` 不得反向依赖 `capabilities`。
+canonical helper 的 Owner 固定为 Provider 无关的私有内核叶子模块 `agentos._json_values`，该模块只依赖 Python 标准库，导出内部使用的 `FrozenJsonValue`、`freeze_json_value()`、`freeze_json_mapping()` 和 `thaw_json_value()`。`agentos.capabilities`、`agentos.messages`、`agentos.providers` 及其他需要冻结 JSON 值的边界可以共同依赖该模块；`messages` 不得反向依赖 `providers`，`providers` 也不得反向依赖 `capabilities`。
 
 Provider 工具 Schema 必须保持同一递归不可变边界：
 

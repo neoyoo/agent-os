@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from agentos.providers.json_values import FrozenJsonObject, freeze_json, thaw_json
+from agentos._json_values import FrozenJsonObject, freeze_json
 from agentos.artifacts import ArtifactRef
 
 
@@ -29,15 +29,6 @@ class ToolCall:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "arguments", frozen)
 
-    def to_provider_dict(self) -> dict[str, object]:
-        """转换为 provider message 中可序列化的工具调用摘要。"""
-
-        result: dict[str, object] = {"id": self.id, "name": self.name}
-        if self.arguments:
-            result["arguments"] = thaw_json(self.arguments)
-        return result
-
-
 @dataclass(frozen=True, slots=True)
 class StoredMessage:
     """MessageStore 中 append-only 保存的业务消息真值。"""
@@ -50,8 +41,16 @@ class StoredMessage:
     tool_call_id: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "artifact_refs", tuple(self.artifact_refs))
-        object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
+        if type(self.content) is not str:
+            raise TypeError("stored message content must be str")
+        artifact_refs = tuple(self.artifact_refs)
+        tool_calls = tuple(self.tool_calls)
+        if any(type(item) is not ArtifactRef for item in artifact_refs):
+            raise TypeError("stored message artifact_refs require ArtifactRef")
+        if any(type(item) is not ToolCall for item in tool_calls):
+            raise TypeError("stored message tool_calls require ToolCall")
+        object.__setattr__(self, "artifact_refs", artifact_refs)
+        object.__setattr__(self, "tool_calls", tool_calls)
 
 
 @dataclass(frozen=True, slots=True)

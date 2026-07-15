@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import TypeAlias, cast
 
 from agentos._waiting import WaitRequest
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 from agentos._redaction import is_secret_like_key
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.registry import ToolRegistry

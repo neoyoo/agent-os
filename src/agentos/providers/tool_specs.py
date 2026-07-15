@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from agentos.providers.json_values import FrozenJsonObject, freeze_json, thaw_json
+from agentos._json_values import FrozenJsonObject, freeze_json, thaw_json
 
 
 @dataclass(frozen=True, slots=True, init=False)

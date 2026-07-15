@@ -46,6 +46,8 @@ class MessageRuntime:
     def hydrate_messages(self, messages: list[StoredMessage]) -> None:
         """把外部存储召回的原始消息水合进本地 MessageStore。"""
 
+        if any(type(message) is not StoredMessage for message in messages):
+            raise TypeError("MessageRuntime hydrate requires StoredMessage values")
         for message in messages:
             self.store.put(message)
 

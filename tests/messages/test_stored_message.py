@@ -6,6 +6,7 @@ import pickle
 
 import pytest
 
+from agentos._json_values import thaw_json
 from agentos.artifacts import ArtifactRef
 from agentos.messages import MessageStore, StoredMessage, ToolCall
 
@@ -33,16 +34,29 @@ def test_stored_message_is_frozen_and_normalizes_tuple_boundaries() -> None:
         message.content = "mutated"  # type: ignore[misc]
 
 
+def test_stored_message_preserves_one_shot_iterables_during_validation() -> None:
+    artifact = ArtifactRef("art_1", "drawing.png", "image/png")
+    tool_call = ToolCall("call_1", "read_file", {"path": "README.md"})
+
+    message = StoredMessage(
+        id="msg_1",
+        role="assistant",
+        content="",
+        artifact_refs=iter((artifact,)),  # type: ignore[arg-type]
+        tool_calls=iter((tool_call,)),  # type: ignore[arg-type]
+    )
+
+    assert message.artifact_refs == (artifact,)
+    assert message.tool_calls == (tool_call,)
+
+
 def test_tool_call_arguments_are_recursively_immutable_and_detached() -> None:
     arguments = {"filters": {"tags": ["a"]}}
     call = ToolCall("call_1", "search", arguments)
     arguments["filters"]["tags"].append("outside")  # type: ignore[index,union-attr]
 
-    assert call.to_provider_dict() == {
-        "id": "call_1",
-        "name": "search",
-        "arguments": {"filters": {"tags": ["a"]}},
-    }
+    assert thaw_json(call.arguments) == {"filters": {"tags": ["a"]}}
+    assert not hasattr(call, "to_provider_dict")
     with pytest.raises(TypeError):
         call.arguments["filters"]["tags"] += ("inside",)  # type: ignore[index,operator]
 

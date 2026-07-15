@@ -1,6 +1,6 @@
 from typing import get_type_hints
 
-from agentos.providers.json_values import FrozenJsonObject, thaw_json
+from agentos._json_values import FrozenJsonObject, thaw_json
 from agentos.messages import (
     MessageRuntime,
     MessageStore,
@@ -45,14 +45,15 @@ def test_message_store_public_operations_use_stored_message_truth() -> None:
     assert get_type_hints(MessageRuntime.append_user)["return"] is StoredMessage
 
 
-def test_tool_call_provider_dict_deep_copies_arguments() -> None:
+def test_tool_call_does_not_own_provider_serialization() -> None:
     nested = {"path": {"value": "pyproject.toml"}}
     tool_call = ToolCall(id="call_1", name="read_file", arguments=nested)
 
-    provider_dict = tool_call.to_provider_dict()
+    serialized_arguments = thaw_json(tool_call.arguments)
     nested["path"]["value"] = "mutated"  # type: ignore[index]
 
-    assert provider_dict["arguments"] == {"path": {"value": "pyproject.toml"}}
+    assert serialized_arguments == {"path": {"value": "pyproject.toml"}}
+    assert not hasattr(tool_call, "to_provider_dict")
 
 
 def test_message_runtime_keeps_nested_tool_arguments_frozen() -> None:

@@ -10,7 +10,7 @@ from agentos.memory.types import (
     SegmentRecallDocument,
 )
 from agentos.messages import MessageRef, StoredMessage, ToolCall
-from agentos.providers.json_values import thaw_json
+from agentos._json_values import thaw_json
 
 
 JsonDict = dict[str, Any]
