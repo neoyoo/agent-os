@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from agentos.artifacts.in_memory import InMemoryArtifactStore
+from agentos.artifacts.projection import project_artifact_catalog
+from agentos.artifacts.runtime import ArtifactRuntime
 from agentos.context.models import (
     ContextProtocolError,
     ContextSlotProjection,
@@ -155,6 +158,28 @@ def empty_element(slot: str) -> XmlElement:
         "artifact-catalog": (("scope", "session"), ("truncated", "true")),
     }.get(slot, ())
     return XmlElement(slot, attributes)
+
+
+def test_artifact_catalog_projection_composes_and_xml_escapes_filename() -> None:
+    artifacts = ArtifactRuntime(
+        session_id="session-1",
+        store=InMemoryArtifactStore(),
+    )
+    record = artifacts.upload(
+        data=b"image",
+        filename='drawing<&".png',
+        media_type="image/png",
+    )
+    artifact_projection = project_artifact_catalog(artifacts)
+
+    assert artifact_projection is not None
+    snapshot = ContextSnapshotRenderer(ForbiddenTokenCounter()).render(
+        (artifact_projection,)
+    )
+
+    assert record.id in snapshot.xml
+    assert 'filename="drawing&lt;&amp;&quot;.png"' in snapshot.xml
+    assert 'drawing<&".png' not in snapshot.xml
 
 
 def test_snapshot_budget_from_request_budget_is_exact_and_tracks_critical_mode() -> None:
