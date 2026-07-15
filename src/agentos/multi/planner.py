@@ -10,10 +10,6 @@ from typing import Literal, Mapping, Protocol, cast
 from uuid import uuid4
 
 from agentos.capabilities import RegisteredTool, ToolRegistry
-from agentos.multi.types import (
-    TaskAlreadySubmittedError as PlanDispatchAlreadySubmittedError,
-    TaskHandle,
-)
 from agentos.planning import (
     EVIDENCE_KINDS,
     PLAN_STATUSES,
@@ -37,12 +33,16 @@ from agentos.planning import (
     PlanDecompositionGatePolicy,
     PlanDecompositionGateReport,
     PlanDecompositionValidationReport,
+    PlanDispatchAlreadySubmittedError,
+    PlanDispatchReport,
+    PlanDispatchSkip,
     PlanError as PlanError,
     PlanNotFoundError,
     PlanRetryPolicy,
     PlanState,
     PlanStatus,
     PlanStep,
+    PlanStepDispatcher,
     PlanStepSpec,
     PlanStepNotFoundError,
     PlanStepRetryStatus,
@@ -79,11 +79,6 @@ PlannerSchedulablePlanReason = Literal[
 ]
 PlanClaimedSchedulerTickSkipReason = Literal["busy", "tick-failed", "claim-lost"]
 PlanClaimSweepSkipReason = Literal["release-race"]
-PlanDispatchSkipReason = Literal[
-    "missing-template",
-    "unknown-template",
-    "dispatch-failed",
-]
 PLANNER_ORCHESTRATION_REQUIRED_COMPONENTS: tuple[str, ...] = (
     "decomposition_policy",
     "dag_scheduler",
@@ -941,25 +936,6 @@ class PlannerStaleClaimSweepProfile:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanDispatchSkip:
-    """One ready step that was not submitted during a dispatch batch."""
-
-    plan_id: str
-    step_id: str
-    reason: PlanDispatchSkipReason
-    detail: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class PlanDispatchReport:
-    """Transient report for one ready-step dispatch batch."""
-
-    plan_id: str
-    assigned: tuple[PlanAssignment, ...] = ()
-    skipped: tuple[PlanDispatchSkip, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
 class PlanSchedulerRetryReset:
     """One retryable failed step reset during a scheduler tick."""
 
@@ -1147,16 +1123,6 @@ class PlannerClaimedSchedulerDaemonState:
     errors: tuple[PlannerClaimedSchedulerDaemonError, ...] = ()
 
 
-class PlanCoordinator(Protocol):
-    """PlannerRuntime 需要的 coordinator 子集。"""
-
-    def spawn(self, **kwargs: object) -> TaskHandle:
-        """创建 isolated subagent task。"""
-
-    def dispatch(self, **kwargs: object) -> TaskHandle:
-        """派发 persistent expert task。"""
-
-
 class PlannerRuntime:
     """plan state runtime，不直接执行 QueryLoop。"""
 
@@ -1165,7 +1131,7 @@ class PlannerRuntime:
         *,
         store: PlanStore,
         templates: tuple[SubAgentTemplate, ...] = (),
-        coordinator: PlanCoordinator | None = None,
+        dispatcher: PlanStepDispatcher | None = None,
         retry_policy: PlanRetryPolicy | None = None,
         claim_store: PlanClaimStore | None = None,
         clock: object | None = None,
@@ -1173,7 +1139,7 @@ class PlannerRuntime:
     ) -> None:
         self.store = store
         self.templates = {template.template_id: template for template in templates}
-        self.coordinator = coordinator
+        self.dispatcher = dispatcher
         self.retry_policy = retry_policy or PlanRetryPolicy(max_attempts=1)
         self.claim_store = claim_store
         self._clock = clock if callable(clock) else time.time
@@ -1537,10 +1503,10 @@ class PlannerRuntime:
         *,
         template_id: str,
     ) -> PlanState:
-        """通过 coordinator 把 step 分配给 spawn 或 dispatch task。"""
+        """通过 dispatcher 提交一个 Plan Step。"""
 
-        if self.coordinator is None:
-            raise RuntimeError("coordinator is required to assign plan steps")
+        if self.dispatcher is None:
+            raise RuntimeError("dispatcher is required to assign plan steps")
         record = self._require_plan_record(plan_id)
         plan = record.plan
         template = self._require_template(template_id)
@@ -1574,7 +1540,7 @@ class PlannerRuntime:
         self._save_plan(updated, expected_revision=record.revision)
         self._ensure_active_plan_claim(plan_id)
         try:
-            self._submit_assignment_to_coordinator(
+            self._submit_assignment(
                 plan=updated,
                 step=updated_step,
                 assignment=assignment,
@@ -1608,7 +1574,7 @@ class PlannerRuntime:
         default_template_id: str | None = None,
         limit: int | None = None,
     ) -> PlanDispatchReport:
-        """Submit dependency-ready pending steps through the coordinator boundary."""
+        """通过 dispatcher 提交依赖已满足的 pending Step。"""
 
         if limit is not None and limit < 1:
             raise ValueError("limit must be >= 1")
@@ -1672,7 +1638,7 @@ class PlannerRuntime:
         *,
         limit: int | None = None,
     ) -> PlanDispatchReport:
-        """Replay saved assignments that were not yet submitted to a coordinator."""
+        """重新提交已经保存但尚未完成派发的 Assignment。"""
 
         if limit is not None and limit < 1:
             raise ValueError("limit must be >= 1")
@@ -1684,8 +1650,8 @@ class PlannerRuntime:
                 break
             if assignment.dispatch_status != "pending":
                 continue
-            if self.coordinator is None:
-                raise RuntimeError("coordinator is required to recover plan dispatches")
+            if self.dispatcher is None:
+                raise RuntimeError("dispatcher is required to recover plan dispatches")
             try:
                 template = self._require_template(assignment.template_id)
             except KeyError:
@@ -1716,7 +1682,7 @@ class PlannerRuntime:
                 continue
             try:
                 self._ensure_active_plan_claim(plan_id)
-                self._submit_assignment_to_coordinator(
+                self._submit_assignment(
                     plan=current_plan,
                     step=step,
                     assignment=assignment,
@@ -2233,7 +2199,7 @@ class PlannerRuntime:
                 return assignment
         raise PlanStepNotFoundError(step_id)
 
-    def _submit_assignment_to_coordinator(
+    def _submit_assignment(
         self,
         *,
         plan: PlanState,
@@ -2241,29 +2207,13 @@ class PlannerRuntime:
         assignment: PlanAssignment,
         template: SubAgentTemplate,
     ) -> None:
-        if self.coordinator is None:
-            raise RuntimeError("coordinator is required to assign plan steps")
-        instruction = self._instruction_for_template(step, template)
-        if template.target_agent_id is None:
-            self.coordinator.spawn(
-                instruction=instruction,
-                allowed_tool_names=template.allowed_tool_names,
-                parent_agent_id=plan.owner_agent_id,
-                timeout_seconds=template.timeout_seconds,
-                task_id=assignment.task_id,
-                child_agent_id=assignment.target_agent_id,
-            )
-            return
-        self.coordinator.dispatch(
-            instruction=instruction,
-            required_capabilities=(
-                step.required_capabilities or template.capabilities
-            ),
-            parent_agent_id=plan.owner_agent_id,
-            target_agent_id=template.target_agent_id,
-            allowed_tool_names=template.allowed_tool_names,
-            timeout_seconds=template.timeout_seconds,
-            task_id=assignment.task_id,
+        if self.dispatcher is None:
+            raise RuntimeError("dispatcher is required to assign plan steps")
+        self.dispatcher.submit(
+            plan=plan,
+            step=step,
+            assignment=assignment,
+            template=template,
         )
 
     def _replace_assignment(
@@ -2396,16 +2346,6 @@ class PlannerRuntime:
             ),
         )
         self._save_plan(failed_plan, expected_revision=record.revision)
-
-    def _instruction_for_template(
-        self,
-        step: PlanStep,
-        template: SubAgentTemplate,
-    ) -> str:
-        context = "\n".join(template.context_seed)
-        if not context:
-            return step.instruction
-        return f"{context}\n\nTask: {step.instruction}"
 
     def _default_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid4().hex}"

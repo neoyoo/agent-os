@@ -108,6 +108,7 @@ def test_planning_domain_foundation_exists_without_multi_dependency() -> None:
         "__init__.py",
         "decomposition.py",
         "decomposition_governance.py",
+        "dispatch.py",
         "errors.py",
         "models.py",
         "store.py",
@@ -178,11 +179,15 @@ def test_multi_planner_uses_planning_foundation_class_identity() -> None:
         "PlanDecompositionGatePolicy",
         "PlanDecompositionGateReport",
         "PlanDecompositionValidationReport",
+        "PlanDispatchAlreadySubmittedError",
+        "PlanDispatchReport",
+        "PlanDispatchSkip",
         "PlanError",
         "PlanNotFoundError",
         "PlanRetryPolicy",
         "PlanState",
         "PlanStep",
+        "PlanStepDispatcher",
         "PlanStepSpec",
         "PlanStepNotFoundError",
         "PlanStore",
@@ -198,6 +203,20 @@ def test_multi_planner_uses_planning_foundation_class_identity() -> None:
         inspect.signature(planning.PlanState.with_status).return_annotation
         == "'PlanState'"
     )
+    runtime_parameters = inspect.signature(planner.PlannerRuntime).parameters
+    assert "dispatcher" in runtime_parameters
+    assert "coordinator" not in runtime_parameters
+
+    planner_source = PROJECT_ROOT / "src" / "agentos" / "multi" / "planner.py"
+    planner_text = planner_source.read_text(encoding="utf-8")
+    assert "TaskAlreadySubmittedError" not in planner_text
+    assert "self.coordinator" not in planner_text
+
+    adapter_source = (
+        PROJECT_ROOT / "src" / "agentos" / "multi" / "planning_dispatch.py"
+    ).read_text(encoding="utf-8")
+    assert "TaskAlreadySubmittedError" in adapter_source
+    assert "PlanDispatchAlreadySubmittedError" in adapter_source
 
 
 def test_recall_and_session_storage_have_single_domain_owners() -> None:

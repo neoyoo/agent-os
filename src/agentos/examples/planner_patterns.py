@@ -5,6 +5,7 @@ import json
 from typing import Sequence
 
 from agentos.multi import (
+    AgentCoordinatorPlanStepDispatcher,
     InMemoryPlanStore,
     PlannerRuntime,
     SubAgentTemplate,
@@ -80,7 +81,7 @@ def build_plan_and_execute_example() -> dict[str, object]:
     coordinator = StaticPlannerCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="architecture-reviewer",

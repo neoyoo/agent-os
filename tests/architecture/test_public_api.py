@@ -467,6 +467,7 @@ def test_phase8_multi_agent_public_api_exports() -> None:
     for name in [
         "AgentCard",
         "AgentCoordinator",
+        "AgentCoordinatorPlanStepDispatcher",
         "AgentCoordinationTools",
         "AgentEnvelope",
         "AgentInbox",

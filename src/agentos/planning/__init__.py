@@ -3,10 +3,17 @@
 from agentos.planning.errors import (
     PlanClaimLostError,
     PlanConflictError,
+    PlanDispatchAlreadySubmittedError,
     PlanError,
     PlanNotFoundError,
     PlanStepNotFoundError,
     PlannerToolAuthorizationError,
+)
+from agentos.planning.dispatch import (
+    PlanDispatchReport,
+    PlanDispatchSkip,
+    PlanDispatchSkipReason,
+    PlanStepDispatcher,
 )
 from agentos.planning.decomposition import (
     PlanDecomposition,
@@ -71,12 +78,17 @@ __all__ = [
     "PlanDecompositionGatePolicy",
     "PlanDecompositionGateReport",
     "PlanDecompositionValidationReport",
+    "PlanDispatchAlreadySubmittedError",
+    "PlanDispatchReport",
+    "PlanDispatchSkip",
+    "PlanDispatchSkipReason",
     "PlanError",
     "PlanNotFoundError",
     "PlanRetryPolicy",
     "PlanState",
     "PlanStatus",
     "PlanStep",
+    "PlanStepDispatcher",
     "PlanStepSpec",
     "PlanStepNotFoundError",
     "PlanStepRetryStatus",

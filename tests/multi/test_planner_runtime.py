@@ -8,9 +8,11 @@ import pytest
 from agentos.multi import (
     AgentCard,
     AgentCoordinator,
+    AgentCoordinatorPlanStepDispatcher,
     AgentInbox,
     InMemoryRegistry,
     SpawnExecutor,
+    TaskAlreadySubmittedError,
     TaskHandle,
 )
 from agentos.multi.planner import (
@@ -1465,7 +1467,7 @@ def test_planner_runtime_assigns_step_to_spawn_template() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1505,7 +1507,7 @@ def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> N
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1538,13 +1540,13 @@ def test_planner_runtime_fresh_assignment_duplicate_task_is_not_submitted() -> N
     class DuplicateTaskCoordinator(FakeCoordinator):
         def spawn(self, **kwargs: object) -> TaskHandle:
             self.spawn_calls.append(kwargs)
-            raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
+            raise TaskAlreadySubmittedError(str(kwargs["task_id"]))
 
     store = InMemoryPlanStore()
     coordinator = DuplicateTaskCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1576,7 +1578,7 @@ def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -1617,7 +1619,7 @@ def test_planner_runtime_does_not_dispatch_when_assignment_save_fails() -> None:
     store = RejectingPlanStore()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1657,7 +1659,7 @@ def test_planner_runtime_dispatches_ready_steps_with_limit() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1730,7 +1732,7 @@ def test_planner_runtime_dispatch_ready_steps_reports_template_skips() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1794,7 +1796,7 @@ def test_planner_runtime_dispatch_ready_steps_reports_coordinator_failure() -> N
     coordinator = FailingCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -1872,7 +1874,7 @@ def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -1911,7 +1913,7 @@ def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
     class DuplicateTaskCoordinator(FakeCoordinator):
         def dispatch(self, **kwargs: object) -> TaskHandle:
             self.dispatch_calls.append(kwargs)
-            raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
+            raise TaskAlreadySubmittedError(str(kwargs["task_id"]))
 
     store = InMemoryPlanStore()
     store.create_plan(
@@ -1946,7 +1948,7 @@ def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
     coordinator = DuplicateTaskCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -1974,7 +1976,7 @@ def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> 
     class DuplicateSpawnCoordinator(FakeCoordinator):
         def spawn(self, **kwargs: object) -> TaskHandle:
             self.spawn_calls.append(kwargs)
-            raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
+            raise TaskAlreadySubmittedError(str(kwargs["task_id"]))
 
     store = InMemoryPlanStore()
     store.create_plan(
@@ -2009,7 +2011,7 @@ def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> 
     coordinator = DuplicateSpawnCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -2103,7 +2105,7 @@ def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() ->
     )
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -2176,7 +2178,7 @@ def test_planner_runtime_dispatch_ready_steps_recovers_before_new_assignments() 
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -2215,7 +2217,7 @@ def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() ->
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -2294,7 +2296,7 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_recov
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -2375,7 +2377,7 @@ def test_planner_runtime_dispatch_failure_does_not_overwrite_concurrent_step_com
     coordinator = CompletingFailingCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -2606,7 +2608,7 @@ def test_planner_runtime_scheduler_tick_retries_due_steps_before_dispatch() -> N
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -2675,7 +2677,7 @@ def test_planner_runtime_scheduler_tick_respects_retry_and_dispatch_limits() -> 
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3393,7 +3395,7 @@ def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_
     store = RacingPlanStore()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3446,7 +3448,7 @@ def test_planner_runtime_claimed_scheduler_requires_atomic_claim_guarded_save() 
     store = CompareOnlyPlanStore()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3513,7 +3515,7 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispa
     store = ExpiringAfterSavePlanStore()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3721,7 +3723,7 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
     claim_store = InMemoryPlanClaimStore()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3819,7 +3821,7 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3880,7 +3882,7 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_revision_g
     coordinator = RacingCoordinator()
     runtime = PlannerRuntime(
         store=store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -3933,7 +3935,7 @@ def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() 
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",

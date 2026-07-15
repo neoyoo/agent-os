@@ -18,5 +18,9 @@ class PlanConflictError(PlanError):
     """Plan 在读取后发生变化，调用方必须重新加载。"""
 
 
+class PlanDispatchAlreadySubmittedError(PlanError):
+    """Plan Assignment 对应的 Task 已经提交。"""
+
+
 class PlannerToolAuthorizationError(PlanError, PermissionError):
     """Planner Tool 授权策略拒绝模型可调用操作。"""

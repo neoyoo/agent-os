@@ -17,6 +17,7 @@ from agentos.multi.inbox import (
     AgentInboxMissingError,
 )
 from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
+from agentos.multi.planning_dispatch import AgentCoordinatorPlanStepDispatcher
 from agentos.multi.planner import (
     AllowAllPlannerToolAuthorizationPolicy,
     ClaimGuardedPlanStore,
@@ -42,7 +43,6 @@ from agentos.multi.planner import (
     PlanClaimStore,
     PlanClaimedSchedulerTickReport,
     PlanClaimedSchedulerTickSkip,
-    PlanCoordinator,
     PlanDispatchAlreadySubmittedError,
     PlanDispatchReport,
     PlanDispatchSkip,
@@ -205,9 +205,11 @@ def __getattr__(name: str) -> object:
         return RedisAgentMessageQueueConsumerScopeError
     raise AttributeError(name)
 
+
 __all__ = [
     "AgentCard",
     "AgentCoordinator",
+    "AgentCoordinatorPlanStepDispatcher",
     "AgentCoordinationTools",
     "AgentEnvelope",
     "AgentEnvelopeType",
@@ -263,7 +265,6 @@ __all__ = [
     "PlanClaimStore",
     "PlanClaimedSchedulerTickReport",
     "PlanClaimedSchedulerTickSkip",
-    "PlanCoordinator",
     "PlanDispatchAlreadySubmittedError",
     "PlanDispatchReport",
     "PlanDispatchSkip",

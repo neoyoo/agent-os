@@ -9,6 +9,7 @@ import pytest
 from agentos.multi import (
     AgentCard,
     AgentCoordinator,
+    AgentCoordinatorPlanStepDispatcher,
     ExpertAgentRunner,
     InMemoryPlanStore,
     InMemoryRegistry,
@@ -146,7 +147,7 @@ def test_live_distributed_planner_dispatches_expert_worker_to_completion() -> No
     )
     planner = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -275,7 +276,7 @@ def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None
     )
     planner = PlannerRuntime(
         store=plan_store,
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",
@@ -367,7 +368,7 @@ def test_live_distributed_worker_reclaims_pending_task_request_after_crash() -> 
     )
     planner = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),
         templates=(
             SubAgentTemplate(
                 template_id="expert-reviewer",

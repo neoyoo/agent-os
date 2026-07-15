@@ -5,7 +5,7 @@ import json
 import pytest
 
 from agentos.capabilities import ToolRegistry
-from agentos.multi import TaskHandle
+from agentos.multi import AgentCoordinatorPlanStepDispatcher, TaskHandle
 from agentos.multi.planner import (
     AllowAllPlannerToolAuthorizationPolicy,
     InMemoryPlanClaimStore,
@@ -97,7 +97,7 @@ def test_planner_tools_default_policy_denies_scheduler_and_dispatch_tools() -> N
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         claim_store=InMemoryPlanClaimStore(),
-        coordinator=FakeCoordinator(),
+        dispatcher=AgentCoordinatorPlanStepDispatcher(FakeCoordinator()),  # type: ignore[arg-type]
     )
     runtime.create_plan(
         objective="Review guarded planner tools.",
@@ -686,7 +686,7 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -834,7 +834,7 @@ def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=FakeCoordinator(),
+        dispatcher=AgentCoordinatorPlanStepDispatcher(FakeCoordinator()),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -937,7 +937,7 @@ def test_planner_tools_assign_record_evidence_and_complete_handlers() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1007,7 +1007,7 @@ def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",
@@ -1073,7 +1073,7 @@ def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_report(
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
-        coordinator=coordinator,
+        dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
                 template_id="reviewer",

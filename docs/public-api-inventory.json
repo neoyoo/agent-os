@@ -1284,6 +1284,10 @@
           "signature": "(*, registry: 'AgentRegistry', inbox: 'AgentMessageQueue | None' = None, task_table: 'TaskStore | None' = None, message_queue: 'AgentMessageQueue | None' = None, task_store: 'TaskStore | None' = None, spawn_executor: 'SpawnExecutor', subagent_factory: 'SubagentFactory', event_bus: 'EventBus | None' = None, continuation_trigger: 'ContinuationTrigger | None' = None, remote_task_executor: 'RemoteTaskSubmitter | None' = None) -> 'None'",
           "stability": "experimental"
         },
+        "AgentCoordinatorPlanStepDispatcher": {
+          "signature": "(coordinator: 'AgentCoordinator') -> 'None'",
+          "stability": "experimental"
+        },
         "AgentEnvelope": {
           "signature": "(envelope_id: 'str', from_agent_id: 'str', to_agent_id: 'str', type: 'AgentEnvelopeType', payload: \"TaskRequest | TaskResult | 'TeamMessage'\", created_at: 'float', correlation_id: 'str | None' = None) -> None",
           "stability": "experimental"
@@ -1515,14 +1519,6 @@
           "signature": "unavailable",
           "stability": "stable"
         },
-        "PlanCoordinator": {
-          "methods": {
-            "dispatch": "(self, **kwargs: 'object') -> 'TaskHandle'",
-            "spawn": "(self, **kwargs: 'object') -> 'TaskHandle'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
         "PlanDecomposition": {
           "signature": "(objective: 'str', steps: 'tuple[PlanStepSpec, ...]') -> None",
           "stability": "experimental"
@@ -1650,7 +1646,7 @@
           "stability": "experimental"
         },
         "PlannerRuntime": {
-          "signature": "(*, store: 'PlanStore', templates: 'tuple[SubAgentTemplate, ...]' = (), coordinator: 'PlanCoordinator | None' = None, retry_policy: 'PlanRetryPolicy | None' = None, claim_store: 'PlanClaimStore | None' = None, clock: 'object | None' = None, id_factory: 'object | None' = None) -> 'None'",
+          "signature": "(*, store: 'PlanStore', templates: 'tuple[SubAgentTemplate, ...]' = (), dispatcher: 'PlanStepDispatcher | None' = None, retry_policy: 'PlanRetryPolicy | None' = None, claim_store: 'PlanClaimStore | None' = None, clock: 'object | None' = None, id_factory: 'object | None' = None) -> 'None'",
           "stability": "experimental"
         },
         "PlannerSchedulablePlan": {
