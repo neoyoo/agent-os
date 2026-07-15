@@ -8,6 +8,8 @@ from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.capabilities.skills import (
     FileSystemSkillSource,
     SkillRegistry,
+    SkillRuntime,
+    SkillTrustDecision,
     register_skill_loader_tools,
 )
 from agentos.context import ContextRuntime
@@ -233,7 +235,18 @@ def test_instrument_query_loop_records_native_async_skill_stream(
     async def collect() -> tuple[list[object], list[str], list[ProviderRequest]]:
         skill_registry = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
         tool_registry = ToolRegistry()
-        register_skill_loader_tools(tool_registry, skill_registry)
+        trust_policy = SimpleNamespace(
+            verify=lambda metadata, subject: SkillTrustDecision(
+                False,
+                "observability-test",
+                subject,
+            ),
+        )
+        register_skill_loader_tools(
+            tool_registry,
+            SkillRuntime(skill_registry, trust_policy),  # type: ignore[arg-type]
+            "s1",
+        )
         router = ToolCallRouter(tool_registry=tool_registry)
         messages = MessageRuntime()
         provider = FakeProvider(

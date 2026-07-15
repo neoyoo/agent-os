@@ -54,6 +54,39 @@ def test_skill_metadata_never_contains_body_or_path() -> None:
     assert not hasattr(metadata, "path")
 
 
+@pytest.mark.parametrize("name", ["", "two words", "<review>"])
+def test_skill_metadata_rejects_invalid_name(name: str) -> None:
+    with pytest.raises(ValueError, match="invalid skill name"):
+        SkillMetadata(
+            name=name,
+            description="Review code.",
+            loadable=True,
+            trust="trusted",
+        )
+
+
+@pytest.mark.parametrize("trust", ["admin", "", True])
+def test_skill_metadata_rejects_invalid_trust(trust: object) -> None:
+    with pytest.raises(ValueError, match="skill trust must be trusted or untrusted"):
+        SkillMetadata(
+            name="review",
+            description="Review code.",
+            loadable=True,
+            trust=trust,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("loadable", [1, "yes", None])
+def test_skill_metadata_requires_boolean_loadable(loadable: object) -> None:
+    with pytest.raises(ValueError, match="skill loadable must be a boolean"):
+        SkillMetadata(
+            name="review",
+            description="Review code.",
+            loadable=loadable,  # type: ignore[arg-type]
+            trust="trusted",
+        )
+
+
 def test_filesystem_skill_metadata_defaults_to_untrusted(tmp_path: Path) -> None:
     (tmp_path / "review.md").write_text(
         "---\nname: review\ndescription: Review code.\n---\n# Review\n",
@@ -84,6 +117,31 @@ def test_skill_verification_subject_binds_name_revision_and_content() -> None:
 
     assert first.content_digest != second.content_digest
     assert SkillTrustDecision(True, "tests", first).subject == first
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"source_id": ""},
+        {"skill_name": ""},
+        {"source_revision": ""},
+        {"content_digest": ""},
+        {"content_digest": "not-a-sha256-digest"},
+    ],
+)
+def test_skill_verification_subject_rejects_empty_or_invalid_identity(
+    values: dict[str, str],
+) -> None:
+    subject = {
+        "source_id": "builtin",
+        "skill_name": "review",
+        "source_revision": "1",
+        "content_digest": "a" * 64,
+    }
+    subject.update(values)
+
+    with pytest.raises(ValueError, match="skill verification subject"):
+        SkillVerificationSubject(**subject)
 
 
 def test_registry_rejects_duplicate_names_across_sources() -> None:

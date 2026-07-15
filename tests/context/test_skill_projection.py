@@ -153,7 +153,22 @@ def test_policy_revocation_and_disable_remove_trusted_instruction() -> None:
     assert runtime.items("session-a") == ()
 
 
-def test_new_subject_invalidates_old_activation_before_failed_reload() -> None:
+def test_activation_snapshot_remains_version_pinned_until_explicit_reload() -> None:
+    policy = MutableTrustPolicy()
+
+    async def run() -> SkillRuntime:
+        source = MutableRevisionSource()
+        runtime = SkillRuntime(await SkillRegistry.aload(source), policy)
+        await runtime.load("session-a", "review")
+        source.revision = "2"
+        return runtime
+
+    runtime = asyncio.run(run())
+
+    assert runtime.items("session-a")[0].text.endswith("revision=1")
+
+
+def test_explicit_reload_invalidates_version_pinned_activation_before_failure() -> None:
     policy = MutableTrustPolicy()
 
     async def run() -> SkillRuntime:

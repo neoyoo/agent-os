@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol
 
-from agentos.capabilities.skill_types import SkillMetadata, SkillTrustDecision
+from agentos.capabilities.skill_types import (
+    SkillMetadata,
+    SkillTrustDecision,
+    _require_skill_name,
+)
+
+
+_CONTENT_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +24,20 @@ class SkillVerificationSubject:
     source_revision: str
     content_digest: str
 
+    def __post_init__(self) -> None:
+        values = (self.source_id, self.source_revision)
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            raise ValueError("skill verification subject is invalid")
+        try:
+            _require_skill_name(self.skill_name)
+        except ValueError as error:
+            raise ValueError("skill verification subject is invalid") from error
+        if (
+            not isinstance(self.content_digest, str)
+            or _CONTENT_DIGEST_RE.fullmatch(self.content_digest) is None
+        ):
+            raise ValueError("skill verification subject is invalid")
+
     @classmethod
     def from_content(
         cls,
@@ -26,6 +48,9 @@ class SkillVerificationSubject:
         content: str,
     ) -> "SkillVerificationSubject":
         """从 UTF-8 正文生成稳定验证主体。"""
+
+        if not isinstance(content, str):
+            raise ValueError("skill verification subject content must be a string")
 
         return cls(
             source_id=source_id,

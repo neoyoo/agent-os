@@ -19,13 +19,11 @@ from agentos.capabilities.skill_types import (
     SkillResourceLoadResult,
     SkillResourceRef,
     SkillSource,
+    _require_skill_name,
 )
 
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-
-
 class SkillContentSource(ABC):
     """异步 Skill 内容来源。"""
 
@@ -70,7 +68,7 @@ class BuiltinSkillSource(SkillContentSource):
     def __init__(self, skills: Iterable[SkillDefinition]) -> None:
         self._skills: dict[str, SkillDefinition] = {}
         for skill in skills:
-            _validate_skill_name(skill.name)
+            _require_skill_name(skill.name)
             if skill.name in self._skills:
                 raise ValueError(f"duplicate skill: {skill.name}")
             self._skills[skill.name] = skill
@@ -207,7 +205,7 @@ class FileSystemSkillSource(SkillContentSource):
                 if source != "learned" and self._allowed is not None:
                     if name not in self._allowed:
                         continue
-                _validate_skill_name(name)
+                _require_skill_name(name)
                 if name in records:
                     raise ValueError(f"duplicate skill: {name}")
                 records[name] = _FileSkillRecord(
@@ -355,8 +353,3 @@ def _discover_skill_files(skills_dir: Path) -> list[tuple[Path, SkillSource]]:
         if path.is_file() and path.parent.name != "learned"
     )
     return discovered
-
-
-def _validate_skill_name(name: str) -> None:
-    if not _SKILL_NAME_RE.match(name):
-        raise ValueError(f"invalid skill name: {name}")

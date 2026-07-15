@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -9,6 +10,19 @@ if TYPE_CHECKING:
 
 SkillSource = Literal["builtin", "filesystem", "learned"]
 SkillTrust = Literal["trusted", "untrusted"]
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def _require_skill_name(name: object) -> str:
+    if not isinstance(name, str) or _SKILL_NAME_RE.fullmatch(name) is None:
+        raise ValueError(f"invalid skill name: {name}")
+    return name
+
+
+def _require_skill_trust(trust: object) -> SkillTrust:
+    if trust not in ("trusted", "untrusted") or not isinstance(trust, str):
+        raise ValueError("skill trust must be trusted or untrusted")
+    return trust
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +33,12 @@ class SkillMetadata:
     description: str
     loadable: bool
     trust: SkillTrust
+
+    def __post_init__(self) -> None:
+        _require_skill_name(self.name)
+        if type(self.loadable) is not bool:
+            raise ValueError("skill loadable must be a boolean")
+        _require_skill_trust(self.trust)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +60,14 @@ class SkillDefinition:
     source: SkillSource = "filesystem"
     trust: SkillTrust = "untrusted"
     source_revision: str = "1"
+
+    def __post_init__(self) -> None:
+        _require_skill_name(self.name)
+        if self.source not in ("builtin", "filesystem", "learned"):
+            raise ValueError("invalid skill source")
+        _require_skill_trust(self.trust)
+        if not isinstance(self.source_revision, str) or not self.source_revision.strip():
+            raise ValueError("skill source_revision must be a non-empty string")
 
     def descriptor(self) -> SkillDescriptor:
         """返回不携带正文的发现描述。"""
