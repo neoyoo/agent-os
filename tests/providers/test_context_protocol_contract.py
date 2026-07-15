@@ -16,6 +16,7 @@ from agentos.providers import (
     ProviderToolCall,
     TextPart,
 )
+from agentos.providers.openai_chat import OpenAIChatCompletionsProvider
 from tests._provider_binary import binary_payload
 
 
@@ -78,6 +79,41 @@ def _compatible_factory(request: ProviderRequest) -> ContractObservation:
     provider.complete(request)
     assert transport.payload is not None
     messages = transport.payload["messages"]
+    assert isinstance(messages, list)
+    system = messages[0]
+    assert isinstance(system, dict)
+    return ContractObservation(
+        system=str(system["content"]),
+        sequence=tuple(_compatible_marker(item) for item in messages[1:]),
+    )
+
+
+def _chat_factory(request: ProviderRequest) -> ContractObservation:
+    class RecordingCompletions:
+        payload: dict[str, object] | None = None
+
+        def create(self, **kwargs: object) -> object:
+            self.payload = kwargs
+            return SimpleNamespace(
+                id="chatcmpl_1",
+                model="model",
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(content="done", tool_calls=[]),
+                    ),
+                ],
+            )
+
+    completions = RecordingCompletions()
+    provider = OpenAIChatCompletionsProvider(
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        model="model",
+    )
+    provider.complete(request)
+    assert completions.payload is not None
+    messages = completions.payload["messages"]
     assert isinstance(messages, list)
     system = messages[0]
     assert isinstance(system, dict)
@@ -158,6 +194,7 @@ def _responses_marker(item: object) -> str:
 
 PROVIDER_ADAPTER_FACTORIES: tuple[object, ...] = (
     pytest.param(_compatible_factory, id="openai-compatible"),
+    pytest.param(_chat_factory, id="openai-chat-completions"),
     pytest.param(_responses_factory, id="openai-responses"),
 )
 
