@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from uuid import NAMESPACE_URL, uuid5
 
-from agentos.memory.embeddings import TextEmbeddingProvider
-from agentos.memory.types import RecallCandidate, SegmentRecallDocument
+from agentos.recall.embeddings import TextEmbeddingProvider
+from agentos.recall.types import RecallCandidate, SegmentRecallDocument
 
 
 class QdrantRecallIndex:

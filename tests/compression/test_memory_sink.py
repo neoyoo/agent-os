@@ -2,7 +2,7 @@ import pytest
 
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRuntime
-from agentos.memory import CompressedSegmentPackage
+from agentos.recall import CompressedSegmentPackage
 from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy
 

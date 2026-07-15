@@ -116,6 +116,10 @@ changes are involved, in migration notes.
 - team runtime UI stream and worker daemon profiles
 - planner scheduler daemon, claimed scheduler, stale claim sweep, and LLM
   governance profiles
+- `agentos.recall`: compressed-segment recall boundaries including
+  `SegmentRepository`, `RecallIndex`, and their local/optional adapters
+- hot and durable session-store boundaries under `agentos.persistence`,
+  including `HotSessionStore`, `DurableSessionStore`, and Redis adapters
 - `ReferenceStatePlaneStack` and `ReferenceLiveBackendProbePack`
 - worker supervisor reference adapters
 - release evidence helpers that aggregate external backend probe output

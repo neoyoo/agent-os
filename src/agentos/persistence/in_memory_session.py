@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Sequence
 
 from agentos.context import CompressedSegment
-from agentos.memory.types import (
-    CompressedSegmentPackage,
-    HotSessionState,
-    RecallCandidate,
-    SegmentRecallDocument,
-)
 from agentos.messages import MessageRef, StoredMessage
+from agentos.persistence.session_store import HotSessionState
+from agentos.recall.types import CompressedSegmentPackage
 from agentos.runtime.session import SessionState
 
 
@@ -37,11 +32,10 @@ class InMemoryHotSessionStore:
             self.append_hot_message(state.session_id, message)
         for segment_id, refs in state.segment_refs.items():
             self.save_segment_refs(state.session_id, segment_id, refs)
-        if state.temporary_recalled_refs:
-            self.set_temporary_recalled_refs(
-                state.session_id,
-                state.temporary_recalled_refs,
-            )
+        self.set_temporary_recalled_refs(
+            state.session_id,
+            state.temporary_recalled_refs,
+        )
 
     def append_hot_message(self, session_id: str, message: StoredMessage) -> None:
         """追加一条热点原文消息。"""
@@ -184,76 +178,3 @@ class InMemoryDurableSessionStore:
             package.segment
             for package in self._packages.get(session_id, {}).values()
         )
-
-
-@dataclass(slots=True)
-class InMemoryRecallIndex:
-    """测试和 local profile 使用的词法 recall index。"""
-
-    _documents: dict[str, dict[str, SegmentRecallDocument]] = field(
-        default_factory=dict,
-    )
-
-    def index_segment(self, document: SegmentRecallDocument) -> None:
-        """写入一个 segment recall document。"""
-
-        self._documents.setdefault(document.session_id, {})[
-            document.segment_id
-        ] = document
-
-    def search_segments(
-        self,
-        session_id: str,
-        query: str,
-        limit: int,
-    ) -> tuple[RecallCandidate, ...]:
-        """按 query 的词法重叠检索 candidate segments。"""
-
-        if limit <= 0:
-            return ()
-        query_tokens = self._tokens(query)
-        if not query_tokens:
-            return ()
-
-        candidates: list[RecallCandidate] = []
-        for document in self._documents.get(session_id, {}).values():
-            document_tokens = self._tokens(document.to_text())
-            overlap = query_tokens & document_tokens
-            if not overlap:
-                continue
-            score = len(overlap) / len(query_tokens)
-            candidates.append(
-                RecallCandidate(
-                    session_id=session_id,
-                    segment_id=document.segment_id,
-                    score=score,
-                    reason="lexical overlap: " + ", ".join(sorted(overlap)),
-                ),
-            )
-
-        candidates.sort(
-            key=lambda candidate: (
-                -(candidate.score or 0.0),
-                candidate.segment_id,
-            ),
-        )
-        return tuple(candidates[:limit])
-
-    def delete_session(self, session_id: str) -> None:
-        """删除某个 session 的 recall index。"""
-
-        self._documents.pop(session_id, None)
-
-    def _tokens(self, text: str) -> set[str]:
-        """提取适合开发上下文的简单词法 token。"""
-
-        tokens: set[str] = set()
-        for token in re.findall(r"[A-Za-z0-9_./:-]+", text):
-            lowered = token.lower()
-            tokens.add(lowered)
-            tokens.update(
-                part
-                for part in re.split(r"[._/:-]+", lowered)
-                if part
-            )
-        return tokens

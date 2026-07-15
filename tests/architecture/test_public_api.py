@@ -387,16 +387,40 @@ def test_phase5_phase6_public_api_exports() -> None:
     assert observability.EventSubscriber is events.EventSubscriber
 
 
-def test_phase7_memory_public_api_exports() -> None:
+def test_recall_and_session_storage_public_api_exports() -> None:
     agentos = importlib.import_module("agentos")
     memory = importlib.import_module("agentos.memory")
+    persistence = importlib.import_module("agentos.persistence")
+    recall = importlib.import_module("agentos.recall")
+
+    for name in [
+        "CompressedSegmentPackage",
+        "InMemoryRecallIndex",
+        "QdrantRecallIndex",
+        "RecallCandidate",
+        "RecallIndex",
+        "SegmentRecallDocument",
+        "SegmentRepository",
+        "TextEmbeddingProvider",
+    ]:
+        assert hasattr(recall, name)
+
+    for name in [
+        "DurableSessionStore",
+        "HotSessionState",
+        "HotSessionStore",
+        "InMemoryDurableSessionStore",
+        "InMemoryHotSessionStore",
+        "PostgresDurableSessionStore",
+        "RedisHotSessionStore",
+    ]:
+        assert hasattr(persistence, name)
 
     for name in [
         "CompressedSegmentPackage",
         "DurableSessionStore",
         "HotSessionState",
         "HotSessionStore",
-        "MemoryRuntime",
         "QdrantRecallIndex",
         "RecallCandidate",
         "RecallIndex",
@@ -404,11 +428,10 @@ def test_phase7_memory_public_api_exports() -> None:
         "SegmentRecallDocument",
         "TextEmbeddingProvider",
     ]:
-        assert hasattr(memory, name)
+        assert not hasattr(memory, name)
 
     for name in [
         "CompressedSegmentPackage",
-        "MemoryRuntime",
         "PostgresDurableSessionStore",
         "QdrantRecallIndex",
         "RedisHotSessionStore",

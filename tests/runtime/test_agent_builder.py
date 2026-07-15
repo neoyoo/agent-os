@@ -9,10 +9,15 @@ from agentos.context import ContextRenderer, ContextRuntime
 from agentos.context.models import SystemEnvelope
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.messages import MessageRuntime
+from agentos.persistence import (
+    InMemoryDurableSessionStore,
+    InMemoryHotSessionStore,
+)
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy
 from agentos.providers import FakeProvider
 from agentos.providers import ProviderResponse, ProviderToolCall
 from agentos.providers import provider_tool_spec_to_dict
+from agentos.recall import InMemoryRecallIndex, SegmentRepository
 from agentos.runtime import EventBus, QueryLoop, TurnStartedEvent
 
 
@@ -22,6 +27,11 @@ class StructuralContextRendererStub:
 
     def render(self) -> SystemEnvelope:
         return SystemEnvelope(text=self.text)
+
+
+class NonRepositoryMemorySink:
+    def record_compressed_segment(self, package: object) -> None:
+        return None
 
 
 def test_agent_builder_creates_runnable_standard_agent() -> None:
@@ -338,6 +348,84 @@ def test_agent_builder_accepts_compression_runtime_override() -> None:
     )
 
     assert agent.query_loop.compression_runtime is compression
+
+
+def test_agent_builder_rejects_non_repository_compression_sink() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    compression = CompressionRuntime(
+        context_runtime=context,
+        message_runtime=messages,
+        budget_policy=BudgetPolicy(max_active_messages=2, retain_latest_messages=1),
+        memory_sink=NonRepositoryMemorySink(),
+    )
+
+    with pytest.raises(ValueError, match="memory_sink must be a SegmentRepository"):
+        (
+            AgentBuilder()
+            .provider(FakeProvider(["ok"]))
+            .context_runtime(context)
+            .message_runtime(messages)
+            .compression_runtime(compression)
+            .build()
+        )
+
+
+def test_agent_builder_shares_configured_segment_repository_with_recall() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    repository = SegmentRepository(
+        hot_store=InMemoryHotSessionStore(),
+        durable_store=InMemoryDurableSessionStore(),
+        recall_index=InMemoryRecallIndex(),
+    )
+    compression = CompressionRuntime(
+        context_runtime=context,
+        message_runtime=messages,
+        budget_policy=BudgetPolicy(max_active_messages=2, retain_latest_messages=1),
+        memory_sink=repository,
+        session_id="session_1",
+    )
+
+    agent = (
+        AgentBuilder()
+        .provider(FakeProvider(["ok"]))
+        .context_runtime(context)
+        .message_runtime(messages)
+        .compression_runtime(compression)
+        .build()
+    )
+
+    router = agent.query_loop.tool_call_router
+    assert isinstance(router, ToolCallRouter)
+    assert router.recall_runtime is not None
+    assert router.recall_runtime.segment_repository is repository
+
+
+def test_agent_builder_requires_session_for_configured_segment_repository() -> None:
+    context = ContextRuntime()
+    messages = MessageRuntime()
+    repository = SegmentRepository(
+        hot_store=InMemoryHotSessionStore(),
+        durable_store=InMemoryDurableSessionStore(),
+        recall_index=InMemoryRecallIndex(),
+    )
+    compression = CompressionRuntime(
+        context_runtime=context,
+        message_runtime=messages,
+        budget_policy=BudgetPolicy(max_active_messages=2, retain_latest_messages=1),
+        memory_sink=repository,
+    )
+
+    with pytest.raises(ValueError, match="session_id is required"):
+        (
+            AgentBuilder()
+            .provider(FakeProvider(["ok"]))
+            .context_runtime(context)
+            .message_runtime(messages)
+            .compression_runtime(compression)
+            .build()
+        )
 
 
 def test_agent_builder_accepts_tool_call_router_override() -> None:

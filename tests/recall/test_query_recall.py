@@ -5,18 +5,24 @@ import asyncio
 import pytest
 
 from agentos import AgentBuilder
-from agentos.compression import CompressionIndex, CompressionRuntime
+from agentos.compression import CompressionRuntime
 from agentos.context import CompressedSegment, ContextRuntime
-from agentos.memory import CompressedSegmentPackage, MemoryRuntime, SegmentRecallDocument
-from agentos.memory.in_memory import (
+from agentos.events import EventBus, RecallContextFailedEvent
+from agentos.persistence import (
     InMemoryDurableSessionStore,
     InMemoryHotSessionStore,
-    InMemoryRecallIndex,
 )
 from agentos.messages import ActiveWindow, MessageRef, MessageRuntime, StoredMessage
 from agentos.policies import BudgetPolicy
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
-from agentos.recall import RecallContextError, RecallRuntime
+from agentos.recall import (
+    CompressedSegmentPackage,
+    InMemoryRecallIndex,
+    RecallContextError,
+    RecallRuntime,
+    SegmentRecallDocument,
+    SegmentRepository,
+)
 
 
 class RecordingActiveWindow(ActiveWindow):
@@ -29,9 +35,18 @@ class RecordingActiveWindow(ActiveWindow):
         super().prepend_temporary(message_ids)
 
 
-def build_memory_runtime() -> tuple[MemoryRuntime, InMemoryDurableSessionStore]:
+class FailedEventRecorder:
+    def __init__(self) -> None:
+        self.events: list[RecallContextFailedEvent] = []
+
+    def record(self, event: object) -> None:
+        if isinstance(event, RecallContextFailedEvent):
+            self.events.append(event)
+
+
+def build_segment_repository() -> tuple[SegmentRepository, InMemoryDurableSessionStore]:
     durable_store = InMemoryDurableSessionStore()
-    runtime = MemoryRuntime(
+    runtime = SegmentRepository(
         hot_store=InMemoryHotSessionStore(),
         durable_store=durable_store,
         recall_index=InMemoryRecallIndex(),
@@ -64,12 +79,11 @@ def build_memory_runtime() -> tuple[MemoryRuntime, InMemoryDurableSessionStore]:
 
 
 def test_recall_context_query_hydrates_then_prepends_temporary_messages() -> None:
-    memory_runtime, _ = build_memory_runtime()
+    segment_repository, _ = build_segment_repository()
     messages = MessageRuntime(active_window=RecordingActiveWindow())
     recall = RecallRuntime(
-        compression_index=CompressionIndex(),
         message_runtime=messages,
-        memory_runtime=memory_runtime,
+        segment_repository=segment_repository,
         session_id="session_1",
     )
 
@@ -85,13 +99,27 @@ def test_recall_context_query_hydrates_then_prepends_temporary_messages() -> Non
     )
 
 
-def test_recall_context_query_deduplicates_repeated_results() -> None:
-    memory_runtime, _ = build_memory_runtime()
+def test_recall_context_handle_uses_segment_repository() -> None:
+    segment_repository, _ = build_segment_repository()
     messages = MessageRuntime(active_window=RecordingActiveWindow())
     recall = RecallRuntime(
-        compression_index=CompressionIndex(),
         message_runtime=messages,
-        memory_runtime=memory_runtime,
+        segment_repository=segment_repository,
+        session_id="session_1",
+    )
+
+    recalled = recall.recall_context(handle="seg_1")
+
+    assert tuple(message.id for message in recalled) == ("msg_1", "msg_2")
+    assert messages.store.get("msg_2").content == "项目名是 agent-os"
+
+
+def test_recall_context_query_deduplicates_repeated_results() -> None:
+    segment_repository, _ = build_segment_repository()
+    messages = MessageRuntime(active_window=RecordingActiveWindow())
+    recall = RecallRuntime(
+        message_runtime=messages,
+        segment_repository=segment_repository,
         session_id="session_1",
     )
 
@@ -105,29 +133,33 @@ def test_recall_context_query_deduplicates_repeated_results() -> None:
 
 
 def test_recall_context_query_failure_does_not_modify_window() -> None:
-    class FailingMemoryRuntime:
+    class FailingSegmentRepository:
         def recall_by_query(self, session_id: str, query: str, limit: int):
             raise RuntimeError("query failed")
 
     messages = MessageRuntime()
     current = messages.append_user("Current question")
     before = messages.active_window.snapshot_refs()
+    recorder = FailedEventRecorder()
     recall = RecallRuntime(
-        compression_index=CompressionIndex(),
         message_runtime=messages,
-        memory_runtime=FailingMemoryRuntime(),  # type: ignore[arg-type]
+        segment_repository=FailingSegmentRepository(),  # type: ignore[arg-type]
+        event_bus=EventBus(subscribers=[recorder]),
         session_id="session_1",
     )
 
-    with pytest.raises(RuntimeError, match="query failed"):
+    with pytest.raises(RecallContextError, match="query recall failed"):
         recall.recall_context(query="pyproject")
 
     assert before == (MessageRef(current.id),)
     assert messages.active_window.snapshot_refs() == before
+    assert [(event.handle, event.error) for event in recorder.events] == [
+        ("query:pyproject", "query recall failed"),
+    ]
 
 
 def test_recall_context_hydrate_failure_does_not_modify_window() -> None:
-    class ConflictingMemoryRuntime:
+    class ConflictingSegmentRepository:
         def recall_by_query(
             self,
             session_id: str,
@@ -144,9 +176,8 @@ def test_recall_context_hydrate_failure_does_not_modify_window() -> None:
     messages.store.put(StoredMessage("msg_3", "assistant", "Stored value"))
     before = messages.active_window.snapshot_refs()
     recall = RecallRuntime(
-        compression_index=CompressionIndex(),
         message_runtime=messages,
-        memory_runtime=ConflictingMemoryRuntime(),  # type: ignore[arg-type]
+        segment_repository=ConflictingSegmentRepository(),  # type: ignore[arg-type]
         session_id="session_1",
     )
 
@@ -159,11 +190,10 @@ def test_recall_context_hydrate_failure_does_not_modify_window() -> None:
 
 
 def test_recall_context_rejects_handle_and_query_together() -> None:
-    memory_runtime, _ = build_memory_runtime()
+    segment_repository, _ = build_segment_repository()
     recall = RecallRuntime(
-        compression_index=CompressionIndex(),
         message_runtime=MessageRuntime(),
-        memory_runtime=memory_runtime,
+        segment_repository=segment_repository,
         session_id="session_1",
     )
 
@@ -171,14 +201,14 @@ def test_recall_context_rejects_handle_and_query_together() -> None:
         recall.recall_context("seg_1", query="pyproject")
 
 
-def test_recall_context_query_requires_memory_runtime() -> None:
+def test_recall_context_query_requires_session_id() -> None:
+    segment_repository, _ = build_segment_repository()
     recall = RecallRuntime(
-        compression_index=CompressionIndex(),
         message_runtime=MessageRuntime(),
-        session_id="session_1",
+        segment_repository=segment_repository,
     )
 
-    with pytest.raises(RecallContextError, match="memory runtime is required"):
+    with pytest.raises(RecallContextError, match="session_id is required"):
         recall.recall_context(query="pyproject")
 
 

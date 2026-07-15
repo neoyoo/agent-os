@@ -6,25 +6,19 @@ from pathlib import Path
 import pytest
 
 from agentos.artifacts import ArtifactRef
-from agentos.context import CompressedSegment
-from agentos.memory import (
-    CompressedSegmentPackage,
+from agentos.persistence import (
+    DurableSessionStore,
     HotSessionState,
-    RecallCandidate,
-    SegmentRecallDocument,
-)
-from agentos.memory.in_memory import (
     InMemoryDurableSessionStore,
     InMemoryHotSessionStore,
+    HotSessionStore,
+    RedisHotSessionStore,
 )
-from agentos.memory.redis_store import RedisHotSessionStore
-from agentos.memory.runtime import MemoryRuntime
-from agentos.memory.serializers import (
+from agentos.persistence.session_serializers import (
     message_from_dict,
     message_to_dict,
     tool_call_to_dict,
 )
-from agentos.memory.store import DurableSessionStore, HotSessionStore
 from agentos.messages import MessageRef, StoredMessage, ToolCall
 
 
@@ -47,8 +41,6 @@ def _annotation_text(annotation: object) -> str:
         (InMemoryDurableSessionStore, "get_messages", "return"),
         (RedisHotSessionStore, "append_hot_message", "message"),
         (RedisHotSessionStore, "get_hot_messages", "return"),
-        (MemoryRuntime, "recall_by_handle", "return"),
-        (MemoryRuntime, "recall_by_query", "return"),
     ],
 )
 def test_memory_public_message_annotations_use_stored_message(
@@ -73,7 +65,7 @@ def test_memory_public_message_annotations_use_stored_message(
         (message_from_dict, "return"),
     ],
 )
-def test_memory_serializer_annotations_use_stored_message(
+def test_session_serializer_annotations_use_stored_message(
     function: object,
     parameter: str,
 ) -> None:
@@ -97,14 +89,12 @@ def test_hot_session_state_annotations_use_stored_message() -> None:
     assert "StoredMessage" in _annotation_text(init_annotation)
 
 
-def test_memory_sources_do_not_import_legacy_message_name() -> None:
+def test_session_sources_do_not_import_legacy_message_name() -> None:
     modules = (
-        "agentos.memory.in_memory",
-        "agentos.memory.redis_store",
-        "agentos.memory.runtime",
-        "agentos.memory.serializers",
-        "agentos.memory.store",
-        "agentos.memory.types",
+        "agentos.persistence.in_memory_session",
+        "agentos.persistence.redis_session",
+        "agentos.persistence.session_serializers",
+        "agentos.persistence.session_store",
     )
     legacy_imports: list[str] = []
     for module_name in modules:
@@ -122,50 +112,6 @@ def test_memory_sources_do_not_import_legacy_message_name() -> None:
     assert legacy_imports == []
 
 
-def test_segment_recall_document_renders_search_text_without_original_payload() -> None:
-    document = SegmentRecallDocument(
-        session_id="session_1",
-        segment_id="seg_1",
-        topic="读取 pyproject.toml 里的项目名",
-        summary="用户要求读取项目名，工具返回 project.name = agent-os。",
-        keywords=("pyproject.toml", "project.name", "agent-os"),
-        tool_hints=("read_file(path=pyproject.toml)",),
-        searchable_text="project metadata lookup",
-    )
-
-    rendered = document.to_text()
-
-    assert "读取 pyproject.toml 里的项目名" in rendered
-    assert "project.name" in rendered
-    assert "read_file(path=pyproject.toml)" in rendered
-    assert "project metadata lookup" in rendered
-    assert "完整 pyproject 原文不应该出现在 recall document" not in rendered
-
-
-def test_compressed_segment_package_keeps_visible_segment_refs_and_recall_document() -> None:
-    segment = CompressedSegment(
-        id="seg_1",
-        topic="历史上下文",
-        summary="压缩了 2 条历史消息。",
-    )
-    document = SegmentRecallDocument(
-        session_id="session_1",
-        segment_id="seg_1",
-        topic=segment.topic,
-        summary=segment.summary,
-    )
-
-    package = CompressedSegmentPackage(
-        segment=segment,
-        source_refs=("msg_1", "msg_2"),
-        recall_document=document,
-    )
-
-    assert package.segment is segment
-    assert package.source_refs == ("msg_1", "msg_2")
-    assert package.recall_document.segment_id == "seg_1"
-
-
 def test_hot_session_state_freezes_collections() -> None:
     message = StoredMessage(id="msg_1", role="user", content="hello")
     state = HotSessionState(
@@ -180,20 +126,6 @@ def test_hot_session_state_freezes_collections() -> None:
     assert state.recent_messages == (message,)
     assert state.temporary_recalled_refs == ("msg_2",)
     assert state.segment_refs == {"seg_1": ("msg_1",)}
-
-
-def test_recall_candidate_is_orderable_by_score_in_callers() -> None:
-    candidate = RecallCandidate(
-        session_id="session_1",
-        segment_id="seg_1",
-        score=0.75,
-        reason="keyword overlap",
-    )
-
-    assert candidate.session_id == "session_1"
-    assert candidate.segment_id == "seg_1"
-    assert candidate.score == 0.75
-    assert candidate.reason == "keyword overlap"
 
 
 def test_memory_tool_call_serializer_thaws_nested_arguments() -> None:

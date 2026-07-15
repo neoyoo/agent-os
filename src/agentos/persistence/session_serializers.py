@@ -4,13 +4,10 @@ from typing import Any
 
 from agentos.artifacts import ArtifactRef
 from agentos.context import CompressedSegment
-from agentos.memory.types import (
-    CompressedSegmentPackage,
-    HotSessionState,
-    SegmentRecallDocument,
-)
 from agentos.messages import MessageRef, StoredMessage, ToolCall
 from agentos._json_values import thaw_json
+from agentos.persistence.session_store import HotSessionState
+from agentos.recall.types import CompressedSegmentPackage, SegmentRecallDocument
 
 
 JsonDict = dict[str, Any]

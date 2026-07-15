@@ -8,7 +8,7 @@ from agentos.observability.events import EventLog
 from agentos.persistence import MemoryPersistence, SessionSnapshot
 from agentos.policies import BudgetPolicy
 from agentos.providers import FakeProvider
-from agentos.recall import RecallRuntime
+from agentos.recall import RecallRuntime, SegmentRepository
 from agentos.runtime import Agent, EventBus, ProviderRequestBuilder, QueryLoop, SessionState
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
@@ -97,8 +97,12 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
         next_segment_number=restored.next_segment_number,
     )
     recalled = RecallRuntime(
-        compression_index=restored_compression.index,
         message_runtime=restored_messages,
+        segment_repository=SegmentRepository.from_runtime(
+            restored_compression.index,
+            restored_messages,
+        ),
+        session_id="session_1",
     ).recall_context("seg_1")
 
     request = _request_builder(restored_context, restored_messages).build().request

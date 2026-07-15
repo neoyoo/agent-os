@@ -1,5 +1,5 @@
 from agentos.compression import RuleBasedCompressor
-from agentos.memory import CompressedSegmentPackage
+from agentos.recall import CompressedSegmentPackage
 from agentos.messages import StoredMessage, ToolCall
 
 

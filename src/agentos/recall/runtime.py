@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from agentos.compression import CompressionIndex
-from agentos.memory import MemoryRuntime
 from agentos.messages import MessageRuntime, StoredMessage
+from agentos.recall.segment_repository import (
+    SegmentNotFoundError,
+    SegmentRepository,
+)
 
 if TYPE_CHECKING:
     from agentos.runtime.event_bus import EventBus
@@ -21,9 +23,8 @@ class RecallContextError(ValueError):
 class RecallRuntime:
     """执行 `recall_context` 并返回原文消息。"""
 
-    compression_index: CompressionIndex
     message_runtime: MessageRuntime
-    memory_runtime: MemoryRuntime | None = None
+    segment_repository: SegmentRepository
     event_bus: EventBus | None = None
     session_id: str | None = None
     turn_id: str | None = None
@@ -49,6 +50,8 @@ class RecallRuntime:
     def _recall_by_handle(self, handle: str) -> tuple[StoredMessage, ...]:
         """按 compressed segment handle 召回。"""
 
+        if self.session_id is None:
+            raise RecallContextError("session_id is required for context recall")
         from agentos.runtime.event_bus import RecallContextRequestedEvent
 
         self._emit(
@@ -58,26 +61,19 @@ class RecallRuntime:
             ),
         )
         try:
-            source_message_ids = tuple(self.compression_index.source_refs(handle))
-        except KeyError as error:
-            message = f"unknown compressed segment: {handle}"
-            from agentos.runtime.event_bus import RecallContextFailedEvent
-
-            self._emit(
-                RecallContextFailedEvent(
-                    handle=handle,
-                    error=message,
-                    **self._event_context(),
-                ),
+            recalled_messages = tuple(
+                self.segment_repository.recall_by_handle(self.session_id, handle),
             )
-            raise RecallContextError(
-                message,
-            ) from error
+        except SegmentNotFoundError as error:
+            message = f"unknown compressed segment: {handle}"
+            self._emit_failure(handle, message)
+            raise RecallContextError(message) from error
+        except Exception as error:
+            message = f"failed to recall compressed segment: {handle}"
+            self._emit_failure(handle, message)
+            raise RecallContextError(message) from error
 
-        recalled_messages = tuple(
-            self.message_runtime.store.get(message_id)
-            for message_id in source_message_ids
-        )
+        self.message_runtime.hydrate_messages(list(recalled_messages))
         recalled_message_ids = tuple(message.id for message in recalled_messages)
         self.message_runtime.active_window.prepend_temporary(recalled_message_ids)
         from agentos.runtime.event_bus import RecallContextInjectedEvent
@@ -98,8 +94,6 @@ class RecallRuntime:
     ) -> tuple[StoredMessage, ...]:
         """按 query 检索 recall index 并召回。"""
 
-        if self.memory_runtime is None:
-            raise RecallContextError("memory runtime is required for query recall")
         if self.session_id is None:
             raise RecallContextError("session_id is required for query recall")
 
@@ -112,13 +106,18 @@ class RecallRuntime:
                 **self._event_context(),
             ),
         )
-        recalled_messages = tuple(
-            self.memory_runtime.recall_by_query(
-                self.session_id,
-                query,
-                limit,
-            ),
-        )
+        try:
+            recalled_messages = tuple(
+                self.segment_repository.recall_by_query(
+                    self.session_id,
+                    query,
+                    limit,
+                ),
+            )
+        except Exception as error:
+            message = "query recall failed"
+            self._emit_failure(event_handle, message)
+            raise RecallContextError(message) from error
         self.message_runtime.hydrate_messages(list(recalled_messages))
         recalled_message_ids = tuple(message.id for message in recalled_messages)
         self.message_runtime.active_window.prepend_temporary(recalled_message_ids)
@@ -138,6 +137,17 @@ class RecallRuntime:
 
         if self.event_bus is not None:
             self.event_bus.emit(event)
+
+    def _emit_failure(self, handle: str, message: str) -> None:
+        from agentos.runtime.event_bus import RecallContextFailedEvent
+
+        self._emit(
+            RecallContextFailedEvent(
+                handle=handle,
+                error=message,
+                **self._event_context(),
+            ),
+        )
 
     def _event_context(self) -> dict[str, str | None]:
         """返回 recall event 使用的 session/turn id。"""

@@ -266,17 +266,24 @@ Client → Load Balancer → N × ASGI instances
 
 ```python
 from agentos import AgentBuilder, AsgiAgentApp
-from agentos.memory import MemoryRuntime, QdrantRecallIndex, RedisHotSessionStore
-from agentos.persistence import PostgresDurableSessionStore
+from agentos.persistence import PostgresDurableSessionStore, RedisHotSessionStore
+from agentos.recall import QdrantRecallIndex, SegmentRepository
 
 hot_store = RedisHotSessionStore(url="redis://...", ttl_seconds=3600)
 durable_store = PostgresDurableSessionStore(dsn="postgresql://...")
-recall_index = QdrantRecallIndex(url="http://...", collection="agent_recall")
-memory = MemoryRuntime(
+recall_index = QdrantRecallIndex(
+    url="http://...",
+    collection_name="agent_recall",
+    embedding_provider=embedding_provider,
+)
+segment_repository = SegmentRepository(
     hot_store=hot_store,
     durable_store=durable_store,
     recall_index=recall_index,
 )
+
+# Inject segment_repository as CompressionRuntime.memory_sink and
+# RecallRuntime.segment_repository in the production composition root.
 
 def make_agent(session_id: str) -> Agent:
     return (

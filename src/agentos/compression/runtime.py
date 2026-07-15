@@ -7,9 +7,9 @@ from agentos.compression.compressor import Compressor, RuleBasedCompressor
 from agentos.compression.evictor import Evictor
 from agentos.compression.index import CompressionIndex
 from agentos.context import CompressedSegment
-from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import MessageRuntime, StoredMessage
 from agentos.policies import CompressionBudget
+from agentos.recall.types import CompressedSegmentPackage, SegmentRecallDocument
 
 if TYPE_CHECKING:
     from agentos.runtime.event_bus import EventBus

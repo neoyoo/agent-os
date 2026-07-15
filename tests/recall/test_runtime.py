@@ -4,7 +4,11 @@ from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionIndex, CompressionRuntime
 from agentos.context import ContextRuntime
-from agentos.events import EventBus, RecallContextInjectedEvent
+from agentos.events import (
+    EventBus,
+    RecallContextFailedEvent,
+    RecallContextInjectedEvent,
+)
 from agentos.messages import (
     ActiveWindow,
     MessageRef,
@@ -15,7 +19,7 @@ from agentos.messages import (
 )
 from agentos.policies import BudgetPolicy
 from agentos.providers import ProviderToolCall
-from agentos.recall import RecallContextError, RecallRuntime
+from agentos.recall import RecallContextError, RecallRuntime, SegmentRepository
 
 import pytest
 
@@ -41,6 +45,29 @@ class InjectedEventRecorder:
             self.active_refs_at_injected_event = (
                 self.message_runtime.active_window.snapshot_refs()
             )
+
+
+class FailedEventRecorder:
+    def __init__(self) -> None:
+        self.events: list[RecallContextFailedEvent] = []
+
+    def record(self, event: object) -> None:
+        if isinstance(event, RecallContextFailedEvent):
+            self.events.append(event)
+
+
+def _recall_runtime(
+    messages: MessageRuntime,
+    index: CompressionIndex,
+    *,
+    event_bus: EventBus | None = None,
+) -> RecallRuntime:
+    return RecallRuntime(
+        message_runtime=messages,
+        segment_repository=SegmentRepository.from_runtime(index, messages),
+        event_bus=event_bus,
+        session_id="session_1",
+    )
 
 
 def _compressed_runtime() -> tuple[
@@ -77,9 +104,9 @@ def test_recall_context_atomically_prepends_original_messages_before_event() -> 
     recorder = InjectedEventRecorder(messages)
     event_bus = EventBus(subscribers=[recorder])
 
-    recalled = RecallRuntime(
-        compression_index=compression.index,
-        message_runtime=messages,
+    recalled = _recall_runtime(
+        messages,
+        compression.index,
         event_bus=event_bus,
     ).recall_context("seg_1")
 
@@ -102,10 +129,7 @@ def test_recall_context_deduplicates_repeated_segment_in_window() -> None:
     messages, compression, old_user, old_assistant, current_user = (
         _compressed_runtime()
     )
-    recall = RecallRuntime(
-        compression_index=compression.index,
-        message_runtime=messages,
-    )
+    recall = _recall_runtime(messages, compression.index)
 
     first = recall.recall_context("seg_1")
     second = recall.recall_context("seg_1")
@@ -139,9 +163,9 @@ def test_recall_context_preserves_tool_pair_order_in_temporary_window() -> None:
     )
     compression.maybe_compress()
 
-    recalled = RecallRuntime(
-        compression_index=compression.index,
-        message_runtime=message_runtime,
+    recalled = _recall_runtime(
+        message_runtime,
+        compression.index,
     ).recall_context("seg_1")
 
     assert recalled == (first, assistant, result)
@@ -159,9 +183,11 @@ def test_recall_context_unknown_handle_does_not_modify_window() -> None:
     message_runtime = MessageRuntime()
     current = message_runtime.append_user("Current question")
     before = message_runtime.active_window.snapshot_refs()
-    runtime = RecallRuntime(
-        compression_index=CompressionIndex(),
-        message_runtime=message_runtime,
+    recorder = FailedEventRecorder()
+    runtime = _recall_runtime(
+        message_runtime,
+        CompressionIndex(),
+        event_bus=EventBus(subscribers=[recorder]),
     )
 
     with pytest.raises(RecallContextError, match="unknown compressed segment"):
@@ -169,6 +195,9 @@ def test_recall_context_unknown_handle_does_not_modify_window() -> None:
 
     assert before == (MessageRef(current.id),)
     assert message_runtime.active_window.snapshot_refs() == before
+    assert [(event.handle, event.error) for event in recorder.events] == [
+        ("seg_missing", "unknown compressed segment: seg_missing"),
+    ]
 
 
 def test_recall_context_source_read_failure_does_not_modify_window() -> None:
@@ -181,14 +210,19 @@ def test_recall_context_source_read_failure_does_not_modify_window() -> None:
     index.record("seg_1", [first.id, "msg_missing"])
     before = message_runtime.active_window.snapshot_refs()
 
-    with pytest.raises(KeyError, match="msg_missing"):
-        RecallRuntime(
-            compression_index=index,
-            message_runtime=message_runtime,
+    recorder = FailedEventRecorder()
+    with pytest.raises(RecallContextError, match="failed to recall compressed segment"):
+        _recall_runtime(
+            message_runtime,
+            index,
+            event_bus=EventBus(subscribers=[recorder]),
         ).recall_context("seg_1")
 
     assert before == (MessageRef(current.id),)
     assert message_runtime.active_window.snapshot_refs() == before
+    assert [(event.handle, event.error) for event in recorder.events] == [
+        ("seg_1", "failed to recall compressed segment: seg_1"),
+    ]
 
 
 def test_recall_router_returns_standard_tool_result_and_injects_originals() -> None:
@@ -197,10 +231,7 @@ def test_recall_router_returns_standard_tool_result_and_injects_originals() -> N
     )
     router = ToolCallRouter(
         tool_registry=ToolRegistry(),
-        recall_runtime=RecallRuntime(
-            compression_index=compression.index,
-            message_runtime=messages,
-        ),
+        recall_runtime=_recall_runtime(messages, compression.index),
     )
 
     result = router.execute_tool_call(

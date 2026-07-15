@@ -1984,9 +1984,50 @@
           "signature": "unavailable",
           "stability": "experimental"
         },
+        "DurableSessionStore": {
+          "methods": {
+            "append_message": "(self, session_id: 'str', message: 'StoredMessage') -> 'None'",
+            "get_messages": "(self, session_id: 'str', message_ids: 'Sequence[str]') -> 'list[StoredMessage]'",
+            "get_segment_refs": "(self, session_id: 'str', segment_id: 'str') -> 'tuple[str, ...]'",
+            "list_compressed_segments": "(self, session_id: 'str') -> 'tuple[CompressedSegment, ...]'",
+            "load_active_refs": "(self, session_id: 'str') -> 'tuple[MessageRef, ...]'",
+            "load_session": "(self, session_id: 'str') -> \"'SessionState'\"",
+            "save_active_refs": "(self, session_id: 'str', refs: 'Sequence[MessageRef]') -> 'None'",
+            "save_compressed_segment": "(self, session_id: 'str', package: 'CompressedSegmentPackage') -> 'None'",
+            "save_session": "(self, session: \"'SessionState'\") -> 'None'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
         "FileSystemPersistence": {
           "signature": "(base_dir: pathlib.Path) -> None",
           "stability": "stable"
+        },
+        "HotSessionState": {
+          "signature": "(session_id: 'str', active_refs: 'Sequence[MessageRef] | None' = None, recent_messages: 'Sequence[StoredMessage] | None' = None, temporary_recalled_refs: 'Sequence[str] | None' = None, segment_refs: 'Mapping[str, Sequence[str]] | None' = None, metadata: 'Mapping[str, object] | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "HotSessionStore": {
+          "methods": {
+            "append_hot_message": "(self, session_id: 'str', message: 'StoredMessage') -> 'None'",
+            "consume_temporary_recalled_refs": "(self, session_id: 'str') -> 'tuple[str, ...]'",
+            "get_hot_messages": "(self, session_id: 'str', message_ids: 'Sequence[str]') -> 'list[StoredMessage] | None'",
+            "get_segment_refs": "(self, session_id: 'str', segment_id: 'str') -> 'tuple[str, ...] | None'",
+            "load_hot_state": "(self, session_id: 'str') -> 'HotSessionState | None'",
+            "save_hot_state": "(self, state: 'HotSessionState') -> 'None'",
+            "save_segment_refs": "(self, session_id: 'str', segment_id: 'str', message_ids: 'Sequence[str]') -> 'None'",
+            "set_temporary_recalled_refs": "(self, session_id: 'str', message_ids: 'Sequence[str]') -> 'None'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "InMemoryDurableSessionStore": {
+          "signature": "(_sessions: 'dict[str, SessionState]' = <factory>, _messages: 'dict[str, dict[str, StoredMessage]]' = <factory>, _active_refs: 'dict[str, tuple[MessageRef, ...]]' = <factory>, _packages: 'dict[str, dict[str, CompressedSegmentPackage]]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "InMemoryHotSessionStore": {
+          "signature": "(_states: 'dict[str, HotSessionState]' = <factory>, _messages: 'dict[str, dict[str, StoredMessage]]' = <factory>, _segment_refs: 'dict[str, dict[str, tuple[str, ...]]]' = <factory>, _temporary_refs: 'dict[str, tuple[str, ...]]' = <factory>) -> None",
+          "stability": "experimental"
         },
         "MemoryPersistence": {
           "signature": "() -> None",
@@ -2014,6 +2055,10 @@
         "PostgresSessionSnapshotPersistence": {
           "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
           "stability": "stable"
+        },
+        "RedisHotSessionStore": {
+          "signature": "(url: 'str', client: 'object | None' = None, *, key_prefix: 'str' = 'agentos', ttl_seconds: 'int | None' = None) -> 'None'",
+          "stability": "experimental"
         },
         "SNAPSHOT_VERSION": {
           "signature": "non-callable",
@@ -2091,6 +2136,76 @@
         },
         "list_agent_form_readiness": {
           "signature": "() -> 'tuple[AgentFormReadiness, ...]'",
+          "stability": "experimental"
+        }
+      }
+    },
+    "agentos.recall": {
+      "exports": {
+        "CompressedSegmentPackage": {
+          "signature": "(segment: 'CompressedSegment', source_refs: 'Sequence[str]', recall_document: 'SegmentRecallDocument') -> 'None'",
+          "stability": "experimental"
+        },
+        "InMemoryRecallIndex": {
+          "signature": "(_documents: 'dict[str, dict[str, SegmentRecallDocument]]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "QdrantRecallIndex": {
+          "signature": "(url: 'str', collection_name: 'str', embedding_provider: 'TextEmbeddingProvider', client: 'object | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "RecallCandidate": {
+          "signature": "(session_id: 'str', segment_id: 'str', score: 'float | None', reason: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "RecallContextError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "RecallIndex": {
+          "methods": {
+            "delete_session": "(self, session_id: str) -> None",
+            "index_segment": "(self, document: agentos.recall.types.SegmentRecallDocument) -> None",
+            "search_segments": "(self, session_id: str, query: str, limit: int) -> tuple[agentos.recall.types.RecallCandidate, ...]"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "RecallRuntime": {
+          "signature": "(message_runtime: 'MessageRuntime', segment_repository: 'SegmentRepository', event_bus: 'EventBus | None' = None, session_id: 'str | None' = None, turn_id: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "SegmentDurableStore": {
+          "methods": {
+            "get_messages": "(self, session_id: str, message_ids: Sequence[str]) -> list[agentos.messages.types.StoredMessage]",
+            "get_segment_refs": "(self, session_id: str, segment_id: str) -> tuple[str, ...]",
+            "save_compressed_segment": "(self, session_id: str, package: agentos.recall.types.CompressedSegmentPackage) -> None"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "SegmentHotStore": {
+          "methods": {
+            "get_hot_messages": "(self, session_id: str, message_ids: Sequence[str]) -> list[agentos.messages.types.StoredMessage] | None",
+            "get_segment_refs": "(self, session_id: str, segment_id: str) -> tuple[str, ...] | None",
+            "save_segment_refs": "(self, session_id: str, segment_id: str, message_ids: Sequence[str]) -> None"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "SegmentRecallDocument": {
+          "signature": "(session_id: 'str', segment_id: 'str', topic: 'str', summary: 'str', keywords: 'Sequence[str] | None' = None, tool_hints: 'Sequence[str] | None' = None, searchable_text: 'str' = '') -> 'None'",
+          "stability": "experimental"
+        },
+        "SegmentRepository": {
+          "signature": "(hot_store: 'SegmentHotStore', durable_store: 'SegmentDurableStore', recall_index: 'RecallIndex') -> None",
+          "stability": "experimental"
+        },
+        "TextEmbeddingProvider": {
+          "methods": {
+            "embed_text": "(self, text: str) -> list[float]"
+          },
+          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         }
       }

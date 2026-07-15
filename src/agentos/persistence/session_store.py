@@ -1,13 +1,60 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, Sequence
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
 from agentos.context import CompressedSegment
-from agentos.memory.types import CompressedSegmentPackage, HotSessionState
 from agentos.messages import MessageRef, StoredMessage
+from agentos.recall.types import CompressedSegmentPackage
 
 if TYPE_CHECKING:
     from agentos.runtime.session import SessionState
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class HotSessionState:
+    """活跃 session 的热点工作集快照。"""
+
+    session_id: str
+    active_refs: tuple[MessageRef, ...]
+    recent_messages: tuple[StoredMessage, ...]
+    temporary_recalled_refs: tuple[str, ...]
+    segment_refs: Mapping[str, tuple[str, ...]]
+    metadata: Mapping[str, object]
+
+    def __init__(
+        self,
+        session_id: str,
+        active_refs: Sequence[MessageRef] | None = None,
+        recent_messages: Sequence[StoredMessage] | None = None,
+        temporary_recalled_refs: Sequence[str] | None = None,
+        segment_refs: Mapping[str, Sequence[str]] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "active_refs", tuple(active_refs or ()))
+        object.__setattr__(self, "recent_messages", tuple(recent_messages or ()))
+        object.__setattr__(
+            self,
+            "temporary_recalled_refs",
+            tuple(temporary_recalled_refs or ()),
+        )
+        object.__setattr__(
+            self,
+            "segment_refs",
+            MappingProxyType(
+                {
+                    segment_id: tuple(refs)
+                    for segment_id, refs in (segment_refs or {}).items()
+                },
+            ),
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            MappingProxyType(dict(metadata or {})),
+        )
 
 
 class HotSessionStore(Protocol):

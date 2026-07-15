@@ -10,18 +10,21 @@ from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
 from agentos.context import CompressedSegment, ContextRuntime, WorkingStateField
 from agentos.context.state import working_state_value_to_json
-from agentos.compression import CompressionIndex
-from agentos.memory import CompressedSegmentPackage, MemoryRuntime, SegmentRecallDocument
-from agentos.memory.in_memory import (
+from agentos.persistence import (
     InMemoryDurableSessionStore,
     InMemoryHotSessionStore,
-    InMemoryRecallIndex,
 )
 from agentos.messages import MessageRef, MessageRuntime, StoredMessage
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.policies import BudgetPolicy
 from agentos.providers import ProviderToolCall
-from agentos.recall import RecallRuntime
+from agentos.recall import (
+    CompressedSegmentPackage,
+    InMemoryRecallIndex,
+    RecallRuntime,
+    SegmentRecallDocument,
+    SegmentRepository,
+)
 
 
 def test_tool_call_router_uses_stored_message_truth() -> None:
@@ -329,8 +332,12 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
         tool_registry=ToolRegistry(),
         context_runtime=context,
         recall_runtime=RecallRuntime(
-            compression_index=compression.index,
             message_runtime=messages,
+            segment_repository=SegmentRepository.from_runtime(
+                compression.index,
+                messages,
+            ),
+            session_id="session_1",
         ),
     )
 
@@ -451,10 +458,10 @@ def test_update_state_tool_accepts_nested_json_value() -> None:
     assert restored == {"theme": "dark", "limits": [1, 2, 3]}
 
 
-def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> None:
+def test_tool_call_router_routes_query_recall_context_to_segment_repository() -> None:
     messages = MessageRuntime()
     durable_store = InMemoryDurableSessionStore()
-    memory_runtime = MemoryRuntime(
+    segment_repository = SegmentRepository(
         hot_store=InMemoryHotSessionStore(),
         durable_store=durable_store,
         recall_index=InMemoryRecallIndex(),
@@ -474,7 +481,7 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
             keywords=("pyproject.toml", "agent-os"),
         ),
     )
-    memory_runtime.record_compressed_segment(package)
+    segment_repository.record_compressed_segment(package)
     durable_store.append_message(
         "session_1",
         StoredMessage(id="msg_1", role="user", content="读取 pyproject.toml"),
@@ -482,9 +489,8 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
     runtime = ToolCallRouter(
         tool_registry=ToolRegistry(),
         recall_runtime=RecallRuntime(
-            compression_index=CompressionIndex(),
             message_runtime=messages,
-            memory_runtime=memory_runtime,
+            segment_repository=segment_repository,
             session_id="session_1",
         ),
     )

@@ -13,7 +13,7 @@ from agentos.providers import (
     ProviderResponse,
 )
 from agentos.policies import BudgetPolicy
-from agentos.recall import RecallRuntime
+from agentos.recall import RecallRuntime, SegmentRepository
 from agentos.runtime import (
     Agent,
     AgentResult,
@@ -296,8 +296,12 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
     assert "seg_1" not in provider.requests[1].system
 
     RecallRuntime(
-        compression_index=compression.index,
         message_runtime=messages,
+        segment_repository=SegmentRepository.from_runtime(
+            compression.index,
+            messages,
+        ),
+        session_id="session_1",
     ).recall_context("seg_1")
     recalled_request = request_builder.build().request
     next_request = request_builder.build().request

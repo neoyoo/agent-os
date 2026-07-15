@@ -3,7 +3,7 @@ from agentos.context import ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
 from agentos.observability.events import EventLog
 from agentos.policies import BudgetPolicy
-from agentos.recall import RecallRuntime
+from agentos.recall import RecallRuntime, SegmentRepository
 from agentos.runtime import (
     EventBus,
     ProviderResponseReceivedEvent,
@@ -54,8 +54,11 @@ def test_context_compression_and_recall_emit_traceable_events() -> None:
     segment = compression.maybe_compress()
     assert segment is not None
     RecallRuntime(
-        compression_index=compression.index,
         message_runtime=messages,
+        segment_repository=SegmentRepository.from_runtime(
+            compression.index,
+            messages,
+        ),
         event_bus=bus,
         session_id="s1",
     ).recall_context(segment.id)

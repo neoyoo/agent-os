@@ -1,12 +1,12 @@
 import pytest
 
 from agentos.context import CompressedSegment
-from agentos.memory import CompressedSegmentPackage, HotSessionState, SegmentRecallDocument
-from agentos.memory.in_memory import (
+from agentos.persistence import (
+    HotSessionState,
     InMemoryDurableSessionStore,
     InMemoryHotSessionStore,
-    InMemoryRecallIndex,
 )
+from agentos.recall import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import MessageRef, StoredMessage
 from agentos.runtime import SessionState
 
@@ -74,6 +74,15 @@ def test_in_memory_hot_store_returns_none_when_any_hot_message_is_missing() -> N
     assert store.get_hot_messages("session_1", ["msg_1", "missing"]) is None
 
 
+def test_in_memory_hot_store_empty_snapshot_clears_temporary_refs() -> None:
+    store = InMemoryHotSessionStore()
+    store.set_temporary_recalled_refs("session_1", ["msg_1"])
+
+    store.save_hot_state(HotSessionState(session_id="session_1"))
+
+    assert store.consume_temporary_recalled_refs("session_1") == ()
+
+
 def test_in_memory_durable_store_saves_messages_segments_and_active_refs() -> None:
     store = InMemoryDurableSessionStore()
     session = SessionState(id="session_1")
@@ -103,23 +112,3 @@ def test_in_memory_durable_store_raises_for_missing_message() -> None:
 
     with pytest.raises(KeyError, match="missing"):
         store.get_messages("session_1", ["missing"])
-
-
-def test_in_memory_recall_index_searches_by_lexical_overlap() -> None:
-    index = InMemoryRecallIndex()
-    index.index_segment(build_package("seg_1").recall_document)
-    index.index_segment(
-        SegmentRecallDocument(
-            session_id="session_1",
-            segment_id="seg_2",
-            topic="unrelated",
-            summary="其他历史。",
-            keywords=("other",),
-        ),
-    )
-
-    candidates = index.search_segments("session_1", "pyproject project name", limit=2)
-
-    assert [candidate.segment_id for candidate in candidates] == ["seg_1"]
-    assert candidates[0].score is not None
-    assert candidates[0].score > 0

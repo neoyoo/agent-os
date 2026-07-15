@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from agentos.memory.types import RecallCandidate, SegmentRecallDocument
+from agentos.recall.types import RecallCandidate, SegmentRecallDocument
 
 
 class RecallIndex(Protocol):

@@ -9,9 +9,9 @@ from agentos.compression._helpers import (
 )
 from agentos.compression.compressor import Compressor, RuleBasedCompressor
 from agentos.context import CompressedSegment, SystemEnvelope
-from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import StoredMessage
 from agentos.providers import Provider, ProviderInputItem, ProviderRequest
+from agentos.recall.types import CompressedSegmentPackage, SegmentRecallDocument
 
 
 DEFAULT_COMPRESSION_PROMPT = """你是一个上下文压缩助手。将以下对话片段压缩为简洁摘要。

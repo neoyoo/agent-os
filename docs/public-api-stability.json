@@ -446,6 +446,25 @@
                                                                "TeamWorkerSessionStatus"
                                                            ]
                                       },
+                    "agentos.recall":  {
+                                           "stable":  [
+
+                                                      ],
+                                           "experimental":  [
+                                                                "CompressedSegmentPackage",
+                                                                "InMemoryRecallIndex",
+                                                                "QdrantRecallIndex",
+                                                                "RecallCandidate",
+                                                                "RecallContextError",
+                                                                "RecallIndex",
+                                                                "RecallRuntime",
+                                                                "SegmentDurableStore",
+                                                                "SegmentHotStore",
+                                                                "SegmentRecallDocument",
+                                                                "SegmentRepository",
+                                                                "TextEmbeddingProvider"
+                                                            ]
+                                       },
                     "agentos.persistence":  {
                                                 "stable":  [
                                                                "FileSystemPersistence",
@@ -461,6 +480,12 @@
                                                            ],
                                                 "experimental":  [
                                                                      "BackendUnavailableError",
+                                                                     "DurableSessionStore",
+                                                                     "HotSessionState",
+                                                                     "HotSessionStore",
+                                                                     "InMemoryDurableSessionStore",
+                                                                     "InMemoryHotSessionStore",
+                                                                     "RedisHotSessionStore",
                                                                      "SNAPSHOT_VERSION",
                                                                      "SnapshotConflictError",
                                                                      "SnapshotLoadError",

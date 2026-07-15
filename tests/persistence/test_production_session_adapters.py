@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from agentos.artifacts import ArtifactRef
 from agentos.context import CompressedSegment
-from agentos.memory import CompressedSegmentPackage, HotSessionState, SegmentRecallDocument
 from agentos.messages import MessageRef, StoredMessage, ToolCall
+from agentos.persistence import HotSessionState
+from agentos.recall import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.runtime.session import SessionState
 
 
@@ -93,7 +93,7 @@ class FakeRedisPipeline:
 
 
 def test_redis_hot_session_store_round_trips_hot_state_and_refs() -> None:
-    from agentos.memory.redis_store import RedisHotSessionStore
+    from agentos.persistence.redis_session import RedisHotSessionStore
 
     client = FakeRedisClient()
     store = RedisHotSessionStore(
@@ -170,7 +170,7 @@ def test_redis_hot_session_store_round_trips_hot_state_and_refs() -> None:
 
 
 def test_redis_hot_session_store_batches_hot_state_reads() -> None:
-    from agentos.memory.redis_store import RedisHotSessionStore
+    from agentos.persistence.redis_session import RedisHotSessionStore
 
     client = FakeRedisClient()
     store = RedisHotSessionStore(url="redis://unused", client=client, ttl_seconds=60)
@@ -190,7 +190,10 @@ def test_redis_hot_session_store_batches_hot_state_reads() -> None:
 
 
 def test_hot_state_serializer_restores_segment_refs_as_tuples() -> None:
-    from agentos.memory.serializers import hot_state_from_dict, hot_state_to_dict
+    from agentos.persistence.session_serializers import (
+        hot_state_from_dict,
+        hot_state_to_dict,
+    )
 
     state = HotSessionState(
         session_id="session_1",
@@ -204,7 +207,7 @@ def test_hot_state_serializer_restores_segment_refs_as_tuples() -> None:
 
 
 def test_redis_hot_session_store_requires_atomic_consume() -> None:
-    from agentos.memory.redis_store import RedisHotSessionStore
+    from agentos.persistence.redis_session import RedisHotSessionStore
 
     class NonAtomicClient(FakeRedisClient):
         getdel = None  # type: ignore[assignment]
@@ -402,69 +405,3 @@ def test_postgres_durable_session_store_reports_missing_message_from_batch() -> 
 
     assert error.value.args == ("missing",)
     assert len(connection.message_selects) == 1
-
-
-class FakeEmbeddingProvider:
-    def __init__(self) -> None:
-        self.texts: list[str] = []
-
-    def embed_text(self, text: str) -> list[float]:
-        self.texts.append(text)
-        return [float(len(text)), 1.0]
-
-
-class FakeQdrantClient:
-    def __init__(self) -> None:
-        self.points: list[dict[str, object]] = []
-        self.deleted_filters: list[dict[str, object]] = []
-
-    def upsert(self, collection_name: str, points: list[dict[str, object]]) -> None:
-        self.points.extend(points)
-
-    def search(
-        self,
-        collection_name: str,
-        query_vector: list[float],
-        query_filter: dict[str, object],
-        limit: int,
-    ) -> list[SimpleNamespace]:
-        session_id = query_filter["must"][0]["match"]["value"]  # type: ignore[index]
-        results = [
-            SimpleNamespace(payload=point["payload"], score=0.7)
-            for point in self.points
-            if point["payload"]["session_id"] == session_id  # type: ignore[index]
-        ]
-        return results[:limit]
-
-    def delete(self, collection_name: str, points_selector: dict[str, object]) -> None:
-        self.deleted_filters.append(points_selector)
-        session_id = points_selector["filter"]["must"][0]["match"]["value"]  # type: ignore[index]
-        self.points = [
-            point
-            for point in self.points
-            if point["payload"]["session_id"] != session_id  # type: ignore[index]
-        ]
-
-
-def test_qdrant_recall_index_indexes_searches_and_deletes_by_session() -> None:
-    from agentos.memory.qdrant_index import QdrantRecallIndex
-
-    client = FakeQdrantClient()
-    embeddings = FakeEmbeddingProvider()
-    index = QdrantRecallIndex(
-        url="http://unused",
-        collection_name="agentos-recall",
-        embedding_provider=embeddings,
-        client=client,
-    )
-    document = build_package().recall_document
-
-    index.index_segment(document)
-    candidates = index.search_segments("session_1", "pyproject", limit=1)
-    index.delete_session("session_1")
-
-    assert candidates[0].segment_id == "seg_1"
-    assert candidates[0].score == 0.7
-    assert document.to_text() in embeddings.texts
-    assert "pyproject" in embeddings.texts
-    assert client.points == []

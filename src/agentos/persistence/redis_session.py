@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from typing import Sequence
 
-from agentos.memory.serializers import (
+from agentos.persistence.session_serializers import (
     hot_state_from_dict,
     hot_state_to_dict,
     message_from_dict,
     message_to_dict,
 )
-from agentos.memory.types import HotSessionState
 from agentos.messages import StoredMessage
+from agentos.persistence.session_store import HotSessionState
 
 
 class RedisHotSessionStore:

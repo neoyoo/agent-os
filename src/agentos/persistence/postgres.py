@@ -9,13 +9,12 @@ from json import JSONDecodeError
 from typing import Callable, Sequence, TypeVar, cast
 
 from agentos.context import CompressedSegment
-from agentos.memory.serializers import (
+from agentos.persistence.session_serializers import (
     message_ref_from_dict,
     message_ref_to_dict,
     package_from_dict,
     package_to_dict,
 )
-from agentos.memory.types import CompressedSegmentPackage
 from agentos.messages import MessageRef, StoredMessage
 from agentos.persistence.base import (
     SessionSnapshot,
@@ -32,6 +31,7 @@ from agentos.persistence.serializers import (
     session_snapshot_to_dict,
 )
 from agentos.runtime.session import SessionState
+from agentos.recall.types import CompressedSegmentPackage
 
 
 _F = TypeVar("_F", bound=Callable[..., object])

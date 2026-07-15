@@ -1,12 +1,15 @@
 from agentos.artifacts import ArtifactRef
 from agentos.context import CompressedSegment
-from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
-from agentos.memory.in_memory import (
+from agentos.persistence import (
     InMemoryDurableSessionStore,
     InMemoryHotSessionStore,
-    InMemoryRecallIndex,
 )
-from agentos.memory.runtime import MemoryRuntime
+from agentos.recall import (
+    CompressedSegmentPackage,
+    InMemoryRecallIndex,
+    SegmentRecallDocument,
+    SegmentRepository,
+)
 from agentos.messages import StoredMessage, ToolCall
 
 
@@ -31,7 +34,7 @@ def build_package(segment_id: str = "seg_1") -> CompressedSegmentPackage:
 
 
 def build_runtime() -> tuple[
-    MemoryRuntime,
+    SegmentRepository,
     InMemoryHotSessionStore,
     InMemoryDurableSessionStore,
     InMemoryRecallIndex,
@@ -40,7 +43,7 @@ def build_runtime() -> tuple[
     durable_store = InMemoryDurableSessionStore()
     recall_index = InMemoryRecallIndex()
     return (
-        MemoryRuntime(
+        SegmentRepository(
             hot_store=hot_store,
             durable_store=durable_store,
             recall_index=recall_index,
@@ -51,7 +54,7 @@ def build_runtime() -> tuple[
     )
 
 
-def test_memory_runtime_records_compressed_segment_package() -> None:
+def test_segment_repository_records_compressed_segment_package() -> None:
     runtime, hot_store, durable_store, recall_index = build_runtime()
     package = build_package()
 

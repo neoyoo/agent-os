@@ -77,13 +77,13 @@ Runtime Notice
 | `async-http` | `httpx>=0.27` | OpenAI-compatible async transport |
 | `production-memory` | redis + qdrant + psycopg | 缁勫悎瀹夎鐢熶骇 memory adapters |
 
-婧愮爜鏉ユ簮锛歔`pyproject.toml`](../pyproject.toml)锛孾`src/agentos/memory/redis_store.py`](../src/agentos/memory/redis_store.py)锛孾`src/agentos/multi/redis_queue.py`](../src/agentos/multi/redis_queue.py)锛孾`src/agentos/persistence/postgres.py`](../src/agentos/persistence/postgres.py)锛孾`src/agentos/registry/postgres.py`](../src/agentos/registry/postgres.py)锛孾`src/agentos/multi/postgres_tasks.py`](../src/agentos/multi/postgres_tasks.py)锛孾`src/agentos/memory/qdrant_index.py`](../src/agentos/memory/qdrant_index.py)锛孾`src/agentos/observability/otel.py`](../src/agentos/observability/otel.py)锛孾`src/agentos/providers/openai_compatible.py`](../src/agentos/providers/openai_compatible.py)
+源码来源：[`pyproject.toml`](../pyproject.toml)、[`src/agentos/persistence/redis_session.py`](../src/agentos/persistence/redis_session.py)、[`src/agentos/multi/redis_queue.py`](../src/agentos/multi/redis_queue.py)、[`src/agentos/persistence/postgres.py`](../src/agentos/persistence/postgres.py)、[`src/agentos/registry/postgres.py`](../src/agentos/registry/postgres.py)、[`src/agentos/multi/postgres_tasks.py`](../src/agentos/multi/postgres_tasks.py)、[`src/agentos/recall/qdrant_index.py`](../src/agentos/recall/qdrant_index.py)、[`src/agentos/observability/otel.py`](../src/agentos/observability/otel.py)、[`src/agentos/providers/openai_compatible.py`](../src/agentos/providers/openai_compatible.py)
 
 ### 1.3 Protocol Boundaries
 
 椤圭洰鍐呭澶勮竟鐣屼娇鐢?`typing.Protocol`锛歱rovider銆乤sync provider銆乧ontext snapshot provider銆乼ool handler銆丮CP client銆乻ession provider銆乧hannel auth銆乭ot/durable session store銆乺ecall index銆乪mbedding provider銆乻ession persistence銆乺egistry store銆丄2A transport銆乻ubagent factory 鍜?remote task submitter 绛夈€?
 
-婧愮爜鏉ユ簮锛歔`src/agentos/providers/base.py`](../src/agentos/providers/base.py)锛孾`src/agentos/runtime/provider_request_builder.py`](../src/agentos/runtime/provider_request_builder.py)锛孾`src/agentos/capabilities/tools.py`](../src/agentos/capabilities/tools.py)锛孾`src/agentos/capabilities/mcp.py`](../src/agentos/capabilities/mcp.py)锛孾`src/agentos/channels/session.py`](../src/agentos/channels/session.py)锛孾`src/agentos/channels/auth.py`](../src/agentos/channels/auth.py)锛孾`src/agentos/memory/store.py`](../src/agentos/memory/store.py)锛孾`src/agentos/memory/recall_index.py`](../src/agentos/memory/recall_index.py)锛孾`src/agentos/persistence/base.py`](../src/agentos/persistence/base.py)锛孾`src/agentos/multi/coordinator.py`](../src/agentos/multi/coordinator.py)
+源码来源：[`src/agentos/providers/base.py`](../src/agentos/providers/base.py)、[`src/agentos/runtime/provider_request_builder.py`](../src/agentos/runtime/provider_request_builder.py)、[`src/agentos/capabilities/tools.py`](../src/agentos/capabilities/tools.py)、[`src/agentos/capabilities/mcp.py`](../src/agentos/capabilities/mcp.py)、[`src/agentos/channels/session.py`](../src/agentos/channels/session.py)、[`src/agentos/channels/auth.py`](../src/agentos/channels/auth.py)、[`src/agentos/persistence/session_store.py`](../src/agentos/persistence/session_store.py)、[`src/agentos/recall/index.py`](../src/agentos/recall/index.py)、[`src/agentos/persistence/base.py`](../src/agentos/persistence/base.py)、[`src/agentos/multi/coordinator.py`](../src/agentos/multi/coordinator.py)
 
 ---
 
@@ -172,7 +172,7 @@ ProviderRequest(
 
 `CompressionRuntime.maybe_compress()` 鍦?provider request 鏋勫缓鍓嶈繍琛屻€傚畠璇诲彇 active messages锛屼氦缁?`Evictor` 閫夋嫨瑕佸帇缂╃殑 message ids锛岀敤 compressor 鐢熸垚 `CompressedSegmentPackage`锛屽厛鍐?memory sink锛屽啀鎶?LLM 鍙 segment 杩藉姞鍒?`ContextRuntime`锛岃褰?`CompressionIndex`锛屾渶鍚庝粠 active window 绉婚櫎 refs銆?
 
-`RecallRuntime.recall_context()` 鏀寔涓ゆ潯璺緞锛氭寜 handle 浠?`CompressionIndex` 鎵?source refs锛涙寜 query 闇€瑕?`MemoryRuntime` 鍜?`session_id`锛屽厛鏌?recall index锛屽啀鎸?handle 鎭㈠鍘熷娑堟伅銆俙ToolCallRouter` 浼氭妸鍙洖娑堟伅鏍煎紡鍖栦负 `<recalled-context>` tool result锛岄殢鍚庝綔涓烘爣鍑?tool result 杩涘叆娑堟伅搴忓垪锛涘畠涓嶄細浼鎴愭柊鐨?user/assistant message锛屼篃涓嶄細鍐欏叆 system prompt銆?
+`RecallRuntime.recall_context()` 支持两条路径：本地 handle 召回通过 `CompressionIndex` 读取 source refs；配置 `SegmentRepository` 后，handle/query 均可从 Session Store 和 RecallIndex 恢复原始消息。`ToolCallRouter` 将召回内容格式化为 `<recalled-context>` tool result；它不会伪装成新的 user/assistant message，也不会写入 system prompt。
 
 附件使用独立的 `AttachmentRuntime`。首轮上传的图片会作为 user message 的 `ImagePart` 投影给 provider；后续如果模型需要重新查看附件，应调用 `load_attachment(handle="att:...")`。调用后，该附件会持续投影到当前 user turn 的后续 provider request，直到本轮输出最终结果并清理。下一个 turn 如需引用同一附件，模型必须显式重新调用 `load_attachment`。
 **MIME types**: `AttachmentRuntime` 浠呮帴鍙?`image/gif`銆乣image/jpeg`銆乣image/png`銆乣image/webp`銆備笂浼?PDF 鎴栧叾浠栫被鍨嬪皢鎶?`AttachmentError("unsupported attachment MIME type")`銆俙FilePart` 绫讳粛淇濈暀锛岀洿鎺ユ瀯閫?provider message 涓嶅彈褰卞搷銆?
@@ -312,11 +312,11 @@ app = AsgiAgentApp(sessions=sessions)
 
 ## 6. Memory, Persistence, And Production Adapters
 
-### 6.1 Memory Runtime
+### 6.1 Segment Repository
 
-`MemoryRuntime` 杩炴帴涓夌被杈圭晫锛歚HotSessionStore`銆乣DurableSessionStore`銆乣RecallIndex`銆傝褰曞帇缂╃墖娈垫椂锛屽畠淇濆瓨 segment refs 鍒?hot store锛屼繚瀛樺畬鏁?compression package 鍒?durable store锛屽苟鎶?recall document 鍐欏叆 recall index銆傛寜 query recall 鏃讹紝瀹冨厛鎼滅储鍊欓€?segment锛屽啀鎸?handle 鎭㈠鍘熷娑堟伅骞跺幓閲嶃€?
+`SegmentRepository` 连接 `SegmentHotStore`、`SegmentDurableStore` 和 `RecallIndex`。记录压缩片段时，它把 refs 写入热点 Store、把完整 package 写入持久 Store，并写入召回索引；按 query 召回时，它先检索候选 segment，再按 handle 恢复并去重原始消息。Episodic/Semantic `MemoryRuntime` 不参与压缩片段持久化。
 
-婧愮爜鏉ユ簮锛歔`src/agentos/memory/runtime.py`](../src/agentos/memory/runtime.py)锛孾`src/agentos/memory/store.py`](../src/agentos/memory/store.py)锛孾`src/agentos/memory/recall_index.py`](../src/agentos/memory/recall_index.py)锛孾`src/agentos/memory/types.py`](../src/agentos/memory/types.py)锛孾`tests/memory/test_runtime.py`](../tests/memory/test_runtime.py)
+源码来源：[`src/agentos/recall/segment_repository.py`](../src/agentos/recall/segment_repository.py)、[`src/agentos/recall/store.py`](../src/agentos/recall/store.py)、[`src/agentos/recall/index.py`](../src/agentos/recall/index.py)、[`src/agentos/recall/types.py`](../src/agentos/recall/types.py)、[`tests/recall/test_segment_repository.py`](../tests/recall/test_segment_repository.py)
 
 ### 6.2 Implemented Stores And Indexes
 
@@ -330,7 +330,7 @@ app = AsgiAgentApp(sessions=sessions)
 | Multi-agent task store | `TaskTable`銆乣PostgresTaskStore` |
 | Multi-agent message queue | `AgentInbox`銆乣RedisAgentMessageQueue` |
 
-婧愮爜鏉ユ簮锛歔`src/agentos/memory/in_memory.py`](../src/agentos/memory/in_memory.py)锛孾`src/agentos/memory/redis_store.py`](../src/agentos/memory/redis_store.py)锛孾`src/agentos/memory/qdrant_index.py`](../src/agentos/memory/qdrant_index.py)锛孾`src/agentos/persistence/memory.py`](../src/agentos/persistence/memory.py)锛孾`src/agentos/persistence/filesystem.py`](../src/agentos/persistence/filesystem.py)锛孾`src/agentos/persistence/sqlite.py`](../src/agentos/persistence/sqlite.py)锛孾`src/agentos/persistence/postgres.py`](../src/agentos/persistence/postgres.py)锛孾`src/agentos/registry/persistent.py`](../src/agentos/registry/persistent.py)锛孾`src/agentos/registry/postgres.py`](../src/agentos/registry/postgres.py)锛孾`src/agentos/multi/tasks.py`](../src/agentos/multi/tasks.py)锛孾`src/agentos/multi/postgres_tasks.py`](../src/agentos/multi/postgres_tasks.py)锛孾`src/agentos/multi/inbox.py`](../src/agentos/multi/inbox.py)锛孾`src/agentos/multi/redis_queue.py`](../src/agentos/multi/redis_queue.py)
+源码来源：[`src/agentos/persistence/in_memory_session.py`](../src/agentos/persistence/in_memory_session.py)、[`src/agentos/persistence/redis_session.py`](../src/agentos/persistence/redis_session.py)、[`src/agentos/recall/in_memory_index.py`](../src/agentos/recall/in_memory_index.py)、[`src/agentos/recall/qdrant_index.py`](../src/agentos/recall/qdrant_index.py)、[`src/agentos/persistence/memory.py`](../src/agentos/persistence/memory.py)、[`src/agentos/persistence/filesystem.py`](../src/agentos/persistence/filesystem.py)、[`src/agentos/persistence/sqlite.py`](../src/agentos/persistence/sqlite.py)、[`src/agentos/persistence/postgres.py`](../src/agentos/persistence/postgres.py)
 
 ### 6.3 Production Schema Files
 

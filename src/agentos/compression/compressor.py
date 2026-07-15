@@ -9,8 +9,8 @@ from agentos.compression._helpers import (
     extract_tool_hints,
 )
 from agentos.context import CompressedSegment
-from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import StoredMessage
+from agentos.recall.types import CompressedSegmentPackage, SegmentRecallDocument
 
 
 class Compressor(Protocol):
