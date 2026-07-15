@@ -303,10 +303,32 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
 
     assert [item.kind for item in recalled_request.messages][0] == "context_snapshot"
     assert [item.kind for item in next_request.messages][0] == "context_snapshot"
+    assert [item.kind for item in recalled_request.messages[1:]] == [
+        "recalled_message",
+        "recalled_message",
+        "business_message",
+        "business_message",
+    ]
     assert [
         item.content[0].text for item in recalled_request.messages[1:]  # type: ignore[union-attr]
-    ] == ["Current task", "Second answer."]
+    ] == [
+        "First detail",
+        "Captured first history.",
+        "Current task",
+        "Second answer.",
+    ]
+    assert [item.kind for item in next_request.messages[1:]] == [
+        "recalled_message",
+        "recalled_message",
+        "business_message",
+        "business_message",
+    ]
     assert [
         item.content[0].text for item in next_request.messages[1:]  # type: ignore[union-attr]
-    ] == ["Current task", "Second answer."]
+    ] == [
+        "First detail",
+        "Captured first history.",
+        "Current task",
+        "Second answer.",
+    ]
 

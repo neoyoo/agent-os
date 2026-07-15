@@ -201,6 +201,11 @@
       "path": "src/agentos/probes.py",
       "lines": 312,
       "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/persistence/serializers.py",
+      "lines": 308,
+      "gate": "responsibility_review"
     }
   ]
 }

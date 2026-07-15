@@ -17,7 +17,7 @@ from agentos.memory.in_memory import (
     InMemoryHotSessionStore,
     InMemoryRecallIndex,
 )
-from agentos.messages import MessageRuntime, StoredMessage
+from agentos.messages import MessageRef, MessageRuntime, StoredMessage
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.policies import BudgetPolicy
 from agentos.providers import ProviderToolCall
@@ -316,9 +316,9 @@ def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None
 def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
-    messages.append_user("Original detail")
-    messages.append_assistant("Original answer")
-    messages.append_user("Current task")
+    original_user = messages.append_user("Original detail")
+    original_assistant = messages.append_assistant("Original answer")
+    current_user = messages.append_user("Current task")
     compression = CompressionRuntime(
         context_runtime=context,
         message_runtime=messages,
@@ -347,8 +347,15 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     assert '<message role="user"' in result.content
     assert "Original detail" in result.content
     assert [message.content for message in messages.materialize_active()] == [
+        "Original detail",
+        "Original answer",
         "Current task",
     ]
+    assert messages.active_window.snapshot_refs() == (
+        MessageRef(original_user.id, temporary=True),
+        MessageRef(original_assistant.id, temporary=True),
+        MessageRef(current_user.id),
+    )
 
 
 def test_tool_call_router_routes_load_attachment_namespace() -> None:
@@ -493,5 +500,10 @@ def test_tool_call_router_routes_query_recall_context_to_memory_runtime() -> Non
     assert result.tool_call_id == "call_recall"
     assert '<recalled-context source="semantic_recall"' in result.content
     assert "pyproject.toml" in result.content
-    assert messages.materialize_active() == []
+    assert [message.content for message in messages.materialize_active()] == [
+        "读取 pyproject.toml",
+    ]
+    assert messages.active_window.snapshot_refs() == (
+        MessageRef("msg_1", temporary=True),
+    )
 

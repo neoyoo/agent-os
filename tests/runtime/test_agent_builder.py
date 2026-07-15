@@ -233,7 +233,21 @@ def test_agent_builder_wires_recall_context_to_compression_index() -> None:
     result = asyncio.run(agent.run("Current task"))
 
     assert result.content == "recalled done"
-    assert provider.requests[2].messages[1].content[0].text == "Current task"  # type: ignore[union-attr]
+    projected = provider.requests[2].messages
+    assert [item.kind for item in projected[1:]] == [
+        "recalled_message",
+        "recalled_message",
+        "business_message",
+        "business_message",
+        "tool_result",
+    ]
+    assert [
+        item.content[0].text for item in projected[1:4]  # type: ignore[union-attr]
+    ] == [
+        "First detail",
+        "Captured first history.",
+        "Current task",
+    ]
     tool_message = provider.requests[2].messages[-1]
     assert (tool_message.role, tool_message.tool_call_id) == (
         "tool",
