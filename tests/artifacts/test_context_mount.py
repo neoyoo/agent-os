@@ -150,7 +150,7 @@ def test_multiple_mounts_keep_mount_order_and_reread_store_each_projection() -> 
         filename="drawing.pdf",
         media_type="application/pdf",
     )
-    runtime.mount_user_upload(image.id)
+    runtime.load_attachment(image.id)
     runtime.load_attachment(pdf.id)
     baseline_gets = store.get_calls
 
@@ -206,6 +206,26 @@ def test_store_read_failure_does_not_return_partial_projection() -> None:
 
     with pytest.raises(ArtifactNotFoundError, match="^artifact not found$"):
         project_context_mounts(runtime)
+
+
+def test_user_upload_mount_requires_phase4_projection_integration() -> None:
+    store = RecordingArtifactStore()
+    runtime = ArtifactRuntime(session_id="session-1", store=store)
+    record = runtime.upload(
+        data=b"image",
+        filename="drawing.png",
+        media_type="image/png",
+    )
+    runtime.mount_user_upload(record.id)
+    baseline_reads = store.read_calls
+
+    with pytest.raises(
+        ArtifactValidationError,
+        match="^user upload context projection requires phase4 integration$",
+    ):
+        project_context_mounts(runtime)
+
+    assert store.read_calls == baseline_reads
 
 
 def test_empty_mount_projection_is_empty_tuple() -> None:

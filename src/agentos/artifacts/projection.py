@@ -53,10 +53,15 @@ def project_artifact_catalog(
 def project_context_mounts(
     runtime: ArtifactRuntime,
 ) -> tuple[ProviderInputItem, ...]:
-    """把当前 Turn Mount 原子投影为 Provider-neutral 输入。"""
+    """把 Tool Result Mount 原子投影为 Provider-neutral 输入。"""
 
+    mounts = runtime.active_mounts()
+    if any(mount.reason != "tool_result" for mount in mounts):
+        raise ArtifactValidationError(
+            "user upload context projection requires phase4 integration"
+        )
     projected: list[ProviderInputItem] = []
-    for mount in runtime.active_mounts():
+    for mount in mounts:
         record, data = runtime.resolve_mount(mount)
         payload = ProviderBinaryPayload(
             handle=record.id,
