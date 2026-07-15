@@ -12,8 +12,10 @@ from agentos.memory.records import (
     MemorySelectionContext,
     SemanticCategory,
 )
+from agentos.memory.runtime import BoundMemoryProjectionProvider, MemoryRuntime
 
 __all__ = [
+    "BoundMemoryProjectionProvider",
     "EpisodicCategory",
     "InMemoryMemoryStore",
     "MemoryAccessPolicy",
@@ -21,6 +23,7 @@ __all__ = [
     "MemoryCategory",
     "MemoryKind",
     "MemoryRecord",
+    "MemoryRuntime",
     "MemorySelectionContext",
     "MemoryStore",
     "SemanticCategory",

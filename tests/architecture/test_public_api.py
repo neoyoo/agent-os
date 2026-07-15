@@ -394,6 +394,7 @@ def test_memory_recall_and_session_storage_public_api_exports() -> None:
     recall = importlib.import_module("agentos.recall")
 
     for name in [
+        "BoundMemoryProjectionProvider",
         "EpisodicCategory",
         "InMemoryMemoryStore",
         "MemoryAccessPolicy",
@@ -401,6 +402,7 @@ def test_memory_recall_and_session_storage_public_api_exports() -> None:
         "MemoryCategory",
         "MemoryKind",
         "MemoryRecord",
+        "MemoryRuntime",
         "MemorySelectionContext",
         "MemoryStore",
         "SemanticCategory",

@@ -113,7 +113,8 @@ changes are involved, in migration notes.
 
 - advanced A2A operation and conformance surfaces
 - `agentos.memory`: Episodic/Semantic memory records, selection scope,
-  access/store ports, and the Level 1 in-memory adapter
+  access/store ports, the Level 1 in-memory adapter, and request-bound
+  `memory-context` selection/projection
 - Nacos registry adapter behavior beyond AgentCard metadata projection
 - team runtime UI stream and worker daemon profiles
 - planner scheduler daemon, claimed scheduler, stale claim sweep, and LLM

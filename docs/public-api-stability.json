@@ -470,6 +470,7 @@
 
                                                       ],
                                            "experimental":  [
+                                                                "BoundMemoryProjectionProvider",
                                                                 "EpisodicCategory",
                                                                 "InMemoryMemoryStore",
                                                                 "MemoryAccessPolicy",
@@ -477,6 +478,7 @@
                                                                 "MemoryCategory",
                                                                 "MemoryKind",
                                                                 "MemoryRecord",
+                                                                "MemoryRuntime",
                                                                 "MemorySelectionContext",
                                                                 "MemoryStore",
                                                                 "SemanticCategory"

@@ -5,6 +5,13 @@ here.
 
 ## Unreleased
 
+### Phase 3C: Memory Context Projection
+
+- Added request-bound Episodic/Semantic memory selection with explicit Session,
+  access, expiry, score, deterministic Top-K, and complete-record projection.
+- Added `MemoryRuntime` and `BoundMemoryProjectionProvider` as experimental
+  `agentos.memory` APIs without wiring them into the Kernel or Builder.
+
 ### `0.2.0a1`: Single Async QueryLoop Cutover
 
 - Breaking: replaced the sync/async dual-loop topology with one native async

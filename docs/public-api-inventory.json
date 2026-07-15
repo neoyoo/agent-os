@@ -1212,6 +1212,10 @@
     },
     "agentos.memory": {
       "exports": {
+        "BoundMemoryProjectionProvider": {
+          "signature": "(runtime: 'MemoryRuntime', context: 'MemorySelectionContext') -> None",
+          "stability": "experimental"
+        },
         "EpisodicCategory": {
           "signature": "(*args, **kwargs)",
           "stability": "experimental"
@@ -1241,6 +1245,10 @@
         },
         "MemoryRecord": {
           "signature": "(handle: 'str', session_id: 'str', kind: 'MemoryKind', category: 'MemoryCategory', content: 'str', artifact_handles: 'tuple[str, ...]' = (), expires_at: 'datetime | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "MemoryRuntime": {
+          "signature": "(store: 'MemoryStore', access_policy: 'MemoryAccessPolicy', top_k: 'int', candidate_limit: 'int', min_score: 'float' = 0.0) -> 'None'",
           "stability": "experimental"
         },
         "MemorySelectionContext": {

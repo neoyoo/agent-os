@@ -314,9 +314,9 @@ app = AsgiAgentApp(sessions=sessions)
 
 ### 6.1 Segment Repository
 
-`SegmentRepository` 连接 `SegmentHotStore`、`SegmentDurableStore` 和 `RecallIndex`。记录压缩片段时，它把 refs 写入热点 Store、把完整 package 写入持久 Store，并写入召回索引；按 query 召回时，它先检索候选 segment，再按 handle 恢复并去重原始消息。Episodic/Semantic `MemoryRuntime` 不参与压缩片段持久化。
+`SegmentRepository` 连接 `SegmentHotStore`、`SegmentDurableStore` 和 `RecallIndex`。记录压缩片段时，它把 refs 写入热点 Store、把完整 package 写入持久 Store，并写入召回索引；按 query 召回时，它先检索候选 segment，再按 handle 恢复并去重原始消息。Episodic/Semantic `MemoryRuntime` 不参与压缩片段持久化，而是在每次请求中按显式 Session、主体权限、过期时间和相关性重新选择 Top-K，并生成 `memory-context` 数据投影。
 
-源码来源：[`src/agentos/recall/segment_repository.py`](../src/agentos/recall/segment_repository.py)、[`src/agentos/recall/store.py`](../src/agentos/recall/store.py)、[`src/agentos/recall/index.py`](../src/agentos/recall/index.py)、[`src/agentos/recall/types.py`](../src/agentos/recall/types.py)、[`tests/recall/test_segment_repository.py`](../tests/recall/test_segment_repository.py)
+源码来源：[`src/agentos/recall/segment_repository.py`](../src/agentos/recall/segment_repository.py)、[`src/agentos/recall/store.py`](../src/agentos/recall/store.py)、[`src/agentos/recall/index.py`](../src/agentos/recall/index.py)、[`src/agentos/recall/types.py`](../src/agentos/recall/types.py)、[`src/agentos/memory/runtime.py`](../src/agentos/memory/runtime.py)、[`src/agentos/memory/projection.py`](../src/agentos/memory/projection.py)、[`tests/recall/test_segment_repository.py`](../tests/recall/test_segment_repository.py)、[`tests/context/test_memory_projection.py`](../tests/context/test_memory_projection.py)
 
 ### 6.2 Implemented Stores And Indexes
 
