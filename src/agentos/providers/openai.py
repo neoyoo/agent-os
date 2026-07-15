@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentos._json_values import thaw_json
-from agentos.providers._content_parts import openai_chat_user_content
+from agentos.providers.openai_chat_wire import openai_chat_user_content
 from agentos.providers._tool_arguments import (
     parse_json_object_arguments,
     require_tool_call_id,

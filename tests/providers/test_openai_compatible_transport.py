@@ -211,7 +211,7 @@ def test_openai_compatible_transport_includes_error_body(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "agentos.providers.openai_compatible.urlopen",
+        "agentos.providers.openai_compatible_transport.urlopen",
         _raise_http_error,
     )
 
@@ -252,7 +252,7 @@ def test_openai_compatible_stream_transport_ignores_sse_metadata(monkeypatch) ->
             return None
 
     monkeypatch.setattr(
-        "agentos.providers.openai_compatible.urlopen",
+        "agentos.providers.openai_compatible_transport.urlopen",
         lambda *args, **kwargs: FakeStreamResponse(),
     )
 

@@ -1,307 +1,39 @@
-import json
-import socket
+"""OpenAI-compatible Chat Completions Provider facade。"""
+
+from __future__ import annotations
+
 import time
 import warnings
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Protocol
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from agentos._sync_work import run_sync
-from agentos.providers._openai_compatible_payload import (
-    build_chat_completions_payload,
+from agentos.providers.base import ProviderRequest, ProviderResponse
+from agentos.providers.input import ProviderInputItem
+from agentos.providers.openai_chat_wire import openai_chat_message
+from agentos.providers.openai_compatible_parsing import (
+    OpenAICompatibleStreamParser,
+    parse_openai_compatible_response,
 )
-from agentos._json_values import thaw_json
-from agentos.providers._tool_arguments import (
-    parse_json_object_arguments,
-    require_tool_call_id,
-    require_tool_call_name,
+from agentos.providers.openai_compatible_transport import (
+    AsyncOpenAICompatibleTransport,
+    HttpxAsyncJSONTransport,
+    OpenAICompatibleProviderError,
+    OpenAICompatibleTransport,
+    UrlLibJSONTransport,
 )
-from agentos.providers._content_parts import openai_chat_user_content
-from agentos.providers.base import (
-    ProviderRequest,
-    ProviderResponse,
-    ProviderTimeoutError,
-    ProviderToolCall,
-    ProviderUsage,
+from agentos.providers.openai_compatible_wire import (
+    build_openai_compatible_payload,
 )
-from agentos.providers.input import ProviderInputItem, TextPart
 from agentos.providers.stream import (
-    ProviderContentDelta,
-    ProviderStreamCompleted,
     ProviderStreamEvent,
     ProviderStreamOptions,
-    ProviderStreamStarted,
-    ProviderThinkingDelta,
-    ProviderToolCallDelta,
 )
-
-
-class OpenAICompatibleProviderError(RuntimeError):
-    """OpenAI-compatible provider 请求失败。"""
-
-
-_STREAM_DONE = object()
-
-
-def _parse_openai_stream_line(line: str) -> dict[str, object] | object | None:
-    """解析单行 OpenAI-compatible SSE，忽略 SSE 控制字段。"""
-
-    line = line.strip()
-    if not line or line.startswith(":"):
-        return None
-    if ":" in line:
-        field_name = line.split(":", 1)[0]
-        if field_name in {"event", "id", "retry"}:
-            return None
-    if line.startswith("data:"):
-        line = line.removeprefix("data:").strip()
-    if not line:
-        return None
-    if line == "[DONE]":
-        return _STREAM_DONE
-    try:
-        parsed = json.loads(line)
-    except json.JSONDecodeError as error:
-        preview = line[:200]
-        raise OpenAICompatibleProviderError(
-            f"OpenAI-compatible stream chunk is not valid JSON: {preview}",
-        ) from error
-    if not isinstance(parsed, dict):
-        raise ValueError("stream chunk must be a JSON object")
-    return parsed
-
-
-class OpenAICompatibleTransport(Protocol):
-    """OpenAI-compatible JSON HTTP transport。"""
-
-    def post_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> dict[str, object]:
-        """发送 JSON POST 并返回 JSON object。"""
-
-    def post_json_stream(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> Iterator[dict[str, object]]:
-        """发送 JSON streaming POST 并逐个返回 SSE JSON object。"""
-
-
-class AsyncOpenAICompatibleTransport(Protocol):
-    """OpenAI-compatible async JSON HTTP transport。"""
-
-    async def post_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> dict[str, object]:
-        """异步发送 JSON POST 并返回 JSON object。"""
-
-    def post_json_stream(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> AsyncIterator[dict[str, object]]:
-        """异步发送 JSON streaming POST 并逐个返回 SSE JSON object。"""
-
-
-class UrlLibJSONTransport:
-    """基于标准库 urllib 的 JSON transport。"""
-
-    def post_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> dict[str, object]:
-        """发送 JSON POST 请求。"""
-
-        request = Request(
-            url=url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=timeout) as response:  # noqa: S310
-                body = response.read().decode("utf-8")
-        except HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed with HTTP {error.code}: {body}",
-            ) from error
-        except URLError as error:
-            self._map_transport_error(error)
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed: {error.reason}",
-            ) from error
-        parsed = json.loads(body)
-        if not isinstance(parsed, dict):
-            raise ValueError("OpenAI-compatible response must be a JSON object")
-        return parsed
-
-    def post_json_stream(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> Iterator[dict[str, object]]:
-        """发送 JSON streaming POST 请求并解析 OpenAI-compatible SSE。"""
-
-        stream_payload = dict(payload)
-        stream_payload["stream"] = True
-        request = Request(
-            url=url,
-            data=json.dumps(stream_payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=timeout) as response:  # noqa: S310
-                for raw_line in response:
-                    parsed = _parse_openai_stream_line(
-                        raw_line.decode("utf-8"),
-                    )
-                    if parsed is None:
-                        continue
-                    if parsed is _STREAM_DONE:
-                        break
-                    yield parsed
-        except HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed with HTTP {error.code}: {body}",
-            ) from error
-        except URLError as error:
-            self._map_transport_error(error)
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed: {error.reason}",
-            ) from error
-
-    def _map_transport_error(self, error: URLError) -> None:
-        """把标准库 timeout 转成统一 ProviderTimeoutError。"""
-
-        reason = getattr(error, "reason", None)
-        if isinstance(reason, (TimeoutError, socket.timeout)):
-            raise ProviderTimeoutError(
-                "OpenAI-compatible request timed out",
-            ) from error
-
-
-class HttpxAsyncJSONTransport:
-    """基于可选 httpx 依赖的 async JSON transport。"""
-
-    async def post_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> dict[str, object]:
-        """异步发送 JSON POST 请求。"""
-
-        httpx = self._httpx()
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                parsed = response.json()
-        except httpx.HTTPStatusError as error:
-            body = await _async_response_error_text(error.response)
-            raise OpenAICompatibleProviderError(
-                "OpenAI-compatible request failed with HTTP "
-                f"{error.response.status_code}: {body}",
-            ) from error
-        except httpx.HTTPError as error:
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed: {error}",
-            ) from error
-        if not isinstance(parsed, dict):
-            raise ValueError("OpenAI-compatible response must be a JSON object")
-        return parsed
-
-    async def post_json_stream(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, object],
-        timeout: float,
-    ) -> AsyncIterator[dict[str, object]]:
-        """异步发送 JSON streaming POST 请求并解析 OpenAI-compatible SSE。"""
-
-        httpx = self._httpx()
-        stream_payload = dict(payload)
-        stream_payload["stream"] = True
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream(
-                    "POST",
-                    url,
-                    headers=headers,
-                    json=stream_payload,
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        parsed = _parse_openai_stream_line(line)
-                        if parsed is None:
-                            continue
-                        if parsed is _STREAM_DONE:
-                            break
-                        yield parsed
-        except httpx.HTTPStatusError as error:
-            body = await _async_response_error_text(error.response)
-            raise OpenAICompatibleProviderError(
-                "OpenAI-compatible request failed with HTTP "
-                f"{error.response.status_code}: {body}",
-            ) from error
-        except httpx.HTTPError as error:
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed: {error}",
-            ) from error
-
-    def _httpx(self) -> object:
-        """延迟导入 httpx，保持 core 零依赖。"""
-
-        try:
-            import httpx
-        except ImportError as error:  # pragma: no cover - depends on environment
-            raise OpenAICompatibleProviderError(
-                "async OpenAI-compatible transport requires installing "
-                "agent-os[async-http]",
-            ) from error
-        return httpx
-
-
-async def _async_response_error_text(response: object) -> str:
-    aread = getattr(response, "aread", None)
-    if callable(aread):
-        try:
-            await aread()
-        except Exception:
-            pass
-    try:
-        return str(getattr(response, "text"))
-    except Exception:
-        return ""
 
 
 @dataclass(slots=True)
 class OpenAICompatibleProvider:
-    """使用 OpenAI chat completions 协议的 provider。"""
+    """使用 OpenAI-compatible Chat Completions 协议的 Provider。"""
 
     api_key: str
     base_url: str
@@ -313,7 +45,11 @@ class OpenAICompatibleProvider:
     thinking: dict[str, object] | None = None
     extra_body: dict[str, object] | None = None
     supports_parallel_tool_calls_parameter: bool = False
-    _fallback_tool_call_ids: set[str] = field(default_factory=set, init=False, repr=False)
+    _fallback_tool_call_ids: set[str] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """兼容 legacy timeout，同时把公开配置收敛到 timeout_seconds。"""
@@ -329,19 +65,16 @@ class OpenAICompatibleProvider:
             self.timeout_seconds = self.timeout
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
-        """调用 OpenAI-compatible `/chat/completions` 并标准化响应。"""
+        """调用 OpenAI-compatible `/chat/completions`。"""
 
         transport = self.transport or UrlLibJSONTransport()
         response = transport.post_json(
             url=self._chat_completions_url(),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=self._headers(),
             payload=self._payload(request),
             timeout=self._timeout(),
         )
-        return self._response(response)
+        return parse_openai_compatible_response(response)
 
     async def async_complete(self, request: ProviderRequest) -> ProviderResponse:
         """异步调用 OpenAI-compatible `/chat/completions`。"""
@@ -351,152 +84,42 @@ class OpenAICompatibleProvider:
         transport = self.async_transport or HttpxAsyncJSONTransport()
         response = await transport.post_json(
             url=self._chat_completions_url(),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=self._headers(),
             payload=self._payload(request),
             timeout=self._timeout(),
         )
-        return self._response(response)
+        return parse_openai_compatible_response(response)
 
     def stream(
         self,
         request: ProviderRequest,
         options: ProviderStreamOptions | None = None,
     ) -> Iterator[ProviderStreamEvent]:
-        """调用 OpenAI-compatible streaming chat completions。"""
+        """调用 OpenAI-compatible streaming Chat Completions。"""
 
-        stream_options = options or ProviderStreamOptions()
-        transport = self.transport or UrlLibJSONTransport()
+        parser = OpenAICompatibleStreamParser(
+            model=self.model,
+            options=options or ProviderStreamOptions(),
+            fallback_tool_call_id=self._next_fallback_tool_call_id,
+        )
         payload = self._payload(request)
         payload["stream"] = True
-
-        content_parts: list[str] = []
-        thinking_parts: list[str] = []
-        tool_builders: dict[int, dict[str, str]] = {}
-        response_id = "stream"
-        response_model: str | None = self.model
-        stop_reason: str | None = None
-        usage: ProviderUsage | None = None
-        started = False
-        content_index = 0
-        thinking_index = 0
-        tool_index = 0
-
+        transport = self.transport or UrlLibJSONTransport()
         for chunk in transport.post_json_stream(
             url=self._chat_completions_url(),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=self._headers(),
             payload=payload,
             timeout=self._timeout(),
         ):
-            response_id = str(chunk.get("id") or response_id)
-            response_model = (
-                self.model if chunk.get("model") is None else str(chunk.get("model"))
-            )
-            if not started:
-                started = True
-                yield ProviderStreamStarted(
-                    request_id=response_id,
-                    thinking_requested=stream_options.thinking,
-                    thinking_supported=True,
-                )
-
-            raw_usage = chunk.get("usage")
-            if raw_usage is not None:
-                usage = self._usage(raw_usage)
-
-            choices = chunk.get("choices")
-            if not isinstance(choices, list) or not choices:
-                continue
-            choice = choices[0]
-            if not isinstance(choice, dict):
-                continue
-
-            raw_finish_reason = choice.get("finish_reason")
-            if raw_finish_reason is not None:
-                stop_reason = str(raw_finish_reason)
-
-            delta = choice.get("delta")
-            if not isinstance(delta, dict):
-                continue
-
-            reasoning = delta.get("reasoning_content")
-            if isinstance(reasoning, str) and reasoning:
-                thinking_parts.append(reasoning)
-                if stream_options.thinking and stream_options.show_thinking:
-                    thinking_index += 1
-                    text = reasoning
-                    if stream_options.max_thinking_chars is not None:
-                        text = text[: stream_options.max_thinking_chars]
-                    yield ProviderThinkingDelta(
-                        request_id=response_id,
-                        index=thinking_index,
-                        text=text,
-                    )
-
-            content = delta.get("content")
-            if isinstance(content, str) and content:
-                content_parts.append(content)
-                content_index += 1
-                yield ProviderContentDelta(
-                    request_id=response_id,
-                    index=content_index,
-                    text=content,
-                )
-
-            for raw_tool_call in delta.get("tool_calls") or []:
-                if not isinstance(raw_tool_call, dict):
-                    continue
-                index = int(raw_tool_call.get("index", 0))
-                builder = tool_builders.setdefault(
-                    index,
-                    {"id": "", "name": "", "arguments": ""},
-                )
-                tool_call_id, name_delta, arguments_delta = (
-                    self._apply_stream_tool_call_delta(builder, raw_tool_call)
-                )
-                tool_index += 1
-                yield ProviderToolCallDelta(
-                    request_id=response_id,
-                    index=tool_index,
-                    tool_call_id=tool_call_id,
-                    name_delta=name_delta,
-                    arguments_delta=arguments_delta,
-                )
-
-        if not started:
-            yield ProviderStreamStarted(
-                request_id=response_id,
-                thinking_requested=stream_options.thinking,
-                thinking_supported=False,
-            )
-
-        response = ProviderResponse(
-            content="".join(content_parts),
-            tool_calls=self._built_tool_calls(tool_builders),
-            stop_reason=stop_reason,
-            usage=usage,
-            model=response_model,
-            provider_name="openai-compatible",
-            response_id=response_id,
-            thinking_content="".join(thinking_parts) or None,
-        )
-        yield ProviderStreamCompleted(
-            request_id=response_id,
-            response=response,
-            stop_reason=stop_reason,
-        )
+            yield from parser.feed(chunk)
+        yield from parser.finish()
 
     async def async_stream(
         self,
         request: ProviderRequest,
         options: ProviderStreamOptions | None = None,
     ) -> AsyncIterator[ProviderStreamEvent]:
-        """异步调用 OpenAI-compatible streaming chat completions。"""
+        """异步调用 OpenAI-compatible streaming Chat Completions。"""
 
         if self.async_transport is None and self.transport is not None:
             async for event in _iterate_sync_stream(
@@ -504,312 +127,57 @@ class OpenAICompatibleProvider:
             ):
                 yield event
             return
-        stream_options = options or ProviderStreamOptions()
-        transport = self.async_transport or HttpxAsyncJSONTransport()
+        parser = OpenAICompatibleStreamParser(
+            model=self.model,
+            options=options or ProviderStreamOptions(),
+            fallback_tool_call_id=self._next_fallback_tool_call_id,
+        )
         payload = self._payload(request)
         payload["stream"] = True
-
-        content_parts: list[str] = []
-        thinking_parts: list[str] = []
-        tool_builders: dict[int, dict[str, str]] = {}
-        response_id = "stream"
-        response_model: str | None = self.model
-        stop_reason: str | None = None
-        usage: ProviderUsage | None = None
-        started = False
-        content_index = 0
-        thinking_index = 0
-        tool_index = 0
-
+        transport = self.async_transport or HttpxAsyncJSONTransport()
         async for chunk in transport.post_json_stream(
             url=self._chat_completions_url(),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=self._headers(),
             payload=payload,
             timeout=self._timeout(),
         ):
-            response_id = str(chunk.get("id") or response_id)
-            response_model = (
-                self.model if chunk.get("model") is None else str(chunk.get("model"))
-            )
-            if not started:
-                started = True
-                yield ProviderStreamStarted(
-                    request_id=response_id,
-                    thinking_requested=stream_options.thinking,
-                    thinking_supported=True,
-                )
-
-            raw_usage = chunk.get("usage")
-            if raw_usage is not None:
-                usage = self._usage(raw_usage)
-
-            choices = chunk.get("choices")
-            if not isinstance(choices, list) or not choices:
-                continue
-            choice = choices[0]
-            if not isinstance(choice, dict):
-                continue
-
-            raw_finish_reason = choice.get("finish_reason")
-            if raw_finish_reason is not None:
-                stop_reason = str(raw_finish_reason)
-
-            delta = choice.get("delta")
-            if not isinstance(delta, dict):
-                continue
-
-            reasoning = delta.get("reasoning_content")
-            if isinstance(reasoning, str) and reasoning:
-                thinking_parts.append(reasoning)
-                if stream_options.thinking and stream_options.show_thinking:
-                    thinking_index += 1
-                    text = reasoning
-                    if stream_options.max_thinking_chars is not None:
-                        text = text[: stream_options.max_thinking_chars]
-                    yield ProviderThinkingDelta(
-                        request_id=response_id,
-                        index=thinking_index,
-                        text=text,
-                    )
-
-            content = delta.get("content")
-            if isinstance(content, str) and content:
-                content_parts.append(content)
-                content_index += 1
-                yield ProviderContentDelta(
-                    request_id=response_id,
-                    index=content_index,
-                    text=content,
-                )
-
-            for raw_tool_call in delta.get("tool_calls") or []:
-                if not isinstance(raw_tool_call, dict):
-                    continue
-                index = int(raw_tool_call.get("index", 0))
-                builder = tool_builders.setdefault(
-                    index,
-                    {"id": "", "name": "", "arguments": ""},
-                )
-                tool_call_id, name_delta, arguments_delta = (
-                    self._apply_stream_tool_call_delta(builder, raw_tool_call)
-                )
-                tool_index += 1
-                yield ProviderToolCallDelta(
-                    request_id=response_id,
-                    index=tool_index,
-                    tool_call_id=tool_call_id,
-                    name_delta=name_delta,
-                    arguments_delta=arguments_delta,
-                )
-
-        if not started:
-            yield ProviderStreamStarted(
-                request_id=response_id,
-                thinking_requested=stream_options.thinking,
-                thinking_supported=False,
-            )
-
-        response = ProviderResponse(
-            content="".join(content_parts),
-            tool_calls=self._built_tool_calls(tool_builders),
-            stop_reason=stop_reason,
-            usage=usage,
-            model=response_model,
-            provider_name="openai-compatible",
-            response_id=response_id,
-            thinking_content="".join(thinking_parts) or None,
-        )
-        yield ProviderStreamCompleted(
-            request_id=response_id,
-            response=response,
-            stop_reason=stop_reason,
-        )
+            for event in parser.feed(chunk):
+                yield event
+        for event in parser.finish():
+            yield event
 
     def _payload(self, request: ProviderRequest) -> dict[str, object]:
-        """构造 OpenAI-compatible chat completions payload。"""
-        return build_chat_completions_payload(
+        return build_openai_compatible_payload(
             model=self.model,
             request=request,
-            message_to_dict=self._message,
             thinking=self.thinking,
             extra_body=self.extra_body,
             supports_parallel_tool_calls_parameter=(
                 self.supports_parallel_tool_calls_parameter
             ),
+            invalid_message_error=OpenAICompatibleProviderError,
+        )
+
+    def _message(self, message: ProviderInputItem) -> dict[str, object]:
+        return openai_chat_message(
+            message,
+            invalid_message_error=OpenAICompatibleProviderError,
         )
 
     def _chat_completions_url(self) -> str:
-        """返回 chat completions endpoint URL。"""
         base_url = self.base_url.rstrip("/")
         if base_url.endswith("/chat/completions"):
             return base_url
         return f"{base_url}/chat/completions"
 
-    def _timeout(self) -> float:
-        """返回 provider 调用超时秒数。"""
-        return self.timeout_seconds
-
-    def _message(self, message: ProviderInputItem) -> dict[str, object]:
-        """把逻辑 Provider 输入转为 OpenAI-compatible message。"""
-
-        if message.role == "user":
-            content: object = message.content
-            if len(message.content) == 1 and isinstance(message.content[0], TextPart):
-                content = message.content[0].text
-            return {"role": "user", "content": openai_chat_user_content(content)}
-        if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
-            raise ValueError(
-                f"{message.role} provider input content requires exactly one TextPart",
-            )
-        if message.role == "assistant":
-            result: dict[str, object] = {
-                "role": "assistant",
-                "content": message.content[0].text,
-            }
-            if not message.tool_calls:
-                return result
-            result["content"] = message.content[0].text or None
-            result["tool_calls"] = [self._request_tool_call(c) for c in message.tool_calls]
-            return result
-        if message.role == "tool" and message.tool_call_id is not None:
-            return {
-                "role": "tool",
-                "tool_call_id": message.tool_call_id,
-                "content": message.content[0].text,
-            }
-        raise OpenAICompatibleProviderError(
-            "active messages must not include system role; use ProviderRequest.system",
-        )
-
-    def _request_tool_call(self, tool_call: ProviderToolCall) -> dict[str, object]:
-        """把内部 tool call 摘要转为 OpenAI function tool_call。"""
+    def _headers(self) -> dict[str, str]:
         return {
-            "id": tool_call.id,
-            "type": "function",
-            "function": {
-                "name": tool_call.name,
-                "arguments": json.dumps(
-                    thaw_json(tool_call.arguments), ensure_ascii=False
-                ),
-            },
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
 
-    def _response(self, response: dict[str, object]) -> ProviderResponse:
-        """把 OpenAI-compatible response 转为 ProviderResponse。"""
-        choices = response.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise ValueError("OpenAI-compatible response requires choices")
-        first_choice = choices[0]
-        if not isinstance(first_choice, dict):
-            raise ValueError("OpenAI-compatible choice must be an object")
-        message = first_choice.get("message")
-        if not isinstance(message, dict):
-            raise ValueError("OpenAI-compatible choice requires message")
-        raw_finish_reason = first_choice.get("finish_reason")
-        return ProviderResponse(
-            content=str(message.get("content") or ""),
-            tool_calls=self._response_tool_calls(message.get("tool_calls") or []),
-            stop_reason=(
-                None if raw_finish_reason is None else str(raw_finish_reason)
-            ),
-            usage=self._usage(response.get("usage")),
-            model=None if response.get("model") is None else str(response.get("model")),
-            provider_name="openai-compatible",
-            response_id=None if response.get("id") is None else str(response.get("id")),
-        )
-
-    def _response_tool_calls(self, raw_tool_calls: object) -> list[ProviderToolCall]:
-        """解析 OpenAI-compatible response tool_calls。"""
-
-        if not isinstance(raw_tool_calls, list):
-            raise ValueError("OpenAI-compatible tool_calls must be a list")
-        tool_calls: list[ProviderToolCall] = []
-        for raw_tool_call in raw_tool_calls:
-            if not isinstance(raw_tool_call, dict):
-                raise ValueError("OpenAI-compatible tool_call must be an object")
-            function = raw_tool_call.get("function")
-            if not isinstance(function, dict):
-                raise ValueError("OpenAI-compatible tool_call requires function")
-            arguments = function.get("arguments") or "{}"
-            if not isinstance(arguments, str):
-                raise ValueError("OpenAI-compatible tool arguments must be a string")
-            tool_call_id = require_tool_call_id(
-                raw_tool_call.get("id"),
-                provider_name="OpenAI-compatible",
-            )
-            tool_call_name = require_tool_call_name(
-                function.get("name"),
-                provider_name="OpenAI-compatible",
-            )
-            tool_calls.append(
-                ProviderToolCall(
-                    id=tool_call_id,
-                    name=tool_call_name,
-                    arguments=parse_json_object_arguments(
-                        arguments,
-                        provider_name="OpenAI-compatible",
-                    ),
-                ),
-            )
-        return tool_calls
-
-    def _built_tool_calls(
-        self,
-        tool_builders: dict[int, dict[str, str]],
-    ) -> list[ProviderToolCall]:
-        """把 streaming tool call builder 转为 ProviderToolCall。"""
-
-        tool_calls: list[ProviderToolCall] = []
-        for index in sorted(tool_builders):
-            item = tool_builders[index]
-            arguments = item["arguments"] or "{}"
-            tool_call_id = item["id"] or self._next_fallback_tool_call_id()
-            tool_call_name = require_tool_call_name(
-                item["name"],
-                provider_name="OpenAI-compatible",
-            )
-            tool_calls.append(
-                ProviderToolCall(
-                    id=tool_call_id,
-                    name=tool_call_name,
-                    arguments=parse_json_object_arguments(
-                        arguments,
-                        provider_name="OpenAI-compatible",
-                    ),
-                ),
-            )
-        return tool_calls
-
-    def _apply_stream_tool_call_delta(
-        self,
-        builder: dict[str, str],
-        raw_tool_call: dict[str, object],
-    ) -> tuple[str | None, str | None, str | None]:
-        """累计一个 streaming tool call delta 并返回本次 delta 事件字段。"""
-
-        tool_call_id = raw_tool_call.get("id")
-        if isinstance(tool_call_id, str) and tool_call_id:
-            builder["id"] = tool_call_id
-
-        function = raw_tool_call.get("function")
-        name_delta = None
-        arguments_delta = None
-        if isinstance(function, dict):
-            raw_name = function.get("name")
-            if isinstance(raw_name, str):
-                builder["name"] += raw_name
-                name_delta = raw_name
-            raw_arguments = function.get("arguments")
-            if isinstance(raw_arguments, str):
-                builder["arguments"] += raw_arguments
-                arguments_delta = raw_arguments
-
-        if not builder["id"] and builder["name"]:
-            builder["id"] = self._next_fallback_tool_call_id()
-        return builder["id"] or None, name_delta, arguments_delta
+    def _timeout(self) -> float:
+        return self.timeout_seconds
 
     def _next_fallback_tool_call_id(self) -> str:
         base_id = f"call_ts_{time.time_ns()}"
@@ -820,36 +188,6 @@ class OpenAICompatibleProvider:
             suffix += 1
         self._fallback_tool_call_ids.add(candidate)
         return candidate
-
-    def _usage(self, raw_usage: object) -> ProviderUsage | None:
-        """把 OpenAI-compatible JSON usage 标准化。"""
-
-        if not isinstance(raw_usage, dict):
-            return None
-        prompt_details = raw_usage.get("prompt_tokens_details")
-        completion_details = raw_usage.get("completion_tokens_details")
-        return ProviderUsage(
-            input_tokens=self._int_or_none(raw_usage.get("prompt_tokens")),
-            output_tokens=self._int_or_none(raw_usage.get("completion_tokens")),
-            total_tokens=self._int_or_none(raw_usage.get("total_tokens")),
-            cached_input_tokens=(
-                self._int_or_none(prompt_details.get("cached_tokens"))
-                if isinstance(prompt_details, dict)
-                else None
-            ),
-            reasoning_output_tokens=(
-                self._int_or_none(completion_details.get("reasoning_tokens"))
-                if isinstance(completion_details, dict)
-                else None
-            ),
-        )
-
-    def _int_or_none(self, value: object) -> int | None:
-        """把 provider usage 数值转为 int。"""
-
-        if value is None:
-            return None
-        return int(value)
 
 
 _SYNC_STREAM_DONE = object()
