@@ -1,344 +1,44 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import re
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
 
-from agentos._sync_work import run_sync
-from agentos.capabilities._skill_resources import (
-    _guess_mime_type,
-    _safe_resource_path,
-)
 from agentos.capabilities.registry import ToolRegistry
+from agentos.capabilities.skill_sources import (
+    BuiltinSkillSource,
+    ChainedSkillSource,
+    FileSystemSkillSource,
+    SkillContentSource,
+    SkillLoadResult,
+)
+from agentos.capabilities.skill_trust import (
+    SkillTrustDecision,
+    SkillTrustPolicy,
+    SkillVerificationSubject,
+)
+from agentos.capabilities.skill_types import (
+    SkillDefinition,
+    SkillDescriptor,
+    SkillMetadata,
+    SkillResourceLoadResult,
+    SkillResourceRef,
+    SkillSource,
+    SkillTrust,
+)
 from agentos.capabilities.tools import RegisteredTool
 from agentos.context.projection import SkillDeclaration
 
 
-SkillSource = Literal["builtin", "filesystem", "learned"]
-
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-
-
-@dataclass(frozen=True, slots=True)
-class SkillDefinition:
-    """可按需加载的 skill 定义。"""
-
-    name: str
-    description: str
-    when_to_use: str
-    content: str
-    source: SkillSource = "filesystem"
-    path: Path | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SkillResourceRef:
-    """Skill 附带资源的轻量 manifest 项。"""
-
-    path: str
-    mime_type: str = "text/plain"
-
-
-@dataclass(frozen=True, slots=True)
-class SkillLoadResult:
-    """`load_skill` 工具返回的结构化结果。"""
-
-    name: str
-    content: str
-
-    def render_tool_result(
-        self,
-        resource_manifest: tuple[SkillResourceRef, ...] = (),
-    ) -> str:
-        """渲染为写入 tool result 的文本。"""
-
-        body = f"# Skill: {self.name}\n\n{self.content}"
-        if resource_manifest:
-            resources = "\n".join(
-                f"- `{resource.path}` ({resource.mime_type})"
-                for resource in resource_manifest
-            )
-            body = (
-                f"{body}\n\n## Available resources\n"
-                f"{resources}\n\n"
-                "Use `load_skill_resource` to load any of the above."
-            )
-        return body
-
-
-@dataclass(frozen=True, slots=True)
-class SkillResourceLoadResult:
-    """`load_skill_resource` 工具返回的结构化结果。"""
-
-    skill_name: str
-    path: str
-    content: str
-    mime_type: str = "text/plain"
-
-    def render_tool_result(self) -> str:
-        """渲染为写入 tool result 的文本。"""
-
-        return self.content
-
-
-class SkillContentSource(ABC):
-    """异步 skill 内容来源。"""
-
-    @abstractmethod
-    async def list_skills(self) -> list[SkillDefinition]:
-        """列出可用 skill 元数据。"""
-
-    @abstractmethod
-    async def load_skill(self, name: str) -> SkillLoadResult:
-        """按名称加载 skill 完整内容。"""
-
-    @abstractmethod
-    async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
-        """列出 skill 可按需加载的资源。"""
-
-    @abstractmethod
-    async def load_resource(
-        self,
-        name: str,
-        path: str,
-    ) -> SkillResourceLoadResult:
-        """加载 skill 资源内容。"""
-
-    async def load_resources(
-        self,
-        name: str,
-        paths: Iterable[str],
-    ) -> list[SkillResourceLoadResult]:
-        """批量加载资源；外部存储实现可重写为 pipeline。"""
-
-        return await asyncio.gather(
-            *(self.load_resource(name, path) for path in paths),
-        )
-
-
-class BuiltinSkillSource(SkillContentSource):
-    """把内置 skill 暴露为普通 async source。"""
-
-    def __init__(self, skills: Iterable[SkillDefinition]) -> None:
-        """创建内置 skill source。"""
-
-        self._skills: dict[str, SkillDefinition] = {}
-        for skill in skills:
-            _validate_skill_name(skill.name)
-            if skill.name in self._skills:
-                raise ValueError(f"duplicate skill: {skill.name}")
-            self._skills[skill.name] = skill
-
-    async def list_skills(self) -> list[SkillDefinition]:
-        """列出内置 skills。"""
-
-        return list(self._skills.values())
-
-    async def load_skill(self, name: str) -> SkillLoadResult:
-        """加载内置 skill。"""
-
-        try:
-            skill = self._skills[name]
-        except KeyError as error:
-            raise KeyError(name) from error
-        return SkillLoadResult(name=skill.name, content=skill.content)
-
-    async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
-        """内置 skill 当前不携带资源。"""
-
-        if name not in self._skills:
-            raise KeyError(name)
-        return ()
-
-    async def load_resource(
-        self,
-        name: str,
-        path: str,
-    ) -> SkillResourceLoadResult:
-        """内置 skill 当前不携带资源。"""
-
-        if name not in self._skills:
-            raise KeyError(name)
-        raise KeyError(path)
-
-
-class FileSystemSkillSource(SkillContentSource):
-    """从本地目录异步发现和加载 Markdown skills。"""
-
-    def __init__(
-        self,
-        skill_dirs: Iterable[Path],
-        *,
-        allowed: set[str] | None = None,
-    ) -> None:
-        """创建 filesystem source；不在构造阶段执行 I/O。"""
-
-        self._skill_dirs = [Path(skill_dir) for skill_dir in skill_dirs]
-        self._allowed = allowed
-        self._skills: dict[str, SkillDefinition] | None = None
-
-    async def list_skills(self) -> list[SkillDefinition]:
-        """异步发现 skill 文件并缓存元数据。"""
-
-        if self._skills is None:
-            self._skills = await run_sync(self._discover_skills)
-        return list(self._skills.values())
-
-    async def load_skill(self, name: str) -> SkillLoadResult:
-        """加载 filesystem skill。"""
-
-        skills = await self._skills_by_name()
-        try:
-            skill = skills[name]
-        except KeyError as error:
-            raise KeyError(name) from error
-        return SkillLoadResult(name=skill.name, content=skill.content)
-
-    async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
-        """列出 skill 目录下可按需加载的附加资源。"""
-
-        skills = await self._skills_by_name()
-        try:
-            skill = skills[name]
-        except KeyError as error:
-            raise KeyError(name) from error
-        if skill.path is None or skill.path.name != "SKILL.md":
-            return ()
-        return await run_sync(self._list_skill_resources, skill.path)
-
-    async def load_resource(
-        self,
-        name: str,
-        path: str,
-    ) -> SkillResourceLoadResult:
-        """加载 skill 目录下的附加资源，拒绝越界路径。"""
-
-        skills = await self._skills_by_name()
-        try:
-            skill = skills[name]
-        except KeyError as error:
-            raise KeyError(name) from error
-        if skill.path is None or skill.path.name != "SKILL.md":
-            raise KeyError(name)
-        root = skill.path.parent
-        resource_path = _safe_resource_path(root, path)
-        if resource_path is None or not resource_path.is_file():
-            raise KeyError(path)
-        content = await run_sync(resource_path.read_text, encoding="utf-8")
-        return SkillResourceLoadResult(
-            skill_name=name,
-            path=Path(path).as_posix(),
-            content=content,
-            mime_type=_guess_mime_type(resource_path),
-        )
-
-    def _list_skill_resources(self, skill_path: Path) -> tuple[SkillResourceRef, ...]:
-        root = skill_path.parent
-        resources = []
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or path == skill_path:
-                continue
-            relative_path = path.relative_to(root)
-            if any(part.startswith(".") for part in relative_path.parts):
-                continue
-            resources.append(
-                SkillResourceRef(
-                    path=relative_path.as_posix(),
-                    mime_type=_guess_mime_type(path),
-                ),
-            )
-        return tuple(resources)
-
-    async def _skills_by_name(self) -> dict[str, SkillDefinition]:
-        if self._skills is None:
-            await self.list_skills()
-        assert self._skills is not None
-        return self._skills
-
-    def _discover_skills(self) -> dict[str, SkillDefinition]:
-        skills: dict[str, SkillDefinition] = {}
-        for skill_dir in self._skill_dirs:
-            for path, source in _discover_skill_files(skill_dir):
-                skill = _parse_skill_file(path, source)
-                if (
-                    source != "learned"
-                    and self._allowed is not None
-                    and skill.name not in self._allowed
-                ):
-                    continue
-                _validate_skill_name(skill.name)
-                if skill.name in skills:
-                    continue
-                skills[skill.name] = skill
-        return skills
-
-
-class ChainedSkillSource(SkillContentSource):
-    """按顺序组合多个 skill source。"""
-
-    def __init__(self, sources: Iterable[SkillContentSource]) -> None:
-        """创建组合 source。"""
-
-        self._sources = list(sources)
-
-    async def list_skills(self) -> list[SkillDefinition]:
-        """按 source 顺序串联 skill 元数据。"""
-
-        skills: list[SkillDefinition] = []
-        for source in self._sources:
-            skills.extend(await source.list_skills())
-        return skills
-
-    async def load_skill(self, name: str) -> SkillLoadResult:
-        """从第一个匹配 source 加载 skill。"""
-
-        for source in self._sources:
-            if await self._source_has_skill(source, name):
-                return await source.load_skill(name)
-        raise KeyError(name)
-
-    async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
-        """从第一个匹配 source 列出资源。"""
-
-        for source in self._sources:
-            if await self._source_has_skill(source, name):
-                return await source.list_resources(name)
-        raise KeyError(name)
-
-    async def load_resource(
-        self,
-        name: str,
-        path: str,
-    ) -> SkillResourceLoadResult:
-        """从第一个匹配 source 加载资源。"""
-
-        for source in self._sources:
-            if await self._source_has_skill(source, name):
-                return await source.load_resource(name, path)
-        raise KeyError(name)
-
-    async def _source_has_skill(self, source: SkillContentSource, name: str) -> bool:
-        return any(skill.name == name for skill in await source.list_skills())
-
-
 class SkillRegistry:
-    """保存可被 Capability Plane 摘要和 `load_skill` 使用的 skills。"""
+    """保存 Skill 描述并按需委托 Source 加载正文。"""
 
     def __init__(
         self,
         source: SkillContentSource | None = None,
-        skills: Iterable[SkillDefinition] = (),
+        skills: Iterable[SkillDescriptor] = (),
     ) -> None:
-        """创建 skill registry；构造阶段不触发 I/O。"""
-
         self._source = source
-        self._skills: dict[str, SkillDefinition] = {}
+        self._skills: dict[str, SkillDescriptor] = {}
         for skill in skills:
             self._register_metadata(skill)
 
@@ -349,12 +49,12 @@ class SkillRegistry:
         *,
         builtin_skills: Iterable[SkillDefinition] = (),
     ) -> "SkillRegistry":
-        """异步加载 source 元数据并创建 registry。"""
+        """异步加载 Source 元数据并创建 Registry。"""
 
-        sources: list[SkillContentSource] = []
+        sources = []
         if source is not None:
             sources.append(source)
-        builtin_skills = list(builtin_skills)
+        builtin_skills = tuple(builtin_skills)
         if builtin_skills:
             sources.append(BuiltinSkillSource(builtin_skills))
         combined_source: SkillContentSource | None
@@ -364,33 +64,45 @@ class SkillRegistry:
             combined_source = sources[0]
         else:
             combined_source = ChainedSkillSource(sources)
-
         skills = [] if combined_source is None else await combined_source.list_skills()
         return cls(source=combined_source, skills=skills)
 
     def available_skill_names(self) -> list[str]:
-        """返回当前可加载 skill 名称。"""
+        """返回当前可加载 Skill 名称。"""
 
         return sorted(self._skills)
 
+    def descriptors(self) -> tuple[SkillDescriptor, ...]:
+        """按发现顺序返回安全 Skill 描述。"""
+
+        return tuple(self._skills.values())
+
     def capability_declarations(self) -> list[SkillDeclaration]:
-        """返回 LLM 可见 Capability Plane 使用的 skill 摘要。"""
+        """返回 Capability Plane 使用的 Skill 摘要。"""
 
         return [
-            SkillDeclaration(name=skill.name, when_to_use=skill.when_to_use)
+            SkillDeclaration(
+                name=skill.metadata.name,
+                when_to_use=skill.when_to_use,
+            )
             for skill in self._skills.values()
         ]
 
     async def load(self, skill_name: str) -> SkillLoadResult:
-        """按名称异步加载 skill 完整内容。"""
+        """按名称异步加载 Skill 完整内容。"""
 
-        self._require_known_skill(skill_name)
+        descriptor = self._require_known_skill(skill_name)
         if self._source is None:
             raise KeyError(skill_name)
-        return await self._source.load_skill(skill_name)
+        loaded = await self._source.load_skill(skill_name)
+        if loaded.metadata != descriptor.metadata:
+            raise ValueError("skill metadata changed during load")
+        if loaded.subject.skill_name != skill_name:
+            raise ValueError("skill verification subject mismatch")
+        return loaded
 
     async def list_resources(self, skill_name: str) -> tuple[SkillResourceRef, ...]:
-        """列出 skill 资源 manifest。"""
+        """列出 Skill 资源 manifest。"""
 
         self._require_known_skill(skill_name)
         if self._source is None:
@@ -402,32 +114,41 @@ class SkillRegistry:
         skill_name: str,
         path: str,
     ) -> SkillResourceLoadResult:
-        """加载 skill 资源。"""
+        """加载 Skill 资源。"""
 
         self._require_known_skill(skill_name)
         if self._source is None:
             raise KeyError(skill_name)
         return await self._source.load_resource(skill_name, path)
 
-    def _register_metadata(self, skill: SkillDefinition) -> None:
-        _validate_skill_name(skill.name)
-        if skill.name in self._skills:
-            raise ValueError(f"duplicate skill: {skill.name}")
-        self._skills[skill.name] = skill
+    async def aclose(self) -> None:
+        """关闭 Registry 持有的 Source。"""
 
-    def _require_known_skill(self, skill_name: str) -> None:
-        if skill_name not in self._skills:
-            raise KeyError(skill_name)
+        if self._source is not None:
+            await self._source.aclose()
+
+    def _register_metadata(self, skill: SkillDescriptor) -> None:
+        name = skill.metadata.name
+        if name in self._skills:
+            raise ValueError(f"duplicate skill: {name}")
+        self._skills[name] = skill
+
+    def _require_known_skill(self, skill_name: str) -> SkillDescriptor:
+        try:
+            return self._skills[skill_name]
+        except KeyError as error:
+            raise KeyError(skill_name) from error
 
 
 def builtin_schema_template_skill() -> SkillDefinition:
-    """返回内置 schema template skill。"""
+    """返回内置 schema template Skill。"""
 
     return SkillDefinition(
         name="schema-template",
         description="Guide working state schema declarations.",
         when_to_use="需要声明或调整 working state schema 时使用。",
         source="builtin",
+        trust="trusted",
         content=(
             "# Schema Template\n\n"
             "Use `declare_schema` at the start of a multi-step task when no "
@@ -449,18 +170,13 @@ def register_skill_loader_tools(
     tool_registry: ToolRegistry,
     skill_registry: SkillRegistry,
 ) -> None:
-    """把 skill loader tools 注册成 provider-callable async tools。"""
+    """把 Skill loader tools 注册成 provider-callable async tools。"""
 
-    _register_load_skill_tool(tool_registry, skill_registry)
-    _register_load_skill_resource_tool(tool_registry, skill_registry)
+    tool_registry.register(_load_skill_tool(skill_registry))
+    tool_registry.register(_load_skill_resource_tool(skill_registry))
 
 
-def _register_load_skill_tool(
-    tool_registry: ToolRegistry,
-    skill_registry: SkillRegistry,
-) -> None:
-    """注册 `load_skill`。"""
-
+def _load_skill_tool(skill_registry: SkillRegistry) -> RegisteredTool:
     async def load_skill(arguments: dict[str, object]) -> str:
         skill_name = str(arguments.get("skill_name", ""))
         try:
@@ -476,36 +192,29 @@ def _register_load_skill_tool(
                 ensure_ascii=False,
             )
 
-    tool_registry.register(
-        RegisteredTool(
-            name="load_skill",
-            description=(
-                "Load a skill's full instructions by name. "
-                "Use this before tasks that match an available skill summary."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "skill_name": {
-                        "type": "string",
-                        "description": "Name of the skill to load.",
-                    },
-                },
-                "required": ["skill_name"],
-                "additionalProperties": False,
-            },
-            handler=load_skill,
-            kind="skill",
+    return RegisteredTool(
+        name="load_skill",
+        description=(
+            "Load a skill's full instructions by name. "
+            "Use this before tasks that match an available skill summary."
         ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "skill_name": {
+                    "type": "string",
+                    "description": "Name of the skill to load.",
+                },
+            },
+            "required": ["skill_name"],
+            "additionalProperties": False,
+        },
+        handler=load_skill,
+        kind="skill",
     )
 
 
-def _register_load_skill_resource_tool(
-    tool_registry: ToolRegistry,
-    skill_registry: SkillRegistry,
-) -> None:
-    """注册 `load_skill_resource`。"""
-
+def _load_skill_resource_tool(skill_registry: SkillRegistry) -> RegisteredTool:
     async def load_skill_resource(arguments: dict[str, object]) -> str:
         skill_name = str(arguments.get("skill_name", ""))
         path = str(arguments.get("path", ""))
@@ -515,130 +224,46 @@ def _register_load_skill_resource_tool(
         except KeyError:
             return json.dumps(
                 {
-                    "error": (
-                        f"Resource '{path}' for skill '{skill_name}' not found"
-                    ),
+                    "error": f"Resource '{path}' for skill '{skill_name}' not found",
                     "available_skills": skill_registry.available_skill_names(),
                 },
                 ensure_ascii=False,
             )
 
-    tool_registry.register(
-        RegisteredTool(
-            name="load_skill_resource",
-            description=(
-                "Load an additional resource for a previously loaded skill by path."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "skill_name": {
-                        "type": "string",
-                        "description": "Name of the skill that owns the resource.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Resource path from the skill manifest.",
-                    },
-                },
-                "required": ["skill_name", "path"],
-                "additionalProperties": False,
+    return RegisteredTool(
+        name="load_skill_resource",
+        description="Load an additional resource for a Skill by path.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "skill_name": {"type": "string"},
+                "path": {"type": "string"},
             },
-            handler=load_skill_resource,
-            kind="skill",
-        ),
+            "required": ["skill_name", "path"],
+            "additionalProperties": False,
+        },
+        handler=load_skill_resource,
+        kind="skill",
     )
 
 
-def _parse_skill_file(path: Path, source: SkillSource) -> SkillDefinition:
-    """读取 Markdown skill 文件。"""
-
-    raw = path.read_text(encoding="utf-8")
-    frontmatter, content = _parse_frontmatter(raw)
-    fallback_name = path.parent.name if path.name == "SKILL.md" else path.stem
-    name = frontmatter.get("name", fallback_name)
-    description = frontmatter.get("description", "")
-    when_to_use = frontmatter.get("when_to_use") or description
-    return SkillDefinition(
-        name=name,
-        description=description,
-        when_to_use=when_to_use,
-        content=content,
-        source=source,
-        path=path,
-    )
-
-
-def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
-    """解析轻量 frontmatter，支持 `key: value` 和 YAML block values。"""
-
-    match = _FRONTMATTER_RE.match(raw)
-    if match is None:
-        return {}, raw
-
-    values: dict[str, str] = {}
-    lines = match.group(1).splitlines()
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if ":" not in line:
-            index += 1
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        if not key:
-            index += 1
-            continue
-        value = value.strip()
-        if value in {"|", ">"}:
-            block_lines: list[str] = []
-            index += 1
-            while index < len(lines):
-                next_line = lines[index]
-                if next_line and not next_line.startswith((" ", "\t")):
-                    break
-                block_lines.append(next_line.strip())
-                index += 1
-            if value == ">":
-                values[key] = " ".join(line for line in block_lines if line)
-            else:
-                values[key] = "\n".join(block_lines).strip()
-            continue
-        values[key] = value
-        index += 1
-    return values, raw[match.end() :]
-
-
-def _discover_skill_files(skills_dir: Path) -> list[tuple[Path, SkillSource]]:
-    """按 agentos 支持的目录布局发现 skill 文件。"""
-
-    if not skills_dir.exists():
-        return []
-
-    discovered: list[tuple[Path, SkillSource]] = []
-    learned_dir = skills_dir / "learned"
-    if learned_dir.exists():
-        discovered.extend(
-            (path, "learned")
-            for path in sorted(learned_dir.glob("*/SKILL.md"))
-            if path.is_file()
-        )
-
-    discovered.extend(
-        (path, "filesystem")
-        for path in sorted(skills_dir.glob("*.md"))
-        if path.is_file()
-    )
-    discovered.extend(
-        (path, "filesystem")
-        for path in sorted(skills_dir.glob("*/SKILL.md"))
-        if path.is_file() and path.parent.name != "learned"
-    )
-    return discovered
-
-
-def _validate_skill_name(name: str) -> None:
-    """校验 skill 名称可安全用于 provider tool 参数。"""
-
-    if not _SKILL_NAME_RE.match(name):
-        raise ValueError(f"invalid skill name: {name}")
+__all__ = [
+    "BuiltinSkillSource",
+    "ChainedSkillSource",
+    "FileSystemSkillSource",
+    "SkillContentSource",
+    "SkillDefinition",
+    "SkillDescriptor",
+    "SkillLoadResult",
+    "SkillMetadata",
+    "SkillRegistry",
+    "SkillResourceLoadResult",
+    "SkillResourceRef",
+    "SkillSource",
+    "SkillTrust",
+    "SkillTrustDecision",
+    "SkillTrustPolicy",
+    "SkillVerificationSubject",
+    "builtin_schema_template_skill",
+    "register_skill_loader_tools",
+]

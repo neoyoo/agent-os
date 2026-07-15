@@ -5,10 +5,12 @@ import asyncio
 from agentos.capabilities.skills import (
     SkillContentSource,
     SkillDefinition,
+    SkillDescriptor,
     SkillLoadResult,
     SkillRegistry,
     SkillResourceLoadResult,
     SkillResourceRef,
+    SkillVerificationSubject,
     register_skill_loader_tools,
 )
 from agentos.capabilities import ToolCallRouter, ToolRegistry
@@ -26,9 +28,9 @@ class AsyncMemorySkillSource(SkillContentSource):
         self._resources = resources or {}
         self.loaded: list[str] = []
 
-    async def list_skills(self) -> list[SkillDefinition]:
+    async def list_skills(self) -> list[SkillDescriptor]:
         await asyncio.sleep(0)
-        return list(self._skills.values())
+        return [skill.descriptor() for skill in self._skills.values()]
 
     async def load_skill(self, name: str) -> SkillLoadResult:
         await asyncio.sleep(0)
@@ -37,7 +39,17 @@ class AsyncMemorySkillSource(SkillContentSource):
             skill = self._skills[name]
         except KeyError as error:
             raise KeyError(name) from error
-        return SkillLoadResult(name=skill.name, content=skill.content)
+        return SkillLoadResult(
+            name=skill.name,
+            content=skill.content,
+            metadata=skill.descriptor().metadata,
+            subject=SkillVerificationSubject.from_content(
+                source_id="tests",
+                skill_name=skill.name,
+                source_revision=skill.source_revision,
+                content=skill.content,
+            ),
+        )
 
     async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
         await asyncio.sleep(0)
