@@ -26,11 +26,12 @@ def test_kernel_does_not_import_extension_implementations() -> None:
     for root in checked_roots:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            imports = (
-                node.module
-                for node in ast.walk(tree)
-                if isinstance(node, ast.ImportFrom) and node.module is not None
-            )
+            imports = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module is not None:
+                    imports.append(node.module)
+                elif isinstance(node, ast.Import):
+                    imports.extend(alias.name for alias in node.names)
             for imported in imports:
                 if imported.startswith(forbidden):
                     matches.append(
