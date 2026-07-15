@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 
 from agentos._sync_work import run_sync
 from agentos.providers._timeout import raise_for_provider_timeout
@@ -41,6 +42,19 @@ class OpenAICompatibleProvider:
     thinking: dict[str, object] | None = None
     extra_body: dict[str, object] | None = None
     supports_parallel_tool_calls_parameter: bool = False
+    _stream_invocation_ordinal: int = field(
+        default=0,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _stream_seed_lock: Lock = field(
+        default_factory=Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用 OpenAI-compatible `/chat/completions`。"""
 
@@ -88,9 +102,11 @@ class OpenAICompatibleProvider:
     ) -> Iterator[ProviderStreamEvent]:
         """调用 OpenAI-compatible streaming Chat Completions。"""
 
+        stream_options = options or ProviderStreamOptions()
         parser = OpenAICompatibleStreamParser(
             model=self.model,
-            options=options or ProviderStreamOptions(),
+            options=stream_options,
+            stream_seed=self._next_stream_seed(),
         )
         payload = self._payload(request)
         payload["stream"] = True
@@ -124,9 +140,11 @@ class OpenAICompatibleProvider:
             ):
                 yield event
             return
+        stream_options = options or ProviderStreamOptions()
         parser = OpenAICompatibleStreamParser(
             model=self.model,
-            options=options or ProviderStreamOptions(),
+            options=stream_options,
+            stream_seed=self._next_stream_seed(),
         )
         payload = self._payload(request)
         payload["stream"] = True
@@ -172,6 +190,15 @@ class OpenAICompatibleProvider:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+    def _next_stream_seed(self) -> str:
+        """冻结与 Provider chunk 元数据无关的调用级 seed。"""
+
+        with self._stream_seed_lock:
+            self._stream_invocation_ordinal += 1
+            ordinal = self._stream_invocation_ordinal
+        return f"stream_{ordinal}"
+
 
 _SYNC_STREAM_DONE = object()
 

@@ -39,9 +39,7 @@ def build_openai_responses_payload(
         "input": input_items,
     }
     if request.tools:
-        payload["tools"] = [
-            openai_responses_tool(tool) for tool in request.tools
-        ]
+        payload["tools"] = [openai_responses_tool(tool) for tool in request.tools]
         if request.parallel_tool_calls is not None:
             payload["parallel_tool_calls"] = request.parallel_tool_calls
     return payload

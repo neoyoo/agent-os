@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from agentos.providers import (
     ImagePart,
@@ -302,7 +302,6 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
             arguments={"path": "pyproject.toml"},
         ),
     )
-
 
 
 def test_openai_compatible_provider_can_disable_thinking() -> None:

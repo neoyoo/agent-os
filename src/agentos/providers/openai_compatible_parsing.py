@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 
 from agentos.providers._tool_arguments import (
@@ -112,6 +111,7 @@ class OpenAICompatibleStreamParser:
 
     model: str
     options: ProviderStreamOptions
+    stream_seed: str
     content_parts: list[str] = field(default_factory=list)
     thinking_parts: list[str] = field(default_factory=list)
     tool_builders: dict[int, dict[str, str]] = field(default_factory=dict)
@@ -304,10 +304,7 @@ class OpenAICompatibleStreamParser:
         return tuple(tool_calls)
 
     def _fallback_tool_call_id(self, index: int) -> str:
-        stream_digest = hashlib.sha256(
-            self.response_id.encode("utf-8"),
-        ).hexdigest()[:16]
-        return f"call_fallback_{stream_digest}_{index}"
+        return f"call_fallback_{self.stream_seed}_{index}"
 
 
 def _int_or_none(value: object) -> int | None:

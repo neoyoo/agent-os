@@ -1,4 +1,6 @@
-﻿from collections.abc import Iterator
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -13,6 +15,7 @@ from agentos.providers import (
     ProviderToolCallDelta,
     ProviderUsage,
 )
+
 
 class FakeStreamingTransport:
     """记录 streaming HTTP 请求并返回预设 chunk。"""
@@ -97,7 +100,6 @@ def test_openai_compatible_streams_content_and_completion() -> None:
     )
 
 
-
 def test_openai_compatible_streaming_payload_includes_extra_body() -> None:
     transport = FakeStreamingTransport(
         [
@@ -126,7 +128,6 @@ def test_openai_compatible_streaming_payload_includes_extra_body() -> None:
     assert payload["vl_high_resolution_images"] is True
     assert payload["metadata"] == {"route": "qwen-vl"}
     assert payload["model"] == "deepseek-chat"
-
 
 
 def test_openai_compatible_streams_reasoning_when_visible() -> None:
@@ -227,7 +228,9 @@ def test_openai_compatible_streams_tool_call_deltas() -> None:
 
     events = list(provider.stream(ProviderRequest(system="system", messages=[])))
 
-    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
+    tool_deltas = [
+        event for event in events if isinstance(event, ProviderToolCallDelta)
+    ]
     assert len(tool_deltas) == 2
     assert isinstance(events[-1], ProviderStreamCompleted)
     assert events[-1].response.tool_calls[0].id == "call_1"
@@ -270,11 +273,14 @@ def test_openai_compatible_stream_generates_missing_tool_call_id() -> None:
     events = list(provider.stream(ProviderRequest(system="system", messages=[])))
 
     assert isinstance(events[-1], ProviderStreamCompleted)
-    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
-    assert tool_deltas[0].tool_call_id == "call_fallback_2234400da79a73f6_0"
-    assert events[-1].response.tool_calls[0].id == (
-        "call_fallback_2234400da79a73f6_0"
-    )
+    tool_deltas = [
+        event for event in events if isinstance(event, ProviderToolCallDelta)
+    ]
+    fallback_id = tool_deltas[0].tool_call_id
+    assert fallback_id is not None
+    assert fallback_id.startswith("call_fallback_")
+    assert fallback_id.endswith("_0")
+    assert events[-1].response.tool_calls[0].id == fallback_id
     assert events[-1].response.tool_calls[0].name == "load_skill"
     assert events[-1].response.tool_calls[0].arguments == {
         "skill_name": "drawing",
@@ -323,11 +329,166 @@ def test_openai_compatible_stream_generates_unique_missing_tool_call_ids() -> No
     events = list(provider.stream(ProviderRequest(system="system", messages=[])))
 
     ids = [tool_call.id for tool_call in events[-1].response.tool_calls]
-    assert ids == [
-        "call_fallback_2234400da79a73f6_0",
-        "call_fallback_2234400da79a73f6_1",
-    ]
+    assert ids[0] != ids[1]
+    assert ids[0].startswith("call_fallback_")
+    assert ids[0].endswith("_0")
+    assert ids[1].startswith("call_fallback_")
+    assert ids[1].endswith("_1")
 
+
+def test_fallback_tool_id_is_independent_of_response_id_chunk_timing() -> None:
+    request = ProviderRequest(system="system", messages=[])
+
+    def fallback_id(*, response_id_in_first_chunk: bool) -> str:
+        first_chunk: dict[str, object] = {
+            "model": "deepseek-chat",
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": '{"query"',
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        }
+        if response_id_in_first_chunk:
+            first_chunk["id"] = "chatcmpl_timing"
+        transport = FakeStreamingTransport(
+            [
+                first_chunk,
+                {
+                    "id": "chatcmpl_timing",
+                    "model": "deepseek-chat",
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "arguments": ':"agentos"}',
+                                        },
+                                    },
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        },
+                    ],
+                },
+            ],
+        )
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            base_url="https://api.deepseek.example",
+            model="deepseek-chat",
+            transport=transport,
+        )
+        events = list(provider.stream(request))
+        return events[-1].response.tool_calls[0].id
+
+    assert fallback_id(response_id_in_first_chunk=False) == fallback_id(
+        response_id_in_first_chunk=True,
+    )
+
+
+def test_missing_response_id_streams_do_not_reuse_fallback_tool_ids() -> None:
+    transport = FakeStreamingTransport(
+        [
+            {
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "lookup",
+                                        "arguments": '{"query":"agentos"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+    request = ProviderRequest(system="system", messages=[])
+
+    first = list(provider.stream(request))[-1].response.tool_calls[0].id
+    second = list(provider.stream(request))[-1].response.tool_calls[0].id
+
+    assert first != second
+
+
+def test_concurrent_streams_allocate_distinct_fallback_tool_ids() -> None:
+    barrier = Barrier(2)
+
+    class ConcurrentTransport(FakeStreamingTransport):
+        def post_json_stream(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ) -> Iterator[dict[str, object]]:
+            barrier.wait()
+            yield from self.chunks
+
+    transport = ConcurrentTransport(
+        [
+            {
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "name": "lookup",
+                                        "arguments": '{"query":"agentos"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    },
+                ],
+            },
+        ],
+    )
+    provider = OpenAICompatibleProvider(
+        api_key="test-key",
+        base_url="https://api.deepseek.example",
+        model="deepseek-chat",
+        transport=transport,
+    )
+    request = ProviderRequest(system="system", messages=[])
+
+    def stream_tool_id(_: int) -> str:
+        events = list(provider.stream(request))
+        return events[-1].response.tool_calls[0].id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        ids = tuple(executor.map(stream_tool_id, range(2)))
+
+    assert len(set(ids)) == 2
 
 
 def test_openai_compatible_stream_preserves_provider_tool_call_id() -> None:
@@ -423,7 +584,9 @@ def test_openai_compatible_stream_ignores_empty_tool_call_id_delta() -> None:
 
     events = list(provider.stream(ProviderRequest(system="system", messages=[])))
 
-    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
+    tool_deltas = [
+        event for event in events if isinstance(event, ProviderToolCallDelta)
+    ]
     assert [delta.tool_call_id for delta in tool_deltas] == [
         "provider_call_1",
         "provider_call_1",

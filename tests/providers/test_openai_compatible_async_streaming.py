@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 
 import pytest
 
@@ -8,6 +8,7 @@ from agentos.providers import (
     ProviderStreamCompleted,
     ProviderToolCallDelta,
 )
+
 
 def test_openai_compatible_async_stream_uses_async_transport() -> None:
     class FakeAsyncStreamingTransport:
@@ -112,7 +113,6 @@ def test_openai_compatible_async_stream_uses_explicit_sync_transport() -> None:
         "ProviderStreamCompleted",
     ]
     assert events[-1].response.content == "sync"
-
 
 
 def test_openai_compatible_async_streaming_payload_includes_extra_body() -> None:
@@ -262,12 +262,10 @@ def test_openai_compatible_cancelled_stream_does_not_complete() -> None:
 def test_openai_compatible_sync_and_async_stream_events_are_equal() -> None:
     chunks = (
         {
-            "id": "chatcmpl_equal",
             "model": "model",
             "choices": [{"delta": {"content": "hello "}}],
         },
         {
-            "id": "chatcmpl_equal",
             "model": "model",
             "choices": [
                 {
@@ -288,7 +286,6 @@ def test_openai_compatible_sync_and_async_stream_events_are_equal() -> None:
             ],
         },
         {
-            "id": "chatcmpl_equal",
             "model": "model",
             "choices": [
                 {
@@ -343,14 +340,13 @@ def test_openai_compatible_sync_and_async_stream_events_are_equal() -> None:
     tool_deltas = [
         event for event in sync_events if isinstance(event, ProviderToolCallDelta)
     ]
+    fallback_id = tool_deltas[0].tool_call_id
+    assert fallback_id is not None
     assert [event.tool_call_id for event in tool_deltas] == [
-        "call_fallback_24239fcf564a865d_0",
-        "call_fallback_24239fcf564a865d_0",
+        fallback_id,
+        fallback_id,
     ]
-    assert sync_events[-1].response.tool_calls[0].id == (
-        "call_fallback_24239fcf564a865d_0"
-    )
-
+    assert sync_events[-1].response.tool_calls[0].id == fallback_id
 
 
 def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id() -> None:
@@ -399,8 +395,10 @@ def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id() -
 
     events = asyncio.run(collect())
 
-    tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
-    assert tool_deltas[0].tool_call_id == "call_fallback_b73023924eb13c41_0"
-    assert events[-1].response.tool_calls[0].id == (
-        "call_fallback_b73023924eb13c41_0"
-    )
+    tool_deltas = [
+        event for event in events if isinstance(event, ProviderToolCallDelta)
+    ]
+    fallback_id = tool_deltas[0].tool_call_id
+    assert fallback_id is not None
+    assert fallback_id.startswith("call_fallback_")
+    assert events[-1].response.tool_calls[0].id == fallback_id

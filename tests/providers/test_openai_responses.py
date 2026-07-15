@@ -68,7 +68,9 @@ def function_tool() -> ProviderToolSpec:
     )
 
 
-def test_openai_responses_maps_ordered_items_tools_and_binary_without_mutation() -> None:
+def test_openai_responses_maps_ordered_items_tools_and_binary_without_mutation() -> (
+    None
+):
     provider, responses = provider_for(completed_response())
     tool_call = ProviderToolCall(
         id="call_1",
@@ -181,9 +183,7 @@ def test_openai_responses_derives_pdf_filename_without_mutating_payload() -> Non
     )
     request = ProviderRequest(
         system="trusted-system",
-        messages=(
-            ProviderInputItem.context_mount((FilePart(document),)),
-        ),
+        messages=(ProviderInputItem.context_mount((FilePart(document),)),),
     )
     original = deepcopy(request)
 
@@ -198,7 +198,9 @@ def test_openai_responses_derives_pdf_filename_without_mutating_payload() -> Non
     assert request == original
 
 
-def test_openai_responses_omits_tool_fields_without_tools_and_forwards_timeout() -> None:
+def test_openai_responses_omits_tool_fields_without_tools_and_forwards_timeout() -> (
+    None
+):
     provider, responses = provider_for(
         completed_response(),
         timeout_seconds=7.5,

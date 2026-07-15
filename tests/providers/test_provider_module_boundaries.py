@@ -42,3 +42,5 @@ def test_openai_compatible_facade_has_no_wire_or_fallback_identity_state() -> No
     assert "def _message(" not in facade
     assert "time_ns" not in facade
     assert "_fallback_tool_call_ids" not in facade
+    assert "hashlib" not in facade
+    assert "repr((self.model, request, options))" not in facade
