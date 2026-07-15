@@ -1,6 +1,6 @@
 from agentos.artifacts.runtime import ArtifactRuntime
 from agentos.artifacts.types import ArtifactToolItem, ArtifactToolPage
-from agentos.providers import ProviderFunctionSpec, ProviderToolSpec
+from agentos.providers.tool_specs import ProviderFunctionSpec, ProviderToolSpec
 
 
 _ARTIFACT_ID_PATTERN = (

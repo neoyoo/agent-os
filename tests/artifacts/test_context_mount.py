@@ -166,16 +166,23 @@ def test_multiple_mounts_keep_mount_order_and_reread_store_each_projection() -> 
     assert store.read_calls == 4
 
 
-def test_unsupported_mount_media_fails_deterministically() -> None:
+@pytest.mark.parametrize(
+    ("media_type", "filename"),
+    [("text/plain", "notes.txt"), ("image/svg+xml", "drawing.svg")],
+)
+def test_unsupported_mount_media_fails_deterministically(
+    media_type: str,
+    filename: str,
+) -> None:
     runtime = ArtifactRuntime(
         session_id="session-1",
         store=InMemoryArtifactStore(),
-        policy=ArtifactPolicy(allowed_media_types=frozenset({"text/plain"})),
+        policy=ArtifactPolicy(allowed_media_types=frozenset({media_type})),
     )
     record = runtime.upload(
         data=b"text",
-        filename="notes.txt",
-        media_type="text/plain",
+        filename=filename,
+        media_type=media_type,
     )
     runtime.load_attachment(record.id)
 
@@ -221,7 +228,7 @@ def test_user_upload_mount_requires_phase4_projection_integration() -> None:
 
     with pytest.raises(
         ArtifactValidationError,
-        match="^user upload context projection requires phase4 integration$",
+        match="^user upload mount cannot use tool result projection$",
     ):
         project_context_mounts(runtime)
 

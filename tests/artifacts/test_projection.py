@@ -1,5 +1,8 @@
+import ast
 from datetime import UTC, datetime
+from pathlib import Path
 
+import agentos.artifacts.projection as projection_module
 from agentos.artifacts.in_memory import InMemoryArtifactStore
 from agentos.artifacts.projection import project_artifact_catalog
 from agentos.artifacts.runtime import ArtifactRuntime
@@ -23,6 +26,18 @@ def upload(target: ArtifactRuntime, filename: str | None = "drawing.png"):
         filename=filename,
         media_type="image/png",
     )
+
+
+def test_artifact_projection_imports_provider_values_without_facade() -> None:
+    source = Path(projection_module.__file__).read_text(encoding="utf-8")
+    imports = {
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+    }
+
+    assert "agentos.providers" not in imports
+    assert {"agentos.providers.content", "agentos.providers.input"} <= imports
 
 
 def test_empty_artifact_catalog_does_not_emit_empty_slot() -> None:

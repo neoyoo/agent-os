@@ -2,16 +2,19 @@ from agentos.artifacts.runtime import ArtifactRuntime
 from agentos.artifacts.types import ArtifactRecord, ArtifactValidationError
 from agentos.context.models import ContextSlotProjection, ProjectionVariant
 from agentos.context.xml import XmlElement
-from agentos.providers import (
+from agentos.providers.content import (
     FilePart,
     ImagePart,
     ProviderBinaryPayload,
-    ProviderInputItem,
     TextPart,
 )
+from agentos.providers.input import ProviderInputItem
 
 
 _CATALOG_LIMIT = 20
+_SUPPORTED_IMAGE_MEDIA_TYPES = frozenset(
+    {"image/gif", "image/jpeg", "image/png", "image/webp"}
+)
 _TOOL_RESULT_ATTACHMENT_TEXT = (
     "【工具结果附件】\n"
     "以下图片是前序 load_attachment 工具调用结果所对应的附件内容。"
@@ -58,7 +61,7 @@ def project_context_mounts(
     mounts = runtime.active_mounts()
     if any(mount.reason != "tool_result" for mount in mounts):
         raise ArtifactValidationError(
-            "user upload context projection requires phase4 integration"
+            "user upload mount cannot use tool result projection"
         )
     projected: list[ProviderInputItem] = []
     for mount in mounts:
@@ -69,7 +72,7 @@ def project_context_mounts(
             data=memoryview(data).tobytes(),
             filename=record.filename,
         )
-        if record.media_type.startswith("image/"):
+        if record.media_type in _SUPPORTED_IMAGE_MEDIA_TYPES:
             binary_part = ImagePart(payload=payload)
         elif record.media_type == "application/pdf":
             binary_part = FilePart(payload=payload)
