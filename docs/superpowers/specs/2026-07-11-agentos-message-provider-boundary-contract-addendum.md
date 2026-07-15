@@ -1,8 +1,8 @@
 # AgentOS Message / Provider Boundary Contract Addendum
 
-> 状态：已批准
+> 状态：已批准（2026-07-15 Task 13 re-baseline 修订）
 >
-> 日期：2026-07-11
+> 日期：2026-07-11，修订于 2026-07-15
 >
 > 上位规范：`2026-07-10-agentos-next-generation-sdk-architecture-design.md`、`2026-07-10-agentos-context-protocol-v1-design.md`
 
@@ -28,6 +28,7 @@ ProviderInputKind = Literal[
     "business_message",
     "tool_result",
     "recalled_message",
+    "model_task",
     "context_mount",
 ]
 
@@ -58,6 +59,7 @@ VisibilityPolicy = Literal["conversation", "internal"]
 | Stored tool result | tool | tool_result | message_store | tool_data | stored | internal |
 | Temporary recalled user/assistant message | 原业务 role | recalled_message | recall_runtime | conversation_data | ephemeral | internal |
 | Temporary recalled tool result | tool | recalled_message | recall_runtime | tool_data | ephemeral | internal |
+| Runtime internal model task data | user | model_task | runtime | context_data | ephemeral | internal |
 | ContextMount | user | context_mount | artifact_runtime | artifact_data | ephemeral | internal |
 
 Phase 2 的 Tool Result 在执行完成后先 append 到 MessageStore，再进入下一次 Provider build；因此“当前尚未消费的 Tool Result”仍使用 `origin="message_store"`。本阶段不存在合法的 `tool_runtime` producer，该值不进入枚举闭集；若未来引入未落库流式 Tool Result，必须先升级本矩阵。
@@ -66,12 +68,27 @@ Phase 2 的 Tool Result 在执行完成后先 append 到 MessageStore，再进�
 
 - `SystemEnvelope` 不属于 `ProviderInputItem`，只进入 `ProviderRequest.system`；
 - `tool_result` 必须有 `tool_call_id`；
-- `context_snapshot`、`recalled_message` 和 `context_mount` 不得写入 MessageStore；
+- `context_snapshot`、`recalled_message`、`model_task` 和 `context_mount` 不得写入 MessageStore；
 - `persistence` 描述该 Item 所投影来源的业务持久性，不表示允许持久化 `ProviderInputItem` 对象；任何 `ProviderInputItem` 本身都不得写入 MessageStore；
 - `context_snapshot` 的六项元数据必须由 SDK 构造，调用方不能覆盖；
+- `model_task` 只允许由 `ProviderInputItem.model_task(text)` 创建，固定使用文本输入，不允许 `tool_calls` 或 `tool_call_id`；`ProviderInputItem` 的公开字段构造入口即使传入完整合法矩阵，也必须拒绝直接创建 `model_task`，工厂使用不导出的内部构造凭证完成创建；
+- `ProviderRequestBuilder` 和 Turn message projector 不得生成 `model_task`。它只服务 Compression、Memory extraction、Planner policy、Evaluation 等 Runtime 内部模型任务；
 - Provider Adapter 可以改变 wire role 表达，但不能反写逻辑对象。
 
-### 2.1 深不可变边界
+### 2.1 ProviderRequest 请求平面
+
+`ProviderRequest` 有两个互斥的逻辑请求平面：
+
+- Agent Turn 请求由 `ProviderRequestBuilder` 创建，可以包含 ContextSnapshot、business message、tool result、recalled message 和 context mount，但不能包含 `model_task`；
+- Runtime internal model task 请求由具体 Runtime 直接创建，`messages` 必须且只能包含一个 `model_task`，`tools=()` 且 `parallel_tool_calls=None`。`ProviderRequest.system` 仍然必须来自 `SystemEnvelope.text`：由该 Runtime 使用 SDK 固定模板或应用开发者显式提供的 trusted task template 构建；用户、Tool、Memory、Recall、Artifact 或待压缩正文不得插入该模板，只有经过类型化格式化的有界控制参数（例如输出 token 上限）可以进入。`model_task` 正文始终按不可信数据处理；
+- `ProviderRequest.__post_init__` 必须拒绝混合两个平面、多个 `model_task`、为 model task 携带 Tool Schema 或启用 `parallel_tool_calls`；
+- internal model task 复用唯一 Provider Protocol、Adapter、错误和传输边界，但不进入 QueryLoop 的 ProviderAttemptRunner、Hook、temporary receipt 或 retry 生命周期。Phase 2 不为它增加第二套 Provider/Adapter/Runner，也不新增隐藏 retry。
+
+上述 internal model task 是对“Agent Turn 的 SystemEnvelope 由 ContextRenderer 唯一组装”规则的受限例外，不是任意 Prompt 追加入口。ContextRenderer 继续是 Agent Turn 唯一 Owner；internal task Runtime 只拥有自己的固定 task instruction 和 data item，不能读取或拼接 Agent Turn 的 Working State、Plan、Memory、Skill、Artifact Catalog 或 Active Window。
+
+当前只有 `LlmCompressor` 是真实 producer。未来只有出现至少两个需要不同结构化输出、批处理、模型路由、取消或 retry 语义的内部任务后，才允许通过新 Spec 提取 `ModelTaskRunner`；即使提取，也优先构建统一 `ProviderRequest`，不要求 Adapter 实现第二套模型调用协议。
+
+### 2.2 深不可变边界
 
 `StoredMessage`、`ToolCall`、`ProviderInputItem`、`ProviderToolCall`、`ProviderToolSpec` 和 `ProviderRequest` 暴露的所有集合与 JSON-like 字段必须递归不可变，不只是 frozen dataclass 外壳或防御性浅复制。
 
@@ -147,13 +164,18 @@ Streaming attempt 一旦已经向 QueryLoop 调用方发出第一个用户可见
 ## 6. 兼容与阶段边界
 
 - Phase 2 删除 Public `Message` 和 `ProviderMessage` 名称，不维护双写；
+- Task 13 同时删除 `UserMessage`、`AssistantMessage`、`ToolResultMessage`、`ProviderMessageContent` 和 `provider_message_*` 迁移 DTO/serializer；`ProviderRequest.messages` 只接受 `ProviderInputItem`；
+- Provider Adapter 必须直接把 `ProviderInputItem` 映射为 wire payload，不得先构造第二套 message DTO；
+- 现有附件行为只通过 `AttachmentRuntime._project_provider_inputs_compat()` 保留到 Phase 3A；旧 `project_provider_messages()` 和 ProviderMessage 投影路径在 Task 13 删除；
 - 具体 OpenAI/Anthropic payload、严格角色合并和 File ID 优化仍属于 Phase 3B；
-- Phase 2 可以保留 Provider Adapter 内部使用的私有兼容构造器，但不得从 `agentos.providers` Public API 导出旧名称；
 - 本补充说明批准后，Phase 2 详细计划方可进入实现。
 
 ## 7. 验收标准
 
-- 五组 ProviderInput 枚举只有本文列出的值；
+- 六组 ProviderInput kind 只有本文列出的值；
+- Agent Turn 与 internal model task 两种 ProviderRequest 平面互斥，非法混合在类型边界被拒绝；
+- `model_task` 不进入 MessageStore、ContextSnapshot、Conversation Read Model、temporary receipt 或 QueryLoop 的 active message projection；
+- `ProviderRequest.messages` 只接受 `ProviderInputItem`，旧 Provider message DTO 和 serializer 在源码与 Public API 中均不存在；
 - `ArtifactRef` 只有一个定义且字段名为 `media_type`；
 - Read Model 事件必须通过显式 projector；
 - retry attempt 每次重建请求；
