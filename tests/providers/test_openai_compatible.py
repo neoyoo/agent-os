@@ -11,6 +11,7 @@ from agentos.providers import (
     ProviderUsage,
     TextPart,
 )
+from agentos.providers.openai_chat_wire import openai_chat_message
 from tests._provider_binary import binary_payload
 
 _FORBIDDEN_PROVIDER_METADATA = {
@@ -66,13 +67,7 @@ def _provider_input_with_content(
 def test_openai_compatible_provider_input_wire_excludes_internal_metadata(
     logical: ProviderInputItem,
 ) -> None:
-    provider = OpenAICompatibleProvider(
-        api_key="test-key",
-        base_url="https://api.example.test",
-        model="test-model",
-    )
-
-    wire = provider._message(logical)
+    wire = openai_chat_message(logical)
 
     assert _FORBIDDEN_PROVIDER_METADATA.isdisjoint(wire)
 
@@ -90,26 +85,16 @@ def test_openai_compatible_provider_input_rejects_non_single_text_content(
     role: str,
     content: tuple[TextPart | ImagePart, ...],
 ) -> None:
-    provider = OpenAICompatibleProvider(
-        api_key="test-key",
-        base_url="https://api.example.test",
-        model="test-model",
-    )
     logical = _provider_input_with_content(role, content)
 
     with pytest.raises(
         ValueError,
         match=rf"{role} provider input content requires exactly one TextPart",
     ):
-        provider._message(logical)
+        openai_chat_message(logical)
 
 
 def test_openai_compatible_context_mount_maps_to_multimodal_user() -> None:
-    provider = OpenAICompatibleProvider(
-        api_key="test-key",
-        base_url="https://api.example.test",
-        model="test-model",
-    )
     payload = binary_payload(
         handle="att_1",
         filename="diagram.png",
@@ -118,7 +103,7 @@ def test_openai_compatible_context_mount_maps_to_multimodal_user() -> None:
     )
     content = (TextPart("inspect"), ImagePart(payload))
 
-    assert provider._message(ProviderInputItem.context_mount(content)) == {
+    assert openai_chat_message(ProviderInputItem.context_mount(content)) == {
         "role": "user",
         "content": [
             {"type": "text", "text": "inspect"},

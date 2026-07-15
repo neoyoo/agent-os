@@ -18,6 +18,11 @@ from agentos.providers.input import ProviderInputItem, ProviderToolCall
 from agentos.providers.tool_specs import ProviderToolSpec
 
 
+_FILE_EXTENSION_BY_MEDIA_TYPE = {
+    "application/pdf": ".pdf",
+}
+
+
 def build_openai_responses_payload(
     *,
     model: str,
@@ -126,11 +131,9 @@ def _content_part(part: ProviderContentPart) -> dict[str, object]:
             "detail": part.detail,
         }
     if isinstance(part, FilePart):
-        if not part.payload.filename:
-            raise ValueError("OpenAI Responses file parts require filename")
         return {
             "type": "input_file",
-            "filename": part.payload.filename,
+            "filename": _provider_filename(part.payload),
             "file_data": _data_url(part.payload),
         }
     raise ValueError(f"unsupported OpenAI content part: {type(part).__name__}")
@@ -139,3 +142,12 @@ def _content_part(part: ProviderContentPart) -> dict[str, object]:
 def _data_url(payload: ProviderBinaryPayload) -> str:
     data = base64.b64encode(payload.data).decode("ascii")
     return f"data:{payload.media_type};base64,{data}"
+
+
+def _provider_filename(payload: ProviderBinaryPayload) -> str:
+    if payload.filename:
+        return payload.filename
+    extension = _FILE_EXTENSION_BY_MEDIA_TYPE.get(payload.media_type)
+    if extension is None:
+        raise ValueError("OpenAI Responses file parts require filename")
+    return f"{payload.handle}{extension}"

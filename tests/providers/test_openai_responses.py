@@ -171,6 +171,33 @@ def test_openai_responses_maps_ordered_items_tools_and_binary_without_mutation()
     assert document.data == b"pdf data"
 
 
+def test_openai_responses_derives_pdf_filename_without_mutating_payload() -> None:
+    provider, responses = provider_for(completed_response())
+    document = binary_payload(
+        handle="art_550e8400-e29b-41d4-a716-446655440000",
+        filename=None,
+        media_type="application/pdf",
+        data=b"pdf data",
+    )
+    request = ProviderRequest(
+        system="trusted-system",
+        messages=(
+            ProviderInputItem.context_mount((FilePart(document),)),
+        ),
+    )
+    original = deepcopy(request)
+
+    provider.complete(request)
+
+    assert responses.kwargs is not None
+    input_items = responses.kwargs["input"]
+    assert input_items[0]["content"][0]["filename"] == (
+        "art_550e8400-e29b-41d4-a716-446655440000.pdf"
+    )
+    assert document.filename is None
+    assert request == original
+
+
 def test_openai_responses_omits_tool_fields_without_tools_and_forwards_timeout() -> None:
     provider, responses = provider_for(
         completed_response(),

@@ -276,10 +276,29 @@ def test_openai_compatible_sync_and_async_stream_events_are_equal() -> None:
                         "tool_calls": [
                             {
                                 "index": 0,
-                                "id": "call_1",
                                 "function": {
                                     "name": "lookup",
-                                    "arguments": '{"query":"agentos"}',
+                                    "arguments": '{"query"',
+                                },
+                            },
+                        ],
+                    },
+                    "finish_reason": None,
+                },
+            ],
+        },
+        {
+            "id": "chatcmpl_equal",
+            "model": "model",
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "late_provider_id",
+                                "function": {
+                                    "arguments": ':"agentos"}',
                                 },
                             },
                         ],
@@ -318,18 +337,23 @@ def test_openai_compatible_sync_and_async_stream_events_are_equal() -> None:
     async def collect() -> list[object]:
         return [event async for event in async_provider.async_stream(request)]
 
-    assert asyncio.run(collect()) == sync_events
+    async_events = asyncio.run(collect())
 
-
-
-def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        "agentos.providers.openai_compatible.time.time_ns",
-        lambda: 1_700_000_000_000_000_000,
+    assert async_events == sync_events
+    tool_deltas = [
+        event for event in sync_events if isinstance(event, ProviderToolCallDelta)
+    ]
+    assert [event.tool_call_id for event in tool_deltas] == [
+        "call_fallback_24239fcf564a865d_0",
+        "call_fallback_24239fcf564a865d_0",
+    ]
+    assert sync_events[-1].response.tool_calls[0].id == (
+        "call_fallback_24239fcf564a865d_0"
     )
 
+
+
+def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id() -> None:
     class FakeAsyncStreamingTransport:
         async def post_json_stream(
             self,
@@ -376,7 +400,7 @@ def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id(
     events = asyncio.run(collect())
 
     tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
-    assert tool_deltas[0].tool_call_id == "call_ts_1700000000000000000"
+    assert tool_deltas[0].tool_call_id == "call_fallback_b73023924eb13c41_0"
     assert events[-1].response.tool_calls[0].id == (
-        "call_ts_1700000000000000000"
+        "call_fallback_b73023924eb13c41_0"
     )

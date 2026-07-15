@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import hashlib
 from dataclasses import dataclass, field
 
 from agentos.providers._tool_arguments import (
@@ -112,7 +112,6 @@ class OpenAICompatibleStreamParser:
 
     model: str
     options: ProviderStreamOptions
-    fallback_tool_call_id: Callable[[], str]
     content_parts: list[str] = field(default_factory=list)
     thinking_parts: list[str] = field(default_factory=list)
     tool_builders: dict[int, dict[str, str]] = field(default_factory=dict)
@@ -244,6 +243,7 @@ class OpenAICompatibleStreamParser:
             tool_call_id, name_delta, arguments_delta = self._apply_tool_delta(
                 builder,
                 raw_tool_call,
+                index,
             )
             self.tool_index += 1
             events.append(
@@ -261,10 +261,15 @@ class OpenAICompatibleStreamParser:
         self,
         builder: dict[str, str],
         raw_tool_call: dict[str, object],
+        index: int,
     ) -> tuple[str | None, str | None, str | None]:
         tool_call_id = raw_tool_call.get("id")
-        if isinstance(tool_call_id, str) and tool_call_id:
-            builder["id"] = tool_call_id
+        if not builder["id"]:
+            builder["id"] = (
+                tool_call_id
+                if isinstance(tool_call_id, str) and tool_call_id
+                else self._fallback_tool_call_id(index)
+            )
         name_delta = None
         arguments_delta = None
         function = raw_tool_call.get("function")
@@ -277,8 +282,6 @@ class OpenAICompatibleStreamParser:
             if isinstance(raw_arguments, str):
                 builder["arguments"] += raw_arguments
                 arguments_delta = raw_arguments
-        if not builder["id"] and builder["name"]:
-            builder["id"] = self.fallback_tool_call_id()
         return builder["id"] or None, name_delta, arguments_delta
 
     def _built_tool_calls(self) -> tuple[ProviderToolCall, ...]:
@@ -287,7 +290,7 @@ class OpenAICompatibleStreamParser:
             item = self.tool_builders[index]
             tool_calls.append(
                 ProviderToolCall(
-                    id=item["id"] or self.fallback_tool_call_id(),
+                    id=item["id"] or self._fallback_tool_call_id(index),
                     name=require_tool_call_name(
                         item["name"],
                         provider_name="OpenAI-compatible",
@@ -299,6 +302,12 @@ class OpenAICompatibleStreamParser:
                 ),
             )
         return tuple(tool_calls)
+
+    def _fallback_tool_call_id(self, index: int) -> str:
+        stream_digest = hashlib.sha256(
+            self.response_id.encode("utf-8"),
+        ).hexdigest()[:16]
+        return f"call_fallback_{stream_digest}_{index}"
 
 
 def _int_or_none(value: object) -> int | None:

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import AsyncIterator, Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from agentos._sync_work import run_sync
 from agentos.providers._timeout import raise_for_provider_timeout
 from agentos.providers.base import ProviderRequest, ProviderResponse
-from agentos.providers.input import ProviderInputItem
-from agentos.providers.openai_chat_wire import openai_chat_message
 from agentos.providers.openai_compatible_parsing import (
     OpenAICompatibleStreamParser,
     parse_openai_compatible_response,
@@ -44,12 +41,6 @@ class OpenAICompatibleProvider:
     thinking: dict[str, object] | None = None
     extra_body: dict[str, object] | None = None
     supports_parallel_tool_calls_parameter: bool = False
-    _fallback_tool_call_ids: set[str] = field(
-        default_factory=set,
-        init=False,
-        repr=False,
-    )
-
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用 OpenAI-compatible `/chat/completions`。"""
 
@@ -100,7 +91,6 @@ class OpenAICompatibleProvider:
         parser = OpenAICompatibleStreamParser(
             model=self.model,
             options=options or ProviderStreamOptions(),
-            fallback_tool_call_id=self._next_fallback_tool_call_id,
         )
         payload = self._payload(request)
         payload["stream"] = True
@@ -137,7 +127,6 @@ class OpenAICompatibleProvider:
         parser = OpenAICompatibleStreamParser(
             model=self.model,
             options=options or ProviderStreamOptions(),
-            fallback_tool_call_id=self._next_fallback_tool_call_id,
         )
         payload = self._payload(request)
         payload["stream"] = True
@@ -172,12 +161,6 @@ class OpenAICompatibleProvider:
             invalid_message_error=OpenAICompatibleProviderError,
         )
 
-    def _message(self, message: ProviderInputItem) -> dict[str, object]:
-        return openai_chat_message(
-            message,
-            invalid_message_error=OpenAICompatibleProviderError,
-        )
-
     def _chat_completions_url(self) -> str:
         base_url = self.base_url.rstrip("/")
         if base_url.endswith("/chat/completions"):
@@ -189,17 +172,6 @@ class OpenAICompatibleProvider:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-    def _next_fallback_tool_call_id(self) -> str:
-        base_id = f"call_ts_{time.time_ns()}"
-        candidate = base_id
-        suffix = 2
-        while candidate in self._fallback_tool_call_ids:
-            candidate = f"{base_id}_{suffix}"
-            suffix += 1
-        self._fallback_tool_call_ids.add(candidate)
-        return candidate
-
 
 _SYNC_STREAM_DONE = object()
 

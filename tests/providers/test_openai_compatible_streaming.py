@@ -235,11 +235,7 @@ def test_openai_compatible_streams_tool_call_deltas() -> None:
     assert events[-1].response.tool_calls[0].arguments == {"path": "pyproject.toml"}
 
 
-def test_openai_compatible_stream_generates_missing_tool_call_id(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "agentos.providers.openai_compatible.time.time_ns",
-        lambda: 1_700_000_000_000_000_000,
-    )
+def test_openai_compatible_stream_generates_missing_tool_call_id() -> None:
     transport = FakeStreamingTransport(
         [
             {
@@ -275,9 +271,9 @@ def test_openai_compatible_stream_generates_missing_tool_call_id(monkeypatch) ->
 
     assert isinstance(events[-1], ProviderStreamCompleted)
     tool_deltas = [event for event in events if isinstance(event, ProviderToolCallDelta)]
-    assert tool_deltas[0].tool_call_id == "call_ts_1700000000000000000"
+    assert tool_deltas[0].tool_call_id == "call_fallback_2234400da79a73f6_0"
     assert events[-1].response.tool_calls[0].id == (
-        "call_ts_1700000000000000000"
+        "call_fallback_2234400da79a73f6_0"
     )
     assert events[-1].response.tool_calls[0].name == "load_skill"
     assert events[-1].response.tool_calls[0].arguments == {
@@ -285,13 +281,7 @@ def test_openai_compatible_stream_generates_missing_tool_call_id(monkeypatch) ->
     }
 
 
-def test_openai_compatible_stream_generates_unique_missing_tool_call_ids(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        "agentos.providers.openai_compatible.time.time_ns",
-        lambda: 1_700_000_000_000_000_000,
-    )
+def test_openai_compatible_stream_generates_unique_missing_tool_call_ids() -> None:
     transport = FakeStreamingTransport(
         [
             {
@@ -334,8 +324,8 @@ def test_openai_compatible_stream_generates_unique_missing_tool_call_ids(
 
     ids = [tool_call.id for tool_call in events[-1].response.tool_calls]
     assert ids == [
-        "call_ts_1700000000000000000",
-        "call_ts_1700000000000000000_2",
+        "call_fallback_2234400da79a73f6_0",
+        "call_fallback_2234400da79a73f6_1",
     ]
 
 

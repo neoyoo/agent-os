@@ -34,3 +34,11 @@ def test_openai_chat_wire_is_the_only_chat_primitive_owner() -> None:
 def test_sync_and_async_stream_use_the_same_parser_state() -> None:
     facade = (PROVIDERS / "openai_compatible.py").read_text(encoding="utf-8")
     assert facade.count("OpenAICompatibleStreamParser(") == 2
+
+
+def test_openai_compatible_facade_has_no_wire_or_fallback_identity_state() -> None:
+    facade = (PROVIDERS / "openai_compatible.py").read_text(encoding="utf-8")
+
+    assert "def _message(" not in facade
+    assert "time_ns" not in facade
+    assert "_fallback_tool_call_ids" not in facade
