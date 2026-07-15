@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Callable
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from agentos.providers import (
     ImagePart,
     OpenAICompatibleProvider,
+    OpenAIProvider,
     ProviderInputItem,
     ProviderRequest,
     ProviderToolCall,
@@ -105,8 +107,58 @@ def _compatible_marker(item: object) -> str:
     raise AssertionError(item)
 
 
+def _responses_factory(request: ProviderRequest) -> ContractObservation:
+    class RecordingResponses:
+        payload: dict[str, object] | None = None
+
+        def create(self, **kwargs: object) -> object:
+            self.payload = kwargs
+            return SimpleNamespace(
+                id="resp_1",
+                model="model",
+                status="completed",
+                usage=None,
+                output=[],
+            )
+
+    responses = RecordingResponses()
+    provider = OpenAIProvider(
+        client=SimpleNamespace(responses=responses),
+        model="model",
+    )
+    provider.complete(request)
+    assert responses.payload is not None
+    input_items = responses.payload["input"]
+    assert isinstance(input_items, list)
+    return ContractObservation(
+        system=str(responses.payload["instructions"]),
+        sequence=tuple(_responses_marker(item) for item in input_items),
+    )
+
+
+def _responses_marker(item: object) -> str:
+    assert isinstance(item, dict)
+    item_type = item.get("type")
+    content = item.get("content")
+    if item_type == "function_call":
+        return "assistant-tool-call"
+    if item_type == "function_call_output":
+        return "tool-result"
+    if content == "<context-snapshot/>":
+        return "context-snapshot"
+    if content == "business-user":
+        return "business-user"
+    if isinstance(content, list) and content[0] == {
+        "type": "input_text",
+        "text": "mount-marker",
+    }:
+        return "context-mount"
+    raise AssertionError(item)
+
+
 PROVIDER_ADAPTER_FACTORIES: tuple[object, ...] = (
     pytest.param(_compatible_factory, id="openai-compatible"),
+    pytest.param(_responses_factory, id="openai-responses"),
 )
 
 

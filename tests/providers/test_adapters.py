@@ -6,7 +6,6 @@ from agentos.providers import (
     AnthropicProvider,
     FilePart,
     ImagePart,
-    OpenAIProvider,
     ProviderFunctionSpec,
     ProviderInputItem,
     ProviderRequest,
@@ -70,14 +69,13 @@ def _provider_input_with_content(
 @pytest.mark.parametrize(
     "provider",
     [
-        OpenAIProvider(client=object(), model="gpt-test"),
         AnthropicProvider(client=object(), model="claude-test"),
     ],
-    ids=["openai", "anthropic"],
+    ids=["anthropic"],
 )
 @pytest.mark.parametrize("logical", _logical_messages())
 def test_provider_input_wire_excludes_internal_metadata(
-    provider: OpenAIProvider | AnthropicProvider,
+    provider: AnthropicProvider,
     logical: ProviderInputItem,
 ) -> None:
     request = ProviderRequest(system="system", messages=(logical,))
@@ -91,10 +89,9 @@ def test_provider_input_wire_excludes_internal_metadata(
 @pytest.mark.parametrize(
     "provider",
     [
-        OpenAIProvider(client=object(), model="gpt-test"),
         AnthropicProvider(client=object(), model="claude-test"),
     ],
-    ids=["openai", "anthropic"],
+    ids=["anthropic"],
 )
 @pytest.mark.parametrize("role", ["assistant", "tool"])
 @pytest.mark.parametrize(
@@ -106,7 +103,7 @@ def test_provider_input_wire_excludes_internal_metadata(
     ],
 )
 def test_provider_input_rejects_non_single_text_assistant_and_tool_content(
-    provider: OpenAIProvider | AnthropicProvider,
+    provider: AnthropicProvider,
     role: str,
     content: tuple[TextPart | ImagePart, ...],
 ) -> None:
@@ -122,13 +119,12 @@ def test_provider_input_rejects_non_single_text_assistant_and_tool_content(
 @pytest.mark.parametrize(
     "provider",
     [
-        OpenAIProvider(client=object(), model="gpt-test"),
         AnthropicProvider(client=object(), model="claude-test"),
     ],
-    ids=["openai", "anthropic"],
+    ids=["anthropic"],
 )
 def test_context_mount_maps_directly_to_multimodal_user(
-    provider: OpenAIProvider | AnthropicProvider,
+    provider: AnthropicProvider,
 ) -> None:
     payload = binary_payload(
         handle="att_1",
@@ -143,293 +139,6 @@ def test_context_mount_maps_directly_to_multimodal_user(
     assert wire["role"] == "user"
     assert isinstance(wire["content"], list)
     assert wire["content"][0] == {"type": "text", "text": "inspect"}  # type: ignore[index]
-
-
-def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
-    class FakeCompletions:
-        def __init__(self) -> None:
-            self.kwargs: dict[str, object] | None = None
-
-        def create(self, **kwargs: object) -> object:
-            self.kwargs = kwargs
-            return SimpleNamespace(
-                id="chatcmpl_1",
-                model="gpt-test",
-                usage=SimpleNamespace(
-                    prompt_tokens=10,
-                    completion_tokens=5,
-                    total_tokens=15,
-                    prompt_tokens_details=SimpleNamespace(cached_tokens=2),
-                    completion_tokens_details=SimpleNamespace(reasoning_tokens=1),
-                ),
-                choices=[
-                    SimpleNamespace(
-                        finish_reason="tool_calls",
-                        message=SimpleNamespace(
-                            content="Need file.",
-                            tool_calls=[
-                                SimpleNamespace(
-                                    id="call_1",
-                                    function=SimpleNamespace(
-                                        name="read_file",
-                                        arguments='{"path": "pyproject.toml"}',
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            )
-
-    completions = FakeCompletions()
-    client = SimpleNamespace(
-        chat=SimpleNamespace(completions=completions),
-    )
-    provider = OpenAIProvider(client=client, model="gpt-test")
-
-    response = provider.complete(
-        ProviderRequest(
-            system="system text",
-            messages=[ProviderInputItem.business_user("read project name")],
-            tools=[
-                ProviderToolSpec(
-                    function=ProviderFunctionSpec(
-                        name="read_file",
-                        description="Read file.",
-                        parameters={"type": "object"},
-                    ),
-                ),
-            ],
-        ),
-    )
-
-    assert completions.kwargs is not None
-    assert completions.kwargs["model"] == "gpt-test"
-    assert completions.kwargs["messages"] == [
-        {"role": "system", "content": "system text"},
-        {"role": "user", "content": "read project name"},
-    ]
-    assert response.content == "Need file."
-    assert response.stop_reason == "tool_calls"
-    assert response.model == "gpt-test"
-    assert response.provider_name == "openai"
-    assert response.response_id == "chatcmpl_1"
-    assert response.usage == ProviderUsage(
-        input_tokens=10,
-        output_tokens=5,
-        total_tokens=15,
-        cached_input_tokens=2,
-        reasoning_output_tokens=1,
-    )
-    assert response.tool_calls == (
-        ProviderToolCall(
-            id="call_1",
-            name="read_file",
-            arguments={"path": "pyproject.toml"},
-        ),
-    )
-
-
-def test_openai_provider_forwards_parallel_tool_call_intent_with_tools() -> None:
-    class FakeCompletions:
-        def __init__(self) -> None:
-            self.kwargs: dict[str, object] = {}
-
-        def create(self, **kwargs: object) -> object:
-            self.kwargs = kwargs
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        finish_reason="stop",
-                        message=SimpleNamespace(content="ok", tool_calls=[]),
-                    ),
-                ],
-                usage=None,
-            )
-
-    completions = FakeCompletions()
-    provider = OpenAIProvider(
-        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
-        model="gpt-test",
-    )
-    tool = ProviderToolSpec(
-        function=ProviderFunctionSpec("lookup", "lookup", {"type": "object"}),
-    )
-
-    provider.complete(
-        ProviderRequest(
-            system="system",
-            messages=(),
-            tools=(tool,),
-            parallel_tool_calls=False,
-        ),
-    )
-
-    assert completions.kwargs["parallel_tool_calls"] is False
-
-
-def test_openai_provider_rejects_non_object_tool_arguments() -> None:
-    class FakeCompletions:
-        def create(self, **kwargs: object) -> object:
-            return SimpleNamespace(
-                id="chatcmpl_1",
-                model="gpt-test",
-                usage=None,
-                choices=[
-                    SimpleNamespace(
-                        finish_reason="tool_calls",
-                        message=SimpleNamespace(
-                            content=None,
-                            tool_calls=[
-                                SimpleNamespace(
-                                    id="call_1",
-                                    function=SimpleNamespace(
-                                        name="read_file",
-                                        arguments='["not", "object"]',
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            )
-
-    provider = OpenAIProvider(
-        client=SimpleNamespace(
-            chat=SimpleNamespace(completions=FakeCompletions()),
-        ),
-        model="gpt-test",
-    )
-
-    with pytest.raises(ValueError, match="tool arguments must decode to an object"):
-        provider.complete(ProviderRequest(system="system", messages=[]))
-
-
-def test_openai_provider_rejects_missing_tool_identity() -> None:
-    class FakeCompletions:
-        def create(self, **kwargs: object) -> object:
-            return SimpleNamespace(
-                id="chatcmpl_1",
-                model="gpt-test",
-                usage=None,
-                choices=[
-                    SimpleNamespace(
-                        finish_reason="tool_calls",
-                        message=SimpleNamespace(
-                            content=None,
-                            tool_calls=[
-                                SimpleNamespace(
-                                    id=None,
-                                    function=SimpleNamespace(
-                                        name="read_file",
-                                        arguments="{}",
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            )
-
-    provider = OpenAIProvider(
-        client=SimpleNamespace(
-            chat=SimpleNamespace(completions=FakeCompletions()),
-        ),
-        model="gpt-test",
-    )
-
-    with pytest.raises(ValueError, match="tool_call requires id"):
-        provider.complete(ProviderRequest(system="system", messages=[]))
-
-
-def test_openai_provider_maps_image_parts_to_chat_image_url() -> None:
-    class FakeCompletions:
-        def __init__(self) -> None:
-            self.kwargs: dict[str, object] | None = None
-
-        def create(self, **kwargs: object) -> object:
-            self.kwargs = kwargs
-            return SimpleNamespace(
-                id="chatcmpl_1",
-                model="gpt-test",
-                usage=None,
-                choices=[
-                    SimpleNamespace(
-                        finish_reason="stop",
-                        message=SimpleNamespace(content="ok", tool_calls=[]),
-                    ),
-                ],
-            )
-
-    completions = FakeCompletions()
-    provider = OpenAIProvider(
-        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
-        model="gpt-test",
-    )
-    payload = binary_payload(
-        handle="att_1",
-        filename="diagram.png",
-        media_type="image/png",
-        data=b"image-bytes",
-    )
-
-    provider.complete(
-        ProviderRequest(
-            system="system",
-            messages=[
-                ProviderInputItem.context_mount(
-                    (
-                        TextPart("分析图片"),
-                        ImagePart(payload),
-                    ),
-                ),
-            ],
-        ),
-    )
-
-    assert completions.kwargs is not None
-    assert completions.kwargs["messages"][1] == {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "分析图片"},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
-                    "detail": "auto",
-                },
-            },
-        ],
-    }
-
-
-def test_openai_provider_rejects_file_parts_for_chat_completions() -> None:
-    class FakeCompletions:
-        def create(self, **kwargs: object) -> object:
-            raise AssertionError("OpenAI client should not be called")
-
-    provider = OpenAIProvider(
-        client=SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
-        model="gpt-test",
-    )
-    payload = binary_payload(
-        handle="att_1",
-        filename="doc.pdf",
-        media_type="application/pdf",
-        data=b"pdf data",
-    )
-
-    with pytest.raises(ValueError, match="does not support file attachments"):
-        provider.complete(
-            ProviderRequest(
-                system="system",
-                messages=[
-                    ProviderInputItem.context_mount(
-                        (FilePart(payload),),
-                    ),
-                ],
-            ),
-        )
 
 
 def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
