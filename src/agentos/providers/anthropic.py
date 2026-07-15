@@ -1,28 +1,25 @@
-import base64
+"""Anthropic Messages API Provider。"""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
-from agentos._json_values import thaw_json
+from agentos.providers.anthropic_wire import (
+    anthropic_tools,
+    build_anthropic_messages,
+)
 from agentos.providers.base import (
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderUsage,
 )
-from agentos.providers.content import (
-    FilePart,
-    ImagePart,
-    ProviderBinaryPayload,
-    ProviderContentPart,
-    TextPart,
-)
-from agentos.providers.input import ProviderInputItem
-from agentos.providers.tool_specs import ProviderToolSpec
 
 
 @dataclass(slots=True)
 class AnthropicProvider:
-    """Anthropic messages 薄适配器，client 由调用方注入。"""
+    """使用注入 client 的 Anthropic Messages Provider。"""
 
     client: Any
     model: str
@@ -30,15 +27,14 @@ class AnthropicProvider:
     timeout_seconds: float | None = None
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
-        """调用注入的 Anthropic client，并标准化响应。"""
+        """调用注入的 Anthropic client，并标准化完整响应。"""
 
-        self._ensure_no_active_system_messages(request)
         kwargs: dict[str, object] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": request.system,
-            "messages": self._messages(request.messages),
-            "tools": self._tools(request.tools) or None,
+            "messages": build_anthropic_messages(request.messages),
+            "tools": anthropic_tools(request.tools) or None,
         }
         if self.timeout_seconds is not None:
             kwargs["timeout"] = self.timeout_seconds
@@ -60,173 +56,23 @@ class AnthropicProvider:
             content="".join(text_parts),
             tool_calls=tool_calls,
             stop_reason=getattr(response, "stop_reason", None),
-            usage=self._usage(getattr(response, "usage", None)),
+            usage=_usage(getattr(response, "usage", None)),
             model=getattr(response, "model", None) or self.model,
             provider_name="anthropic",
             response_id=getattr(response, "id", None),
         )
 
-    def _ensure_no_active_system_messages(self, request: ProviderRequest) -> None:
-        """拒绝 active window 中的 system 消息，避免 provider 收到双 system。"""
 
-        for message in request.messages:
-            if message.role in ("user", "assistant", "tool"):
-                continue
-            raise ValueError(
-                "active messages must not include system role; use "
-                "ProviderRequest.system",
-            )
-
-    def _message(
-        self,
-        message: ProviderInputItem,
-    ) -> dict[str, object]:
-        """把逻辑 Provider 输入转为 Anthropic Messages API 形态。"""
-
-        if message.role == "user":
-            content: object = message.content
-            if len(message.content) == 1 and isinstance(message.content[0], TextPart):
-                content = message.content[0].text
-            return {
-                "role": "user",
-                "content": self._user_content(content),
-            }
-        if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
-            raise ValueError(
-                f"{message.role} provider input content requires exactly one TextPart",
-            )
-        if message.role == "assistant":
-            content: list[dict[str, object]] = []
-            if message.content[0].text:
-                content.append({"type": "text", "text": message.content[0].text})
-            for tool_call in message.tool_calls:
-                content.append(
-                    {
-                        "type": "tool_use",
-                        "id": tool_call.id,
-                        "name": tool_call.name,
-                        "input": thaw_json(tool_call.arguments),
-                    },
-                )
-            return {
-                "role": "assistant",
-                "content": content if content else message.content[0].text,
-            }
-        if message.role == "tool" and message.tool_call_id is not None:
-            return {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": message.tool_call_id,
-                        "content": message.content[0].text,
-                    },
-                ],
-            }
-        raise ValueError(
-            "active messages must not include system role; use ProviderRequest.system",
-        )
-
-    def _user_content(self, content: object) -> object:
-        """把 canonical content parts 转为 Anthropic content blocks。"""
-
-        if isinstance(content, str):
-            return content
-        if isinstance(content, tuple):
-            return [self._content_part(part) for part in content]
-        return content
-
-    def _content_part(self, part: ProviderContentPart) -> dict[str, object]:
-        """把单个 canonical part 转为 Anthropic content block。"""
-
-        if isinstance(part, TextPart):
-            return {"type": "text", "text": part.text}
-        if isinstance(part, ImagePart):
-            return {
-                "type": "image",
-                "source": self._source_block(part.payload, require_image=True),
-            }
-        if isinstance(part, FilePart):
-            if part.payload.media_type != "application/pdf":
-                raise ValueError("Anthropic file attachments only support PDF in v1")
-            return {
-                "type": "document",
-                "source": self._source_block(part.payload),
-            }
-        raise ValueError(f"unsupported Anthropic content part: {type(part).__name__}")
-
-    def _source_block(
-        self,
-        payload: ProviderBinaryPayload,
-        *,
-        require_image: bool = False,
-    ) -> dict[str, object]:
-        """把二进制载荷转为 Anthropic source block。"""
-
-        if require_image and not payload.media_type.startswith("image/"):
-            raise ValueError("Anthropic image parts require image MIME")
-        return {
-            "type": "base64",
-            "media_type": payload.media_type,
-            "data": base64.b64encode(payload.data).decode("ascii"),
-        }
-
-    def _messages(
-        self,
-        messages: tuple[ProviderInputItem, ...],
-    ) -> list[dict[str, object]]:
-        """转换并合并连续 tool_result，满足 Anthropic 角色交替规则。"""
-
-        return self._merge_consecutive_tool_results(
-            [self._message(message) for message in messages],
-        )
-
-    def _merge_consecutive_tool_results(
-        self,
-        messages: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
-        """把连续 tool_result user blocks 合并为一条 user 消息。"""
-
-        merged: list[dict[str, object]] = []
-        for message in messages:
-            if (
-                message.get("role") == "user"
-                and isinstance(message.get("content"), list)
-                and merged
-                and merged[-1].get("role") == "user"
-                and isinstance(merged[-1].get("content"), list)
-            ):
-                merged[-1]["content"].extend(message["content"])  # type: ignore[union-attr]
-                continue
-            merged.append(message)
-        return merged
-
-    def _tools(self, tools: tuple[ProviderToolSpec, ...]) -> list[dict[str, object]]:
-        """把内部 function tool schema 转成 Anthropic input_schema 形态。"""
-
-        converted: list[dict[str, object]] = []
-        for tool in tools:
-            converted.append(
-                {
-                    "name": tool.function.name,
-                    "description": tool.function.description,
-                    "input_schema": thaw_json(tool.function.parameters),
-                },
-            )
-        return converted
-
-    def _usage(self, raw_usage: object | None) -> ProviderUsage | None:
-        """把 Anthropic usage 标准化。"""
-
-        if raw_usage is None:
-            return None
-        return ProviderUsage(
-            input_tokens=getattr(raw_usage, "input_tokens", None),
-            output_tokens=getattr(raw_usage, "output_tokens", None),
-            cached_input_tokens=getattr(raw_usage, "cache_read_input_tokens", None),
-            cache_creation_input_tokens=getattr(
-                raw_usage,
-                "cache_creation_input_tokens",
-                None,
-            ),
-        )
+def _usage(raw_usage: object | None) -> ProviderUsage | None:
+    if raw_usage is None:
+        return None
+    return ProviderUsage(
+        input_tokens=getattr(raw_usage, "input_tokens", None),
+        output_tokens=getattr(raw_usage, "output_tokens", None),
+        cached_input_tokens=getattr(raw_usage, "cache_read_input_tokens", None),
+        cache_creation_input_tokens=getattr(
+            raw_usage,
+            "cache_creation_input_tokens",
+            None,
+        ),
+    )

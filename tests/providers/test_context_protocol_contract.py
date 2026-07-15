@@ -8,6 +8,7 @@ from typing import Callable
 import pytest
 
 from agentos.providers import (
+    AnthropicProvider,
     ImagePart,
     OpenAICompatibleProvider,
     OpenAIProvider,
@@ -192,7 +193,66 @@ def _responses_marker(item: object) -> str:
     raise AssertionError(item)
 
 
+def _anthropic_factory(request: ProviderRequest) -> ContractObservation:
+    class RecordingMessages:
+        payload: dict[str, object] | None = None
+
+        def create(self, **kwargs: object) -> object:
+            self.payload = kwargs
+            return SimpleNamespace(
+                id="msg_1",
+                model="model",
+                stop_reason="end_turn",
+                usage=None,
+                content=[SimpleNamespace(type="text", text="done")],
+            )
+
+    messages_api = RecordingMessages()
+    provider = AnthropicProvider(
+        client=SimpleNamespace(messages=messages_api),
+        model="model",
+    )
+    provider.complete(request)
+    assert messages_api.payload is not None
+    wire_messages = messages_api.payload["messages"]
+    assert isinstance(wire_messages, list)
+    return ContractObservation(
+        system=str(messages_api.payload["system"]),
+        sequence=tuple(
+            marker
+            for item in wire_messages
+            for marker in _anthropic_markers(item)
+        ),
+    )
+
+
+def _anthropic_markers(item: object) -> tuple[str, ...]:
+    assert isinstance(item, dict)
+    role = item.get("role")
+    content = item.get("content")
+    if role == "assistant":
+        assert isinstance(content, list)
+        assert any(block.get("type") == "tool_use" for block in content)
+        return ("assistant-tool-call",)
+    assert role == "user"
+    assert isinstance(content, list)
+    markers: list[str] = []
+    for block in content:
+        assert isinstance(block, dict)
+        block_type = block.get("type")
+        if block_type == "tool_result":
+            markers.append("tool-result")
+        elif block_type == "text" and block.get("text") == "<context-snapshot/>":
+            markers.append("context-snapshot")
+        elif block_type == "text" and block.get("text") == "business-user":
+            markers.append("business-user")
+        elif block_type == "text" and block.get("text") == "mount-marker":
+            markers.append("context-mount")
+    return tuple(markers)
+
+
 PROVIDER_ADAPTER_FACTORIES: tuple[object, ...] = (
+    pytest.param(_anthropic_factory, id="anthropic"),
     pytest.param(_compatible_factory, id="openai-compatible"),
     pytest.param(_chat_factory, id="openai-chat-completions"),
     pytest.param(_responses_factory, id="openai-responses"),
