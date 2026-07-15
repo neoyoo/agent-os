@@ -8,13 +8,20 @@ from agentos.capabilities.skills import (
     SkillDescriptor,
     SkillLoadResult,
     SkillRegistry,
+    SkillRuntime,
     SkillResourceLoadResult,
     SkillResourceRef,
     SkillVerificationSubject,
+    SkillTrustDecision,
     register_skill_loader_tools,
 )
 from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.providers import ProviderToolCall
+
+
+class RejectingTrustPolicy:
+    def verify(self, metadata, subject):  # type: ignore[no-untyped-def]
+        return SkillTrustDecision(False, "tests", subject)
 
 
 class AsyncMemorySkillSource(SkillContentSource):
@@ -114,7 +121,11 @@ def test_load_skill_tool_result_includes_resource_manifest() -> None:
     async def run() -> object:
         registry = await SkillRegistry.aload(source)
         tools = ToolRegistry()
-        register_skill_loader_tools(tools, registry)
+        register_skill_loader_tools(
+            tools,
+            SkillRuntime(registry, RejectingTrustPolicy()),
+            "session-1",
+        )
         router = ToolCallRouter(tool_registry=tools)
         return await router.async_execute_tool_call(
             ProviderToolCall(
@@ -151,7 +162,11 @@ def test_load_skill_resource_tool_loads_source_resource() -> None:
     async def run() -> object:
         registry = await SkillRegistry.aload(source)
         tools = ToolRegistry()
-        register_skill_loader_tools(tools, registry)
+        register_skill_loader_tools(
+            tools,
+            SkillRuntime(registry, RejectingTrustPolicy()),
+            "session-1",
+        )
         router = ToolCallRouter(tool_registry=tools)
         return await router.async_execute_tool_call(
             ProviderToolCall(

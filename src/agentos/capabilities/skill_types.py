@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from agentos.capabilities.skill_trust import SkillVerificationSubject
 
 
 SkillSource = Literal["builtin", "filesystem", "learned"]
@@ -49,6 +52,43 @@ class SkillDefinition:
                 trust=self.trust,
             ),
             when_to_use=self.when_to_use,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SkillTrustDecision:
+    """Trust Policy 对完整验证主体作出的决定。"""
+
+    verified: bool
+    policy_id: str
+    subject: SkillVerificationSubject
+
+
+@dataclass(frozen=True, slots=True)
+class SkillLoadResult:
+    """按需加载并绑定验证主体的 Skill 正文。"""
+
+    name: str
+    content: str
+    metadata: SkillMetadata
+    subject: SkillVerificationSubject
+
+    def render_tool_result(
+        self,
+        resource_manifest: tuple[SkillResourceRef, ...] = (),
+    ) -> str:
+        """渲染为有界 Tool Result 文本。"""
+
+        body = f"# Skill: {self.name}\n\n{self.content}"
+        if not resource_manifest:
+            return body
+        resources = "\n".join(
+            f"- `{resource.path}` ({resource.mime_type})"
+            for resource in resource_manifest
+        )
+        return (
+            f"{body}\n\n## Available resources\n{resources}\n\n"
+            "Use `load_skill_resource` to load any of the above."
         )
 
 

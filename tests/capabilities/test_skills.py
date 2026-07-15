@@ -7,10 +7,17 @@ from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.skills import (
     FileSystemSkillSource,
     SkillRegistry,
+    SkillRuntime,
+    SkillTrustDecision,
     builtin_schema_template_skill,
     register_skill_loader_tools,
 )
 from agentos.providers import ProviderToolCall
+
+
+class RejectingTrustPolicy:
+    def verify(self, metadata, subject):  # type: ignore[no-untyped-def]
+        return SkillTrustDecision(False, "tests", subject)
 
 
 def write_skill(path: Path, frontmatter: str, body: str) -> None:
@@ -84,7 +91,11 @@ def test_skill_loader_tool_returns_content_or_deterministic_error(
     async def run() -> tuple[object, object]:
         skills = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
         tools = ToolRegistry()
-        register_skill_loader_tools(tools, skills)
+        register_skill_loader_tools(
+            tools,
+            SkillRuntime(skills, RejectingTrustPolicy()),
+            "session-1",
+        )
         router = ToolCallRouter(tool_registry=tools)
 
         loaded = await router.async_execute_tool_call(
@@ -174,7 +185,11 @@ def test_async_skill_loader_tool_exposes_resource_manifest_and_content(
     async def run() -> tuple[object, object]:
         registry = await SkillRegistry.aload(FileSystemSkillSource([tmp_path]))
         tools = ToolRegistry()
-        register_skill_loader_tools(tools, registry)
+        register_skill_loader_tools(
+            tools,
+            SkillRuntime(registry, RejectingTrustPolicy()),
+            "session-1",
+        )
         router = ToolCallRouter(tool_registry=tools)
         loaded = await router.async_execute_tool_call(
             ProviderToolCall(

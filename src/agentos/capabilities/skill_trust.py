@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol
 
-from agentos.capabilities.skill_types import SkillMetadata
+from agentos.capabilities.skill_types import SkillMetadata, SkillTrustDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,15 +33,6 @@ class SkillVerificationSubject:
             source_revision=source_revision,
             content_digest=sha256(content.encode("utf-8")).hexdigest(),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class SkillTrustDecision:
-    """Trust Policy 对完整验证主体作出的决定。"""
-
-    verified: bool
-    policy_id: str
-    subject: SkillVerificationSubject
 
 
 class SkillTrustPolicy(Protocol):

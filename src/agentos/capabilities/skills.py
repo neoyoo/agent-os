@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 
 from agentos.capabilities.registry import ToolRegistry
@@ -9,7 +8,13 @@ from agentos.capabilities.skill_sources import (
     ChainedSkillSource,
     FileSystemSkillSource,
     SkillContentSource,
-    SkillLoadResult,
+)
+from agentos.capabilities.skill_runtime import (
+    BoundSkillInstructionProvider,
+    BoundSkillProjectionProvider,
+    BoundSkillTools,
+    SkillRuntime,
+    SkillTrustError,
 )
 from agentos.capabilities.skill_trust import (
     SkillTrustDecision,
@@ -19,13 +24,13 @@ from agentos.capabilities.skill_trust import (
 from agentos.capabilities.skill_types import (
     SkillDefinition,
     SkillDescriptor,
+    SkillLoadResult,
     SkillMetadata,
     SkillResourceLoadResult,
     SkillResourceRef,
     SkillSource,
     SkillTrust,
 )
-from agentos.capabilities.tools import RegisteredTool
 from agentos.context.projection import SkillDeclaration
 
 
@@ -168,87 +173,20 @@ def builtin_schema_template_skill() -> SkillDefinition:
 
 def register_skill_loader_tools(
     tool_registry: ToolRegistry,
-    skill_registry: SkillRegistry,
+    skill_runtime: SkillRuntime,
+    session_id: str,
 ) -> None:
-    """把 Skill loader tools 注册成 provider-callable async tools。"""
+    """注册闭包绑定 Session 的 Skill tools。"""
 
-    tool_registry.register(_load_skill_tool(skill_registry))
-    tool_registry.register(_load_skill_resource_tool(skill_registry))
-
-
-def _load_skill_tool(skill_registry: SkillRegistry) -> RegisteredTool:
-    async def load_skill(arguments: dict[str, object]) -> str:
-        skill_name = str(arguments.get("skill_name", ""))
-        try:
-            result = await skill_registry.load(skill_name)
-            resources = await skill_registry.list_resources(skill_name)
-            return result.render_tool_result(resource_manifest=resources)
-        except KeyError:
-            return json.dumps(
-                {
-                    "error": f"Skill '{skill_name}' not found",
-                    "available_skills": skill_registry.available_skill_names(),
-                },
-                ensure_ascii=False,
-            )
-
-    return RegisteredTool(
-        name="load_skill",
-        description=(
-            "Load a skill's full instructions by name. "
-            "Use this before tasks that match an available skill summary."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "skill_name": {
-                    "type": "string",
-                    "description": "Name of the skill to load.",
-                },
-            },
-            "required": ["skill_name"],
-            "additionalProperties": False,
-        },
-        handler=load_skill,
-        kind="skill",
-    )
-
-
-def _load_skill_resource_tool(skill_registry: SkillRegistry) -> RegisteredTool:
-    async def load_skill_resource(arguments: dict[str, object]) -> str:
-        skill_name = str(arguments.get("skill_name", ""))
-        path = str(arguments.get("path", ""))
-        try:
-            result = await skill_registry.load_resource(skill_name, path)
-            return result.render_tool_result()
-        except KeyError:
-            return json.dumps(
-                {
-                    "error": f"Resource '{path}' for skill '{skill_name}' not found",
-                    "available_skills": skill_registry.available_skill_names(),
-                },
-                ensure_ascii=False,
-            )
-
-    return RegisteredTool(
-        name="load_skill_resource",
-        description="Load an additional resource for a Skill by path.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "skill_name": {"type": "string"},
-                "path": {"type": "string"},
-            },
-            "required": ["skill_name", "path"],
-            "additionalProperties": False,
-        },
-        handler=load_skill_resource,
-        kind="skill",
-    )
+    for tool in BoundSkillTools(skill_runtime, session_id).registered_tools():
+        tool_registry.register(tool)
 
 
 __all__ = [
     "BuiltinSkillSource",
+    "BoundSkillInstructionProvider",
+    "BoundSkillProjectionProvider",
+    "BoundSkillTools",
     "ChainedSkillSource",
     "FileSystemSkillSource",
     "SkillContentSource",
@@ -257,11 +195,13 @@ __all__ = [
     "SkillLoadResult",
     "SkillMetadata",
     "SkillRegistry",
+    "SkillRuntime",
     "SkillResourceLoadResult",
     "SkillResourceRef",
     "SkillSource",
     "SkillTrust",
     "SkillTrustDecision",
+    "SkillTrustError",
     "SkillTrustPolicy",
     "SkillVerificationSubject",
     "builtin_schema_template_skill",

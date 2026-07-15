@@ -14,6 +14,7 @@ from agentos.capabilities.skill_trust import SkillVerificationSubject
 from agentos.capabilities.skill_types import (
     SkillDefinition,
     SkillDescriptor,
+    SkillLoadResult,
     SkillMetadata,
     SkillResourceLoadResult,
     SkillResourceRef,
@@ -23,34 +24,6 @@ from agentos.capabilities.skill_types import (
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-
-
-@dataclass(frozen=True, slots=True)
-class SkillLoadResult:
-    """按需加载并绑定验证主体的 Skill 正文。"""
-
-    name: str
-    content: str
-    metadata: SkillMetadata
-    subject: SkillVerificationSubject
-
-    def render_tool_result(
-        self,
-        resource_manifest: tuple[SkillResourceRef, ...] = (),
-    ) -> str:
-        """渲染为有界 Tool Result 文本。"""
-
-        body = f"# Skill: {self.name}\n\n{self.content}"
-        if not resource_manifest:
-            return body
-        resources = "\n".join(
-            f"- `{resource.path}` ({resource.mime_type})"
-            for resource in resource_manifest
-        )
-        return (
-            f"{body}\n\n## Available resources\n{resources}\n\n"
-            "Use `load_skill_resource` to load any of the above."
-        )
 
 
 class SkillContentSource(ABC):
