@@ -366,12 +366,15 @@ Phase 6  Distributed Runtime / Transport
 
 ### Phase 2：StoredMessage / ProviderInput Boundary
 
-**核心接口已经冻结；剩余消费者迁移按详细计划 Wave 3 受控并行，Task 13-14 串行收口。**
+**Phase 2 已完成并冻结在实现基线 `a57e40d`；Phase 3A、3B、3C 可以按既定边界并行启动。**
 
-> **2026-07-14 状态同步：** Phase 2 正在执行。Task 0-7 与单一异步 Kernel
-> 重构已经在 `88ae4ff` 完成；当前详细计划执行游标为 Task 8。下方旧双 Loop
-> 文件列表只保留为最初规划记录，Loop/Runner 拓扑以
-> `2026-07-12-agentos-single-async-query-loop-design.md` 和 2026-07-14 re-baseline 为准。
+> **2026-07-15 完成同步：** Task 0-14、单一异步 Kernel、全部消费者迁移和
+> Message/Provider Public API 收口均已完成。Task 13A/13B 分别由 `2fdc5d1`
+> 和 `606d2ac` 完成，Task 14 阶段验收由 `a57e40d` 完成。最终目标集为
+> `537 passed`，全量为 `2370 passed, 11 skipped`，架构集为 `69 passed`；
+> Ruff、compileall、diff、drift 门禁和修复后的 Spec Compliance / Code Quality
+> 二轮 Review 全部通过。下方旧双 Loop 文件列表只保留为最初规划记录，实际
+> Loop/Runner 拓扑以单一异步设计和 Phase 2 详细计划的 Closure Baseline 为准。
 
 目标文件：
 

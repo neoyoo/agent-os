@@ -57,9 +57,9 @@ Gate 0 当前事实：
 
 本节取代 2026-07-12 基线中的双 Loop、双 Runner、旧 Agent API、旧模块路径和旧规模事实。它已被下一节 2026-07-15 Wave 3 集成基线继续取代，只解释迁移历史。
 
-### 2026-07-15 Post Wave 3 Integration Re-baseline
+### Historical: 2026-07-15 Post Wave 3 Integration Re-baseline
 
-当前执行基线为：
+该检查点当时的执行基线为：
 
 - 分支：`feature/agentos-sdk-single-async-loop-impl`；
 - 提交：`5eca3b8`；
@@ -68,6 +68,19 @@ Gate 0 当前事实：
 - Ruff、compileall、module-size gate、`git diff --check` 和逐任务双层 Review 全部通过；
 - `persistence/serializers.py` 为 308 行，经职责审查仍是单一 SessionSnapshot codec Owner，已登记 `responsibility_review`，本 Phase 不机械拆分；
 - 当前只允许从 Task 13A 开始串行修改共享 Provider 核心，Task 14 最后完成阶段验收。
+
+### 2026-07-15 Phase 2 Closure Baseline
+
+本节取代上方 Post Wave 3 Integration Re-baseline，成为 Phase 2 的最终完成记录：
+
+- 分支：`feature/agentos-sdk-single-async-loop-impl`；
+- Tasks 8-12 已集成到 `5eca3b8`；Task 13 re-baseline 为 `696a8e8`；
+- Task 13A `model_task` 契约提交为 `2fdc5d1`；Task 13B legacy Provider message/Public API 原子收口提交为 `606d2ac`；
+- Task 14 Contract Matrix、审计修复和阶段验收提交为 `a57e40d`；
+- 最终目标集为 `537 passed`，全量为 `2370 passed, 11 skipped`，架构集为 `69 passed`；
+- Ruff、compileall、Public API、module-size、`git diff --check`、单 Loop、旧 Message/Provider、Context 和 `model_task` producer drift 门禁全部通过；
+- Task 13A、13B、14 均完成独立 Spec Compliance / Code Quality Review；Task 14 的 Important iterator finding 修复后二轮 Review 均为 `APPROVED`；
+- Phase 2 Acceptance Items 全部满足。Artifact Catalog/Mount/Session Scope、完整 Provider Adapter Contract、真实 Skill/Plan/Memory Projection 和 Local Public API 收敛继续分别属于 Phase 3A、3B、3C 和 Phase 4，不计为 Phase 2 遗留。
 
 ## Execution Waves And Ownership
 
@@ -83,40 +96,40 @@ Phase 2 使用“核心接口串行冻结、外围消费者受控并行、公共
 | Wave 3B | Task 9 | 已完成并集成 | Compression/Recall 定向测试、双层 Review、精确提交 |
 | Wave 3C | Task 10 | 已完成并集成 | Memory 定向测试、双层 Review、精确提交 |
 | Wave 3D | Tasks 11-12 | 已完成并集成 | Policy/Capability/Debug 定向测试、双层 Review |
-| Wave 4 | Task 13 | 当前串行执行 | `model_task` 契约、迁移桥和旧 Public API 零残留 |
-| Wave 5 | Task 14 | 串行，待执行 | Contract Matrix、全量门禁和阶段双层 Review |
+| Wave 4 | Task 13 | 已完成，`2fdc5d1`、`606d2ac` | `model_task` 契约、迁移桥和旧 Public API 零残留 |
+| Wave 5 | Task 14 | 已完成，`a57e40d` | Contract Matrix、全量门禁和阶段双层 Review |
 
-并行规则：
+实施期并行规则（已执行）：
 
 - Wave 0-2S 已完成，不得重新执行或恢复双 Loop/双 Runner 路径；
 - Wave 3 的 worktree/subagent 流程已经结束，不得重放或改写其已集成提交；
-- Task 13 共享 `providers/input.py`、`providers/base.py`、Adapter 和 Public API 边界，只允许单一 Owner 串行实施；独立 Reviewer 可以并行只读审查；
-- `88ae4ff` 只作为单一异步内核历史审计基线，当前实现与验证以 `5eca3b8` 及其后续精确提交为准；
-- Task 13 前必须重新运行旧名称 drift scan；Task 14 前不得保留任何未声明迁移桥。
+- Task 13 共享 `providers/input.py`、`providers/base.py`、Adapter 和 Public API 边界，已由单一 Owner 串行实施；独立 Reviewer 只读并行审查；
+- `88ae4ff` 和 `5eca3b8` 只作为历史审计/集成基线，Phase 2 最终实现与验证以 `a57e40d` 为准；
+- Task 13 启动前已重新运行旧名称 drift scan；Task 14 启动前已确认没有未声明迁移桥。
 
 ### Compatibility Budget
 
 本项目尚未生产推广，Phase 2 优先选择清晰的 breaking migration，不为历史调用方式设计长期兼容架构。允许的临时兼容仅有：
 
-1. `Message = StoredMessage` 同一类身份 alias，用于让分阶段提交保持可运行；不得增加 wrapper、subclass、双写、行为分支或第二套 serializer，并在 Task 13 删除；
+1. `Message = StoredMessage` 同一类身份 alias，用于让分阶段提交保持可运行；不得增加 wrapper、subclass、双写、行为分支或第二套 serializer；该 alias 已在 Task 13 删除；
 2. 现有 Public Attachment 行为的私有 ProviderInput 投影桥，仅维持当前图片能力，并在 Phase 3A 由正式 ContextMount 替换。
 
 除以上两项外，不得新增 deprecated facade、legacy DTO、旧新字段双读、自动猜测迁移、版本分支或 Adapter-specific 领域字段。任何新增兼容需求都必须先停止实现、更新 Spec 并获得批准；Phase 2 最终 Public API 只保留正式的 `StoredMessage` 和 `ProviderInputItem` 边界。
 
 ## Mandatory Execution Bootstrap And Review Gate
 
-Task 13 前依次完整读取 `AGENTS.md`、工程规范、两份批准 Spec、单一异步 QueryLoop Spec、已批准 addendum、本计划、`5eca3b8` 实施结果、将修改的源码/相邻测试及对应 `ai-knowledge/wiki` 页面，并重新发布 Scope Contract。上下文压缩、交接或 Agent 替换后重复。
+Task 13 启动前已按 Readiness Gate 完成规定上下文复核并重新发布 Scope Contract；该复核规则在后续上下文压缩和 Agent 交接时继续适用。
 
-剩余 Task 13-14 每个任务都必须执行 Red -> 最小实现 -> 模块 Green -> 独立 Spec Compliance Review -> 修复 Critical/Important -> 独立 Code Quality Review -> 精确暂存提交。两层 Reviewer 均 `APPROVED` 前不得提交或进入下一任务；禁止 `git add .`。Task 14 的阶段 Review 是跨模块额外验收，不替代逐任务门禁。
+Task 13-14 已按 Red -> 最小实现 -> 模块 Green -> 独立 Spec Compliance Review -> 修复 Critical/Important -> 独立 Code Quality Review -> 精确暂存提交完成。两层 Reviewer 均在提交前 `APPROVED`，实施过程未使用 `git add .`；Task 14 的跨模块阶段 Review 没有替代逐任务门禁。
 
 ## Scope Contract
 
-- **Phase / Active Specs:** Phase 2；两份 2026-07-10 已批准 Spec、2026-07-11 Message/Provider Contract Addendum、2026-07-12 单一异步 QueryLoop Spec，以及当前实现基线 `5eca3b8`。
+- **Phase / Active Specs:** Phase 2（已完成）；两份 2026-07-10 已批准 Spec、2026-07-11 Message/Provider Contract Addendum、2026-07-12 单一异步 QueryLoop Spec，以及最终实现基线 `a57e40d`。
 - **Acceptance Items:** `StoredMessage` 成为唯一业务消息 Public 名称；Persistence、Compression/Recall、Memory、Policy/Capability、Debug Projection 全部迁移到该真值类型；temporary recall 原子进入 temporary window；`model_task` 成为 Runtime 内部模型任务的唯一 Provider 输入；全部旧 Message/Provider DTO、serializer 和 Phase 2 迁移桥删除；stream/non-stream 共用同一 QueryLoop/AgentStream 事件源；Task 14 Contract Matrix 与全量门禁通过。
 - **Allowed Files:** Task 13-14 各节明确列出的 builder、messages、providers、attachments、observability、compression、example、测试、Public API inventory、module-size baseline 和稳定性文档。Task 13 只为内部模型输入和旧边界收口修改其明确列出的消费者，不改变对应模块的其他业务语义。
 - **Forbidden Files:** `runtime/query_loop.py`、`runtime/provider_attempt.py`、`runtime/agent.py`、`runtime/agent_stream.py`、`src/agentos/sync/**` 的新控制流；第二 Loop/Runner；Artifact Store/Runtime/Projection；Attachment 生命周期重写；Skill/Plan/Memory Projection；Provider-specific strict-role merge/File ID/cache 优化；Distributed/Transport 语义；Root API 既定范围之外的公共扩张。
 - **Dependency Boundaries:** `messages` 不导入 `providers`；`ProviderRequest.messages` 只接受 `ProviderInputItem`；Provider Input Projection 位于 `providers/input.py` 或 Request Builder 的纯函数边界；`model_task` 只由专用 Runtime 直接构建，QueryLoop RequestBuilder/Turn projector 不生成；Provider Adapter 不读取 MessageStore/ContextRuntime；Read Model 不读取 ProviderRequest Transcript。
-- **Completed In This Work Package:** Task 0-12、M2 Core Request Pipeline、业务/Provider/前端三类模型分离、每 attempt 重建、单一异步 QueryLoop/ProviderAttemptRunner、AgentStream 生命周期、`agentos.sync` 适配、WAITING、Tool Scheduler、Persistence、Compression/Recall、Memory、Policy/Capability 和 Debug Projection 边界。
+- **Completed In This Work Package:** Task 0-14、M2 Core Request Pipeline、业务/Provider/前端三类模型分离、每 attempt 重建、单一异步 QueryLoop/ProviderAttemptRunner、AgentStream 生命周期、`agentos.sync` 适配、WAITING、Tool Scheduler、Persistence、Compression/Recall、Memory、Policy/Capability、Debug Projection、internal `model_task`、legacy Provider message/Public API 收口和最终 Contract Matrix。
 - **Explicit Deferrals:** Artifact Catalog/Mount/Session Scope 到 Phase 3A；Phase 2 只保留现有 Public Attachment API 的私有 ProviderInput 兼容桥，不扩展新附件语义，并在 Phase 3A 由正式 ContextMount 替换；完整 Adapter Contract/严格角色合并到 Phase 3B；真实 Skill/Plan/Memory Projection 到 Phase 3C；Local Tool Scheduler/Public root 收敛到 Phase 4。`providers/openai_compatible.py` 已超过 800 行，Phase 2 禁止继续净增长；Phase 3B 必须先以现有 adapter tests 固化 payload、stream、timeout 和错误映射，再按顺序提取 `openai_compatible_wire.py`（request/tool/content 序列化纯函数）、`openai_compatible_parsing.py`（response/stream 解析纯函数）和 `openai_compatible_transport.py`（HTTP/timeout I/O），最后由 `openai_compatible.py` 只保留 Provider 门面与生命周期协调。拆分期间不得改变 Public API、retry 或 wire 语义，目标是门面文件 `<300` 且三个目标模块各 `<500`。
 - **Verification Commands:** 每任务定向 pytest；Phase 1+2 Contract Matrix；全量 pytest；compileall；ruff；public inventory generator；单 Loop/旧 Message/旧 Provider 名称 drift scan；module-size baseline generator/gate；diff check。
 
@@ -1001,11 +1014,11 @@ git commit -m "refactor: rebuild requests for every provider attempt"
 - Modify: `tests/persistence/test_serializers.py`
 - Modify: `tests/persistence/test_postgres_session_snapshot_persistence.py`
 
-- [ ] **Step 1: 写 StoredMessage/ArtifactRef round-trip Red 测试**
+- [x] **Step 1: 写 StoredMessage/ArtifactRef round-trip Red 测试**
 
 断言 `StoredMessage -> dict -> StoredMessage` 保留 tool calls、递归冻结 arguments 与 `ArtifactRef(artifact_id, filename, media_type)`；序列化结果不得包含 ContextSnapshot 或 Provider 元数据字段。未知字段按现有兼容策略处理，不在本任务发明新版本协议。
 
-- [ ] **Step 2: Red、最小迁移、Green**
+- [x] **Step 2: Red、最小迁移、Green**
 
 ```powershell
 python -m pytest tests/persistence/test_serializers.py tests/persistence/test_postgres_session_snapshot_persistence.py -q
@@ -1037,11 +1050,11 @@ git commit -m "refactor: persist stored message truth"
 - Modify: `tests/recall/test_query_recall.py`
 - Modify: `tests/recall/test_runtime.py`
 
-- [ ] **Step 1: 写算法等价与 temporary recall Red 测试**
+- [x] **Step 1: 写算法等价与 temporary recall Red 测试**
 
 使用现有 fixtures 的相同输入，断言迁移前后压缩选择、summary、Tool Pair eviction 和 recall 排序不变。新增 Red：`recall_context()` 成功返回前，所有 recalled message 已 hydrate 到 Store，并通过 `MessageRuntime.active_window.prepend_temporary(message_ids)` 原子加入 temporary window；重复 recall 仍按 Window 去重；未知 handle、Memory 查询失败或 hydrate 前失败不修改 Window。Router 仍返回标准 `ToolExecutionResult`，QueryLoop 仍把它 append 为 Stored tool result，temporary recalled 原文不能替代 Tool Result。
 
-- [ ] **Step 2: 机械迁移并验证**
+- [x] **Step 2: 机械迁移并验证**
 
 Compression 只替换领域类型名、tuple 适配和冻结 arguments 的只读访问，不改变阈值、排序或摘要 prompt。Recall 在 `_recall_by_handle/_recall_by_query` 完成全部读取/水合后、发出 `RecallContextInjectedEvent` 前调用同一个 `prepend_temporary(tuple(message.id ...))` API；若前序读取/水合失败则不调用，Window 不变。Window prepend 本身是无 I/O 的确定性操作；成功后返回 recalled messages，Router 按现有 `_format_recalled_context()` 生成标准 tool result。测试覆盖 handle/query、重复、失败不变和 tool result 仍存在。
 
@@ -1068,11 +1081,11 @@ git commit -m "refactor: migrate compression and recall messages"
 - Modify: `tests/memory/test_runtime.py`
 - Modify: `tests/memory/test_types.py`
 
-- [ ] **Step 1: 写新类型边界 Red 测试**
+- [x] **Step 1: 写新类型边界 Red 测试**
 
 新增断言 Memory store/runtime/serializer 的公开类型注解和返回实例都是 `StoredMessage`，源码不再从 `agentos.messages` 导入旧 `Message`。该断言在迁移前确定性失败；同时保留现有 serializer round-trip characterization tests，并增加带 `ArtifactRef`、嵌套 `ToolCall.arguments` 的 Memory message payload、Redis hot message/state 和 durable recall round-trip，证明恢复结果没有丢失业务消息真值。
 
-- [ ] **Step 2: 机械迁移并验证**
+- [x] **Step 2: 机械迁移并验证**
 
 迁移 `StoredMessage` 类型、tuple 和 `FrozenJsonObject` 的只读访问，不改变 hot/durable store 算法、Redis key/hash 结构、TTL、原子消费或 recall 排序。Memory message payload 必须增加 `artifact_refs` 业务字段，并与 canonical persistence serializer 使用同一 `ArtifactRef(artifact_id, filename, media_type)` 结构；读取既有 payload 时字段缺省为空。该加法字段是保存完整 `StoredMessage` 真值所必需的格式修正，不允许引入版本分支、双写或第二套 serializer。
 
@@ -1092,11 +1105,11 @@ git commit -m "refactor: migrate memory message consumers"
 - Modify: `tests/policies/test_token_budget_policy.py`
 - Modify: `tests/capabilities/test_tools.py`
 
-- [ ] **Step 1: 写旧类型消除 Red 测试**
+- [x] **Step 1: 写旧类型消除 Red 测试**
 
 断言 Budget policy 接收 `tuple[StoredMessage, ...]`，Router 追加的 tool result 是 `StoredMessage`，且两个模块源码不再导入旧 `Message`。迁移前至少旧 import/type assertion 失败，不把已通过的 characterization test 冒充 Red。
 
-- [ ] **Step 2: 最小迁移、模块验证和提交**
+- [x] **Step 2: 最小迁移、模块验证和提交**
 
 只替换领域类型与冻结 JSON 只读访问；Router 仍只 dispatch 一个 call，不增加 Scheduler、并发或 DAG。
 
@@ -1114,11 +1127,11 @@ git commit -m "refactor: migrate policy and capability messages"
 - Modify: `src/agentos/context/debug_projection.py`
 - Modify: `tests/context/test_debug_projection.py`
 
-- [ ] **Step 1: 写 StoredMessage 输入和 Provider metadata 排除 Red 测试**
+- [x] **Step 1: 写 StoredMessage 输入和 Provider metadata 排除 Red 测试**
 
 断言 debug projector 的输入实例为 `StoredMessage`、输出不包含 `origin/authority/persistence/visibility`，并且源码无旧 `Message` import；旧实现的类型/import 断言确定性失败。
 
-- [ ] **Step 2: 最小迁移、验证和提交**
+- [x] **Step 2: 最小迁移、验证和提交**
 
 Debug Projection 只用于调试，不成为 Provider context 或 Read Model 真值源。
 
@@ -1146,11 +1159,11 @@ Task 13 按 13A/13B 串行执行。13A 是加法契约，可独立 Green；13B �
 - Inspect/Run: `tests/runtime/test_provider_request_builder.py`
 - Inspect/Run: `tests/runtime/test_provider_request_rebuild.py`
 
-- [ ] **Step 1: 写 `model_task` 元数据与生产者限制 Red 测试**
+- [x] **Step 1: 写 `model_task` 元数据与生产者限制 Red 测试**
 
 断言 `ProviderInputKind` 增加且只增加 `model_task`；`ProviderInputItem.model_task(text)` 固定生成 `user/runtime/context_data/ephemeral/internal`，只接受文本，不允许 tool calls/tool_call_id；直接通过公开字段构造同矩阵 `model_task` 被拒绝；internal model task `ProviderRequest` 必须且只能包含一个 `model_task`、`tools=()`、`parallel_tool_calls=None`，混合 Turn item、多任务 item 或 Tool Schema 均被拒绝；`LlmCompressor` 的请求使用该平面，不再构造 `UserMessage`。Compressor task instruction 先构造 `SystemEnvelope` 再把 `.text` 写入 request.system，待压缩正文只存在于 `model_task`，不能进入 trusted template；现有 ProviderRequestBuilder/rebuild 测试同时证明普通 Turn 路径只产生 ContextSnapshot、business/tool/recall/context-mount，不产生 `model_task`。
 
-- [ ] **Step 2: 最小实现、验证、双层 Review 和提交**
+- [x] **Step 2: 最小实现、验证、双层 Review 和提交**
 
 `model_task` 工厂使用不导出的内部构造凭证，避免公开 dataclass 字段入口绕过受控 producer。`LlmCompressor.prompt_template` 是 SDK 默认值或应用开发者显式配置的 trusted task template；实现不得把 StoredMessage 内容、摘要候选或其他 Context Data 拼入 SystemEnvelope，只允许加入类型化计算出的输出预算。该平面复用统一 `ProviderRequest`/Provider Adapter/错误/超时/观测边界，但不进入 QueryLoop ProviderAttemptRunner、Hook、temporary receipt 或 retry 生命周期；本任务不新增 `ModelTaskProvider`、第二套 Adapter 协议或第二个 retry 控制流。当前只有 Compression 一个真实调用点；只有未来出现至少两个需要不同结构化输出、批处理、路由或生命周期语义的内部模型任务后，才允许通过新 Spec 设计 `ModelTaskRunner`。
 
@@ -1212,11 +1225,11 @@ git commit -m "feat: add model task provider input"
 - Inspect/Run: `tests/architecture/test_public_api_inventory.py`
 - Inspect/Run: `tests/architecture/test_public_api_inventory_cli.py`
 
-- [ ] **Step 1: 写唯一 ProviderInput 边界 Red 测试**
+- [x] **Step 1: 写唯一 ProviderInput 边界 Red 测试**
 
 断言 `ProviderRequest.messages` 只接受 `ProviderInputItem`；`Message`、`ProviderMessage`、`UserMessage`、`AssistantMessage`、`ToolResultMessage`、`ProviderMessageContent` 和 `provider_message_*` 均不再可导入；Adapter 源码不再包含 legacy DTO；Observability/example 只调用 `provider_input_to_dict()`；附件旧 `project_provider_messages()` 不存在，现有图片行为仍通过 ProviderRequestBuilder 调用 `_project_provider_inputs_compat()`；Public API inventory 与新模块路径、删除名称完全一致。
 
-- [ ] **Step 2: 原子删除 DTO、迁移 Adapter 与消费者**
+- [x] **Step 2: 原子删除 DTO、迁移 Adapter 与消费者**
 
 删除 `Message = StoredMessage`、`messages/_migration.py` 和全部 Provider message DTO/serializer。把 `ProviderFunctionSpec`、`ProviderToolSpec` 及 tool schema serializer 移到 `providers/tool_specs.py`；`providers/messages.py` 整体删除，避免留下名不副实模块。三个 Adapter 直接把 `ProviderInputItem` 转为 wire payload，不得先构造临时 DTO；`ProviderRequest.__post_init__` 只接受 `ProviderInputItem`。Observability 和 example 统一使用 `provider_input_to_dict()`。
 
@@ -1224,7 +1237,7 @@ git commit -m "feat: add model task provider input"
 
 同一原子提交更新 `docs/api-stability.md`、生成 Public API inventory，并更新 Public API tests。`AgentBuilder` 不依赖具体 Adapter，不硬编码 Skill/Plan/Memory/Artifact projection；若已满足契约，不为制造 diff 修改生产文件。
 
-- [ ] **Step 3: 模块 Green、双层 Review 和原子提交**
+- [x] **Step 3: 模块 Green、双层 Review 和原子提交**
 
 ```powershell
 python -m pytest tests/messages tests/tokens/test_counter.py tests/providers tests/compression/test_llm_compressor.py tests/attachments tests/observability tests/runtime/test_query_loop_hooks.py tests/runtime/test_turn_lifecycle.py tests/runtime/test_agent_builder.py tests/examples/test_small_openai_agent.py -q
@@ -1329,11 +1342,11 @@ temporary receipt 的运行时类型封锁。Code Quality Review 还发现 `Stor
 校验；不得借机改变 JSON 语义、token 计算策略、Provider payload、Message ID、
 持久化 schema 或其他 Public API。
 
-- [ ] **Step 1: 增加跨边界契约矩阵**
+- [x] **Step 1: 增加跨边界契约矩阵**
 
 Contract Matrix 必须覆盖：六种 ProviderInput kind 的全部合法矩阵与代表性非法交叉组合；Snapshot 固定元数据与首位顺序；Tool Pair 邻接；`model_task` 固定元数据、文本限制、唯一受控工厂和公开字段构造拒绝；Agent Turn 与 internal model task 两种 ProviderRequest 平面互斥；QueryLoop RequestBuilder/Turn projector 不生成 `model_task`；`model_task` 不进入 MessageStore、ContextSnapshot、Conversation Read Model 或 temporary receipt；Read Model 明确拒绝 ProviderRequest/ProviderInputItem/internal transcript；每 physical retry fresh request；before-hook 替换清空 receipt；after-hook/usability validation 前不消费；按 receipt ID 精确消费；visible delta 后禁止 retry；`stream=False`/`stream=True` 共用同一事件源且最终结果一致；native async、async complete、同步 stream、同步 complete Provider capability 均进入同一 `ProviderAttemptRunner`；StoredMessage 无 Provider metadata；Tool arguments/schema parameters 深不可变；Builder 不依赖具体 Adapter。
 
-- [ ] **Step 2: 运行目标和全量验证**
+- [x] **Step 2: 运行目标和全量验证**
 
 ```powershell
 python -m pytest tests/context tests/messages tests/tokens/test_counter.py tests/providers/test_provider_input_contract.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py tests/runtime/test_provider_attempt_candidate.py tests/runtime/test_query_loop_contract.py tests/runtime/test_agent_api.py tests/runtime/test_agent_stream_api.py tests/runtime/test_message_provider_boundary_contract.py -q
@@ -1462,18 +1475,18 @@ git diff --check
 
 Expected: 全部 PASS；`src` 的旧 Message/Provider DTO、serializer 和投影桥严格零命中；`tests` 只允许 `tests/architecture/test_public_api.py` 中的 Public API 负向断言，其他测试不得继续消费旧 DTO；Context drift 只允许 Phase 3A 的 `AttachmentLifecycle` 和两个明确负向测试；旧 Loop/Runner 在 `src tests` 零命中；Phase 2 的 `.model_task()` 源码 producer 只有 `LlmCompressor`。Docs scan 的命中必须逐条落在上述精确历史/负向允许清单，不得用宽泛 glob 跳过全部活跃文档。最终规模：`query_loop.py <= 493`、`provider_attempt.py <= 145`、`agent.py <= 144`、`agent_stream.py <= 249`、`providers/tool_specs.py < 200`；`providers/messages.py` 不存在；`builder.py` 不净增职责且不超过 `280` 行。自动生成的 module-size baseline 和门禁是最终规模证据。
 
-- [ ] **Step 3: Spec Compliance Review**
+- [x] **Step 3: Spec Compliance Review**
 
 Reviewer 独立检查：六种 ProviderInput 的 Authority/Persistence/Visibility 矩阵；`model_task` 受控生产者和隔离边界；ArtifactRef ownership；Snapshot/Tool Pair/ContextMount 预留顺序；每 attempt 重建；temporary 消费；Read Model 默认拒绝；Phase 3B 未偷跑；无 silent deferral。
 
-- [ ] **Step 4: Code Quality Review**
+- [x] **Step 4: Code Quality Review**
 
 Reviewer 独立检查：Store/Runtime/Projection 单一职责；`model_task` 不形成第二套 Provider/Retry 控制流；无可变 list 穿过 frozen 边界；无 provider import 反向进入 messages；只有一个 ProviderAttemptRunner 和一个 QueryLoop 控制流；`agentos.sync` 不复制 Kernel 语义；大文件不增长、`providers/messages.py` 已删除且 `providers/tool_specs.py` 只承载 tool schema；测试不依赖 sleep；错误不泄露敏感内容。
 
-- [ ] **Step 5: 阶段提交**
+- [x] **Step 5: 阶段提交**
 
 ```powershell
-git add -- src/agentos/_json_values.py src/agentos/providers/json_values.py src/agentos/capabilities/executor.py src/agentos/capabilities/mcp.py src/agentos/capabilities/router.py src/agentos/capabilities/tools.py src/agentos/memory/serializers.py src/agentos/messages/runtime.py src/agentos/messages/store.py src/agentos/messages/types.py src/agentos/observability/snapshots.py src/agentos/persistence/serializers.py src/agentos/providers/anthropic.py src/agentos/providers/input.py src/agentos/providers/input_serialization.py src/agentos/providers/openai.py src/agentos/providers/openai_compatible.py src/agentos/providers/tool_specs.py src/agentos/runtime/provider_request_builder.py src/agentos/runtime/query_loop_support.py src/agentos/tokens/counter.py tests/messages/test_runtime.py tests/messages/test_stored_message.py tests/observability/test_snapshots.py tests/persistence/test_postgres_session_snapshot_persistence.py tests/persistence/test_serializers.py tests/runtime/test_message_provider_boundary_contract.py tests/tokens/test_counter.py tests/test_frozen_json.py docs/api-stability.md docs/governance/agentos-module-size-baseline.json docs/superpowers/specs/2026-07-11-agentos-level1-parallel-tool-calls-design.md docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md
+git add -- src/agentos/_json_values.py src/agentos/capabilities/executor.py src/agentos/capabilities/mcp.py src/agentos/capabilities/router.py src/agentos/capabilities/tools.py src/agentos/memory/serializers.py src/agentos/messages/runtime.py src/agentos/messages/store.py src/agentos/messages/types.py src/agentos/observability/snapshots.py src/agentos/persistence/serializers.py src/agentos/providers/anthropic.py src/agentos/providers/input.py src/agentos/providers/input_serialization.py src/agentos/providers/openai.py src/agentos/providers/openai_compatible.py src/agentos/providers/tool_specs.py src/agentos/runtime/provider_request_builder.py src/agentos/runtime/query_loop_support.py src/agentos/tokens/counter.py tests/messages/test_runtime.py tests/messages/test_stored_message.py tests/observability/test_snapshots.py tests/persistence/test_postgres_session_snapshot_persistence.py tests/persistence/test_serializers.py tests/runtime/test_message_provider_boundary_contract.py tests/tokens/test_counter.py tests/test_frozen_json.py docs/api-stability.md docs/governance/agentos-module-size-baseline.json docs/superpowers/specs/2026-07-11-agentos-level1-parallel-tool-calls-design.md docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md
 git commit -m "refactor: enforce message provider boundary contract"
 ```
 
@@ -1486,6 +1499,6 @@ git commit -m "refactor: enforce message provider boundary contract"
 - **Plan completeness audit:** 已逐步检查，所有行为步骤均含具体输入、实现边界、命令和预期结果。
 - **Type consistency:** `StoredMessage` 只在 MessageStore；`ProviderInputItem` 只在 ProviderRequest；`model_task` 只由专用 Runtime 直接构建且不进入 Turn projection；`ArtifactRef` 单一定义；`ProviderRequest.messages/tools` 始终 tuple；`ContextSnapshot` 固定工厂元数据。
 - **File-size review:** `query_loop.py <= 493`、`provider_attempt.py <= 145`、`agent.py <= 144`、`agent_stream.py <= 249`、`providers/tool_specs.py < 200` 且 `providers/messages.py` 已删除；`builder.py` 仅保留组装且不得超过 `280` 行。任何目标未满足都不能通过 Phase 2 DoD。
-- **Execution topology review:** Tasks 0-7 和单一异步内核重构已完成，`88ae4ff` 仅作为历史代码审计基线；Tasks 8-10 的独立工作流与 Tasks 11-12 已全部集成到 `5eca3b8` 并通过 Wave 3 门禁；Tasks 13A/13B 在当前集成分支串行执行，Task 14 最后完成阶段验收。
+- **Execution topology review:** Tasks 0-7 和单一异步内核重构已完成，`88ae4ff` 仅作为历史代码审计基线；Tasks 8-12 已集成到 `5eca3b8` 并通过 Wave 3 门禁；Task 13A/13B 已由 `2fdc5d1`、`606d2ac` 串行完成，Task 14 已由 `a57e40d` 完成阶段验收。
 - **Re-baseline review:** 48 个旧边界依赖文件、101 个 Request 构造/引用位置和四个规模基线已经写入 Task 0；测试通配符已替换为实际文件路径。
 - **Rollback boundary:** `model_task` 先作为受控工厂加法引入并单独迁移 LlmCompressor；随后在同一原子提交删除 legacy Provider DTO/serializer、更新 Public API tests/stability/inventory。Persistence、Compression/Recall、Memory、Policy/Capability、Debug Projection、Attempt Runner、Public cleanup 分别提交。每个任务命令都包含受影响模块回归；Task 13 删除全部 Phase 2 Message/Provider 迁移桥，唯独承载既有 Public Attachment 行为的私有兼容桥按声明保留到 Phase 3A，因此每一提交保持 Green 且可精确回滚。
