@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agentos.capabilities.skill_projection import project_available_skills
-from agentos.capabilities.skill_trust import SkillTrustPolicy
+from agentos.capabilities.skill_trust import (
+    SkillTrustPolicy,
+    SkillVerificationSubject,
+)
 from agentos.capabilities.skill_types import (
     SkillLoadResult,
     SkillMetadata,
@@ -119,7 +122,15 @@ class SkillRuntime:
         loaded: SkillLoadResult,
     ) -> SkillTrustDecision:
         decision = self._trust_policy.verify(metadata, loaded.subject)
-        if not decision.verified or decision.subject != loaded.subject:
+        if (
+            type(decision) is not SkillTrustDecision
+            or type(decision.verified) is not bool
+            or not isinstance(decision.policy_id, str)
+            or not decision.policy_id.strip()
+            or not isinstance(decision.subject, SkillVerificationSubject)
+            or not decision.verified
+            or decision.subject != loaded.subject
+        ):
             raise SkillTrustError("skill trust verification failed")
         return decision
 

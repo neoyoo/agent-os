@@ -87,6 +87,31 @@ def test_skill_metadata_requires_boolean_loadable(loadable: object) -> None:
         )
 
 
+@pytest.mark.parametrize("description", [None, 1, True])
+def test_skill_metadata_requires_string_description(description: object) -> None:
+    with pytest.raises(ValueError, match="skill description must be a string"):
+        SkillMetadata(
+            name="review",
+            description=description,  # type: ignore[arg-type]
+            loadable=True,
+            trust="trusted",
+        )
+
+
+@pytest.mark.parametrize("field_name", ["description", "when_to_use", "content"])
+def test_skill_definition_requires_string_text_fields(field_name: str) -> None:
+    values = {
+        "name": "review",
+        "description": "Review code.",
+        "when_to_use": "Review changes.",
+        "content": "# Review",
+    }
+    values[field_name] = None
+
+    with pytest.raises(ValueError, match=f"skill {field_name} must be a string"):
+        SkillDefinition(**values)  # type: ignore[arg-type]
+
+
 def test_filesystem_skill_metadata_defaults_to_untrusted(tmp_path: Path) -> None:
     (tmp_path / "review.md").write_text(
         "---\nname: review\ndescription: Review code.\n---\n# Review\n",
@@ -142,6 +167,34 @@ def test_skill_verification_subject_rejects_empty_or_invalid_identity(
 
     with pytest.raises(ValueError, match="skill verification subject"):
         SkillVerificationSubject(**subject)
+
+
+@pytest.mark.parametrize(
+    ("verified", "policy_id", "subject"),
+    [
+        ("yes", "tests", None),
+        (True, "", None),
+        (True, "tests", "not-a-subject"),
+    ],
+)
+def test_skill_trust_decision_rejects_invalid_policy_values(
+    verified: object,
+    policy_id: str,
+    subject: object,
+) -> None:
+    valid_subject = SkillVerificationSubject.from_content(
+        source_id="builtin",
+        skill_name="review",
+        source_revision="1",
+        content="# Review",
+    )
+
+    with pytest.raises(ValueError, match="skill trust decision is invalid"):
+        SkillTrustDecision(
+            verified=verified,  # type: ignore[arg-type]
+            policy_id=policy_id,
+            subject=valid_subject if subject is None and policy_id == "" else subject,  # type: ignore[arg-type]
+        )
 
 
 def test_registry_rejects_duplicate_names_across_sources() -> None:

@@ -123,6 +123,24 @@ def test_builtin_is_not_trusted_without_verified_policy_decision() -> None:
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("result_kind", ["wrong-type", "forged-decision"])
+def test_invalid_trust_policy_result_fails_closed(result_kind: str) -> None:
+    class InvalidPolicy:
+        def verify(self, metadata, subject):  # type: ignore[no-untyped-def]
+            if result_kind == "wrong-type":
+                return object()
+            decision = SkillTrustDecision(True, "tests", subject)
+            object.__setattr__(decision, "verified", "yes")
+            return decision
+
+    async def run() -> None:
+        runtime = await runtime_for(definition(), InvalidPolicy())  # type: ignore[arg-type]
+        with pytest.raises(SkillTrustError, match="skill trust verification failed"):
+            await runtime.load("session-a", "review")
+
+    asyncio.run(run())
+
+
 def test_untrusted_skill_body_stays_in_bounded_tool_result() -> None:
     async def run() -> tuple[SkillRuntime, str]:
         runtime = await runtime_for(definition(trust="untrusted"), MutableTrustPolicy())

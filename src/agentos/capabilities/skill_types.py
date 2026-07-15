@@ -36,6 +36,8 @@ class SkillMetadata:
 
     def __post_init__(self) -> None:
         _require_skill_name(self.name)
+        if not isinstance(self.description, str):
+            raise ValueError("skill description must be a string")
         if type(self.loadable) is not bool:
             raise ValueError("skill loadable must be a boolean")
         _require_skill_trust(self.trust)
@@ -47,6 +49,12 @@ class SkillDescriptor:
 
     metadata: SkillMetadata
     when_to_use: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.metadata, SkillMetadata):
+            raise ValueError("skill descriptor metadata is invalid")
+        if not isinstance(self.when_to_use, str):
+            raise ValueError("skill when_to_use must be a string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +71,13 @@ class SkillDefinition:
 
     def __post_init__(self) -> None:
         _require_skill_name(self.name)
+        for field_name, value in (
+            ("description", self.description),
+            ("when_to_use", self.when_to_use),
+            ("content", self.content),
+        ):
+            if not isinstance(value, str):
+                raise ValueError(f"skill {field_name} must be a string")
         if self.source not in ("builtin", "filesystem", "learned"):
             raise ValueError("invalid skill source")
         _require_skill_trust(self.trust)
@@ -91,6 +106,17 @@ class SkillTrustDecision:
     policy_id: str
     subject: SkillVerificationSubject
 
+    def __post_init__(self) -> None:
+        from agentos.capabilities.skill_trust import SkillVerificationSubject
+
+        if (
+            type(self.verified) is not bool
+            or not isinstance(self.policy_id, str)
+            or not self.policy_id.strip()
+            or not isinstance(self.subject, SkillVerificationSubject)
+        ):
+            raise ValueError("skill trust decision is invalid")
+
 
 @dataclass(frozen=True, slots=True)
 class SkillLoadResult:
@@ -100,6 +126,19 @@ class SkillLoadResult:
     content: str
     metadata: SkillMetadata
     subject: SkillVerificationSubject
+
+    def __post_init__(self) -> None:
+        from agentos.capabilities.skill_trust import SkillVerificationSubject
+
+        _require_skill_name(self.name)
+        if not isinstance(self.content, str):
+            raise ValueError("skill content must be a string")
+        if not isinstance(self.metadata, SkillMetadata):
+            raise ValueError("skill load metadata is invalid")
+        if not isinstance(self.subject, SkillVerificationSubject):
+            raise ValueError("skill load verification subject is invalid")
+        if self.metadata.name != self.name or self.subject.skill_name != self.name:
+            raise ValueError("skill load identity mismatch")
 
     def render_tool_result(
         self,
