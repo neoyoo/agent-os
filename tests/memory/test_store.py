@@ -120,9 +120,7 @@ def test_in_memory_store_search_isolates_session_candidates() -> None:
     candidates = store.search(selection_context(), candidate_limit=10)
 
     assert [candidate.record.handle for candidate in candidates] == ["mem_local"]
-    assert all(
-        candidate.record.session_id == "session_1" for candidate in candidates
-    )
+    assert all(candidate.record.session_id == "session_1" for candidate in candidates)
 
 
 def test_in_memory_store_search_orders_score_then_handle() -> None:

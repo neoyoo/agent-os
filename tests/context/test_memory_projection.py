@@ -96,16 +96,14 @@ def test_memory_projection_uses_fixed_safe_xml_and_complete_variants() -> None:
     ]
     assert [variant.omitted_count for variant in projection.variants] == [0, 1, 2]
     assert all(
-        set(dict(item.attributes))
-        == {"handle", "kind", "category", "instructional"}
+        set(dict(item.attributes)) == {"handle", "kind", "category", "instructional"}
         for item in projection.variants[0].element.children
     )
 
     snapshot = ContextSnapshotRenderer(RecordingTokenCounter(1)).render(projections)
     assert (
         '<memory handle="mem_1" kind="semantic" category="fact" '
-        'instructional="false">Use &lt;XML&gt; &amp; "quotes".</memory>'
-        in snapshot.xml
+        'instructional="false">Use &lt;XML&gt; &amp; "quotes".</memory>' in snapshot.xml
     )
     for hidden in (
         "internal ranking evidence",
