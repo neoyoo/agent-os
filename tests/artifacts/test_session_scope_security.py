@@ -91,3 +91,32 @@ def test_deleted_and_cross_session_cursor_anchor_have_same_error() -> None:
             match="^invalid artifact cursor$",
         ):
             store.list("session-1", cursor=cursor)
+
+
+def test_cursor_rejects_non_canonical_equivalent_encodings() -> None:
+    store = InMemoryArtifactStore()
+    put(store, "session-1")
+    put(store, "session-1")
+    canonical = store.list("session-1", limit=1).next_cursor
+    assert canonical is not None
+    payload = json.loads(
+        base64.urlsafe_b64decode(canonical + "=" * (-len(canonical) % 4))
+    )
+    non_canonical_json = json.dumps(
+        {"version": payload["version"], "artifact_id": payload["artifact_id"]},
+        separators=(", ", ": "),
+    ).encode("utf-8")
+    variants = (
+        canonical + "=",
+        base64.urlsafe_b64encode(non_canonical_json).decode("ascii").rstrip("="),
+        base64.b64encode(non_canonical_json).decode("ascii").rstrip("="),
+    )
+
+    for cursor in variants:
+        with pytest.raises(
+            ArtifactValidationError,
+            match="^invalid artifact cursor$",
+        ):
+            store.list("session-1", cursor=cursor)
+
+    assert store.list("session-1", cursor=canonical).items

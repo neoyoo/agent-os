@@ -185,6 +185,8 @@ def _decode_cursor(cursor: str) -> str:
         validate_artifact_id(artifact_id)
     except ArtifactValidationError:
         raise _invalid_cursor() from None
+    if cursor != _encode_cursor(artifact_id):
+        raise _invalid_cursor()
     return artifact_id
 
 
