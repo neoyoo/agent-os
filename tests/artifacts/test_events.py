@@ -102,6 +102,31 @@ def test_load_emits_requested_then_mounted_and_duplicate_is_idempotent() -> None
     ]
 
 
+def test_load_upgrades_user_mount_with_observable_unmount_and_mount() -> None:
+    target, event_bus = runtime()
+    record = upload(target)
+    target.mount_user_upload(record.id)
+    event_bus.events.clear()
+
+    target.load_attachment(record.id)
+
+    assert event_bus.events == [
+        ArtifactLoadRequestedEvent(session_id="session-1", handle=record.id),
+        ArtifactUnmountedEvent(
+            session_id="session-1",
+            handle=record.id,
+            reason="user_upload",
+        ),
+        ArtifactMountedEvent(
+            session_id="session-1",
+            handle=record.id,
+            filename="drawing.png",
+            media_type="image/png",
+            reason="tool_result",
+        ),
+    ]
+
+
 def test_valid_unknown_load_emits_only_requested() -> None:
     target, event_bus = runtime()
     missing = "art_00000000-0000-4000-8000-000000000001"

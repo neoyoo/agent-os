@@ -219,8 +219,13 @@ class ArtifactRuntime:
         reason: ArtifactMountReason,
     ) -> tuple[ContextMount, ArtifactRecord, bool]:
         record = self._store.get(self._session_id, artifact_id)
-        for mount in self._mounts:
+        for index, mount in enumerate(self._mounts):
             if mount.artifact_id == artifact_id:
+                if mount.reason == "user_upload" and reason == "tool_result":
+                    upgraded = ContextMount(artifact_id=artifact_id, reason=reason)
+                    self._mounts[index] = upgraded
+                    self._emit_unmounted(mount)
+                    return upgraded, record, True
                 return mount, record, False
         mount = ContextMount(artifact_id=artifact_id, reason=reason)
         self._mounts.append(mount)

@@ -119,7 +119,7 @@ def test_load_attachment_mounts_tool_result_and_returns_fixed_text() -> None:
     assert target.active_mounts()[0].reason == "tool_result"
 
 
-def test_mount_operations_are_idempotent_and_preserve_first_reason() -> None:
+def test_load_attachment_upgrades_user_mount_to_tool_result_without_duplicate() -> None:
     target = runtime()
     record = upload(target)
 
@@ -128,8 +128,21 @@ def test_mount_operations_are_idempotent_and_preserve_first_reason() -> None:
     target.load_attachment(record.id)
 
     assert first is second
-    assert target.active_mounts() == (first,)
-    assert first.reason == "user_upload"
+    assert len(target.active_mounts()) == 1
+    assert target.active_mounts()[0].reason == "tool_result"
+
+
+def test_user_mount_does_not_downgrade_existing_tool_result_mount() -> None:
+    target = runtime()
+    record = upload(target)
+    target.load_attachment(record.id)
+
+    tool_mount = target.active_mounts()[0]
+    user_mount = target.mount_user_upload(record.id)
+
+    assert user_mount is tool_mount
+    assert target.active_mounts() == (tool_mount,)
+    assert tool_mount.reason == "tool_result"
 
 
 def test_mount_user_upload_does_not_create_artifact() -> None:
