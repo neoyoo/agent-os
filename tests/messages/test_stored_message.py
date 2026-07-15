@@ -1,12 +1,13 @@
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, asdict, fields
+import importlib
+import importlib.util
 import pickle
 
 import pytest
 
 from agentos.artifacts import ArtifactRef
-from agentos.messages import Message, MessageStore, StoredMessage, ToolCall
-from agentos.messages.types import Message as TypesMessage
+from agentos.messages import MessageStore, StoredMessage, ToolCall
 
 
 def test_stored_message_is_frozen_and_normalizes_tuple_boundaries() -> None:
@@ -75,16 +76,11 @@ def test_artifact_ref_and_stored_message_exclude_runtime_provider_fields() -> No
     assert not hasattr(StoredMessage, "to_provider_dict")
 
 
-def test_legacy_message_name_is_the_same_class_and_store_truth() -> None:
-    assert Message is StoredMessage
-    assert TypesMessage is StoredMessage
+def test_legacy_message_name_and_migration_module_are_removed() -> None:
+    messages = importlib.import_module("agentos.messages")
 
-    legacy_value = Message(id="msg_7", role="user", content="legacy import")
-    store = MessageStore()
-    store.put(legacy_value)
-
-    assert store.get("msg_7") is legacy_value
-    assert isinstance(store.get("msg_7"), StoredMessage)
+    assert not hasattr(messages, "Message")
+    assert importlib.util.find_spec("agentos.messages._migration") is None
 
 
 @pytest.mark.parametrize(

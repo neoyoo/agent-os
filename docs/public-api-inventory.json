@@ -103,7 +103,7 @@
           "stability": "stable"
         },
         "ProviderRequestBuilder": {
-          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.messages.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, attachment_runtime: object | None = None, snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
+          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.tool_specs.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, attachment_runtime: object | None = None, snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
           "stability": "stable"
         },
         "QueryLoop": {
@@ -2402,7 +2402,7 @@
           "stability": "experimental"
         },
         "ProviderRequestBuilder": {
-          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.messages.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, attachment_runtime: object | None = None, snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
+          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.tool_specs.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, attachment_runtime: object | None = None, snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
           "stability": "stable"
         },
         "ProviderRequestBuiltEvent": {

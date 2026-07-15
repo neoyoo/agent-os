@@ -7,7 +7,7 @@ from agentos.attachments.types import (
     ProviderFileSource,
     UrlSource,
 )
-from agentos.providers.messages import (
+from agentos.providers.input import (
     FilePart,
     ImagePart,
     ProviderContentPart,

@@ -297,7 +297,7 @@ def test_cleanup_clears_continuation_notices_and_loaded_attachments() -> None:
     lifecycle.cleanup(is_continuation=True)
 
     assert context.snapshot().runtime_notices == ()
-    assert attachments.project_provider_messages([]) == []
+    assert attachments._project_provider_inputs_compat(()) == ()
 
 
 def test_commit_waiting_commits_before_state_transition_and_event_return() -> None:

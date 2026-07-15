@@ -1,3 +1,4 @@
+import importlib.util
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -7,109 +8,35 @@ from agentos.context import ContextRuntime, ContextSnapshotRenderer
 from agentos.context.projection import project_context_state
 from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import (
-    AssistantMessage,
     ProviderFunctionSpec,
+    ProviderInputItem,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
-    ToolResultMessage,
-    UserMessage,
-    provider_message_from_dict,
-    provider_message_to_dict,
     provider_tool_spec_from_dict,
     provider_tool_spec_to_dict,
 )
+from agentos.providers.input_serialization import provider_input_to_dict
 from agentos.runtime import ProviderRequestBuilder
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
 
 
-def test_provider_messages_are_frozen_slotted_dataclasses() -> None:
-    message = UserMessage(content="hello")
+def test_provider_input_items_are_frozen_slotted_dataclasses() -> None:
+    item = ProviderInputItem.business_user("hello")
 
     with pytest.raises(FrozenInstanceError):
-        message.content = "mutated"  # type: ignore[misc]
+        item.content = (TextPart("mutated"),)  # type: ignore[misc]
 
-    assert not hasattr(message, "__dict__")
-
-
-def test_provider_message_types_are_importable_from_provider_namespace() -> None:
-    from agentos.providers import AssistantMessage as NamespaceAssistantMessage
-    from agentos.providers import ProviderToolSpec as NamespaceProviderToolSpec
-    from agentos.providers import UserMessage as NamespaceUserMessage
-
-    assert NamespaceUserMessage is UserMessage
-    assert NamespaceAssistantMessage is AssistantMessage
-    assert NamespaceProviderToolSpec is ProviderToolSpec
+    assert not hasattr(item, "__dict__")
 
 
-def test_provider_message_round_trips_openai_style_dicts() -> None:
-    assistant = AssistantMessage(
-        content="",
-        tool_calls=(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "README.md"},
-            ),
-        ),
-    )
-
-    as_dict = provider_message_to_dict(assistant)
-    restored = provider_message_from_dict(as_dict)
-
-    assert as_dict == {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [
-            {
-                "id": "call_1",
-                "name": "read_file",
-                "arguments": {"path": "README.md"},
-            },
-        ],
-    }
-    assert restored == assistant
-    assert provider_message_from_dict(
-        {"role": "tool", "tool_call_id": "call_1", "content": "done"},
-    ) == ToolResultMessage(tool_call_id="call_1", content="done")
+def test_legacy_provider_message_module_is_removed() -> None:
+    assert importlib.util.find_spec("agentos.providers.messages") is None
 
 
-def test_provider_message_null_content_normalizes_to_empty_string() -> None:
-    assistant = provider_message_from_dict(
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "name": "read_file",
-                    "arguments": {"path": "README.md"},
-                },
-            ],
-        },
-    )
-
-    assert assistant == AssistantMessage(
-        content="",
-        tool_calls=(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "README.md"},
-            ),
-        ),
-    )
-    assert provider_message_from_dict({"role": "user", "content": None}) == UserMessage(
-        content="",
-    )
-    assert provider_message_from_dict(
-        {"role": "tool", "tool_call_id": "call_1", "content": None},
-    ) == ToolResultMessage(tool_call_id="call_1", content="")
-
-
-def test_provider_message_to_dict_redacts_attachment_content_parts() -> None:
+def test_provider_input_serialization_redacts_attachment_content_parts() -> None:
     attachment = Attachment(
         handle="att_1",
         filename="diagram.png",
@@ -118,9 +45,9 @@ def test_provider_message_to_dict_redacts_attachment_content_parts() -> None:
         source=BytesSource(b"image-bytes"),
     )
 
-    result = provider_message_to_dict(
-        UserMessage(
-            content=(
+    result = provider_input_to_dict(
+        ProviderInputItem.context_mount(
+            (
                 TextPart("分析图片"),
                 ImagePart(attachment),
             ),
@@ -144,28 +71,6 @@ def test_provider_message_to_dict_redacts_attachment_content_parts() -> None:
         ],
     }
     assert "image-bytes" not in str(result)
-
-
-@pytest.mark.parametrize(
-    "tool_call",
-    [
-        {},
-        {"id": "call_1"},
-        {"name": "read_file"},
-        {"id": None, "name": "read_file"},
-        {"id": "call_1", "name": None},
-        {"id": "call_1", "name": "read_file", "arguments": []},
-    ],
-)
-def test_provider_message_rejects_malformed_tool_calls(tool_call: object) -> None:
-    with pytest.raises(ValueError, match="provider tool call"):
-        provider_message_from_dict(
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [tool_call],
-            },
-        )
 
 
 def test_provider_tool_call_deepcopies_arguments() -> None:
@@ -228,7 +133,7 @@ def test_provider_tool_spec_preserves_canonical_function_schema() -> None:
 def test_provider_request_normalizes_typed_sequences_to_tuples() -> None:
     request = ProviderRequest(
         system="system",
-        messages=[UserMessage(content="hello")],
+        messages=[ProviderInputItem.business_user("hello")],
         tools=[
             ProviderToolSpec(
                 function=ProviderFunctionSpec(
@@ -240,7 +145,7 @@ def test_provider_request_normalizes_typed_sequences_to_tuples() -> None:
         ],
     )
 
-    assert request.messages == (UserMessage(content="hello"),)
+    assert request.messages == (ProviderInputItem.business_user("hello"),)
     assert request.tools == (
         ProviderToolSpec(
             function=ProviderFunctionSpec(
@@ -252,34 +157,12 @@ def test_provider_request_normalizes_typed_sequences_to_tuples() -> None:
     )
 
 
-def test_provider_request_bridge_copies_mutable_message_inputs() -> None:
-    content = [TextPart("before")]
-    tool_calls = [
-        ProviderToolCall(
-            id="call_1",
-            name="lookup",
-            arguments={"query": "before"},
-        ),
-    ]
-    request = ProviderRequest(
-        system="system",
-        messages=[
-            UserMessage(content=content),  # type: ignore[arg-type]
-            AssistantMessage(tool_calls=tool_calls),  # type: ignore[arg-type]
-        ],
-    )
-
-    content.append(TextPart("after"))
-    tool_calls.clear()
-
-    assert request.messages[0].content == (TextPart("before"),)
-    assert request.messages[1].tool_calls == (
-        ProviderToolCall(
-            id="call_1",
-            name="lookup",
-            arguments={"query": "before"},
-        ),
-    )
+def test_provider_request_rejects_non_provider_input_messages() -> None:
+    with pytest.raises(TypeError, match="ProviderInputItem"):
+        ProviderRequest(
+            system="system",
+            messages=({"role": "user", "content": "hello"},),  # type: ignore[arg-type]
+        )
 
 
 def test_provider_request_builder_returns_provider_input_items() -> None:
@@ -309,6 +192,7 @@ def test_provider_request_builder_returns_provider_input_items() -> None:
         )(),
     ).build().request
 
+    assert all(type(message) is ProviderInputItem for message in request.messages)
     assert [message.kind for message in request.messages] == [
         "context_snapshot",
         "business_message",

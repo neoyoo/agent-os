@@ -69,7 +69,7 @@
     },
     {
       "path": "src/agentos/providers/openai_compatible.py",
-      "lines": 884,
+      "lines": 875,
       "gate": "no_new_responsibility"
     },
     {
@@ -149,7 +149,7 @@
     },
     {
       "path": "src/agentos/examples/small_openai_agent.py",
-      "lines": 443,
+      "lines": 439,
       "gate": "responsibility_review"
     },
     {
@@ -180,11 +180,6 @@
     {
       "path": "src/agentos/testing/contracts/plan_claim_store.py",
       "lines": 338,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/providers/messages.py",
-      "lines": 335,
       "gate": "responsibility_review"
     },
     {

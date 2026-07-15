@@ -12,7 +12,7 @@ from agentos.providers import (
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
-    UserMessage,
+    ProviderInputItem,
 )
 from agentos.runtime import (
     AgentResult,
@@ -77,7 +77,7 @@ def test_before_provider_call_hook_can_modify_request() -> None:
             payload={
                 "request": ProviderRequest(
                     system="modified system",
-                    messages=[UserMessage(content="modified user")],
+                    messages=[ProviderInputItem.business_user("modified user")],
                 ),
             },
         )
@@ -89,7 +89,9 @@ def test_before_provider_call_hook_can_modify_request() -> None:
     run_turn(loop, "hello")
 
     assert provider.requests[0].system == "modified system"
-    assert provider.requests[0].messages == (UserMessage(content="modified user"),)
+    assert provider.requests[0].messages == (
+        ProviderInputItem.business_user("modified user"),
+    )
 
 
 def test_after_provider_call_hook_observes_response() -> None:

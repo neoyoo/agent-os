@@ -2,19 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Protocol
 
 from agentos._internal_transcript import InternalTranscriptValue
 from agentos.providers.input import ProviderInputItem, ProviderToolCall
-from agentos.providers.messages import (
-    ProviderMessage,
-    ProviderToolSpec,
-)
+from agentos.providers.tool_specs import ProviderToolSpec
 if TYPE_CHECKING:
     from agentos.providers.stream import ProviderStreamEvent, ProviderStreamOptions
-
-
-_ProviderRequestMessage: TypeAlias = ProviderInputItem | ProviderMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +16,7 @@ class ProviderRequest(InternalTranscriptValue):
     """发送给 provider 的标准化请求。"""
 
     system: str
-    messages: tuple[_ProviderRequestMessage, ...]
+    messages: tuple[ProviderInputItem, ...]
     tools: tuple[ProviderToolSpec, ...] = ()
     parallel_tool_calls: bool | None = None
 
@@ -30,11 +24,8 @@ class ProviderRequest(InternalTranscriptValue):
         """冻结 typed 输入并拒绝 legacy dict 边界。"""
 
         messages = tuple(self.messages)
-        if any(not isinstance(item, (ProviderInputItem, ProviderMessage)) for item in messages):
-            raise TypeError(
-                "ProviderRequest messages must contain ProviderInputItem "
-                "or typed migration messages",
-            )
+        if any(type(item) is not ProviderInputItem for item in messages):
+            raise TypeError("ProviderRequest messages must contain ProviderInputItem")
         tools = tuple(self.tools)
         if any(type(item) is not ProviderToolSpec for item in tools):
             raise TypeError("ProviderRequest tools must contain ProviderToolSpec")

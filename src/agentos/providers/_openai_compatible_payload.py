@@ -5,17 +5,14 @@ from collections.abc import Callable
 
 from agentos.providers.base import ProviderRequest
 from agentos.providers.input import ProviderInputItem
-from agentos.providers.messages import ProviderMessage, provider_tool_spec_to_dict
+from agentos.providers.tool_specs import provider_tool_spec_to_dict
 
 
 def build_chat_completions_payload(
     *,
     model: str,
     request: ProviderRequest,
-    message_to_dict: Callable[
-        [ProviderInputItem | ProviderMessage],
-        dict[str, object],
-    ],
+    message_to_dict: Callable[[ProviderInputItem], dict[str, object]],
     thinking: dict[str, object] | None,
     extra_body: dict[str, object] | None,
     supports_parallel_tool_calls_parameter: bool,

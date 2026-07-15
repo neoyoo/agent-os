@@ -12,7 +12,7 @@ from agentos.providers import (
     ProviderThinkingDelta,
     ProviderToolCallDelta,
     ProviderUsage,
-    UserMessage,
+    ProviderInputItem,
 )
 
 
@@ -72,7 +72,7 @@ def test_openai_compatible_streams_content_and_completion() -> None:
         provider.stream(
             ProviderRequest(
                 system="system",
-                messages=[UserMessage(content="hi")],
+                messages=[ProviderInputItem.business_user("hi")],
             ),
         ),
     )

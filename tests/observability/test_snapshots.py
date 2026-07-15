@@ -13,21 +13,21 @@ from agentos.observability.snapshots import (
 )
 from agentos.providers import (
     ProviderFunctionSpec,
+    ProviderInputItem,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
-    UserMessage,
-    provider_message_to_dict,
     provider_tool_spec_to_dict,
 )
+from agentos.providers.input_serialization import provider_input_to_dict
 
 
 def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only() -> None:
     request = ProviderRequest(
         system="system secret",
-        messages=[UserMessage(content="hello")],
+        messages=[ProviderInputItem.business_user("hello")],
         tools=[
             ProviderToolSpec(
                 function=ProviderFunctionSpec(
@@ -52,7 +52,7 @@ def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only
     assert snapshot.tool_count == 1
     assert snapshot.system_sha256 == stable_sha256("system secret")
     assert snapshot.messages_sha256 == stable_sha256(
-        [provider_message_to_dict(message) for message in request.messages],
+        [provider_input_to_dict(message) for message in request.messages],
     )
     assert snapshot.tools_sha256 == stable_sha256(
         [provider_tool_spec_to_dict(tool) for tool in request.tools],
@@ -62,7 +62,7 @@ def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only
 def test_provider_request_snapshot_full_mode_captures_payloads() -> None:
     request = ProviderRequest(
         system="system text",
-        messages=[UserMessage(content="hello")],
+        messages=[ProviderInputItem.business_user("hello")],
         tools=[
             ProviderToolSpec(
                 function=ProviderFunctionSpec(
@@ -104,8 +104,8 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
     request = ProviderRequest(
         system="system text",
         messages=[
-            UserMessage(
-                content=(
+            ProviderInputItem.context_mount(
+                (
                     TextPart("分析图片"),
                     ImagePart(attachment),
                 ),
@@ -138,7 +138,7 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
     )
     assert "image-bytes" not in str(snapshot.messages)
     assert snapshot.messages_sha256 == stable_sha256(
-        [provider_message_to_dict(message) for message in request.messages],
+        [provider_input_to_dict(message) for message in request.messages],
     )
 
 

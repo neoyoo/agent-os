@@ -54,10 +54,6 @@ class StoredMessage:
         object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
 
 
-# Phase 2 migration bridge; remove in Task 13.
-Message = StoredMessage
-
-
 @dataclass(frozen=True, slots=True)
 class MessageRef:
     """ActiveWindow 中指向 MessageStore 原文的引用。"""

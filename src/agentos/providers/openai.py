@@ -10,19 +10,13 @@ from agentos.providers._tool_arguments import (
     require_tool_call_name,
 )
 from agentos.providers.base import (
-    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderUsage,
 )
 from agentos.providers.input import ProviderInputItem, TextPart
-from agentos.providers.messages import (
-    AssistantMessage,
-    ToolResultMessage,
-    UserMessage,
-    provider_tool_spec_to_dict,
-)
+from agentos.providers.tool_specs import provider_tool_spec_to_dict
 
 
 @dataclass(slots=True)
@@ -70,13 +64,7 @@ class OpenAIProvider:
         """拒绝 active window 中的 system 消息，避免 provider 收到双 system。"""
 
         for message in request.messages:
-            if isinstance(message, ProviderInputItem) and message.role in (
-                "user",
-                "assistant",
-                "tool",
-            ):
-                continue
-            if isinstance(message, (UserMessage, AssistantMessage, ToolResultMessage)):
+            if message.role in ("user", "assistant", "tool"):
                 continue
             raise ValueError(
                 "active messages must not include system role; use "
@@ -85,36 +73,26 @@ class OpenAIProvider:
 
     def _message(
         self,
-        message: ProviderInputItem | ProviderMessage,
+        message: ProviderInputItem,
     ) -> dict[str, object]:
-        """把 provider message 转为 OpenAI chat message。"""
+        """把逻辑 Provider 输入转为 OpenAI chat message。"""
 
-        # Phase 2 migration bridge; remove in Task 13.
-        if isinstance(message, ProviderInputItem):
-            if message.role == "user":
-                if len(message.content) == 1 and isinstance(message.content[0], TextPart):
-                    return self._message(UserMessage(message.content[0].text))
-                return self._message(UserMessage(message.content))
-            if message.role in ("assistant", "tool"):
-                if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
-                    raise ValueError(f"{message.role} provider input content requires exactly one TextPart")
-            if message.role == "assistant":
-                return self._message(
-                    AssistantMessage(message.content[0].text, message.tool_calls),
-                )
-            if message.role == "tool" and message.tool_call_id is not None:
-                return self._message(
-                    ToolResultMessage(message.tool_call_id, message.content[0].text),
-                )
-        if isinstance(message, UserMessage):
-            return {"role": "user", "content": self._user_content(message.content)}
-        if isinstance(message, AssistantMessage):
+        if message.role == "user":
+            content: object = message.content
+            if len(message.content) == 1 and isinstance(message.content[0], TextPart):
+                content = message.content[0].text
+            return {"role": "user", "content": self._user_content(content)}
+        if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
+            raise ValueError(
+                f"{message.role} provider input content requires exactly one TextPart",
+            )
+        if message.role == "assistant":
             result: dict[str, object] = {
                 "role": "assistant",
-                "content": message.content,
+                "content": message.content[0].text,
             }
             if message.tool_calls:
-                result["content"] = message.content or None
+                result["content"] = message.content[0].text or None
                 result["tool_calls"] = [
                     {
                         "id": tool_call.id,
@@ -130,11 +108,11 @@ class OpenAIProvider:
                     for tool_call in message.tool_calls
                 ]
             return result
-        if isinstance(message, ToolResultMessage):
+        if message.role == "tool" and message.tool_call_id is not None:
             return {
                 "role": "tool",
                 "tool_call_id": message.tool_call_id,
-                "content": message.content,
+                "content": message.content[0].text,
             }
         raise ValueError(
             "active messages must not include system role; use ProviderRequest.system",

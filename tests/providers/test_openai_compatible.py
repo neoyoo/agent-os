@@ -12,7 +12,6 @@ from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import (
-    AssistantMessage,
     HttpxAsyncJSONTransport,
     OpenAICompatibleProviderError,
     OpenAICompatibleProvider,
@@ -22,9 +21,7 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
-    ToolResultMessage,
     UrlLibJSONTransport,
-    UserMessage,
 )
 from agentos.runtime import AgentBusyError, ProviderRequestBuilder, QueryLoop
 from tests._context_protocol_fixtures import default_context_renderer
@@ -38,30 +35,18 @@ _FORBIDDEN_PROVIDER_METADATA = {
 }
 
 
-def _logical_message_pairs() -> tuple[
-    tuple[UserMessage | AssistantMessage | ToolResultMessage, ProviderInputItem],
-    ...,
-]:
+def _logical_messages() -> tuple[ProviderInputItem, ...]:
     tool_call = ProviderToolCall(
         id="call_1",
         name="lookup",
         arguments={"query": "agentos"},
     )
     return (
-        (UserMessage("hello"), ProviderInputItem.business_user("hello")),
-        (
-            AssistantMessage("", tool_calls=(tool_call,)),
-            ProviderInputItem.business_assistant("", (tool_call,)),
-        ),
-        (
-            ToolResultMessage("call_1", "done"),
-            ProviderInputItem.tool_result("call_1", "done"),
-        ),
-        (UserMessage("old"), ProviderInputItem.recalled_user("old")),
-        (
-            ToolResultMessage("call_1", "old result"),
-            ProviderInputItem.recalled_tool("call_1", "old result"),
-        ),
+        ProviderInputItem.business_user("hello"),
+        ProviderInputItem.business_assistant("", (tool_call,)),
+        ProviderInputItem.tool_result("call_1", "done"),
+        ProviderInputItem.recalled_user("old"),
+        ProviderInputItem.recalled_tool("call_1", "old result"),
     )
 
 
@@ -91,9 +76,8 @@ def _provider_input_with_content(
     )
 
 
-@pytest.mark.parametrize("legacy, logical", _logical_message_pairs())
-def test_openai_compatible_provider_input_wire_matches_legacy_messages(
-    legacy: UserMessage | AssistantMessage | ToolResultMessage,
+@pytest.mark.parametrize("logical", _logical_messages())
+def test_openai_compatible_provider_input_wire_excludes_internal_metadata(
     logical: ProviderInputItem,
 ) -> None:
     provider = OpenAICompatibleProvider(
@@ -104,7 +88,6 @@ def test_openai_compatible_provider_input_wire_matches_legacy_messages(
 
     wire = provider._message(logical)
 
-    assert wire == provider._message(legacy)
     assert _FORBIDDEN_PROVIDER_METADATA.isdisjoint(wire)
 
 
@@ -135,7 +118,7 @@ def test_openai_compatible_provider_input_rejects_non_single_text_content(
         provider._message(logical)
 
 
-def test_openai_compatible_context_mount_matches_legacy_multimodal_user() -> None:
+def test_openai_compatible_context_mount_maps_to_multimodal_user() -> None:
     provider = OpenAICompatibleProvider(
         api_key="test-key",
         base_url="https://api.example.test",
@@ -150,9 +133,19 @@ def test_openai_compatible_context_mount_matches_legacy_multimodal_user() -> Non
     )
     content = (TextPart("inspect"), ImagePart(attachment))
 
-    assert provider._message(ProviderInputItem.context_mount(content)) == (
-        provider._message(UserMessage(content))
-    )
+    assert provider._message(ProviderInputItem.context_mount(content)) == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "inspect"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                    "detail": "auto",
+                },
+            },
+        ],
+    }
 
 
 class FakeTransport:
@@ -249,10 +242,10 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
         ProviderRequest(
             system="system prompt",
             messages=[
-                UserMessage(content="读取项目名"),
-                AssistantMessage(
-                    content="",
-                    tool_calls=(
+                ProviderInputItem.business_user("读取项目名"),
+                ProviderInputItem.business_assistant(
+                    "",
+                    (
                         ProviderToolCall(
                             id="call_existing",
                             name="read_file",
@@ -260,10 +253,7 @@ def test_openai_compatible_provider_posts_chat_completion_request() -> None:
                         ),
                     ),
                 ),
-                ToolResultMessage(
-                    tool_call_id="call_existing",
-                    content="readme",
-                ),
+                ProviderInputItem.tool_result("call_existing", "readme"),
             ],
             tools=[
                 ProviderToolSpec(
@@ -745,7 +735,10 @@ def test_openai_compatible_provider_can_disable_thinking() -> None:
     )
 
     provider.complete(
-        ProviderRequest(system="system", messages=[UserMessage(content="hi")]),
+        ProviderRequest(
+            system="system",
+            messages=[ProviderInputItem.business_user("hi")],
+        ),
     )
 
     assert transport.calls[0]["payload"]["thinking"] == {"type": "disabled"}
@@ -765,7 +758,10 @@ def test_openai_compatible_provider_merges_extra_body_into_payload() -> None:
     )
 
     provider.complete(
-        ProviderRequest(system="system", messages=[UserMessage(content="hi")]),
+        ProviderRequest(
+            system="system",
+            messages=[ProviderInputItem.business_user("hi")],
+        ),
     )
 
     payload = transport.calls[0]["payload"]
@@ -812,7 +808,7 @@ def test_openai_compatible_provider_core_payload_overrides_extra_body() -> None:
     provider.complete(
         ProviderRequest(
             system="system",
-            messages=[UserMessage(content="hi")],
+            messages=[ProviderInputItem.business_user("hi")],
             tools=[
                 ProviderToolSpec(
                     function=ProviderFunctionSpec(
@@ -864,8 +860,8 @@ def test_openai_compatible_provider_maps_image_content_parts() -> None:
         ProviderRequest(
             system="system",
             messages=[
-                UserMessage(
-                    content=(
+                ProviderInputItem.context_mount(
+                    (
                         TextPart("分析图片"),
                         ImagePart(attachment),
                     ),
@@ -895,7 +891,7 @@ def test_openai_compatible_provider_rejects_system_messages_in_active_window() -
             system="system",
             messages=[
                 {"role": "system", "content": "extra system"},
-                UserMessage(content="hi"),
+                ProviderInputItem.business_user("hi"),
             ],
         )
 

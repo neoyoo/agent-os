@@ -10,6 +10,13 @@ Distributed types that are not implemented for that level are not exported in
 advance. Later phases add public names only when their owning phase, behavior,
 and compatibility tests are implemented.
 
+Phase 2 applies a breaking message-boundary reset: `StoredMessage` is the only
+business message truth type, while `ProviderInputItem` is the only accepted
+`ProviderRequest.messages` value. The former `Message` alias and the legacy
+Provider message DTO/serializer surface are removed without compatibility
+facades. Provider tool schema values remain available from `agentos.providers`
+and are owned by the dedicated `agentos.providers.tool_specs` module.
+
 The machine-readable stability policy is `docs/public-api-stability.json`. It
 contains only governed modules and the stable or experimental classification of
 each export. The generated `docs/public-api-inventory.json` records the current

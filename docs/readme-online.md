@@ -124,15 +124,32 @@ Provider 杈圭晫鎺ユ敹鏍囧噯鍖?`ProviderRequest`锛?
 
 ```python
 ProviderRequest(
-    system="<rendered context>",
-    messages=[UserMessage(...), AssistantMessage(...), ToolResultMessage(...)],
-    tools=[ProviderToolSpec(...)]
+    system=system_envelope.text,
+    messages=(
+        ProviderInputItem.context_snapshot(snapshot.xml),
+        ProviderInputItem.business_user("inspect the project"),
+        ProviderInputItem.business_assistant(
+            "",
+            (
+                ProviderToolCall(
+                    id="call_1",
+                    name="read_file",
+                    arguments={"path": "README.md"},
+                ),
+            ),
+        ),
+        ProviderInputItem.tool_result("call_1", "file content"),
+    ),
+    tools=(ProviderToolSpec(...),),
 )
 ```
 
-`ProviderRequestBuilder.build()` 涓嶆毚闇?context 鍐呴儴瀵硅薄锛屽彧渚濊禆 `snapshot()`锛沘ctive messages 鐢?`MessageRuntime.materialize_provider_messages()` 杞垚寮虹被鍨?provider messages銆?
+`ProviderRequestBuilder.build()` 姣忔浠庢潈濞佺姸鎬侀噸鏂扮粍瑁呰姹傘€?`SystemEnvelope`
+鍙壙杞藉彲淇℃寚浠わ紝`ContextSnapshot` 鍜屼笟鍔℃秷鎭垎鍒姇褰变负
+`ProviderInputItem`銆?`MessageRuntime` 鍙鐞?`StoredMessage` 鐪熷€煎拰 ActiveWindow锛?
+涓嶅啀鐢熸垚 Provider DTO銆?
 
-婧愮爜鏉ユ簮锛歔`src/agentos/providers/base.py`](../src/agentos/providers/base.py)锛孾`src/agentos/providers/messages.py`](../src/agentos/providers/messages.py)锛孾`src/agentos/runtime/provider_request_builder.py`](../src/agentos/runtime/provider_request_builder.py)锛孾`src/agentos/messages/runtime.py`](../src/agentos/messages/runtime.py)锛孾`tests/providers/test_provider_messages.py`](../tests/providers/test_provider_messages.py)
+婧愮爜鏉ユ簮锛歔`src/agentos/providers/base.py`](../src/agentos/providers/base.py)锛孾`src/agentos/providers/input.py`](../src/agentos/providers/input.py)锛孾`src/agentos/providers/tool_specs.py`](../src/agentos/providers/tool_specs.py)锛孾`src/agentos/runtime/provider_request_builder.py`](../src/agentos/runtime/provider_request_builder.py)锛孾`src/agentos/runtime/message_projection.py`](../src/agentos/runtime/message_projection.py)锛孾`tests/providers/test_provider_messages.py`](../tests/providers/test_provider_messages.py)
 
 ### 3.2 Built-in Context Tools
 

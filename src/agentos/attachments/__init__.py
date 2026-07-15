@@ -10,7 +10,7 @@ from agentos.attachments.types import (
     ProviderFileSource,
     UrlSource,
 )
-from agentos.providers.messages import FilePart, ImagePart, TextPart
+from agentos.providers.input import FilePart, ImagePart, TextPart
 
 __all__ = [
     "Attachment",

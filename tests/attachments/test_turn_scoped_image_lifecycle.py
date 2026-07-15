@@ -14,7 +14,7 @@ from agentos.providers import (
     ProviderStreamOptions,
     ProviderStreamStarted,
     ProviderToolCall,
-    UserMessage,
+    ProviderInputItem,
 )
 from agentos.runtime import LocalContinuationInput, ProviderRequestBuilder, QueryLoop
 from tests._context_protocol_fixtures import default_context_renderer
@@ -46,9 +46,8 @@ def build_agent(
 
 
 def assert_no_loaded_attachments(attachments: AttachmentRuntime) -> None:
-    assert attachments.project_provider_messages([UserMessage(content="next")]) == [
-        UserMessage(content="next"),
-    ]
+    item = ProviderInputItem.business_user("next")
+    assert attachments._project_provider_inputs_compat((item,)) == (item,)
 
 
 def test_load_attachment_projects_to_rest_of_turn_provider_requests() -> None:

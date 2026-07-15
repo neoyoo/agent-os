@@ -10,7 +10,6 @@ from agentos.attachments import (
     TextPart,
 )
 from agentos.providers import (
-    AssistantMessage,
     AnthropicProvider,
     OpenAIProvider,
     ProviderFunctionSpec,
@@ -19,8 +18,6 @@ from agentos.providers import (
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
-    ToolResultMessage,
-    UserMessage,
 )
 
 
@@ -32,30 +29,18 @@ _FORBIDDEN_PROVIDER_METADATA = {
 }
 
 
-def _logical_message_pairs() -> tuple[
-    tuple[UserMessage | AssistantMessage | ToolResultMessage, ProviderInputItem],
-    ...,
-]:
+def _logical_messages() -> tuple[ProviderInputItem, ...]:
     tool_call = ProviderToolCall(
         id="call_1",
         name="lookup",
         arguments={"query": "agentos"},
     )
     return (
-        (UserMessage("hello"), ProviderInputItem.business_user("hello")),
-        (
-            AssistantMessage("", tool_calls=(tool_call,)),
-            ProviderInputItem.business_assistant("", (tool_call,)),
-        ),
-        (
-            ToolResultMessage("call_1", "done"),
-            ProviderInputItem.tool_result("call_1", "done"),
-        ),
-        (UserMessage("old"), ProviderInputItem.recalled_user("old")),
-        (
-            ToolResultMessage("call_1", "old result"),
-            ProviderInputItem.recalled_tool("call_1", "old result"),
-        ),
+        ProviderInputItem.business_user("hello"),
+        ProviderInputItem.business_assistant("", (tool_call,)),
+        ProviderInputItem.tool_result("call_1", "done"),
+        ProviderInputItem.recalled_user("old"),
+        ProviderInputItem.recalled_tool("call_1", "old result"),
     )
 
 
@@ -93,10 +78,9 @@ def _provider_input_with_content(
     ],
     ids=["openai", "anthropic"],
 )
-@pytest.mark.parametrize("legacy, logical", _logical_message_pairs())
-def test_provider_input_wire_matches_legacy_messages(
+@pytest.mark.parametrize("logical", _logical_messages())
+def test_provider_input_wire_excludes_internal_metadata(
     provider: OpenAIProvider | AnthropicProvider,
-    legacy: UserMessage | AssistantMessage | ToolResultMessage,
     logical: ProviderInputItem,
 ) -> None:
     request = ProviderRequest(system="system", messages=(logical,))
@@ -104,7 +88,6 @@ def test_provider_input_wire_matches_legacy_messages(
     provider._ensure_no_active_system_messages(request)
     wire = provider._message(logical)
 
-    assert wire == provider._message(legacy)
     assert _FORBIDDEN_PROVIDER_METADATA.isdisjoint(wire)
 
 
@@ -147,7 +130,7 @@ def test_provider_input_rejects_non_single_text_assistant_and_tool_content(
     ],
     ids=["openai", "anthropic"],
 )
-def test_context_mount_wire_matches_legacy_multimodal_user(
+def test_context_mount_maps_directly_to_multimodal_user(
     provider: OpenAIProvider | AnthropicProvider,
 ) -> None:
     attachment = Attachment(
@@ -159,9 +142,11 @@ def test_context_mount_wire_matches_legacy_multimodal_user(
     )
     content = (TextPart("inspect"), ImagePart(attachment))
 
-    assert provider._message(ProviderInputItem.context_mount(content)) == (
-        provider._message(UserMessage(content))
-    )
+    wire = provider._message(ProviderInputItem.context_mount(content))
+
+    assert wire["role"] == "user"
+    assert isinstance(wire["content"], list)
+    assert wire["content"][0] == {"type": "text", "text": "inspect"}  # type: ignore[index]
 
 
 def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
@@ -209,7 +194,7 @@ def test_openai_provider_normalizes_chat_completion_tool_calls() -> None:
     response = provider.complete(
         ProviderRequest(
             system="system text",
-            messages=[UserMessage(content="read project name")],
+            messages=[ProviderInputItem.business_user("read project name")],
             tools=[
                 ProviderToolSpec(
                     function=ProviderFunctionSpec(
@@ -397,8 +382,8 @@ def test_openai_provider_maps_image_parts_to_chat_image_url() -> None:
         ProviderRequest(
             system="system",
             messages=[
-                UserMessage(
-                    content=(
+                ProviderInputItem.context_mount(
+                    (
                         TextPart("分析图片"),
                         ImagePart(attachment),
                     ),
@@ -444,7 +429,7 @@ def test_openai_provider_rejects_file_parts_for_chat_completions() -> None:
         provider.complete(
             ProviderRequest(
                 system="system",
-                messages=[UserMessage(content=(FilePart(attachment),))],
+                messages=[ProviderInputItem.context_mount((FilePart(attachment),))],
             ),
         )
 
@@ -484,7 +469,7 @@ def test_anthropic_provider_normalizes_messages_tool_calls() -> None:
     response = provider.complete(
         ProviderRequest(
             system="system text",
-            messages=[UserMessage(content="read project name")],
+            messages=[ProviderInputItem.business_user("read project name")],
             tools=[
                 ProviderToolSpec(
                     function=ProviderFunctionSpec(
@@ -556,10 +541,10 @@ def test_anthropic_provider_converts_tool_messages_to_anthropic_blocks() -> None
         ProviderRequest(
             system="system text",
             messages=[
-                UserMessage(content="read project name"),
-                AssistantMessage(
-                    content="",
-                    tool_calls=(
+                ProviderInputItem.business_user("read project name"),
+                ProviderInputItem.business_assistant(
+                    "",
+                    (
                         ProviderToolCall(
                             id="call_1",
                             name="read_file",
@@ -567,8 +552,8 @@ def test_anthropic_provider_converts_tool_messages_to_anthropic_blocks() -> None
                         ),
                     ),
                 ),
-                ToolResultMessage(tool_call_id="call_1", content="project = agent-os"),
-                ToolResultMessage(tool_call_id="call_2", content="version = 0.1"),
+                ProviderInputItem.tool_result("call_1", "project = agent-os"),
+                ProviderInputItem.tool_result("call_2", "version = 0.1"),
             ],
         ),
     )
@@ -644,8 +629,8 @@ def test_anthropic_provider_maps_image_and_pdf_parts_to_content_blocks() -> None
         ProviderRequest(
             system="system",
             messages=[
-                UserMessage(
-                    content=(
+                ProviderInputItem.context_mount(
+                    (
                         TextPart("分析附件"),
                         ImagePart(image),
                         FilePart(pdf),

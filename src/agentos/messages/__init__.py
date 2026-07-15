@@ -1,6 +1,5 @@
 """消息真值源和 active window 管理。"""
 
-from agentos.messages._migration import Message
 from agentos.messages.read_model import (
     ConversationEventItem,
     ConversationEventProjector,
@@ -21,7 +20,6 @@ __all__ = [
     "ConversationItem",
     "ConversationMessageItem",
     "ConversationReadModel",
-    "Message",
     "MessageRef",
     "MessageRole",
     "MessageRuntime",

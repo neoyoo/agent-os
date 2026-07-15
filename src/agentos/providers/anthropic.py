@@ -11,24 +11,19 @@ from agentos.attachments.types import (
     UrlSource,
 )
 from agentos.providers.base import (
-    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
-    ProviderToolSpec,
     ProviderUsage,
 )
-from agentos.providers.input import ProviderInputItem
-from agentos.providers.messages import (
-    AssistantMessage,
+from agentos.providers.input import (
     FilePart,
     ImagePart,
     ProviderContentPart,
-    ToolResultMessage,
+    ProviderInputItem,
     TextPart,
-    UserMessage,
-    provider_message_to_dict,
 )
+from agentos.providers.tool_specs import ProviderToolSpec
 
 
 @dataclass(slots=True)
@@ -81,13 +76,7 @@ class AnthropicProvider:
         """拒绝 active window 中的 system 消息，避免 provider 收到双 system。"""
 
         for message in request.messages:
-            if isinstance(message, ProviderInputItem) and message.role in (
-                "user",
-                "assistant",
-                "tool",
-            ):
-                continue
-            if isinstance(message, (UserMessage, AssistantMessage, ToolResultMessage)):
+            if message.role in ("user", "assistant", "tool"):
                 continue
             raise ValueError(
                 "active messages must not include system role; use "
@@ -96,36 +85,26 @@ class AnthropicProvider:
 
     def _message(
         self,
-        message: ProviderInputItem | ProviderMessage,
+        message: ProviderInputItem,
     ) -> dict[str, object]:
-        """把 provider message 转为 Anthropic Messages API 形态。"""
+        """把逻辑 Provider 输入转为 Anthropic Messages API 形态。"""
 
-        # Phase 2 migration bridge; remove in Task 13.
-        if isinstance(message, ProviderInputItem):
-            if message.role == "user":
-                if len(message.content) == 1 and isinstance(message.content[0], TextPart):
-                    return self._message(UserMessage(message.content[0].text))
-                return self._message(UserMessage(message.content))
-            if message.role in ("assistant", "tool"):
-                if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
-                    raise ValueError(f"{message.role} provider input content requires exactly one TextPart")
-            if message.role == "assistant":
-                return self._message(
-                    AssistantMessage(message.content[0].text, message.tool_calls),
-                )
-            if message.role == "tool" and message.tool_call_id is not None:
-                return self._message(
-                    ToolResultMessage(message.tool_call_id, message.content[0].text),
-                )
-        if isinstance(message, UserMessage):
+        if message.role == "user":
+            content: object = message.content
+            if len(message.content) == 1 and isinstance(message.content[0], TextPart):
+                content = message.content[0].text
             return {
                 "role": "user",
-                "content": self._user_content(message.content),
+                "content": self._user_content(content),
             }
-        if isinstance(message, AssistantMessage):
+        if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
+            raise ValueError(
+                f"{message.role} provider input content requires exactly one TextPart",
+            )
+        if message.role == "assistant":
             content: list[dict[str, object]] = []
-            if message.content:
-                content.append({"type": "text", "text": message.content})
+            if message.content[0].text:
+                content.append({"type": "text", "text": message.content[0].text})
             for tool_call in message.tool_calls:
                 content.append(
                     {
@@ -137,21 +116,22 @@ class AnthropicProvider:
                 )
             return {
                 "role": "assistant",
-                "content": content if content else message.content,
+                "content": content if content else message.content[0].text,
             }
-        if isinstance(message, ToolResultMessage):
+        if message.role == "tool" and message.tool_call_id is not None:
             return {
                 "role": "user",
                 "content": [
                     {
                         "type": "tool_result",
                         "tool_use_id": message.tool_call_id,
-                        "content": message.content,
+                        "content": message.content[0].text,
                     },
                 ],
             }
-
-        return provider_message_to_dict(message)
+        raise ValueError(
+            "active messages must not include system role; use ProviderRequest.system",
+        )
 
     def _user_content(self, content: object) -> object:
         """把 canonical content parts 转为 Anthropic content blocks。"""
@@ -222,7 +202,7 @@ class AnthropicProvider:
 
     def _messages(
         self,
-        messages: list[ProviderInputItem | ProviderMessage],
+        messages: tuple[ProviderInputItem, ...],
     ) -> list[dict[str, object]]:
         """转换并合并连续 tool_result，满足 Anthropic 角色交替规则。"""
 
@@ -250,7 +230,7 @@ class AnthropicProvider:
             merged.append(message)
         return merged
 
-    def _tools(self, tools: list[ProviderToolSpec]) -> list[dict[str, object]]:
+    def _tools(self, tools: tuple[ProviderToolSpec, ...]) -> list[dict[str, object]]:
         """把内部 function tool schema 转成 Anthropic input_schema 形态。"""
 
         converted: list[dict[str, object]] = []

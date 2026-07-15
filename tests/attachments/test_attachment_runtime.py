@@ -1,4 +1,5 @@
-﻿from pathlib import Path
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -9,7 +10,7 @@ from agentos.attachments import (
     ImagePart,
     TextPart,
 )
-from agentos.providers import UserMessage
+from agentos.providers import ProviderInputItem
 
 
 def test_upload_bytes_creates_private_placeholder() -> None:
@@ -38,25 +39,28 @@ def test_prepare_user_message_expands_attachment_for_rest_of_turn() -> None:
         filename="diagram.png",
         mime_type="image/png",
     )
-    content = runtime.prepare_user_message("鍒嗘瀽鍥剧墖", [attachment])
+    user_text = "鍒嗘瀽鍥剧墖"
+    content = runtime.prepare_user_message(user_text, [attachment])
+    item = ProviderInputItem.business_user(content)
 
-    first_request = runtime.project_provider_messages([UserMessage(content=content)])
-    second_request = runtime.project_provider_messages([UserMessage(content=content)])
+    first_request = runtime._project_provider_inputs_compat((item,))
+    second_request = runtime._project_provider_inputs_compat((item,))
 
-    initial_loaded = UserMessage(
+    initial_loaded = replace(
+        ProviderInputItem.business_user(user_text),
         content=(
-            TextPart("鍒嗘瀽鍥剧墖"),
+            TextPart(user_text),
             ImagePart(attachment),
         ),
     )
-    turn_loaded = UserMessage(
-        content=(
+    turn_loaded = ProviderInputItem.context_mount(
+        (
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),
             ImagePart(attachment),
         ),
     )
-    assert isinstance(first_request[0], UserMessage)
-    assert first_request == [initial_loaded]
+    assert isinstance(first_request[0], ProviderInputItem)
+    assert first_request == (initial_loaded,)
     assert second_request[-1] == turn_loaded
 
 
@@ -69,11 +73,12 @@ def test_load_attachment_handle_projects_for_rest_of_turn() -> None:
     )
 
     runtime.load_attachment_handle(f"att:{attachment.handle}")
-    first_request = runtime.project_provider_messages([UserMessage(content="next")])
-    second_request = runtime.project_provider_messages([UserMessage(content="next")])
+    item = ProviderInputItem.business_user("next")
+    first_request = runtime._project_provider_inputs_compat((item,))
+    second_request = runtime._project_provider_inputs_compat((item,))
 
-    loaded = UserMessage(
-        content=(
+    loaded = ProviderInputItem.context_mount(
+        (
             TextPart(f"Loaded attachment {attachment.handle} for inspection."),
             ImagePart(attachment),
         ),
@@ -93,9 +98,8 @@ def test_clear_turn_loaded_attachments_resets_loaded_attachment_state() -> None:
     runtime.load_attachment_handle(f"att:{attachment.handle}")
     runtime.clear_turn_loaded_attachments()
 
-    assert runtime.project_provider_messages([UserMessage(content="next")]) == [
-        UserMessage(content="next"),
-    ]
+    item = ProviderInputItem.business_user("next")
+    assert runtime._project_provider_inputs_compat((item,)) == (item,)
 
 
 def test_load_attachment_unknown_attachment_handle_raises() -> None:
@@ -139,4 +143,3 @@ def test_upload_path_freezes_file_bytes_at_upload_time(tmp_path: Path) -> None:
 
     assert attachment.size_bytes == 5
     assert attachment.source == BytesSource(b"first")
-

@@ -17,7 +17,7 @@ from agentos.providers import (
     ProviderStreamOptions,
     ProviderStreamStarted,
     ProviderUsage,
-    UserMessage,
+    ProviderInputItem,
 )
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
 from agentos.runtime.errors import AgentBusyError
@@ -52,7 +52,7 @@ def test_instrumented_provider_records_generation_span_without_changing_response
     )
     request = ProviderRequest(
         system="system text",
-        messages=[UserMessage(content="hello")],
+        messages=[ProviderInputItem.business_user("hello")],
         tools=[],
     )
 
@@ -106,7 +106,7 @@ def test_instrumented_provider_full_capture_records_input_and_output() -> None:
     instrumented.complete(
         ProviderRequest(
             system="system text",
-            messages=[UserMessage(content="hello")],
+            messages=[ProviderInputItem.business_user("hello")],
             tools=[],
         ),
     )

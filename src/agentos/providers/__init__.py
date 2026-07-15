@@ -3,13 +3,10 @@
 from agentos.providers.anthropic import AnthropicProvider
 from agentos.providers.base import (
     AsyncProvider,
-    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     ProviderTimeoutError,
     Provider,
-    ProviderToolCall,
-    ProviderToolSpec,
     ProviderUsage,
 )
 from agentos.providers.fake import FakeProvider
@@ -23,17 +20,13 @@ from agentos.providers.input import (
     ProviderInputItem,
     ProviderInputKind,
     ProviderRole,
+    ProviderToolCall,
     TextPart,
     VisibilityPolicy,
 )
-from agentos.providers.messages import (
-    AssistantMessage,
+from agentos.providers.tool_specs import (
     ProviderFunctionSpec,
-    ProviderMessageContent,
-    ToolResultMessage,
-    UserMessage,
-    provider_message_from_dict,
-    provider_message_to_dict,
+    ProviderToolSpec,
     provider_tool_spec_from_dict,
     provider_tool_spec_to_dict,
 )
@@ -63,7 +56,6 @@ from agentos.providers.stream import (
 
 __all__ = [
     "AnthropicProvider",
-    "AssistantMessage",
     "AsyncOpenAICompatibleTransport",
     "AsyncProvider",
     "FakeProvider",
@@ -76,12 +68,10 @@ __all__ = [
     "OpenAICompatibleProviderError",
     "OpenAICompatibleTransport",
     "OpenAIProvider",
-    "ProviderMessage",
     "ProviderContentPart",
     "ProviderFunctionSpec",
     "ProviderInputItem",
     "ProviderInputKind",
-    "ProviderMessageContent",
     "ProviderRequest",
     "ProviderResponse",
     "ProviderRole",
@@ -103,13 +93,9 @@ __all__ = [
     "ProviderUsageDelta",
     "StreamingProvider",
     "TextPart",
-    "ToolResultMessage",
     "UrlLibJSONTransport",
-    "UserMessage",
     "VisibilityPolicy",
     "complete_response_to_stream_events",
-    "provider_message_from_dict",
-    "provider_message_to_dict",
     "provider_tool_spec_from_dict",
     "provider_tool_spec_to_dict",
 ]

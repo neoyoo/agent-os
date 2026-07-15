@@ -14,7 +14,6 @@ from agentos.providers import (
     ProviderResponse,
     ProviderToolCall,
     ProviderUsage,
-    provider_message_to_dict,
     provider_tool_spec_to_dict,
 )
 from agentos.providers.input_serialization import provider_input_to_dict
@@ -180,11 +179,9 @@ def build_tool_call_snapshot(
     )
 
 
-def _provider_input_to_dict(item: object) -> dict[str, object]:
+def _provider_input_to_dict(item: ProviderInputItem) -> dict[str, object]:
     """把逻辑 Provider 输入转换为脱敏、JSON-safe 的观测形态。"""
 
-    if not isinstance(item, ProviderInputItem):
-        return provider_message_to_dict(item)  # type: ignore[arg-type]
     return provider_input_to_dict(item)
 
 

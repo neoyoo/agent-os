@@ -10,10 +10,6 @@ from agentos.attachments.types import (
     BytesSource,
 )
 from agentos.providers.input import ImagePart, ProviderInputItem, TextPart
-from agentos.providers.messages import (
-    ProviderMessage,
-    UserMessage,
-)
 
 
 DEFAULT_ALLOWED_MIME_TYPES = frozenset(
@@ -132,25 +128,6 @@ class AttachmentRuntime:
 
         self._turn_loaded_attachment_handles.clear()
 
-    def project_provider_messages(
-        self,
-        messages: list[ProviderMessage],
-    ) -> list[ProviderMessage]:
-        """把待展开附件投影进 provider request。"""
-
-        user_handles, user_text = self._consume_user_handles()
-        attachment_handles = self._loaded_handles_excluding(user_handles)
-        projected = list(messages)
-        if user_handles:
-            projected = self._project_user_handles(projected, user_handles, user_text)
-        if attachment_handles:
-            projected.append(
-                UserMessage(
-                    content=self._loaded_attachment_content(attachment_handles),
-                ),
-            )
-        return projected
-
     def _project_provider_inputs_compat(
         self,
         items: tuple[ProviderInputItem, ...],
@@ -216,34 +193,6 @@ class AttachmentRuntime:
                 ),
             )
             return items
-        raise AttachmentError("cannot expand attachments without a user message")
-
-    def _project_user_handles(
-        self,
-        messages: list[ProviderMessage],
-        handles: list[str],
-        user_text: str | None,
-    ) -> list[ProviderMessage]:
-        """把首轮附件展开到最后一条 user message。"""
-
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            if isinstance(message, UserMessage):
-                text = (
-                    user_text
-                    if user_text is not None
-                    else message.content if isinstance(message.content, str) else ""
-                )
-                messages[index] = UserMessage(
-                    content=(
-                        TextPart(text),
-                        *[
-                            self._content_part_for_attachment(self.store.get(handle))
-                            for handle in handles
-                        ],
-                    ),
-                )
-                return messages
         raise AttachmentError("cannot expand attachments without a user message")
 
     def _consume_user_handles(self) -> tuple[list[str], str | None]:

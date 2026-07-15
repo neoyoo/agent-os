@@ -20,7 +20,6 @@ from agentos.providers._tool_arguments import (
 )
 from agentos.providers._content_parts import openai_chat_user_content
 from agentos.providers.base import (
-    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     ProviderTimeoutError,
@@ -28,11 +27,6 @@ from agentos.providers.base import (
     ProviderUsage,
 )
 from agentos.providers.input import ProviderInputItem, TextPart
-from agentos.providers.messages import (
-    AssistantMessage,
-    ToolResultMessage,
-    UserMessage,
-)
 from agentos.providers.stream import (
     ProviderContentDelta,
     ProviderStreamCompleted,
@@ -658,37 +652,34 @@ class OpenAICompatibleProvider:
         """返回 provider 调用超时秒数。"""
         return self.timeout_seconds
 
-    def _message(self, message: ProviderInputItem | ProviderMessage) -> dict[str, object]:
-        """把 SDK 内部 provider message 转为 OpenAI-compatible message。"""
-        # Phase 2 migration bridge; remove in Task 13.
-        if isinstance(message, ProviderInputItem):
-            if message.role == "user":
-                message = UserMessage(
-                    message.content[0].text if len(message.content) == 1
-                    and isinstance(message.content[0], TextPart) else message.content
-                )
-            elif message.role in ("assistant", "tool") and (
-                len(message.content) != 1 or not isinstance(message.content[0], TextPart)
-            ):
-                raise ValueError(f"{message.role} provider input content requires exactly one TextPart")
-            elif message.role == "assistant":
-                message = AssistantMessage(message.content[0].text, message.tool_calls)
-            elif message.role == "tool" and message.tool_call_id is not None:
-                message = ToolResultMessage(message.tool_call_id, message.content[0].text)
-        if isinstance(message, UserMessage):
-            return {"role": "user", "content": openai_chat_user_content(message.content)}
-        if isinstance(message, AssistantMessage):
+    def _message(self, message: ProviderInputItem) -> dict[str, object]:
+        """把逻辑 Provider 输入转为 OpenAI-compatible message。"""
+
+        if message.role == "user":
+            content: object = message.content
+            if len(message.content) == 1 and isinstance(message.content[0], TextPart):
+                content = message.content[0].text
+            return {"role": "user", "content": openai_chat_user_content(content)}
+        if len(message.content) != 1 or not isinstance(message.content[0], TextPart):
+            raise ValueError(
+                f"{message.role} provider input content requires exactly one TextPart",
+            )
+        if message.role == "assistant":
             result: dict[str, object] = {
                 "role": "assistant",
-                "content": message.content,
+                "content": message.content[0].text,
             }
             if not message.tool_calls:
                 return result
-            result["content"] = message.content or None
+            result["content"] = message.content[0].text or None
             result["tool_calls"] = [self._request_tool_call(c) for c in message.tool_calls]
             return result
-        if isinstance(message, ToolResultMessage):
-            return {"role": "tool", "tool_call_id": message.tool_call_id, "content": message.content}
+        if message.role == "tool" and message.tool_call_id is not None:
+            return {
+                "role": "tool",
+                "tool_call_id": message.tool_call_id,
+                "content": message.content[0].text,
+            }
         raise OpenAICompatibleProviderError(
             "active messages must not include system role; use ProviderRequest.system",
         )

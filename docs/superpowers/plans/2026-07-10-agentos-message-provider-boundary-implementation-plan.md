@@ -1190,6 +1190,7 @@ git commit -m "feat: add model task provider input"
 - Modify: `docs/governance/agentos-module-size-baseline.json`
 - Modify: `docs/public-api-inventory.json`
 - Modify: `docs/api-stability.md`
+- Modify: `docs/readme-online.md`（Task 13B Code Quality Review 补充：删除失效 DTO 示例和源码链接）
 
 **Test files:**
 - Modify: `tests/messages/test_stored_message.py`

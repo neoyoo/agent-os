@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from agentos.messages import Message
+from agentos.messages import StoredMessage
 from agentos.tokens import HeuristicTokenCounter
 
 
@@ -18,7 +18,7 @@ def test_heuristic_counter_counts_text_with_ceiling() -> None:
 
 def test_heuristic_counter_counts_messages_and_tools() -> None:
     counter = HeuristicTokenCounter(char_per_token=4)
-    message = Message(id="msg_1", role="tool", content="abcdefgh")
+    message = StoredMessage(id="msg_1", role="tool", content="abcdefgh")
 
     total = counter.count_messages(
         [message],

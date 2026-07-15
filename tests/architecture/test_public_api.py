@@ -10,6 +10,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_API_INVENTORY = PROJECT_ROOT / "docs" / "public-api-inventory.json"
+ONLINE_README = PROJECT_ROOT / "docs" / "readme-online.md"
 REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
 
 
@@ -258,6 +259,42 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert not hasattr(agentos, "Provider")
     assert not hasattr(agentos, "ToolCallRouter")
     assert not hasattr(agentos, "HookManager")
+
+
+def test_phase2_legacy_message_boundaries_are_removed() -> None:
+    attachments = importlib.import_module("agentos.attachments")
+    messages = importlib.import_module("agentos.messages")
+    providers = importlib.import_module("agentos.providers")
+
+    assert not hasattr(messages, "Message")
+    for name in [
+        "ProviderMessage",
+        "UserMessage",
+        "AssistantMessage",
+        "ToolResultMessage",
+        "ProviderMessageContent",
+        "provider_message_to_dict",
+        "provider_message_from_dict",
+    ]:
+        assert not hasattr(providers, name), name
+    assert importlib.util.find_spec("agentos.messages._migration") is None
+    assert importlib.util.find_spec("agentos.providers.messages") is None
+    assert not hasattr(attachments.AttachmentRuntime, "project_provider_messages")
+
+    online_readme = ONLINE_README.read_text(encoding="utf-8")
+    for legacy_reference in [
+        "ProviderMessage",
+        "UserMessage",
+        "AssistantMessage",
+        "ToolResultMessage",
+        "ProviderMessageContent",
+        "provider_message_to_dict",
+        "provider_message_from_dict",
+        "project_provider_messages",
+        "materialize_provider_messages",
+        "providers/messages.py",
+    ]:
+        assert legacy_reference not in online_readme, legacy_reference
 
 
 def test_context_protocol_public_constants_remain_available() -> None:

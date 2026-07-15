@@ -27,7 +27,6 @@ from agentos.providers import (
     ProviderResponse,
     Provider,
     complete_response_to_stream_events,
-    provider_message_to_dict,
     provider_tool_spec_to_dict,
 )
 from agentos.providers.input import ProviderInputItem
@@ -275,12 +274,9 @@ def _json_default(value: object) -> object:
         return provider_tool_spec_to_dict(value)
     if isinstance(value, ProviderInputItem):
         return provider_input_to_dict(value)
-    try:
-        return provider_message_to_dict(value)  # type: ignore[arg-type]
-    except TypeError:
-        raise TypeError(
-            f"Object of type {type(value).__name__} is not JSON serializable",
-        )
+    raise TypeError(
+        f"Object of type {type(value).__name__} is not JSON serializable",
+    )
 
 
 def _default_context_renderer() -> ContextRenderer:
