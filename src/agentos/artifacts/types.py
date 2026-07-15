@@ -16,6 +16,7 @@ _MEDIA_TYPE_PATTERN = re.compile(
 )
 
 ArtifactMountReason: TypeAlias = Literal["user_upload", "tool_result"]
+ArtifactToolState: TypeAlias = Literal["available", "mounted"]
 
 
 class ArtifactError(ValueError):
@@ -83,6 +84,41 @@ class ArtifactPage:
         items = tuple(self.items)
         if any(type(item) is not ArtifactRecord for item in items):
             raise ArtifactValidationError("artifact page items are invalid")
+        if self.next_cursor is not None and (
+            type(self.next_cursor) is not str or not self.next_cursor
+        ):
+            raise ArtifactValidationError("artifact cursor is invalid")
+        object.__setattr__(self, "items", items)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactToolItem:
+    """`list_attachments` 可向模型返回的安全 Artifact 元数据。"""
+
+    handle: str
+    filename: str | None
+    media_type: str
+    state: ArtifactToolState
+
+    def __post_init__(self) -> None:
+        validate_artifact_id(self.handle)
+        validate_artifact_filename(self.filename)
+        validate_artifact_media_type(self.media_type)
+        if self.state not in ("available", "mounted"):
+            raise ArtifactValidationError("artifact tool state is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactToolPage:
+    """`list_attachments` 的有界、模型安全分页结果。"""
+
+    items: tuple[ArtifactToolItem, ...]
+    next_cursor: str | None
+
+    def __post_init__(self) -> None:
+        items = tuple(self.items)
+        if any(type(item) is not ArtifactToolItem for item in items):
+            raise ArtifactValidationError("artifact tool page items are invalid")
         if self.next_cursor is not None and (
             type(self.next_cursor) is not str or not self.next_cursor
         ):
