@@ -45,6 +45,7 @@ def test_provider_input_literal_sets_are_closed() -> None:
         "business_message",
         "tool_result",
         "recalled_message",
+        "model_task",
         "context_mount",
     }
     assert set(get_args(InputOrigin)) == {
@@ -144,6 +145,17 @@ def test_provider_input_literal_sets_are_closed() -> None:
             ),
         ),
         (
+            lambda: ProviderInputItem.model_task("summarize this transcript"),
+            (
+                "user",
+                "model_task",
+                "runtime",
+                "context_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+        (
             lambda: ProviderInputItem.context_mount((ImagePart("art_1"),)),
             (
                 "user",
@@ -178,6 +190,27 @@ def test_context_snapshot_item_has_sdk_fixed_metadata_and_content() -> None:
     assert item.content == (TextPart("<context-snapshot/>\n"),)
     assert item.tool_calls == ()
     assert item.tool_call_id is None
+
+
+def test_model_task_item_has_factory_only_text_content() -> None:
+    item = ProviderInputItem.model_task("untrusted task data")
+
+    assert item.content == (TextPart("untrusted task data"),)
+    assert item.tool_calls == ()
+    assert item.tool_call_id is None
+    with pytest.raises(TypeError, match="text"):
+        ProviderInputItem.model_task(object())  # type: ignore[arg-type]
+
+
+def test_model_task_rejects_direct_public_field_construction() -> None:
+    with pytest.raises(ValueError, match=r"model_task\(\) factory"):
+        _raw_provider_input(
+            kind="model_task",
+            origin="runtime",
+            authority="context_data",
+            persistence="ephemeral",
+            visibility="internal",
+        )
 
 
 @pytest.mark.parametrize(
@@ -249,6 +282,59 @@ def test_provider_request_rejects_legacy_dict_messages() -> None:
         ProviderRequest(
             system="system",
             messages=({"role": "user", "content": "hello"},),  # type: ignore[arg-type]
+        )
+
+
+def test_provider_request_accepts_only_an_isolated_model_task_plane() -> None:
+    task = ProviderInputItem.model_task("conversation data")
+
+    request = ProviderRequest(system="trusted task instruction", messages=(task,))
+
+    assert request.messages == (task,)
+    assert request.tools == ()
+    assert request.parallel_tool_calls is None
+
+
+@pytest.mark.parametrize(
+    "request_kwargs",
+    [
+        {
+            "messages": (
+                ProviderInputItem.model_task("task data"),
+                ProviderInputItem.business_user("turn data"),
+            ),
+        },
+        {
+            "messages": (
+                ProviderInputItem.model_task("first"),
+                ProviderInputItem.model_task("second"),
+            ),
+        },
+        {
+            "messages": (ProviderInputItem.model_task("task data"),),
+            "tools": (
+                ProviderToolSpec(
+                    function=ProviderFunctionSpec(
+                        name="lookup",
+                        description="Lookup data.",
+                        parameters={"type": "object", "properties": {}},
+                    ),
+                ),
+            ),
+        },
+        {
+            "messages": (ProviderInputItem.model_task("task data"),),
+            "parallel_tool_calls": True,
+        },
+    ],
+)
+def test_provider_request_rejects_mixed_or_tool_enabled_model_task_plane(
+    request_kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="model_task request"):
+        ProviderRequest(
+            system="trusted task instruction",
+            **request_kwargs,  # type: ignore[arg-type]
         )
 
 

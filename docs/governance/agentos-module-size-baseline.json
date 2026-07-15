@@ -198,6 +198,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/providers/input.py",
+      "lines": 314,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/probes.py",
       "lines": 312,
       "gate": "responsibility_review"

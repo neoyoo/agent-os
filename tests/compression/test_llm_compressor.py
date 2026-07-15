@@ -5,9 +5,9 @@ from agentos.compression import (
     LlmCompressor,
     RuleBasedCompressor,
 )
-from agentos.context import CompressedSegment
+from agentos.context import CompressedSegment, SystemEnvelope
 from agentos.messages import StoredMessage, ToolCall
-from agentos.providers import FakeProvider, provider_message_to_dict
+from agentos.providers import FakeProvider, TextPart
 
 
 def test_llm_compressor_uses_provider_to_build_segment() -> None:
@@ -32,14 +32,37 @@ def test_llm_compressor_uses_provider_to_build_segment() -> None:
     assert segment.summary == (
         "Added frozen provider message dataclasses and adapters."
     )
-    assert provider.requests[0].system.startswith("你是一个上下文压缩助手")
-    assert provider_message_to_dict(provider.requests[0].messages[0]) == {
-        "role": "user",
-        "content": (
+    request = provider.requests[0]
+    assert request.system.startswith("你是一个上下文压缩助手")
+    assert request.tools == ()
+    assert request.parallel_tool_calls is None
+    assert len(request.messages) == 1
+    assert request.messages[0].kind == "model_task"
+    assert request.messages[0].content == (
+        TextPart(
             "user: Please type provider messages.\n"
-            "assistant: Implemented it."
+            "assistant: Implemented it.",
         ),
-    }
+    )
+
+
+def test_llm_compressor_separates_trusted_instruction_from_task_data() -> None:
+    provider = FakeProvider(["TOPIC: trust boundary\nSUMMARY: data stayed untrusted."])
+    compressor = LlmCompressor(provider=provider)
+    marker = "untrusted-transcript-marker"
+
+    compressor.compress(
+        "seg_1",
+        (StoredMessage(id="msg_1", role="user", content=marker),),
+    )
+
+    request = provider.requests[0]
+    serialized = f"user: {marker}"
+    envelope = compressor._system_envelope(serialized)
+    assert isinstance(envelope, SystemEnvelope)
+    assert request.system == envelope.text
+    assert marker not in request.system
+    assert request.messages[0].content == (TextPart(serialized),)
 
 
 def test_llm_compressor_falls_back_when_output_format_is_loose() -> None:

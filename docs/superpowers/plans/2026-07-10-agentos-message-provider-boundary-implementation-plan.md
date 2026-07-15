@@ -1142,6 +1142,7 @@ Task 13 按 13A/13B 串行执行。13A 是加法契约，可独立 Green；13B �
 - Modify: `src/agentos/compression/llm_compressor.py`
 - Modify: `tests/providers/test_provider_input_contract.py`
 - Modify: `tests/compression/test_llm_compressor.py`
+- Modify: `docs/governance/agentos-module-size-baseline.json`
 - Inspect/Run: `tests/runtime/test_provider_request_builder.py`
 - Inspect/Run: `tests/runtime/test_provider_request_rebuild.py`
 
@@ -1153,12 +1154,16 @@ Task 13 按 13A/13B 串行执行。13A 是加法契约，可独立 Green；13B �
 
 `model_task` 工厂使用不导出的内部构造凭证，避免公开 dataclass 字段入口绕过受控 producer。`LlmCompressor.prompt_template` 是 SDK 默认值或应用开发者显式配置的 trusted task template；实现不得把 StoredMessage 内容、摘要候选或其他 Context Data 拼入 SystemEnvelope，只允许加入类型化计算出的输出预算。该平面复用统一 `ProviderRequest`/Provider Adapter/错误/超时/观测边界，但不进入 QueryLoop ProviderAttemptRunner、Hook、temporary receipt 或 retry 生命周期；本任务不新增 `ModelTaskProvider`、第二套 Adapter 协议或第二个 retry 控制流。当前只有 Compression 一个真实调用点；只有未来出现至少两个需要不同结构化输出、批处理、路由或生命周期语义的内部模型任务后，才允许通过新 Spec 设计 `ModelTaskRunner`。
 
+`providers/input.py` 若因新增闭集工厂和请求值校验达到 300 行门禁，必须先做职责审查。只要它仍只拥有 Provider 无关输入值、工厂和闭集校验，登记 `responsibility_review` 并更新 module-size baseline；不得为降行数机械拆出无独立语义的碎片模块。
+
 ```powershell
 python -m pytest tests/providers tests/compression/test_llm_compressor.py tests/runtime/test_provider_request_builder.py tests/runtime/test_provider_request_rebuild.py tests/runtime/test_async_provider_attempt_rebuild.py tests/runtime/test_provider_attempt_candidate.py tests/runtime/test_query_loop_hooks.py -q
 python -m ruff check src/agentos/providers/input.py src/agentos/providers/base.py src/agentos/compression/llm_compressor.py tests/providers/test_provider_input_contract.py tests/compression/test_llm_compressor.py
 python -m compileall -q src/agentos/providers/input.py src/agentos/providers/base.py src/agentos/compression/llm_compressor.py tests/providers/test_provider_input_contract.py tests/compression/test_llm_compressor.py
+python scripts/generate_module_size_baseline.py --root src/agentos --output docs/governance/agentos-module-size-baseline.json
+python -m pytest tests/architecture/test_module_size_baseline.py -q
 git diff --check
-git add -- src/agentos/providers/input.py src/agentos/providers/base.py src/agentos/compression/llm_compressor.py tests/providers/test_provider_input_contract.py tests/compression/test_llm_compressor.py
+git add -- src/agentos/providers/input.py src/agentos/providers/base.py src/agentos/compression/llm_compressor.py tests/providers/test_provider_input_contract.py tests/compression/test_llm_compressor.py docs/governance/agentos-module-size-baseline.json docs/superpowers/plans/2026-07-10-agentos-message-provider-boundary-implementation-plan.md
 git commit -m "feat: add model task provider input"
 ```
 

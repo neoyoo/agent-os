@@ -42,6 +42,21 @@ class ProviderRequest(InternalTranscriptValue):
         object.__setattr__(self, "tools", tools)
         if self.parallel_tool_calls is not None and type(self.parallel_tool_calls) is not bool:
             raise TypeError("parallel_tool_calls must be bool or None")
+        model_tasks = tuple(
+            item
+            for item in messages
+            if isinstance(item, ProviderInputItem) and item.kind == "model_task"
+        )
+        if model_tasks and (
+            len(messages) != 1
+            or len(model_tasks) != 1
+            or tools
+            or self.parallel_tool_calls is not None
+        ):
+            raise ValueError(
+                "model_task request requires exactly one model_task, no tools, "
+                "and parallel_tool_calls=None",
+            )
 
 
 @dataclass(frozen=True, slots=True)

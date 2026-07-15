@@ -8,10 +8,10 @@ from agentos.compression._helpers import (
     extract_tool_hints,
 )
 from agentos.compression.compressor import Compressor, RuleBasedCompressor
-from agentos.context import CompressedSegment
+from agentos.context import CompressedSegment, SystemEnvelope
 from agentos.memory import CompressedSegmentPackage, SegmentRecallDocument
 from agentos.messages import StoredMessage
-from agentos.providers import Provider, ProviderRequest, UserMessage
+from agentos.providers import Provider, ProviderInputItem, ProviderRequest
 
 
 DEFAULT_COMPRESSION_PROMPT = """你是一个上下文压缩助手。将以下对话片段压缩为简洁摘要。
@@ -53,10 +53,11 @@ class LlmCompressor:
             raise ValueError("cannot compress an empty message sequence")
 
         serialized = self._serialize_messages(messages)
+        envelope = self._system_envelope(serialized)
         response = self.provider.complete(
             ProviderRequest(
-                system=self._system_prompt(serialized),
-                messages=(UserMessage(content=serialized),),
+                system=envelope.text,
+                messages=(ProviderInputItem.model_task(serialized),),
             ),
         )
         topic, summary = self._parse_llm_output(response.content)
@@ -89,11 +90,13 @@ class LlmCompressor:
             ),
         )
 
-    def _system_prompt(self, serialized_messages: str) -> str:
-        """构造带目标输出预算的 system prompt。"""
+    def _system_envelope(self, serialized_messages: str) -> SystemEnvelope:
+        """构造不包含待压缩正文的可信任务指令。"""
 
         budget = self._target_output_tokens(serialized_messages)
-        return f"{self.prompt_template}\n\n目标输出上限: {budget} tokens"
+        return SystemEnvelope(
+            text=f"{self.prompt_template}\n\n目标输出上限: {budget} tokens",
+        )
 
     def _target_output_tokens(self, serialized_messages: str) -> int:
         """按粗略 4 chars/token 估算输出 token 预算。"""

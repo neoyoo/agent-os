@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Literal, TypeAlias
 
-from agentos.providers.json_values import FrozenJsonObject, freeze_json
 from agentos._internal_transcript import InternalTranscriptValue
+from agentos.providers.json_values import FrozenJsonObject, freeze_json
 
 
 ProviderRole: TypeAlias = Literal["user", "assistant", "tool"]
@@ -16,6 +16,7 @@ ProviderInputKind: TypeAlias = Literal[
     "business_message",
     "tool_result",
     "recalled_message",
+    "model_task",
     "context_mount",
 ]
 InputOrigin: TypeAlias = Literal[
@@ -59,6 +60,9 @@ class FilePart:
 ProviderContentPart: TypeAlias = TextPart | ImagePart | FilePart
 
 
+_MODEL_TASK_FACTORY_TOKEN = object()
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class ProviderToolCall:
     """Provider 边界中的深不可变工具调用。"""
@@ -94,10 +98,13 @@ class ProviderInputItem(InternalTranscriptValue):
     content: tuple[ProviderContentPart, ...]
     tool_calls: tuple[ProviderToolCall, ...] = ()
     tool_call_id: str | None = None
+    _factory_token: InitVar[object | None] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _factory_token: object | None) -> None:
         """冻结集合并校验完整元数据矩阵。"""
 
+        if self.kind == "model_task" and _factory_token is not _MODEL_TASK_FACTORY_TOKEN:
+            raise ValueError("model_task provider input requires model_task() factory")
         content = _normalize_content(self.content)
         tool_calls = tuple(self.tool_calls)
         if any(type(item) is not ProviderToolCall for item in tool_calls):
@@ -187,6 +194,23 @@ class ProviderInputItem(InternalTranscriptValue):
         )
 
     @classmethod
+    def model_task(cls, text: str) -> ProviderInputItem:
+        """创建 Runtime 内部模型任务的不可信文本输入。"""
+
+        if not isinstance(text, str):
+            raise TypeError("model_task text must be str")
+        return cls(
+            role="user",
+            kind="model_task",
+            origin="runtime",
+            authority="context_data",
+            persistence="ephemeral",
+            visibility="internal",
+            content=(TextPart(text),),
+            _factory_token=_MODEL_TASK_FACTORY_TOKEN,
+        )
+
+    @classmethod
     def context_mount(
         cls,
         content: Iterable[ProviderContentPart],
@@ -249,6 +273,7 @@ _ALLOWED_METADATA = frozenset(
         ("user", "recalled_message", "recall_runtime", "conversation_data", "ephemeral", "internal"),
         ("assistant", "recalled_message", "recall_runtime", "conversation_data", "ephemeral", "internal"),
         ("tool", "recalled_message", "recall_runtime", "tool_data", "ephemeral", "internal"),
+        ("user", "model_task", "runtime", "context_data", "ephemeral", "internal"),
         ("user", "context_mount", "artifact_runtime", "artifact_data", "ephemeral", "internal"),
     },
 )
@@ -276,6 +301,10 @@ def _validate_provider_input_item(item: ProviderInputItem) -> None:
     )
     if metadata not in _ALLOWED_METADATA:
         raise ValueError("provider input metadata matrix violation")
+    if item.kind == "model_task" and (
+        len(item.content) != 1 or type(item.content[0]) is not TextPart
+    ):
+        raise ValueError("model_task provider input requires exactly one TextPart")
     if item.role == "tool":
         if not isinstance(item.tool_call_id, str) or not item.tool_call_id:
             raise ValueError("tool provider input requires tool_call_id")
