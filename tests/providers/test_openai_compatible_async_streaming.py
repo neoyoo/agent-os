@@ -213,6 +213,114 @@ def test_openai_compatible_async_stream_cancellation_reaches_transport() -> None
     assert asyncio.run(run_and_cancel()) is True
 
 
+def test_openai_compatible_cancelled_stream_does_not_complete() -> None:
+    blocked = asyncio.Event()
+
+    class BlockingAsyncStreamingTransport:
+        async def post_json_stream(
+            self,
+            url: str,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout: float,
+        ):
+            yield {
+                "id": "chatcmpl_cancel",
+                "model": "model",
+                "choices": [{"delta": {"content": "partial"}}],
+            }
+            blocked.set()
+            await asyncio.Event().wait()
+
+    async def run_and_cancel() -> list[object]:
+        provider = OpenAICompatibleProvider(
+            api_key="key",
+            base_url="https://example.test",
+            model="model",
+            async_transport=BlockingAsyncStreamingTransport(),
+        )
+        events: list[object] = []
+
+        async def consume() -> None:
+            async for event in provider.async_stream(
+                ProviderRequest(system="system", messages=()),
+            ):
+                events.append(event)
+
+        task = asyncio.create_task(consume())
+        await blocked.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return events
+
+    events = asyncio.run(run_and_cancel())
+
+    assert not any(isinstance(event, ProviderStreamCompleted) for event in events)
+
+
+def test_openai_compatible_sync_and_async_stream_events_are_equal() -> None:
+    chunks = (
+        {
+            "id": "chatcmpl_equal",
+            "model": "model",
+            "choices": [{"delta": {"content": "hello "}}],
+        },
+        {
+            "id": "chatcmpl_equal",
+            "model": "model",
+            "choices": [
+                {
+                    "delta": {
+                        "content": "world",
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": '{"query":"agentos"}',
+                                },
+                            },
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                },
+            ],
+        },
+    )
+
+    class SyncTransport:
+        def post_json_stream(self, **kwargs: object):
+            yield from chunks
+
+    class AsyncTransport:
+        async def post_json_stream(self, **kwargs: object):
+            for chunk in chunks:
+                yield chunk
+
+    request = ProviderRequest(system="system", messages=())
+    sync_provider = OpenAICompatibleProvider(
+        api_key="key",
+        base_url="https://example.test",
+        model="model",
+        transport=SyncTransport(),  # type: ignore[arg-type]
+    )
+    async_provider = OpenAICompatibleProvider(
+        api_key="key",
+        base_url="https://example.test",
+        model="model",
+        async_transport=AsyncTransport(),  # type: ignore[arg-type]
+    )
+
+    sync_events = list(sync_provider.stream(request))
+
+    async def collect() -> list[object]:
+        return [event async for event in async_provider.async_stream(request)]
+
+    assert asyncio.run(collect()) == sync_events
+
+
 
 def test_openai_compatible_async_stream_generates_missing_tool_call_delta_id(
     monkeypatch,

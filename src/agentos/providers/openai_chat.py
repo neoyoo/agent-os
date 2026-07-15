@@ -10,6 +10,7 @@ from agentos.providers._tool_arguments import (
     require_tool_call_id,
     require_tool_call_name,
 )
+from agentos.providers._timeout import raise_for_provider_timeout
 from agentos.providers.base import (
     ProviderRequest,
     ProviderResponse,
@@ -37,7 +38,11 @@ class OpenAIChatCompletionsProvider:
         )
         if self.timeout_seconds is not None:
             kwargs["timeout"] = self.timeout_seconds
-        response = self.client.chat.completions.create(**kwargs)
+        try:
+            response = self.client.chat.completions.create(**kwargs)
+        except Exception as error:
+            raise_for_provider_timeout(error, provider_name="OpenAI Chat")
+            raise
         choice = _first_choice(response)
         message = getattr(choice, "message", None)
         if message is None:

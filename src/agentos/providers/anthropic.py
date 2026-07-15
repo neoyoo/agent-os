@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agentos.providers._tool_arguments import (
+    require_tool_call_id,
+    require_tool_call_name,
+)
+from agentos.providers._timeout import raise_for_provider_timeout
 from agentos.providers.anthropic_wire import (
     anthropic_tools,
     build_anthropic_messages,
@@ -38,18 +43,31 @@ class AnthropicProvider:
         }
         if self.timeout_seconds is not None:
             kwargs["timeout"] = self.timeout_seconds
-        response = self.client.messages.create(**kwargs)
+        try:
+            response = self.client.messages.create(**kwargs)
+        except Exception as error:
+            raise_for_provider_timeout(error, provider_name="Anthropic")
+            raise
         text_parts: list[str] = []
         tool_calls: list[ProviderToolCall] = []
         for block in response.content:
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
+                arguments = block.input
+                if not isinstance(arguments, dict):
+                    raise ValueError("Anthropic tool arguments must be an object")
                 tool_calls.append(
                     ProviderToolCall(
-                        id=block.id,
-                        name=block.name,
-                        arguments=dict(block.input),
+                        id=require_tool_call_id(
+                            block.id,
+                            provider_name="Anthropic",
+                        ),
+                        name=require_tool_call_name(
+                            block.name,
+                            provider_name="Anthropic",
+                        ),
+                        arguments=arguments,
                     ),
                 )
         return ProviderResponse(

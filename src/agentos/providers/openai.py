@@ -10,6 +10,7 @@ from agentos.providers._tool_arguments import (
     require_tool_call_id,
     require_tool_call_name,
 )
+from agentos.providers._timeout import raise_for_provider_timeout
 from agentos.providers.base import (
     ProviderRequest,
     ProviderResponse,
@@ -35,7 +36,11 @@ class OpenAIProvider:
         kwargs = build_openai_responses_payload(model=self.model, request=request)
         if self.timeout_seconds is not None:
             kwargs["timeout"] = self.timeout_seconds
-        response = self.client.responses.create(**kwargs)
+        try:
+            response = self.client.responses.create(**kwargs)
+        except Exception as error:
+            raise_for_provider_timeout(error, provider_name="OpenAI")
+            raise
         content, tool_calls = _response_output(response)
         status = getattr(response, "status", None)
         return ProviderResponse(

@@ -239,3 +239,31 @@ def test_anthropic_user_merge_does_not_mutate_created_wire_objects() -> None:
     assert wire == original
     assert merged[0] is not wire[0]
     assert merged[0]["content"] is not wire[1]["content"]
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        SimpleNamespace(type="tool_use", id=None, name="lookup", input={}),
+        SimpleNamespace(type="tool_use", id="call_1", name=None, input={}),
+        SimpleNamespace(type="tool_use", id="call_1", name="lookup", input=[]),
+    ],
+)
+def test_anthropic_rejects_malformed_tool_calls(block: object) -> None:
+    class MalformedMessages:
+        def create(self, **kwargs: object) -> object:
+            return SimpleNamespace(
+                id="msg_1",
+                model="model",
+                stop_reason="tool_use",
+                usage=None,
+                content=[block],
+            )
+
+    provider = AnthropicProvider(
+        client=SimpleNamespace(messages=MalformedMessages()),
+        model="model",
+    )
+
+    with pytest.raises(ValueError, match="Anthropic tool"):
+        provider.complete(ProviderRequest(system="system", messages=()))

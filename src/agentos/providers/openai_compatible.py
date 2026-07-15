@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import time
-import warnings
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 
 from agentos._sync_work import run_sync
+from agentos.providers._timeout import raise_for_provider_timeout
 from agentos.providers.base import ProviderRequest, ProviderResponse
 from agentos.providers.input import ProviderInputItem
 from agentos.providers.openai_chat_wire import openai_chat_message
@@ -38,7 +38,6 @@ class OpenAICompatibleProvider:
     api_key: str
     base_url: str
     model: str
-    timeout: float | None = None
     timeout_seconds: float = 60.0
     transport: OpenAICompatibleTransport | None = None
     async_transport: AsyncOpenAICompatibleTransport | None = None
@@ -51,29 +50,23 @@ class OpenAICompatibleProvider:
         repr=False,
     )
 
-    def __post_init__(self) -> None:
-        """兼容 legacy timeout，同时把公开配置收敛到 timeout_seconds。"""
-
-        if self.timeout is None:
-            return
-        warnings.warn(
-            "`timeout` is deprecated; use `timeout_seconds` instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if self.timeout_seconds == 60.0:
-            self.timeout_seconds = self.timeout
-
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """调用 OpenAI-compatible `/chat/completions`。"""
 
         transport = self.transport or UrlLibJSONTransport()
-        response = transport.post_json(
-            url=self._chat_completions_url(),
-            headers=self._headers(),
-            payload=self._payload(request),
-            timeout=self._timeout(),
-        )
+        try:
+            response = transport.post_json(
+                url=self._chat_completions_url(),
+                headers=self._headers(),
+                payload=self._payload(request),
+                timeout=self.timeout_seconds,
+            )
+        except Exception as error:
+            raise_for_provider_timeout(
+                error,
+                provider_name="OpenAI-compatible",
+            )
+            raise
         return parse_openai_compatible_response(response)
 
     async def async_complete(self, request: ProviderRequest) -> ProviderResponse:
@@ -82,12 +75,19 @@ class OpenAICompatibleProvider:
         if self.async_transport is None and self.transport is not None:
             return await run_sync(self.complete, request)
         transport = self.async_transport or HttpxAsyncJSONTransport()
-        response = await transport.post_json(
-            url=self._chat_completions_url(),
-            headers=self._headers(),
-            payload=self._payload(request),
-            timeout=self._timeout(),
-        )
+        try:
+            response = await transport.post_json(
+                url=self._chat_completions_url(),
+                headers=self._headers(),
+                payload=self._payload(request),
+                timeout=self.timeout_seconds,
+            )
+        except Exception as error:
+            raise_for_provider_timeout(
+                error,
+                provider_name="OpenAI-compatible",
+            )
+            raise
         return parse_openai_compatible_response(response)
 
     def stream(
@@ -105,13 +105,20 @@ class OpenAICompatibleProvider:
         payload = self._payload(request)
         payload["stream"] = True
         transport = self.transport or UrlLibJSONTransport()
-        for chunk in transport.post_json_stream(
-            url=self._chat_completions_url(),
-            headers=self._headers(),
-            payload=payload,
-            timeout=self._timeout(),
-        ):
-            yield from parser.feed(chunk)
+        try:
+            for chunk in transport.post_json_stream(
+                url=self._chat_completions_url(),
+                headers=self._headers(),
+                payload=payload,
+                timeout=self.timeout_seconds,
+            ):
+                yield from parser.feed(chunk)
+        except Exception as error:
+            raise_for_provider_timeout(
+                error,
+                provider_name="OpenAI-compatible",
+            )
+            raise
         yield from parser.finish()
 
     async def async_stream(
@@ -135,14 +142,21 @@ class OpenAICompatibleProvider:
         payload = self._payload(request)
         payload["stream"] = True
         transport = self.async_transport or HttpxAsyncJSONTransport()
-        async for chunk in transport.post_json_stream(
-            url=self._chat_completions_url(),
-            headers=self._headers(),
-            payload=payload,
-            timeout=self._timeout(),
-        ):
-            for event in parser.feed(chunk):
-                yield event
+        try:
+            async for chunk in transport.post_json_stream(
+                url=self._chat_completions_url(),
+                headers=self._headers(),
+                payload=payload,
+                timeout=self.timeout_seconds,
+            ):
+                for event in parser.feed(chunk):
+                    yield event
+        except Exception as error:
+            raise_for_provider_timeout(
+                error,
+                provider_name="OpenAI-compatible",
+            )
+            raise
         for event in parser.finish():
             yield event
 
@@ -175,9 +189,6 @@ class OpenAICompatibleProvider:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-    def _timeout(self) -> float:
-        return self.timeout_seconds
 
     def _next_fallback_tool_call_id(self) -> str:
         base_id = f"call_ts_{time.time_ns()}"

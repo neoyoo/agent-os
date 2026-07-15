@@ -113,6 +113,10 @@ class UrlLibJSONTransport:
             raise OpenAICompatibleProviderError(
                 f"OpenAI-compatible request failed: {error.reason}",
             ) from error
+        except TimeoutError as error:
+            raise ProviderTimeoutError(
+                "OpenAI-compatible request timed out",
+            ) from error
         parsed = json.loads(body)
         if not isinstance(parsed, dict):
             raise ValueError("OpenAI-compatible response must be a JSON object")
@@ -152,6 +156,10 @@ class UrlLibJSONTransport:
             raise OpenAICompatibleProviderError(
                 f"OpenAI-compatible request failed: {error.reason}",
             ) from error
+        except TimeoutError as error:
+            raise ProviderTimeoutError(
+                "OpenAI-compatible request timed out",
+            ) from error
 
     def _map_transport_error(self, error: URLError) -> None:
         reason = getattr(error, "reason", None)
@@ -177,16 +185,22 @@ class HttpxAsyncJSONTransport:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 parsed = response.json()
-        except httpx.HTTPStatusError as error:
-            body = await _async_response_error_text(error.response)
-            raise OpenAICompatibleProviderError(
-                "OpenAI-compatible request failed with HTTP "
-                f"{error.response.status_code}: {body}",
-            ) from error
-        except httpx.HTTPError as error:
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed: {error}",
-            ) from error
+        except Exception as error:
+            if _is_httpx_timeout(httpx, error):
+                raise ProviderTimeoutError(
+                    "OpenAI-compatible request timed out",
+                ) from error
+            if isinstance(error, httpx.HTTPStatusError):
+                body = await _async_response_error_text(error.response)
+                raise OpenAICompatibleProviderError(
+                    "OpenAI-compatible request failed with HTTP "
+                    f"{error.response.status_code}: {body}",
+                ) from error
+            if isinstance(error, httpx.HTTPError):
+                raise OpenAICompatibleProviderError(
+                    f"OpenAI-compatible request failed: {error}",
+                ) from error
+            raise
         if not isinstance(parsed, dict):
             raise ValueError("OpenAI-compatible response must be a JSON object")
         return parsed
@@ -217,16 +231,22 @@ class HttpxAsyncJSONTransport:
                         if parsed is _STREAM_DONE:
                             break
                         yield parsed
-        except httpx.HTTPStatusError as error:
-            body = await _async_response_error_text(error.response)
-            raise OpenAICompatibleProviderError(
-                "OpenAI-compatible request failed with HTTP "
-                f"{error.response.status_code}: {body}",
-            ) from error
-        except httpx.HTTPError as error:
-            raise OpenAICompatibleProviderError(
-                f"OpenAI-compatible request failed: {error}",
-            ) from error
+        except Exception as error:
+            if _is_httpx_timeout(httpx, error):
+                raise ProviderTimeoutError(
+                    "OpenAI-compatible request timed out",
+                ) from error
+            if isinstance(error, httpx.HTTPStatusError):
+                body = await _async_response_error_text(error.response)
+                raise OpenAICompatibleProviderError(
+                    "OpenAI-compatible request failed with HTTP "
+                    f"{error.response.status_code}: {body}",
+                ) from error
+            if isinstance(error, httpx.HTTPError):
+                raise OpenAICompatibleProviderError(
+                    f"OpenAI-compatible request failed: {error}",
+                ) from error
+            raise
 
     def _httpx(self) -> object:
         try:
@@ -250,3 +270,8 @@ async def _async_response_error_text(response: object) -> str:
         return str(getattr(response, "text"))
     except Exception:
         return ""
+
+
+def _is_httpx_timeout(httpx: object, error: Exception) -> bool:
+    timeout_type = getattr(httpx, "TimeoutException", None)
+    return isinstance(timeout_type, type) and isinstance(error, timeout_type)
