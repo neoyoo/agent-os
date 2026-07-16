@@ -41,6 +41,18 @@ class AsyncMemorySkillSource(SkillContentSource):
         await asyncio.sleep(0)
         return [skill.descriptor() for skill in self._skills.values()]
 
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        try:
+            skill = self._skills[name]
+        except KeyError as error:
+            raise KeyError(name) from error
+        return SkillVerificationSubject.from_content(
+            source_id="tests",
+            skill_name=name,
+            source_revision=skill.source_revision,
+            content=skill.content,
+        )
+
     async def load_skill(self, name: str) -> SkillLoadResult:
         await asyncio.sleep(0)
         self.loaded.append(name)

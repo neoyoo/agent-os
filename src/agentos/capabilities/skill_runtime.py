@@ -63,6 +63,8 @@ class SkillRuntime:
             resources = await self._registry.list_resources(skill_name)
             return self._bounded_untrusted_result(loaded, resources)
         decision = self._verify(loaded.metadata, loaded)
+        if not self._registry.is_subject_current(loaded.subject):
+            raise SkillTrustError("skill source revision changed during load")
         self._active[key] = _ActiveSkill(loaded=loaded, decision=decision)
         return f"Skill 已加载：{skill_name}。可信指令将在下一次模型请求中生效。"
 
@@ -80,6 +82,9 @@ class SkillRuntime:
         invalid = []
         for key, active in self._active.items():
             if key[0] != session_id:
+                continue
+            if not self._registry.is_subject_current(active.loaded.subject):
+                invalid.append(key)
                 continue
             try:
                 decision = self._verify(active.loaded.metadata, active.loaded)

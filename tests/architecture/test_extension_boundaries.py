@@ -158,59 +158,17 @@ def test_planning_domain_foundation_exists_without_multi_dependency() -> None:
     assert matches == []
 
 
-def test_multi_planner_uses_planning_foundation_class_identity() -> None:
+def test_planner_has_one_planning_owner_and_multi_only_adapts_dispatch() -> None:
     from agentos import planning
-    from agentos.multi import planner
 
-    names = (
-        "ClaimGuardedPlanStore",
-        "CompareAndSavePlanStore",
-        "EvidenceHandle",
-        "InMemoryPlanClaimStore",
-        "InMemoryPlanStore",
-        "PlanAssignment",
-        "PlanClaimLostError",
-        "PlanClaimRecord",
-        "PlanClaimResult",
-        "PlanClaimStore",
-        "PlanClaimSweepStore",
-        "PlanConflictError",
-        "PlanDecomposition",
-        "PlanDecompositionGatePolicy",
-        "PlanDecompositionGateReport",
-        "PlanDecompositionValidationReport",
-        "PlanDispatchAlreadySubmittedError",
-        "PlanDispatchReport",
-        "PlanDispatchSkip",
-        "PlanError",
-        "PlanNotFoundError",
-        "PlanRetryPolicy",
-        "PlanState",
-        "PlanStep",
-        "PlanStepDispatcher",
-        "PlanStepSpec",
-        "PlanStepNotFoundError",
-        "PlanStore",
-        "PlanStoreRecord",
-        "PlannerToolAuthorizationError",
-        "PlannerLlmGovernanceEvidenceGateReport",
-        "PlannerLlmGovernanceEvidenceRecord",
-        "SubAgentTemplate",
-    )
-
-    assert all(getattr(planner, name) is getattr(planning, name) for name in names)
+    assert not (PROJECT_ROOT / "src" / "agentos" / "multi" / "planner.py").exists()
     assert (
         inspect.signature(planning.PlanState.with_status).return_annotation
         == "'PlanState'"
     )
-    runtime_parameters = inspect.signature(planner.PlannerRuntime).parameters
+    runtime_parameters = inspect.signature(planning.PlannerRuntime).parameters
     assert "dispatcher" in runtime_parameters
     assert "coordinator" not in runtime_parameters
-
-    planner_source = PROJECT_ROOT / "src" / "agentos" / "multi" / "planner.py"
-    planner_text = planner_source.read_text(encoding="utf-8")
-    assert "TaskAlreadySubmittedError" not in planner_text
-    assert "self.coordinator" not in planner_text
 
     adapter_source = (
         PROJECT_ROOT / "src" / "agentos" / "multi" / "planning_dispatch.py"

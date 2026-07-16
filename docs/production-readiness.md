@@ -941,8 +941,8 @@ Required app glue:
 
 Production notes:
 
-- `PlanStore` is the truth source. Working state should receive only compact
-  projections such as `plan_to_working_state_summary(plan)`.
+- `PlanStore` is the truth source. Provider context should receive only the
+  authorized `active-plan` projection from `BoundPlanProjectionProvider`.
 - Use `PlannerRuntime.gate_decomposition_proposal(...)` or
   `plan_gate_decomposition_proposal` when a leader agent, intent router, or
   app-owned LLM planner has produced a raw JSON-like plan draft. The SDK parses

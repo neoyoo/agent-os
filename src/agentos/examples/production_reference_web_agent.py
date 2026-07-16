@@ -28,10 +28,10 @@ from agentos.deployment import (
 from agentos.examples.planner_patterns import build_plan_and_execute_example
 from agentos.multi import (
     AgentCard,
-    PostgresPlanStore,
     PostgresTaskStore,
     RedisAgentMessageQueue,
 )
+from agentos.multi.postgres_plan import PostgresPlanStore
 from agentos.persistence import MemoryPersistence, PostgresSessionSnapshotPersistence
 from agentos.persistence.base import SessionSnapshot
 from agentos.policies import BudgetPolicy
@@ -276,7 +276,7 @@ def build_production_reference_web_agent(
         },
     }
     probe_pack = ReferenceLiveBackendProbePack(environment="reference")
-    planner_summary = build_plan_and_execute_example()
+    planner_context_projection = build_plan_and_execute_example()
     example = ProductionReferenceWebAgentExample(
         service_reference=service_reference,
         runtime_profile=runtime_profile,
@@ -287,7 +287,7 @@ def build_production_reference_web_agent(
         planner_primitive={
             "pattern": "plan-and-execute",
             "runtime": "PlannerRuntime",
-            "summary": planner_summary,
+            "context_projection": planner_context_projection,
         },
         app=service_reference.build_asgi_app(),
         metadata={

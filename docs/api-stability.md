@@ -53,6 +53,7 @@ Every namespace listed here must be represented in
 - `agentos`
 - `agentos.channels`
 - `agentos.multi`
+- `agentos.planning`
 - `agentos.persistence`
 - `agentos.runtime`
 - `agentos.sync`
@@ -146,8 +147,8 @@ namespaces; adapter test suites should import contract runners from
   `agentos.__all__` and the root inventory are supported as root imports.
   Stable or experimental names that are governed in submodules must be imported
   from their owning namespace, for example `agentos.channels`,
-  `agentos.multi`, `agentos.runtime`, `agentos.sync`, `agentos.registry`, or
-  `agentos.deployment`.
+  `agentos.multi`, `agentos.planning`, `agentos.runtime`, `agentos.sync`,
+  `agentos.registry`, or `agentos.deployment`.
 - boundary-first ownership stays unchanged: SDK API exposes protocols, profiles,
   reference compositions, readiness, and audit evidence; deployment code owns
   real infrastructure, credentials, migrations execution, CI/CD, signing,

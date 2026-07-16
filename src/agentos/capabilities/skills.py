@@ -106,6 +106,17 @@ class SkillRegistry:
             raise ValueError("skill verification subject mismatch")
         return loaded
 
+    def is_subject_current(self, subject: SkillVerificationSubject) -> bool:
+        """返回 Source 是否仍能证明已加载的完整验证主体。"""
+
+        if self._source is None or subject.skill_name not in self._skills:
+            return False
+        try:
+            current = self._source.current_subject(subject.skill_name)
+        except Exception:
+            return False
+        return current == subject
+
     async def list_resources(self, skill_name: str) -> tuple[SkillResourceRef, ...]:
         """列出 Skill 资源 manifest。"""
 

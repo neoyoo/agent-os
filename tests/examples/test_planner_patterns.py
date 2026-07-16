@@ -7,48 +7,47 @@ from agentos.examples.planner_patterns import (
 )
 
 
-def test_intent_router_example_returns_plan_summary_projection() -> None:
-    summary = build_intent_router_example(
+def test_intent_router_example_returns_canonical_context_projection() -> None:
+    context_projection = build_intent_router_example(
         query="Please review the planner runtime boundary.",
     )
 
-    assert summary["objective"] == "Route request: Please review the planner runtime boundary."
-    assert summary["status"] == "draft"
-    assert summary["step_counts"]["pending"] == 1
-    assert summary["next_steps"] == [
-        {
-            "step_id": "step_1",
-            "instruction": "Handle request as architecture-review.",
-            "status": "pending",
-            "template_id": "architecture-reviewer",
-            "assigned_agent_id": None,
-            "required_capabilities": ["architecture-review"],
-            "depends_on": [],
-            "evidence_ids": [],
-            "attempts": 0,
-            "next_retry_at": None,
-            "retry_status": None,
-        },
-    ]
+    assert context_projection.startswith(
+        '<context-snapshot protocol="agentos.context" version="1.0"',
+    )
+    assert '<active-plan status="pending">' in context_projection
+    assert (
+        "<goal>Route request: Please review the planner runtime boundary.</goal>"
+        in context_projection
+    )
+    assert (
+        '<step handle="step_1" status="pending">'
+        "Handle request as architecture-review.</step>"
+        in context_projection
+    )
+    assert "architecture-reviewer" not in context_projection
+    assert "required_capabilities" not in context_projection
 
 
-def test_plan_and_execute_example_assigns_records_evidence_and_projects_summary() -> None:
-    summary = build_plan_and_execute_example()
+def test_plan_and_execute_example_projects_store_truth_through_context_protocol() -> None:
+    context_projection = build_plan_and_execute_example()
 
-    assert summary["status"] == "running"
-    assert summary["step_counts"]["completed"] == 1
-    assert summary["step_counts"]["pending"] == 1
-    assert summary["next_steps"][0]["step_id"] == "step_2"
-    assert summary["recent_evidence"] == [
-        {
-            "evidence_id": "evidence_1",
-            "kind": "task_result",
-            "summary": "Architecture reviewer confirmed the boundary.",
-            "producer_agent_id": "architecture_expert",
-        },
-    ]
-    assert "task_dispatch" not in repr(summary)
-    assert "task_spawn" not in repr(summary)
+    assert '<active-plan status="in-progress">' in context_projection
+    assert "<goal>Review planner pattern support.</goal>" in context_projection
+    assert (
+        '<step handle="step_1" status="completed">'
+        "Review the planner runtime boundary.</step>"
+        in context_projection
+    )
+    assert (
+        '<step handle="step_2" status="pending">'
+        "Summarize the remaining production gaps.</step>"
+        in context_projection
+    )
+    assert "Architecture reviewer confirmed the boundary." not in context_projection
+    assert "architecture_expert" not in context_projection
+    assert "task_dispatch" not in context_projection
+    assert "task_spawn" not in context_projection
 
 
 def test_planner_patterns_example_has_main_entrypoint(capsys) -> None:
@@ -58,3 +57,4 @@ def test_planner_patterns_example_has_main_entrypoint(capsys) -> None:
     assert exit_code == 0
     assert "intent_router" in output
     assert "plan_and_execute" in output
+    assert "context-snapshot" in output

@@ -1352,28 +1352,9 @@
           "signature": "() -> 'None'",
           "stability": "experimental"
         },
-        "AllowAllPlannerToolAuthorizationPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
         "AllowAllTeamToolAuthorizationPolicy": {
           "signature": "()",
           "stability": "experimental"
-        },
-        "ClaimGuardedPlanStore": {
-          "methods": {
-            "save_plan_if_claimed": "(self, plan: 'PlanState', claim: \"'PlanClaimRecord'\", *, expected_revision: 'int', now: 'float') -> 'bool'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "CompareAndSavePlanStore": {
-          "methods": {
-            "get_plan_record": "(self, plan_id: 'str') -> 'PlanStoreRecord | None'",
-            "save_plan_if_unchanged": "(self, plan: 'PlanState', *, expected_revision: 'int') -> 'bool'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
         },
         "ContextInitStrategy": {
           "signature": "(*args, **kwargs)",
@@ -1394,33 +1375,13 @@
           "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
-        "DefaultPlannerToolAuthorizationPolicy": {
-          "signature": "()",
-          "stability": "experimental"
-        },
         "DefaultTeamToolAuthorizationPolicy": {
           "signature": "()",
-          "stability": "experimental"
-        },
-        "EvidenceHandle": {
-          "signature": "(evidence_id: 'str', kind: 'EvidenceKind', summary: 'str', uri: 'str | None' = None, producer_agent_id: 'str | None' = None, metadata: 'Mapping[str, str]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "EvidenceKind": {
-          "signature": "(*args, **kwargs)",
           "stability": "experimental"
         },
         "ExpertAgentRunner": {
           "signature": "(*, coordinator: 'AgentCoordinator', agent_id: 'str', worker_id: 'str | None' = None, capabilities: 'tuple[str, ...]' = (), lease_ttl_seconds: 'float' = 300.0, requeue_backoff_seconds: 'float' = 1.0) -> 'None'",
           "stability": "experimental"
-        },
-        "InMemoryPlanClaimStore": {
-          "signature": "() -> 'None'",
-          "stability": "experimental"
-        },
-        "InMemoryPlanStore": {
-          "signature": "() -> 'None'",
-          "stability": "stable"
         },
         "InMemoryRegistry": {
           "signature": "() -> 'None'",
@@ -1461,252 +1422,6 @@
         "OutboxReconciler": {
           "signature": "(task_store: 'OutboxTaskStore', message_queue: 'AgentMessageQueue', batch_size: 'int' = 100) -> None",
           "stability": "experimental"
-        },
-        "PlanAssignment": {
-          "signature": "(plan_id: 'str', step_id: 'str', template_id: 'str', task_id: 'str', target_agent_id: 'str', created_at: 'float', dispatch_status: 'PlanAssignmentDispatchStatus' = 'pending', submitted_at: 'float | None' = None, dispatch_error: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanAssignmentDispatchStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanClaimRecord": {
-          "signature": "(plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', claimed_at: 'float', lease_expires_at: 'float', generation: 'int') -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimResult": {
-          "signature": "(status: 'PlanClaimStatus', claim: 'PlanClaimRecord | None' = None, existing_claim: 'PlanClaimRecord | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanClaimStore": {
-          "methods": {
-            "claim_plan": "(self, *, plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', lease_seconds: 'float', now: 'float') -> 'PlanClaimResult'",
-            "get_claim": "(self, plan_id: 'str') -> 'PlanClaimRecord | None'",
-            "release_plan": "(self, *, plan_id: 'str', worker_id: 'str', owner_agent_id: 'str | None' = None) -> 'bool'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanClaimSweepReport": {
-          "signature": "(checked_claims: 'tuple[PlanClaimRecord, ...]' = (), released_claims: 'tuple[PlanClaimRecord, ...]' = (), skipped_claims: 'tuple[PlanClaimSweepSkip, ...]' = (), dry_run: 'bool' = False, now: 'float' = 0, owner_agent_id: 'str | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimSweepSkip": {
-          "signature": "(plan_id: 'str', reason: 'PlanClaimSweepSkipReason', detail: 'str' = '') -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimSweepStore": {
-          "methods": {
-            "expired_claims": "(self, *, now: 'float', owner_agent_id: 'str | None' = None, limit: 'int | None' = None) -> 'tuple[PlanClaimRecord, ...]'",
-            "release_expired_claim": "(self, claim: 'PlanClaimRecord', *, now: 'float') -> 'bool'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanClaimedSchedulerTickReport": {
-          "signature": "(worker_id: 'str', claims: 'tuple[PlanClaimResult, ...]' = (), tick_reports: 'tuple[PlanSchedulerTickReport, ...]' = (), skipped: 'tuple[PlanClaimedSchedulerTickSkip, ...]' = (), released_plan_ids: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanClaimedSchedulerTickSkip": {
-          "signature": "(plan_id: 'str', reason: 'PlanClaimedSchedulerTickSkipReason', detail: 'str' = '', claim_result: 'PlanClaimResult | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanConflictError": {
-          "signature": "unavailable",
-          "stability": "stable"
-        },
-        "PlanDecomposition": {
-          "signature": "(objective: 'str', steps: 'tuple[PlanStepSpec, ...]') -> None",
-          "stability": "experimental"
-        },
-        "PlanDecompositionGatePolicy": {
-          "signature": "(max_steps: 'int | None' = None, require_template: 'bool' = False, require_approval: 'bool' = False, approved: 'bool' = False, allowed_template_ids: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanDecompositionGateReport": {
-          "signature": "(accepted: 'bool', requires_approval: 'bool' = False, errors: 'tuple[str, ...]' = (), validation: 'PlanDecompositionValidationReport | None' = None, step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = (), missing_templates: 'tuple[str, ...]' = (), disallowed_templates: 'tuple[str, ...]' = (), normalized_decomposition: 'PlanDecomposition | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlanDecompositionValidationReport": {
-          "signature": "(ok: 'bool', errors: 'tuple[str, ...]' = (), step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanDispatchAlreadySubmittedError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "PlanDispatchReport": {
-          "signature": "(plan_id: 'str', assigned: 'tuple[PlanAssignment, ...]' = (), skipped: 'tuple[PlanDispatchSkip, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanDispatchSkip": {
-          "signature": "(plan_id: 'str', step_id: 'str', reason: 'PlanDispatchSkipReason', detail: 'str' = '') -> None",
-          "stability": "experimental"
-        },
-        "PlanError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "PlanNotFoundError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "PlanRetryPolicy": {
-          "signature": "(max_attempts: 'int' = 1, backoff_seconds: 'float' = 0.0, backoff_multiplier: 'float' = 1.0) -> None",
-          "stability": "experimental"
-        },
-        "PlanSchedulerRetryReset": {
-          "signature": "(plan_id: 'str', step_id: 'str', attempts: 'int') -> None",
-          "stability": "experimental"
-        },
-        "PlanSchedulerTickReport": {
-          "signature": "(plan_id: 'str', retry_resets: 'tuple[PlanSchedulerRetryReset, ...]' = (), dispatch: 'PlanDispatchReport' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlanState": {
-          "signature": "(plan_id: 'str', objective: 'str', owner_agent_id: 'str', status: 'PlanStatus' = 'draft', steps: 'tuple[PlanStep, ...]' = (), evidence: 'tuple[EvidenceHandle, ...]' = (), assignments: 'tuple[PlanAssignment, ...]' = (), created_at: 'float' = 0, updated_at: 'float' = 0, workspace: 'WorkspaceHandle | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanStep": {
-          "signature": "(step_id: 'str', instruction: 'str', status: 'PlanStepStatus' = 'pending', required_capabilities: 'tuple[str, ...]' = (), assigned_agent_id: 'str | None' = None, template_id: 'str | None' = None, task_id: 'str | None' = None, depends_on: 'tuple[str, ...]' = (), evidence_ids: 'tuple[str, ...]' = (), error: 'str | None' = None, attempts: 'int' = 0, last_failed_at: 'float | None' = None, next_retry_at: 'float | None' = None, retry_status: 'PlanStepRetryStatus | None' = None, retry_exhausted_at: 'float | None' = None) -> None",
-          "stability": "experimental"
-        },
-        "PlanStepNotFoundError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "PlanStepRetryStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanStepSpec": {
-          "signature": "(instruction: 'str', step_id: 'str | None' = None, required_capabilities: 'tuple[str, ...]' = (), template_id: 'str | None' = None, depends_on: 'tuple[str, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlanStepStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlanStore": {
-          "methods": {
-            "create_plan": "(self, plan: 'PlanState') -> 'None'",
-            "get_plan": "(self, plan_id: 'str') -> 'PlanState | None'",
-            "list_plans": "(self, owner_agent_id: 'str | None' = None) -> 'list[PlanState]'",
-            "save_plan": "(self, plan: 'PlanState') -> 'None'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "PlanStoreRecord": {
-          "signature": "(plan: 'PlanState', revision: 'int') -> None",
-          "stability": "stable"
-        },
-        "PlannerClaimedSchedulerDaemon": {
-          "signature": "(*, runtime: 'PlannerRuntime', worker_id: 'str', lease_seconds: 'float', owner_agent_id: 'str | None' = None, statuses: 'tuple[PlanStatus, ...]' = ('draft', 'running'), limit: 'int | None' = None, default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, release_after_tick: 'bool' = False, poll_interval_seconds: 'float' = 1.0, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerClaimedSchedulerDaemonError": {
-          "signature": "(error: 'str') -> None",
-          "stability": "experimental"
-        },
-        "PlannerClaimedSchedulerDaemonState": {
-          "signature": "(status: 'PlannerClaimedSchedulerDaemonStatus', worker_id: 'str', lease_seconds: 'float', owner_agent_id: 'str | None' = None, statuses: 'tuple[PlanStatus, ...]' = ('draft', 'running'), limit: 'int | None' = None, default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, release_after_tick: 'bool' = False, poll_interval_seconds: 'float' = 1.0, iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_report: 'PlanClaimedSchedulerTickReport | None' = None, errors: 'tuple[PlannerClaimedSchedulerDaemonError, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlannerClaimedSchedulerDaemonStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerDecompositionPolicyDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('prompt_policy', 'output_schema', 'validation_gate', 'template_mapping_policy', 'approval_policy', 'model_routing_policy', 'evaluation_policy', 'trace_logging', 'rollback_policy'), probe_name: 'str' = 'planner_decomposition_policy') -> None",
-          "stability": "experimental"
-        },
-        "PlannerLlmDecompositionGovernanceProfile": {
-          "signature": "(component_refs: 'Mapping[str, str]' = <factory>, evidence_refs: 'Mapping[str, tuple[str, ...]]' = <factory>, metadata: 'Mapping[str, object]' = <factory>, required_components: 'tuple[str, ...]' = ('prompt_policy', 'model_routing_policy', 'approval_policy', 'evaluation_policy', 'trace_logging', 'rollback_policy', 'output_schema', 'validation_gate', 'template_mapping_policy', 'budget_policy', 'live_backend_verification'), probe_name: 'str' = 'planner_llm_decomposition_governance') -> None",
-          "stability": "experimental"
-        },
-        "PlannerLlmGovernanceEvidenceGateReport": {
-          "signature": "(accepted: 'bool', block_plan_creation: 'bool', errors: 'tuple[str, ...]' = (), missing_evidence: 'tuple[str, ...]' = (), failed_evidence: 'tuple[str, ...]' = (), record: 'PlannerLlmGovernanceEvidenceRecord | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlannerLlmGovernanceEvidenceRecord": {
-          "signature": "(proposal_id: 'str', objective: 'str', prompt_ref: 'str | None' = None, prompt_hash: 'str | None' = None, model_ref: 'str | None' = None, model_version: 'str | None' = None, approval_ref: 'str | None' = None, approved: 'bool | None' = None, evaluation_ref: 'str | None' = None, evaluation_passed: 'bool | None' = None, validation_ref: 'str | None' = None, validation_passed: 'bool | None' = None, output_schema_ref: 'str | None' = None, trace_ref: 'str | None' = None, budget_ref: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "PlannerOrchestrationDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('decomposition_policy', 'dag_scheduler', 'worker_dispatch_loop', 'compensation_policy', 'plan_store', 'worker_supervision'), probe_name: 'str' = 'planner_orchestration') -> None",
-          "stability": "experimental"
-        },
-        "PlannerRuntime": {
-          "signature": "(*, store: 'PlanStore', templates: 'tuple[SubAgentTemplate, ...]' = (), dispatcher: 'PlanStepDispatcher | None' = None, retry_policy: 'PlanRetryPolicy | None' = None, claim_store: 'PlanClaimStore | None' = None, clock: 'object | None' = None, id_factory: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerSchedulablePlan": {
-          "signature": "(plan_id: 'str', owner_agent_id: 'str', status: 'PlanStatus', ready_step_ids: 'tuple[str, ...]' = (), retryable_step_ids: 'tuple[str, ...]' = (), reasons: 'tuple[PlannerSchedulablePlanReason, ...]' = (), updated_at: 'float' = 0) -> None",
-          "stability": "experimental"
-        },
-        "PlannerSchedulablePlanReason": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemon": {
-          "signature": "(*, runtime: 'PlannerRuntime', plan_ids: 'tuple[str, ...]', default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, poll_interval_seconds: 'float' = 1.0, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemonError": {
-          "signature": "(plan_id: 'str', error: 'str') -> None",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemonState": {
-          "signature": "(status: 'PlannerSchedulerDaemonStatus', plan_ids: 'tuple[str, ...]', poll_interval_seconds: 'float', default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_reports: 'tuple[PlanSchedulerTickReport, ...]' = (), errors: 'tuple[PlannerSchedulerDaemonError, ...]' = ()) -> None",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerDaemonStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerSchedulerGovernanceDeploymentProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('plan_discovery_policy', 'tenant_routing_policy', 'global_fairness_policy', 'scheduler_lock_policy', 'leader_election_policy', 'stale_lease_recovery_policy', 'worker_dispatch_supervision', 'live_backend_verification'), probe_name: 'str' = 'planner_scheduler_governance') -> None",
-          "stability": "experimental"
-        },
-        "PlannerStaleClaimSweepProfile": {
-          "signature": "(reports: 'tuple[PlanClaimSweepReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('stale_claim_sweep_schedule', 'plan_claim_store', 'scheduler_lock_policy', 'sweep_safety_window', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_stale_claim_sweep') -> None",
-          "stability": "experimental"
-        },
-        "PlannerToolAuthorizationError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "PlannerToolAuthorizationPolicy": {
-          "methods": {
-            "authorize_planner_tool": "(self, *, tool_name: 'str', owner_agent_id: 'str', plan_id: 'str | None') -> 'None'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "PlannerTools": {
-          "signature": "(*, runtime: 'PlannerRuntime', owner_agent_id: 'str', authorization_policy: 'PlannerToolAuthorizationPolicy | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PlannerWorkerDispatchSupervisionProfile": {
-          "signature": "(reports: 'tuple[PlanClaimedSchedulerTickReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('claimed_scheduler_tick_loop', 'worker_process_lifecycle', 'plan_claim_store', 'scheduler_lock_policy', 'stale_lease_recovery', 'compensation_policy', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_worker_dispatch_supervision', max_consecutive_failed_batches: 'int' = 1) -> None",
-          "stability": "experimental"
-        },
-        "PostgresPlanClaimStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
-        "PostgresPlanStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "stable"
         },
         "PostgresTaskStore": {
           "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
@@ -1750,10 +1465,6 @@
         },
         "SpawnExecutor": {
           "signature": "(max_workers: 'int' = 3) -> 'None'",
-          "stability": "experimental"
-        },
-        "SubAgentTemplate": {
-          "signature": "(template_id: 'str', name: 'str', role: 'str', capabilities: 'tuple[str, ...]' = (), allowed_tool_names: 'tuple[str, ...]' = (), context_seed: 'tuple[str, ...]' = (), workspace_scope: 'WorkspaceScope' = 'task', target_agent_id: 'str | None' = None, timeout_seconds: 'float' = 300) -> None",
           "stability": "experimental"
         },
         "SubagentFactory": {
@@ -2027,10 +1738,6 @@
         "TeamWorkerSessionStatus": {
           "signature": "(*args, **kwargs)",
           "stability": "experimental"
-        },
-        "plan_to_working_state_summary": {
-          "signature": "(plan: 'PlanState', *, max_next_steps: 'int' = 5, max_recent_evidence: 'int' = 5) -> 'dict[str, object]'",
-          "stability": "experimental"
         }
       }
     },
@@ -2152,6 +1859,354 @@
         },
         "SnapshotVersionError": {
           "signature": "unavailable",
+          "stability": "experimental"
+        }
+      }
+    },
+    "agentos.planning": {
+      "exports": {
+        "AllowAllPlannerToolAuthorizationPolicy": {
+          "signature": "()",
+          "stability": "experimental"
+        },
+        "AuthorizedPlanSource": {
+          "signature": "(store: 'PlanStore') -> None",
+          "stability": "experimental"
+        },
+        "BoundPlanProjectionProvider": {
+          "signature": "(source: 'AuthorizedPlanSource', plan_id: 'str', owner_agent_id: 'str') -> None",
+          "stability": "experimental"
+        },
+        "ClaimGuardedPlanStore": {
+          "methods": {
+            "save_plan_if_claimed": "(self, plan: 'PlanState', claim: \"'PlanClaimRecord'\", *, expected_revision: 'int', now: 'float') -> 'bool'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "stable"
+        },
+        "CompareAndSavePlanStore": {
+          "methods": {
+            "get_plan_record": "(self, plan_id: 'str') -> 'PlanStoreRecord | None'",
+            "save_plan_if_unchanged": "(self, plan: 'PlanState', *, expected_revision: 'int') -> 'bool'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "stable"
+        },
+        "DefaultPlannerToolAuthorizationPolicy": {
+          "signature": "()",
+          "stability": "experimental"
+        },
+        "EVIDENCE_KINDS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "EvidenceHandle": {
+          "signature": "(evidence_id: 'str', kind: 'EvidenceKind', summary: 'str', uri: 'str | None' = None, producer_agent_id: 'str | None' = None, metadata: 'Mapping[str, str]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "EvidenceKind": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "InMemoryPlanClaimStore": {
+          "signature": "() -> 'None'",
+          "stability": "experimental"
+        },
+        "InMemoryPlanStore": {
+          "signature": "() -> 'None'",
+          "stability": "stable"
+        },
+        "PLANNER_DECOMPOSITION_POLICY_REQUIRED_COMPONENTS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLANNER_LLM_DECOMPOSITION_GOVERNANCE_REQUIRED_COMPONENTS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLANNER_LLM_GOVERNANCE_EXECUTION_REQUIRED_EVIDENCE": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLANNER_ORCHESTRATION_REQUIRED_COMPONENTS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLANNER_SCHEDULER_GOVERNANCE_REQUIRED_COMPONENTS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLANNER_STALE_CLAIM_SWEEP_REQUIRED_COMPONENTS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLANNER_WORKER_DISPATCH_SUPERVISION_REQUIRED_COMPONENTS": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PLAN_STATUSES": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "PlanAssignment": {
+          "signature": "(plan_id: 'str', step_id: 'str', template_id: 'str', task_id: 'str', target_agent_id: 'str', created_at: 'float', dispatch_status: 'PlanAssignmentDispatchStatus' = 'pending', submitted_at: 'float | None' = None, dispatch_error: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanAssignmentDispatchStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanClaimLostError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlanClaimRecord": {
+          "signature": "(plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', claimed_at: 'float', lease_expires_at: 'float', generation: 'int') -> None",
+          "stability": "experimental"
+        },
+        "PlanClaimResult": {
+          "signature": "(status: 'PlanClaimStatus', claim: 'PlanClaimRecord | None' = None, existing_claim: 'PlanClaimRecord | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanClaimStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanClaimStore": {
+          "methods": {
+            "claim_plan": "(self, *, plan_id: 'str', owner_agent_id: 'str', worker_id: 'str', lease_seconds: 'float', now: 'float') -> 'PlanClaimResult'",
+            "get_claim": "(self, plan_id: 'str') -> 'PlanClaimRecord | None'",
+            "release_plan": "(self, *, plan_id: 'str', worker_id: 'str', owner_agent_id: 'str | None' = None) -> 'bool'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanClaimSweepReport": {
+          "signature": "(checked_claims: 'tuple[PlanClaimRecord, ...]' = (), released_claims: 'tuple[PlanClaimRecord, ...]' = (), skipped_claims: 'tuple[PlanClaimSweepSkip, ...]' = (), dry_run: 'bool' = False, now: 'float' = 0, owner_agent_id: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanClaimSweepSkip": {
+          "signature": "(plan_id: 'str', reason: 'PlanClaimSweepSkipReason', detail: 'str' = '') -> None",
+          "stability": "experimental"
+        },
+        "PlanClaimSweepStore": {
+          "methods": {
+            "expired_claims": "(self, *, now: 'float', owner_agent_id: 'str | None' = None, limit: 'int | None' = None) -> 'tuple[PlanClaimRecord, ...]'",
+            "release_expired_claim": "(self, claim: 'PlanClaimRecord', *, now: 'float') -> 'bool'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanClaimedSchedulerTickReport": {
+          "signature": "(worker_id: 'str', claims: 'tuple[PlanClaimResult, ...]' = (), tick_reports: 'tuple[PlanSchedulerTickReport, ...]' = (), skipped: 'tuple[PlanClaimedSchedulerTickSkip, ...]' = (), released_plan_ids: 'tuple[str, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlanClaimedSchedulerTickSkip": {
+          "signature": "(plan_id: 'str', reason: 'PlanClaimedSchedulerTickSkipReason', detail: 'str' = '', claim_result: 'PlanClaimResult | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanConflictError": {
+          "signature": "unavailable",
+          "stability": "stable"
+        },
+        "PlanDecomposition": {
+          "signature": "(objective: 'str', steps: 'tuple[PlanStepSpec, ...]') -> None",
+          "stability": "experimental"
+        },
+        "PlanDecompositionGatePolicy": {
+          "signature": "(max_steps: 'int | None' = None, require_template: 'bool' = False, require_approval: 'bool' = False, approved: 'bool' = False, allowed_template_ids: 'tuple[str, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlanDecompositionGateReport": {
+          "signature": "(accepted: 'bool', requires_approval: 'bool' = False, errors: 'tuple[str, ...]' = (), validation: 'PlanDecompositionValidationReport | None' = None, step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = (), missing_templates: 'tuple[str, ...]' = (), disallowed_templates: 'tuple[str, ...]' = (), normalized_decomposition: 'PlanDecomposition | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "PlanDecompositionValidationReport": {
+          "signature": "(ok: 'bool', errors: 'tuple[str, ...]' = (), step_count: 'int' = 0, required_templates: 'tuple[str, ...]' = (), unknown_templates: 'tuple[str, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlanDispatchAlreadySubmittedError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlanDispatchReport": {
+          "signature": "(plan_id: 'str', assigned: 'tuple[PlanAssignment, ...]' = (), skipped: 'tuple[PlanDispatchSkip, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlanDispatchSkip": {
+          "signature": "(plan_id: 'str', step_id: 'str', reason: 'PlanDispatchSkipReason', detail: 'str' = '') -> None",
+          "stability": "experimental"
+        },
+        "PlanDispatchSkipReason": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlanNotFoundError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlanProjectionError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlanRetryPolicy": {
+          "signature": "(max_attempts: 'int' = 1, backoff_seconds: 'float' = 0.0, backoff_multiplier: 'float' = 1.0) -> None",
+          "stability": "experimental"
+        },
+        "PlanSchedulerRetryReset": {
+          "signature": "(plan_id: 'str', step_id: 'str', attempts: 'int') -> None",
+          "stability": "experimental"
+        },
+        "PlanSchedulerTickReport": {
+          "signature": "(plan_id: 'str', retry_resets: 'tuple[PlanSchedulerRetryReset, ...]' = (), dispatch: 'PlanDispatchReport' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "PlanState": {
+          "signature": "(plan_id: 'str', objective: 'str', owner_agent_id: 'str', status: 'PlanStatus' = 'draft', steps: 'tuple[PlanStep, ...]' = (), evidence: 'tuple[EvidenceHandle, ...]' = (), assignments: 'tuple[PlanAssignment, ...]' = (), created_at: 'float' = 0, updated_at: 'float' = 0, workspace: 'WorkspaceHandle | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanStep": {
+          "signature": "(step_id: 'str', instruction: 'str', status: 'PlanStepStatus' = 'pending', required_capabilities: 'tuple[str, ...]' = (), assigned_agent_id: 'str | None' = None, template_id: 'str | None' = None, task_id: 'str | None' = None, depends_on: 'tuple[str, ...]' = (), evidence_ids: 'tuple[str, ...]' = (), error: 'str | None' = None, attempts: 'int' = 0, last_failed_at: 'float | None' = None, next_retry_at: 'float | None' = None, retry_status: 'PlanStepRetryStatus | None' = None, retry_exhausted_at: 'float | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "PlanStepDispatcher": {
+          "methods": {
+            "submit": "(self, *, plan: 'PlanState', step: 'PlanStep', assignment: 'PlanAssignment', template: 'SubAgentTemplate') -> 'None'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanStepNotFoundError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlanStepRetryStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanStepSpec": {
+          "signature": "(instruction: 'str', step_id: 'str | None' = None, required_capabilities: 'tuple[str, ...]' = (), template_id: 'str | None' = None, depends_on: 'tuple[str, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlanStepStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlanStore": {
+          "methods": {
+            "create_plan": "(self, plan: 'PlanState') -> 'None'",
+            "get_plan": "(self, plan_id: 'str') -> 'PlanState | None'",
+            "list_plans": "(self, owner_agent_id: 'str | None' = None) -> 'list[PlanState]'",
+            "save_plan": "(self, plan: 'PlanState') -> 'None'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "stable"
+        },
+        "PlanStoreRecord": {
+          "signature": "(plan: 'PlanState', revision: 'int') -> None",
+          "stability": "stable"
+        },
+        "PlannerClaimedSchedulerDaemon": {
+          "signature": "(*, runtime: 'PlannerRuntime', worker_id: 'str', lease_seconds: 'float', owner_agent_id: 'str | None' = None, statuses: 'tuple[PlanStatus, ...]' = ('draft', 'running'), limit: 'int | None' = None, default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, release_after_tick: 'bool' = False, poll_interval_seconds: 'float' = 1.0, clock: 'object | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "PlannerClaimedSchedulerDaemonError": {
+          "signature": "(error: 'str') -> None",
+          "stability": "experimental"
+        },
+        "PlannerClaimedSchedulerDaemonState": {
+          "signature": "(status: 'PlannerClaimedSchedulerDaemonStatus', worker_id: 'str', lease_seconds: 'float', owner_agent_id: 'str | None' = None, statuses: 'tuple[PlanStatus, ...]' = ('draft', 'running'), limit: 'int | None' = None, default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, release_after_tick: 'bool' = False, poll_interval_seconds: 'float' = 1.0, iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_report: 'PlanClaimedSchedulerTickReport | None' = None, errors: 'tuple[PlannerClaimedSchedulerDaemonError, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlannerClaimedSchedulerDaemonStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlannerDecompositionPolicyDeploymentProfile": {
+          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('prompt_policy', 'output_schema', 'validation_gate', 'template_mapping_policy', 'approval_policy', 'model_routing_policy', 'evaluation_policy', 'trace_logging', 'rollback_policy'), probe_name: 'str' = 'planner_decomposition_policy') -> None",
+          "stability": "experimental"
+        },
+        "PlannerLlmDecompositionGovernanceProfile": {
+          "signature": "(component_refs: 'Mapping[str, str]' = <factory>, evidence_refs: 'Mapping[str, tuple[str, ...]]' = <factory>, metadata: 'Mapping[str, object]' = <factory>, required_components: 'tuple[str, ...]' = ('prompt_policy', 'model_routing_policy', 'approval_policy', 'evaluation_policy', 'trace_logging', 'rollback_policy', 'output_schema', 'validation_gate', 'template_mapping_policy', 'budget_policy', 'live_backend_verification'), probe_name: 'str' = 'planner_llm_decomposition_governance') -> None",
+          "stability": "experimental"
+        },
+        "PlannerLlmGovernanceEvidenceGateReport": {
+          "signature": "(accepted: 'bool', block_plan_creation: 'bool', errors: 'tuple[str, ...]' = (), missing_evidence: 'tuple[str, ...]' = (), failed_evidence: 'tuple[str, ...]' = (), record: 'PlannerLlmGovernanceEvidenceRecord | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "PlannerLlmGovernanceEvidenceRecord": {
+          "signature": "(proposal_id: 'str', objective: 'str', prompt_ref: 'str | None' = None, prompt_hash: 'str | None' = None, model_ref: 'str | None' = None, model_version: 'str | None' = None, approval_ref: 'str | None' = None, approved: 'bool | None' = None, evaluation_ref: 'str | None' = None, evaluation_passed: 'bool | None' = None, validation_ref: 'str | None' = None, validation_passed: 'bool | None' = None, output_schema_ref: 'str | None' = None, trace_ref: 'str | None' = None, budget_ref: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "PlannerOrchestrationDeploymentProfile": {
+          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('decomposition_policy', 'dag_scheduler', 'worker_dispatch_loop', 'compensation_policy', 'plan_store', 'worker_supervision'), probe_name: 'str' = 'planner_orchestration') -> None",
+          "stability": "experimental"
+        },
+        "PlannerRuntime": {
+          "signature": "(*, store: 'PlanStore', templates: 'tuple[SubAgentTemplate, ...]' = (), dispatcher: 'PlanStepDispatcher | None' = None, retry_policy: 'PlanRetryPolicy | None' = None, claim_store: 'PlanClaimStore | None' = None, clock: 'object | None' = None, id_factory: 'object | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "PlannerSchedulablePlan": {
+          "signature": "(plan_id: 'str', owner_agent_id: 'str', status: 'PlanStatus', ready_step_ids: 'tuple[str, ...]' = (), retryable_step_ids: 'tuple[str, ...]' = (), reasons: 'tuple[PlannerSchedulablePlanReason, ...]' = (), updated_at: 'float' = 0) -> None",
+          "stability": "experimental"
+        },
+        "PlannerSchedulablePlanReason": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlannerSchedulerDaemon": {
+          "signature": "(*, runtime: 'PlannerRuntime', plan_ids: 'tuple[str, ...]', default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, poll_interval_seconds: 'float' = 1.0, clock: 'object | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "PlannerSchedulerDaemonError": {
+          "signature": "(plan_id: 'str', error: 'str') -> None",
+          "stability": "experimental"
+        },
+        "PlannerSchedulerDaemonState": {
+          "signature": "(status: 'PlannerSchedulerDaemonStatus', plan_ids: 'tuple[str, ...]', poll_interval_seconds: 'float', default_template_id: 'str | None' = None, retry_limit: 'int | None' = None, dispatch_limit: 'int | None' = None, iterations: 'int' = 0, started_at: 'float | None' = None, stopped_at: 'float | None' = None, last_run_at: 'float | None' = None, last_reports: 'tuple[PlanSchedulerTickReport, ...]' = (), errors: 'tuple[PlannerSchedulerDaemonError, ...]' = ()) -> None",
+          "stability": "experimental"
+        },
+        "PlannerSchedulerDaemonStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlannerSchedulerGovernanceDeploymentProfile": {
+          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('plan_discovery_policy', 'tenant_routing_policy', 'global_fairness_policy', 'scheduler_lock_policy', 'leader_election_policy', 'stale_lease_recovery_policy', 'worker_dispatch_supervision', 'live_backend_verification'), probe_name: 'str' = 'planner_scheduler_governance') -> None",
+          "stability": "experimental"
+        },
+        "PlannerStaleClaimSweepProfile": {
+          "signature": "(reports: 'tuple[PlanClaimSweepReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('stale_claim_sweep_schedule', 'plan_claim_store', 'scheduler_lock_policy', 'sweep_safety_window', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_stale_claim_sweep') -> None",
+          "stability": "experimental"
+        },
+        "PlannerToolAuthorizationError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "PlannerToolAuthorizationPolicy": {
+          "methods": {
+            "authorize_planner_tool": "(self, *, tool_name: 'str', owner_agent_id: 'str', plan_id: 'str | None') -> 'None'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "PlannerTools": {
+          "signature": "(*, runtime: 'PlannerRuntime', owner_agent_id: 'str', authorization_policy: 'PlannerToolAuthorizationPolicy | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "PlannerWorkerDispatchSupervisionProfile": {
+          "signature": "(reports: 'tuple[PlanClaimedSchedulerTickReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('claimed_scheduler_tick_loop', 'worker_process_lifecycle', 'plan_claim_store', 'scheduler_lock_policy', 'stale_lease_recovery', 'compensation_policy', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_worker_dispatch_supervision', max_consecutive_failed_batches: 'int' = 1) -> None",
+          "stability": "experimental"
+        },
+        "SubAgentTemplate": {
+          "signature": "(template_id: 'str', name: 'str', role: 'str', capabilities: 'tuple[str, ...]' = (), allowed_tool_names: 'tuple[str, ...]' = (), context_seed: 'tuple[str, ...]' = (), workspace_scope: 'WorkspaceScope' = 'task', target_agent_id: 'str | None' = None, timeout_seconds: 'float' = 300) -> None",
           "stability": "experimental"
         }
       }

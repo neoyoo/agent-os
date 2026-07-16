@@ -4,14 +4,19 @@ import argparse
 import json
 from typing import Sequence
 
+from agentos.context import ContextSnapshotRenderer
 from agentos.multi import (
     AgentCoordinatorPlanStepDispatcher,
+    TaskHandle,
+)
+from agentos.planning import (
+    AuthorizedPlanSource,
+    BoundPlanProjectionProvider,
     InMemoryPlanStore,
     PlannerRuntime,
     SubAgentTemplate,
-    TaskHandle,
-    plan_to_working_state_summary,
 )
+from agentos.tokens import HeuristicTokenCounter
 
 
 class StaticPlannerCoordinator:
@@ -43,11 +48,12 @@ class StaticPlannerCoordinator:
 def build_intent_router_example(
     *,
     query: str,
-) -> dict[str, object]:
+) -> str:
     """Route one request into a template-bound plan step."""
 
+    store = InMemoryPlanStore()
     runtime = PlannerRuntime(
-        store=InMemoryPlanStore(),
+        store=store,
         templates=(
             SubAgentTemplate(
                 template_id="architecture-reviewer",
@@ -72,15 +78,20 @@ def build_intent_router_example(
         required_capabilities=(routed_intent,),
         template_id="architecture-reviewer",
     )
-    return plan_to_working_state_summary(plan)
+    return _render_active_plan(
+        store=store,
+        plan_id=plan.plan_id,
+        owner_agent_id=plan.owner_agent_id,
+    )
 
 
-def build_plan_and_execute_example() -> dict[str, object]:
+def build_plan_and_execute_example() -> str:
     """Create a two-step plan, assign one step, and project the current state."""
 
     coordinator = StaticPlannerCoordinator()
+    store = InMemoryPlanStore()
     runtime = PlannerRuntime(
-        store=InMemoryPlanStore(),
+        store=store,
         dispatcher=AgentCoordinatorPlanStepDispatcher(coordinator),  # type: ignore[arg-type]
         templates=(
             SubAgentTemplate(
@@ -127,11 +138,15 @@ def build_plan_and_execute_example() -> dict[str, object]:
         "step_1",
         evidence_ids=(evidence.evidence_id,),
     )
-    return plan_to_working_state_summary(plan)
+    return _render_active_plan(
+        store=store,
+        plan_id=plan.plan_id,
+        owner_agent_id=plan.owner_agent_id,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Print deterministic planner pattern summaries."""
+    """Print deterministic planner context projections."""
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -169,6 +184,22 @@ def _sequential_id_factory():
         return f"{prefix}_{counts[prefix]}"
 
     return next_id
+
+
+def _render_active_plan(
+    *,
+    store: InMemoryPlanStore,
+    plan_id: str,
+    owner_agent_id: str,
+) -> str:
+    provider = BoundPlanProjectionProvider(
+        source=AuthorizedPlanSource(store),
+        plan_id=plan_id,
+        owner_agent_id=owner_agent_id,
+    )
+    return ContextSnapshotRenderer(HeuristicTokenCounter()).render(
+        provider.projections(),
+    ).xml
 
 
 if __name__ == "__main__":

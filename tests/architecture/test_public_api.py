@@ -463,6 +463,8 @@ def test_memory_recall_and_session_storage_public_api_exports() -> None:
 def test_phase8_multi_agent_public_api_exports() -> None:
     agentos = importlib.import_module("agentos")
     multi = importlib.import_module("agentos.multi")
+    planning = importlib.import_module("agentos.planning")
+    postgres_plan = importlib.import_module("agentos.multi.postgres_plan")
 
     for name in [
         "AgentCard",
@@ -544,7 +546,6 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "PlannerToolAuthorizationPolicy",
         "PlannerTools",
         "PlannerRuntime",
-        "plan_to_working_state_summary",
         "PostgresPlanStore",
         "PostgresPlanClaimStore",
         "PostgresTeamStore",
@@ -592,7 +593,16 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "TeamWorkerSessionProvider",
         "TeamWorkerSessionRequest",
     ]:
-        assert hasattr(multi, name)
+        if name in planning.__all__:
+            assert hasattr(planning, name)
+        elif name in {"PostgresPlanStore", "PostgresPlanClaimStore"}:
+            assert hasattr(postgres_plan, name)
+        else:
+            assert hasattr(multi, name)
+
+    assert set(multi.__all__).isdisjoint(planning.__all__)
+    assert not hasattr(multi, "PostgresPlanStore")
+    assert not hasattr(multi, "PostgresPlanClaimStore")
 
     for name in [
         "CompareAndSavePlanStore",
@@ -1093,4 +1103,3 @@ def test_qdrant_recall_collection_migration_script_exists() -> None:
     assert "agentos_recall" in text
     assert "AGENTOS_QDRANT_VECTOR_SIZE" in text
     assert "session_id" in text
-

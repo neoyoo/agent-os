@@ -1,6 +1,6 @@
 # AgentOS Phase 3 Contract Addendum
 
-> 状态：待用户批准
+> 状态：已批准
 >
 > 日期：2026-07-15
 >
@@ -209,6 +209,8 @@ ActivationKey = (session_id, skill_name)
 - `load/disable/items/projections` 都显式接收 `session_id`，禁止隐式“当前 Session”全局变量；
 - builtin、filesystem 或其他来源在没有 verified decision 时一律不能进入 SystemEnvelope；
 - 来源 revision 变化、Policy 撤销/拒绝、显式 disable 或 Session 结束都会使激活失效；
+- trusted Source 必须通过同步、无 I/O 的 `current_subject(name)` 从内存证明完整
+  `SkillVerificationSubject` 仍然有效；无法证明、来源异常或主体不一致时必须 fail-closed；
 - Trust Decision 只保存验证证据元数据，不保存 Skill 正文；跨 Session 激活必须测试为失败。
 - Decision 必须逐字段绑定同一个 `SkillVerificationSubject`，不得在同一 Source/revision 下跨
   Skill 复用；正文变化必须改变 `content_digest` 并使旧 Decision 失效。
@@ -416,7 +418,9 @@ ToolCallRouter、QueryLoop、Root API、Public API Inventory/导出、Examples �
 
 - Phase 4：Builder/Registry 聚合、首轮 Artifact 自动 Mount、Tool Result 后最终排序、
   Turn 终态清理、Active Plan/Memory Query Source 接线、删除 `agentos.attachments`；
-- Phase 5：SQLite/Filesystem Artifact、Plan、Memory 持久化和 Restart/Resume；
+- Phase 5：SQLite/Filesystem Artifact、Plan、Memory 持久化和 Restart/Resume，以及为
+  pending Assignment 持久化 immutable dispatch snapshot/template version，保证配置变化后的
+  restart recovery 仍使用原派发参数；
 - Phase 6：PostgreSQL/Redis Adapter、分布式 Claim/Worker、Transport、Provider File
   分布式缓存和故障注入；
 - Artifact OCR、摘要、向量检索、Workspace/Tenant Scope 仍按上位 Spec 延期。

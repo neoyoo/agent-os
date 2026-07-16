@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agentos.multi.planner import (
+from agentos.planning import (
     PLANNER_SCHEDULER_GOVERNANCE_REQUIRED_COMPONENTS,
     PlannerSchedulerGovernanceDeploymentProfile,
 )

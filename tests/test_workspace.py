@@ -13,6 +13,11 @@ from agentos.workspace import (
 )
 
 
+def test_workspace_handle_rejects_unknown_scope() -> None:
+    with pytest.raises(ValueError, match="invalid workspace scope"):
+        WorkspaceHandle("workspace_1", "unknown")  # type: ignore[arg-type]
+
+
 def test_local_workspace_provider_resolves_process_workspace(tmp_path: Path) -> None:
     provider = LocalWorkspaceProvider(base_dir=tmp_path)
 

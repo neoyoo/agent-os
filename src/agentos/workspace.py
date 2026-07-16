@@ -16,6 +16,14 @@ from agentos._redaction import (
 
 
 WorkspaceScope = Literal["process", "agent", "user", "session", "team", "task"]
+WORKSPACE_SCOPES: tuple[WorkspaceScope, ...] = (
+    "process",
+    "agent",
+    "user",
+    "session",
+    "team",
+    "task",
+)
 
 _SCOPE_RANK: dict[WorkspaceScope, int] = {
     "process": 5,
@@ -153,6 +161,10 @@ class WorkspaceHandle:
     root: str | None = None
     parent_workspace_id: str | None = None
     metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.scope not in WORKSPACE_SCOPES:
+            raise ValueError(f"invalid workspace scope: {self.scope}")
 
 
 @dataclass(frozen=True, slots=True)

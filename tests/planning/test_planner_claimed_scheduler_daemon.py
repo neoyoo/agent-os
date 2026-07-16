@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from agentos.multi.planner import (
+from agentos.planning import (
     InMemoryPlanStore,
-    PlanClaimedSchedulerTickReport,
     PlannerClaimedSchedulerDaemon,
     PlannerClaimedSchedulerDaemonError,
     PlannerRuntime,
 )
+from agentos.planning.scheduling_reports import PlanClaimedSchedulerTickReport
 
 
 class RecordingClaimedPlannerRuntime(PlannerRuntime):

@@ -29,6 +29,9 @@ class ClosingSkillSource(SkillContentSource):
     async def list_skills(self) -> list[SkillDescriptor]:
         return []
 
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        return None
+
     async def load_skill(self, name: str) -> SkillLoadResult:
         raise KeyError(name)
 

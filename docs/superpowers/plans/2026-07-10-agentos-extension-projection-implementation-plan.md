@@ -30,7 +30,8 @@ Renderer 不理解 Extension 业务。PlanStore、Skill Source、MemoryStore 保
 - **Completion:** 三类 Projection 可独立构造并通过协议测试；旧 `multi/planner.py` 删除；
   压缩片段 Recall 与 Session Store 职责从 `memory/` 原子迁出。
 - **Deferral:** Builder/Registry 聚合、Run-Plan 持久绑定、Memory query 接线到 Phase 4；
-  SQLite/Filesystem 到 Phase 5；PostgreSQL/Redis/分布式 Worker 归位到 Phase 6。
+  SQLite/Filesystem 与 immutable dispatch snapshot/template-version restart recovery 到
+  Phase 5；PostgreSQL/Redis/分布式 Worker 归位到 Phase 6。
 - **Verification:** 目标/模块/全量测试、compileall、ruff、import/drift/module-size/diff。
 
 ## Readiness Gate
@@ -118,7 +119,9 @@ tests/multi/test_postgres_plan_store.py
 tests/integration/test_distributed_planner_worker_flow.py
 tests/architecture/test_public_api.py
 tests/architecture/test_public_api_inventory.py
+tests/architecture/test_extension_boundaries.py
 docs/api-stability.md
+docs/production-readiness.md
 docs/public-api-inventory.json
 docs/public-api-stability.json
 ```

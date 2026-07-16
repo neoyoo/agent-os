@@ -23,10 +23,28 @@ PlanStepStatus = Literal[
     "blocked",
     "cancelled",
 ]
+PLAN_STEP_STATUSES: tuple[PlanStepStatus, ...] = (
+    "pending",
+    "assigned",
+    "running",
+    "completed",
+    "failed",
+    "blocked",
+    "cancelled",
+)
 PlanStepRetryStatus = Literal["scheduled", "exhausted"]
+PLAN_STEP_RETRY_STATUSES: tuple[PlanStepRetryStatus, ...] = (
+    "scheduled",
+    "exhausted",
+)
 PlanAssignmentDispatchStatus = Literal["pending", "submitted", "failed"]
+PLAN_ASSIGNMENT_DISPATCH_STATUSES: tuple[PlanAssignmentDispatchStatus, ...] = (
+    "pending",
+    "submitted",
+    "failed",
+)
 EvidenceKind = Literal["text", "artifact", "task_result", "team_message", "external"]
-EVIDENCE_KINDS: tuple[str, ...] = (
+EVIDENCE_KINDS: tuple[EvidenceKind, ...] = (
     "text",
     "artifact",
     "task_result",

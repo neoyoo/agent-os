@@ -15,7 +15,7 @@ from agentos.planning import (
     PlanStep,
 )
 from agentos.multi.postgres_plan import PostgresPlanClaimStore, PostgresPlanStore
-from agentos.multi.serializers import plan_state_from_dict, plan_state_to_dict
+from agentos.planning.serializers import plan_state_from_dict, plan_state_to_dict
 from agentos.testing.contracts.plan_store import run_plan_store_contract
 from agentos.workspace import WorkspaceHandle
 

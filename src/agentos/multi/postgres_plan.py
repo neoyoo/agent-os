@@ -16,9 +16,9 @@ from agentos.planning import (
     PlanStore,
     PlanStoreRecord,
 )
-from agentos.multi.serializers import plan_state_from_dict, plan_state_to_dict
 from agentos.persistence.postgres import BackendUnavailableError
 from agentos.persistence.protocols import PostgresConnection, PostgresCursor
+from agentos.planning.serializers import plan_state_from_dict, plan_state_to_dict
 
 
 class _PostgresConnectionLeaseMixin:

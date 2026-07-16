@@ -11,11 +11,11 @@ from agentos.channels import RedisSessionLeaseStore as RedisSessionLeaseStore
 from agentos.channels import RejectAllChannelAuthPolicy as RejectAllChannelAuthPolicy
 from agentos.channels import ResourceAwareChannelAuthPolicy as ResourceAwareChannelAuthPolicy
 from agentos.channels import SessionLeaseStore as SessionLeaseStore
-from agentos.multi import CompareAndSavePlanStore as CompareAndSavePlanStore
-from agentos.multi import InMemoryPlanStore as InMemoryPlanStore
-from agentos.multi import PlanConflictError as PlanConflictError
-from agentos.multi import PlanStoreRecord as PlanStoreRecord
-from agentos.multi import PostgresPlanStore as PostgresPlanStore
+from agentos.multi.postgres_plan import PostgresPlanStore as PostgresPlanStore
+from agentos.planning import CompareAndSavePlanStore as CompareAndSavePlanStore
+from agentos.planning import InMemoryPlanStore as InMemoryPlanStore
+from agentos.planning import PlanConflictError as PlanConflictError
+from agentos.planning import PlanStoreRecord as PlanStoreRecord
 from agentos.readiness import ProductionReadinessEvidenceBundle as ProductionReadinessEvidenceBundle
 from agentos.readiness import ReadinessEvidenceCheck as ReadinessEvidenceCheck
 from agentos.readiness import ReadinessEvidenceStatus as ReadinessEvidenceStatus

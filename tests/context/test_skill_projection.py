@@ -41,6 +41,8 @@ class MutableTrustPolicy:
 class MutableRevisionSource(SkillContentSource):
     def __init__(self) -> None:
         self.revision = "1"
+        self.content_suffix = ""
+        self.prove_current = True
         self.descriptor = SkillDescriptor(
             SkillMetadata("review", "Review code.", True, "trusted"),
             "Review code.",
@@ -49,8 +51,18 @@ class MutableRevisionSource(SkillContentSource):
     async def list_skills(self) -> list[SkillDescriptor]:
         return [self.descriptor]
 
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        if not self.prove_current or name != self.descriptor.metadata.name:
+            return None
+        return SkillVerificationSubject.from_content(
+            source_id="mutable",
+            skill_name=name,
+            source_revision=self.revision,
+            content=self._content(),
+        )
+
     async def load_skill(self, name: str) -> SkillLoadResult:
-        content = f"# Review\nrevision={self.revision}"
+        content = self._content()
         return SkillLoadResult(
             name=name,
             content=content,
@@ -62,6 +74,9 @@ class MutableRevisionSource(SkillContentSource):
                 content=content,
             ),
         )
+
+    def _content(self) -> str:
+        return f"# Review\nrevision={self.revision}{self.content_suffix}"
 
     async def list_resources(self, name: str) -> tuple[SkillResourceRef, ...]:
         return ()
@@ -172,7 +187,7 @@ def test_policy_revocation_and_disable_remove_trusted_instruction() -> None:
     assert runtime.items("session-a") == ()
 
 
-def test_activation_snapshot_remains_version_pinned_until_explicit_reload() -> None:
+def test_source_revision_change_invalidates_active_skill() -> None:
     policy = MutableTrustPolicy()
 
     async def run() -> SkillRuntime:
@@ -184,7 +199,42 @@ def test_activation_snapshot_remains_version_pinned_until_explicit_reload() -> N
 
     runtime = asyncio.run(run())
 
-    assert runtime.items("session-a")[0].text.endswith("revision=1")
+    assert runtime.items("session-a") == ()
+
+
+def test_source_content_change_without_revision_bump_invalidates_active_skill() -> None:
+    policy = MutableTrustPolicy()
+
+    async def run() -> SkillRuntime:
+        source = MutableRevisionSource()
+        runtime = SkillRuntime(await SkillRegistry.aload(source), policy)
+        await runtime.load("session-a", "review")
+        source.content_suffix = "\nchanged"
+        return runtime
+
+    runtime = asyncio.run(run())
+
+    assert runtime.items("session-a") == ()
+
+
+def test_trusted_skill_load_fails_when_source_cannot_prove_current_subject() -> None:
+    async def run() -> SkillRuntime:
+        source = MutableRevisionSource()
+        source.prove_current = False
+        runtime = SkillRuntime(
+            await SkillRegistry.aload(source),
+            MutableTrustPolicy(),
+        )
+        with pytest.raises(
+            SkillTrustError,
+            match="skill source revision changed during load",
+        ):
+            await runtime.load("session-a", "review")
+        return runtime
+
+    runtime = asyncio.run(run())
+
+    assert runtime.items("session-a") == ()
 
 
 def test_explicit_reload_invalidates_version_pinned_activation_before_failure() -> None:

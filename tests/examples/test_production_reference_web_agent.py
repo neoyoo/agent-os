@@ -231,7 +231,7 @@ def test_production_reference_web_agent_builds_reference_composition_without_fak
     assert evidence["readiness_endpoint"] == "/ready"
     assert evidence["planner_primitive"]["pattern"] == "plan-and-execute"
     assert evidence["planner_primitive"]["runtime"] == "PlannerRuntime"
-    assert evidence["planner_primitive"]["summary"]["status"] == "running"
+    assert "<active-plan" in evidence["planner_primitive"]["context_projection"]
     assert evidence["component_identities"]["service_reference"] == (
         "AgentServiceReference"
     )

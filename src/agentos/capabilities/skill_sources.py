@@ -30,6 +30,10 @@ class SkillContentSource(ABC):
     """异步 Skill 内容来源。"""
 
     @abstractmethod
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        """返回内存中的当前验证主体；无法证明时返回 None。"""
+
+    @abstractmethod
     async def list_skills(self) -> list[SkillDescriptor]:
         """列出不含正文或路径的 Skill 描述。"""
 
@@ -77,6 +81,18 @@ class BuiltinSkillSource(SkillContentSource):
 
     async def list_skills(self) -> list[SkillDescriptor]:
         return [skill.descriptor() for skill in self._skills.values()]
+
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        try:
+            skill = self._skills[name]
+        except KeyError:
+            return None
+        return SkillVerificationSubject.from_content(
+            source_id="builtin",
+            skill_name=name,
+            source_revision=skill.source_revision,
+            content=skill.content,
+        )
 
     async def load_skill(self, name: str) -> SkillLoadResult:
         try:
@@ -134,6 +150,10 @@ class FileSystemSkillSource(SkillContentSource):
     async def list_skills(self) -> list[SkillDescriptor]:
         records = await self._records_by_name()
         return [record.descriptor for record in records.values()]
+
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        # Filesystem Skill 固定为 untrusted，不进入 SystemEnvelope。
+        return None
 
     async def load_skill(self, name: str) -> SkillLoadResult:
         records = await self._records_by_name()
@@ -244,6 +264,16 @@ class ChainedSkillSource(SkillContentSource):
         for source in self._sources:
             skills.extend(await source.list_skills())
         return skills
+
+    def current_subject(self, name: str) -> SkillVerificationSubject | None:
+        subjects = tuple(
+            subject
+            for source in self._sources
+            if (subject := source.current_subject(name)) is not None
+        )
+        if len(subjects) != 1:
+            return None
+        return subjects[0]
 
     async def load_skill(self, name: str) -> SkillLoadResult:
         source = await self._source_for(name)
