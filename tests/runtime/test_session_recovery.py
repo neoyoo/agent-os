@@ -101,6 +101,7 @@ def test_session_snapshot_restores_context_messages_compression_and_recall() -> 
         segment_repository=SegmentRepository.from_runtime(
             restored_compression.index,
             restored_messages,
+            session_id="session_1",
         ),
         session_id="session_1",
     ).recall_context("seg_1")

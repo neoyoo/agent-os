@@ -17,17 +17,18 @@ class SegmentNotFoundError(KeyError):
 
 @dataclass(slots=True)
 class _RuntimeSegmentRefs:
-    compression_index: CompressionIndex
-    saved: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    saved: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
 
-    def save(self, segment_id: str, message_ids: Sequence[str]) -> None:
-        self.saved[segment_id] = tuple(message_ids)
+    def save(
+        self,
+        session_id: str,
+        segment_id: str,
+        message_ids: Sequence[str],
+    ) -> None:
+        self.saved[(session_id, segment_id)] = tuple(message_ids)
 
-    def load(self, segment_id: str) -> tuple[str, ...]:
-        saved = self.saved.get(segment_id)
-        if saved is not None:
-            return saved
-        return tuple(self.compression_index.source_refs(segment_id))
+    def load(self, session_id: str, segment_id: str) -> tuple[str, ...]:
+        return self.saved[(session_id, segment_id)]
 
 
 @dataclass(slots=True)
@@ -41,7 +42,7 @@ class _RuntimeSegmentHotStore:
         segment_id: str,
         message_ids: Sequence[str],
     ) -> None:
-        self.refs.save(segment_id, message_ids)
+        self.refs.save(session_id, segment_id, message_ids)
 
     def get_segment_refs(
         self,
@@ -49,7 +50,7 @@ class _RuntimeSegmentHotStore:
         segment_id: str,
     ) -> tuple[str, ...] | None:
         try:
-            return self.refs.load(segment_id)
+            return self.refs.load(session_id, segment_id)
         except KeyError:
             return None
 
@@ -81,7 +82,7 @@ class _RuntimeSegmentDurableStore:
         session_id: str,
         segment_id: str,
     ) -> tuple[str, ...]:
-        return self.refs.load(segment_id)
+        return self.refs.load(session_id, segment_id)
 
     def get_messages(
         self,
@@ -104,10 +105,17 @@ class SegmentRepository:
         cls,
         compression_index: CompressionIndex,
         message_runtime: MessageRuntime,
+        *,
+        session_id: str,
     ) -> SegmentRepository:
-        """把 Level 1 进程内消息和压缩索引适配为统一 Repository。"""
+        """把单 Session 的 Level 1 消息和压缩索引适配为统一 Repository。"""
 
-        refs = _RuntimeSegmentRefs(compression_index)
+        refs = _RuntimeSegmentRefs(
+            saved={
+                (session_id, segment_id): source_refs
+                for segment_id, source_refs in compression_index.snapshot().items()
+            },
+        )
         return cls(
             hot_store=_RuntimeSegmentHotStore(refs, message_runtime),
             durable_store=_RuntimeSegmentDurableStore(refs, message_runtime),

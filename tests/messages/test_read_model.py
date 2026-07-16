@@ -55,7 +55,11 @@ class SuppressingApprovalProjector:
 
 
 def test_read_model_uses_business_messages_and_registered_event_projectors() -> None:
-    artifact = ArtifactRef("art_1", "drawing.png", "image/png")
+    artifact = ArtifactRef(
+        "art_550e8400-e29b-41d4-a716-446655440000",
+        "drawing.png",
+        "image/png",
+    )
     model = ConversationReadModel(projectors=(ApprovalProjector(),))
 
     result = model.build(
@@ -75,7 +79,11 @@ def test_read_model_uses_business_messages_and_registered_event_projectors() -> 
 
 
 def test_conversation_message_item_copies_artifact_refs() -> None:
-    artifact = ArtifactRef("art_1", "drawing.png", "image/png")
+    artifact = ArtifactRef(
+        "art_550e8400-e29b-41d4-a716-446655440000",
+        "drawing.png",
+        "image/png",
+    )
     artifact_refs = [artifact]
 
     item = ConversationMessageItem(

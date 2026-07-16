@@ -148,7 +148,7 @@ def test_stored_message_round_trip_preserves_artifacts_and_frozen_tool_calls() -
         content="",
         artifact_refs=(
             ArtifactRef(
-                artifact_id="art_drawing",
+                artifact_id="art_550e8400-e29b-41d4-a716-446655440000",
                 filename="drawing.png",
                 media_type="image/png",
             ),
@@ -175,7 +175,7 @@ def test_stored_message_round_trip_preserves_artifacts_and_frozen_tool_calls() -
         "content": "",
         "artifact_refs": [
             {
-                "artifact_id": "art_drawing",
+                "artifact_id": "art_550e8400-e29b-41d4-a716-446655440000",
                 "filename": "drawing.png",
                 "media_type": "image/png",
             },

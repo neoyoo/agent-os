@@ -336,6 +336,7 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
             segment_repository=SegmentRepository.from_runtime(
                 compression.index,
                 messages,
+                session_id="session_1",
             ),
             session_id="session_1",
         ),

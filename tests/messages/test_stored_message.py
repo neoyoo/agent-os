@@ -12,7 +12,11 @@ from agentos.messages import MessageStore, StoredMessage, ToolCall
 
 
 def test_stored_message_is_frozen_and_normalizes_tuple_boundaries() -> None:
-    artifact = ArtifactRef("art_1", "drawing.png", "image/png")
+    artifact = ArtifactRef(
+        "art_550e8400-e29b-41d4-a716-446655440000",
+        "drawing.png",
+        "image/png",
+    )
     tool_calls = [ToolCall("call_1", "read_file", {"path": "README.md"})]
     artifact_refs = [artifact]
 
@@ -35,7 +39,11 @@ def test_stored_message_is_frozen_and_normalizes_tuple_boundaries() -> None:
 
 
 def test_stored_message_preserves_one_shot_iterables_during_validation() -> None:
-    artifact = ArtifactRef("art_1", "drawing.png", "image/png")
+    artifact = ArtifactRef(
+        "art_550e8400-e29b-41d4-a716-446655440000",
+        "drawing.png",
+        "image/png",
+    )
     tool_call = ToolCall("call_1", "read_file", {"path": "README.md"})
 
     message = StoredMessage(

@@ -74,6 +74,8 @@ def test_artifact_values_reject_invalid_artifact_ids(artifact_id: str) -> None:
     with pytest.raises(ArtifactValidationError, match="artifact id is invalid"):
         artifact_record(id=artifact_id)
     with pytest.raises(ArtifactValidationError, match="artifact id is invalid"):
+        ArtifactRef(artifact_id, "drawing.png", "image/png")
+    with pytest.raises(ArtifactValidationError, match="artifact id is invalid"):
         ContextMount(artifact_id, "tool_result")
 
 
@@ -121,10 +123,11 @@ def test_artifact_record_accepts_missing_filename_and_utc_alias() -> None:
 
 
 def test_artifact_ref_rejects_unsafe_filename_and_media_type() -> None:
+    artifact_id = artifact_record().id
     with pytest.raises(ArtifactValidationError, match="artifact filename is invalid"):
-        ArtifactRef("art_legacy", "folder/drawing.png", "image/png")
+        ArtifactRef(artifact_id, "folder/drawing.png", "image/png")
     with pytest.raises(ArtifactValidationError, match="artifact media type is invalid"):
-        ArtifactRef("art_legacy", "drawing.png", "IMAGE PNG")
+        ArtifactRef(artifact_id, "drawing.png", "IMAGE PNG")
 
 
 @pytest.mark.parametrize("reason", ["upload", "tool", ""])

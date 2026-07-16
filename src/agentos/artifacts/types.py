@@ -69,6 +69,7 @@ class ArtifactRef:
     media_type: str
 
     def __post_init__(self) -> None:
+        validate_artifact_id(self.artifact_id)
         validate_artifact_filename(self.filename)
         validate_artifact_media_type(self.media_type)
 

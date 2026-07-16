@@ -8,11 +8,6 @@
   },
   "modules": [
     {
-      "path": "src/agentos/multi/planner.py",
-      "lines": 4859,
-      "gate": "no_new_responsibility"
-    },
-    {
       "path": "src/agentos/channels/a2a_operations.py",
       "lines": 4644,
       "gate": "no_new_responsibility"
@@ -68,16 +63,6 @@
       "gate": "no_new_responsibility"
     },
     {
-      "path": "src/agentos/providers/openai_compatible.py",
-      "lines": 875,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/multi/serializers.py",
-      "lines": 823,
-      "gate": "no_new_responsibility"
-    },
-    {
       "path": "src/agentos/runtime/profile.py",
       "lines": 789,
       "gate": "split_or_exception"
@@ -98,18 +83,18 @@
       "gate": "split_or_exception"
     },
     {
-      "path": "src/agentos/capabilities/skills.py",
-      "lines": 644,
-      "gate": "split_or_exception"
-    },
-    {
       "path": "src/agentos/workspace.py",
-      "lines": 640,
+      "lines": 652,
       "gate": "split_or_exception"
     },
     {
       "path": "src/agentos/channels/durable_session.py",
       "lines": 639,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/multi/serializers.py",
+      "lines": 550,
       "gate": "split_or_exception"
     },
     {
@@ -128,6 +113,11 @@
       "gate": "split_or_exception"
     },
     {
+      "path": "src/agentos/planning/runtime.py",
+      "lines": 499,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/multi/tasks.py",
       "lines": 495,
       "gate": "responsibility_review"
@@ -143,8 +133,23 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/planning/scheduling_profiles.py",
+      "lines": 473,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/dispatch.py",
+      "lines": 463,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/state_plane.py",
       "lines": 455,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/daemons.py",
+      "lines": 451,
       "gate": "responsibility_review"
     },
     {
@@ -153,13 +158,28 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/planning/tools.py",
+      "lines": 439,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/scheduling.py",
+      "lines": 424,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/decomposition.py",
+      "lines": 411,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/channels/__init__.py",
       "lines": 407,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/multi/__init__.py",
-      "lines": 372,
+      "path": "src/agentos/capabilities/skill_sources.py",
+      "lines": 387,
       "gate": "responsibility_review"
     },
     {
@@ -168,8 +188,18 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/planning/profiles.py",
+      "lines": 365,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/channels/sse_buffer.py",
       "lines": 362,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/tool_schemas.py",
+      "lines": 361,
       "gate": "responsibility_review"
     },
     {
@@ -179,7 +209,7 @@
     },
     {
       "path": "src/agentos/testing/contracts/plan_claim_store.py",
-      "lines": 338,
+      "lines": 337,
       "gate": "responsibility_review"
     },
     {
@@ -190,6 +220,11 @@
     {
       "path": "src/agentos/testing/contracts/plan_store.py",
       "lines": 324,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/providers/openai_compatible_parsing.py",
+      "lines": 313,
       "gate": "responsibility_review"
     },
     {

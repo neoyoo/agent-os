@@ -300,6 +300,7 @@ def test_query_loop_runs_compression_and_recall_through_provider_requests() -> N
         segment_repository=SegmentRepository.from_runtime(
             compression.index,
             messages,
+            session_id="session_1",
         ),
         session_id="session_1",
     ).recall_context("seg_1")

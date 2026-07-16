@@ -1,4 +1,7 @@
+import pytest
+
 from agentos.artifacts import ArtifactRef
+from agentos.compression import CompressionIndex
 from agentos.context import CompressedSegment
 from agentos.persistence import (
     InMemoryDurableSessionStore,
@@ -10,10 +13,16 @@ from agentos.recall import (
     SegmentRecallDocument,
     SegmentRepository,
 )
-from agentos.messages import StoredMessage, ToolCall
+from agentos.recall.segment_repository import SegmentNotFoundError
+from agentos.messages import MessageRuntime, StoredMessage, ToolCall
 
 
-def build_package(segment_id: str = "seg_1") -> CompressedSegmentPackage:
+def build_package(
+    segment_id: str = "seg_1",
+    *,
+    session_id: str = "session_1",
+    source_refs: tuple[str, ...] = ("msg_1", "msg_2"),
+) -> CompressedSegmentPackage:
     segment = CompressedSegment(
         id=segment_id,
         topic="读取 pyproject.toml 里的项目名",
@@ -21,9 +30,9 @@ def build_package(segment_id: str = "seg_1") -> CompressedSegmentPackage:
     )
     return CompressedSegmentPackage(
         segment=segment,
-        source_refs=("msg_1", "msg_2"),
+        source_refs=source_refs,
         recall_document=SegmentRecallDocument(
-            session_id="session_1",
+            session_id=session_id,
             segment_id=segment_id,
             topic=segment.topic,
             summary=segment.summary,
@@ -66,6 +75,52 @@ def test_segment_repository_records_compressed_segment_package() -> None:
     assert recall_index.search_segments("session_1", "pyproject", limit=1)[0].segment_id == "seg_1"
 
 
+def test_runtime_repository_partitions_same_segment_id_by_session() -> None:
+    messages = MessageRuntime()
+    messages.hydrate_messages(
+        [
+            StoredMessage("msg_a", "user", "session A"),
+            StoredMessage("msg_b", "user", "session B"),
+        ],
+    )
+    repository = SegmentRepository.from_runtime(
+        CompressionIndex(),
+        messages,
+        session_id="session_a",
+    )
+    repository.record_compressed_segment(
+        build_package("seg_shared", session_id="session_a", source_refs=("msg_a",)),
+    )
+    repository.record_compressed_segment(
+        build_package("seg_shared", session_id="session_b", source_refs=("msg_b",)),
+    )
+
+    assert [
+        message.content
+        for message in repository.recall_by_handle("session_a", "seg_shared")
+    ] == ["session A"]
+    assert [
+        message.content
+        for message in repository.recall_by_handle("session_b", "seg_shared")
+    ] == ["session B"]
+
+
+def test_runtime_repository_rejects_cross_session_handle_access() -> None:
+    messages = MessageRuntime()
+    messages.hydrate_messages([StoredMessage("msg_a", "user", "session A")])
+    repository = SegmentRepository.from_runtime(
+        CompressionIndex(),
+        messages,
+        session_id="session_a",
+    )
+    repository.record_compressed_segment(
+        build_package("seg_a", session_id="session_a", source_refs=("msg_a",)),
+    )
+
+    with pytest.raises(SegmentNotFoundError):
+        repository.recall_by_handle("session_b", "seg_a")
+
+
 def test_recall_by_handle_prefers_hot_messages_when_available() -> None:
     runtime, hot_store, durable_store, _ = build_runtime()
     package = build_package()
@@ -98,7 +153,7 @@ def test_recall_by_handle_falls_back_to_durable_messages() -> None:
     package = build_package()
     runtime.record_compressed_segment(package)
     artifact = ArtifactRef(
-        artifact_id="art_1",
+        artifact_id="art_550e8400-e29b-41d4-a716-446655440000",
         filename="result.json",
         media_type="application/json",
     )

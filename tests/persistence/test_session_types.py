@@ -146,7 +146,7 @@ def test_memory_tool_call_serializer_thaws_nested_arguments() -> None:
 
 def test_memory_message_serializer_round_trip_returns_stored_message() -> None:
     artifact = ArtifactRef(
-        artifact_id="art_1",
+        artifact_id="art_550e8400-e29b-41d4-a716-446655440000",
         filename="report.json",
         media_type="application/json",
     )
@@ -169,7 +169,7 @@ def test_memory_message_serializer_round_trip_returns_stored_message() -> None:
 
     assert encoded["artifact_refs"] == [
         {
-            "artifact_id": "art_1",
+            "artifact_id": "art_550e8400-e29b-41d4-a716-446655440000",
             "filename": "report.json",
             "media_type": "application/json",
         },

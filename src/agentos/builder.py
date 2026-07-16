@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agentos._builder_recall import assemble_recall_runtime
 from agentos._builder_tools import assemble_tool_components
 from agentos.attachments import AttachmentRuntime
 from agentos.capabilities import RegisteredTool, ToolCallRouter
-from agentos.compression import CompressionIndex, CompressionRuntime, Compressor
+from agentos.compression import CompressionRuntime, Compressor
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.context.projection import default_system_section_registry
 from agentos.events import EventBus
 from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
-from agentos.recall import RecallRuntime, SegmentRepository
 from agentos.runtime import Agent
 from agentos.runtime.provider_request_builder import (
     ProviderRequestBuilder,
@@ -218,44 +218,9 @@ class AgentBuilder:
                 compressor=self._compressor,
                 event_bus=self._event_bus,
             )
-        compression_index = (
-            compression_runtime.index
-            if compression_runtime is not None
-            else CompressionIndex()
-        )
-        configured_memory_sink = (
-            compression_runtime.memory_sink
-            if compression_runtime is not None
-            else None
-        )
-        if configured_memory_sink is not None and not isinstance(
-            configured_memory_sink,
-            SegmentRepository,
-        ):
-            raise ValueError(
-                "CompressionRuntime.memory_sink must be a SegmentRepository "
-                "when assembled by AgentBuilder",
-            )
-        if configured_memory_sink is not None and not compression_runtime.session_id:
-            raise ValueError(
-                "CompressionRuntime.session_id is required for a configured "
-                "SegmentRepository",
-            )
-        segment_repository = configured_memory_sink or SegmentRepository.from_runtime(
-            compression_index,
-            messages,
-        )
-        if compression_runtime is not None and compression_runtime.memory_sink is None:
-            compression_runtime.memory_sink = segment_repository
-        # Empty scope is confined to the per-Agent Level 1 repository above.
-        recall_runtime = RecallRuntime(
+        recall_runtime = assemble_recall_runtime(
+            compression_runtime=compression_runtime,
             message_runtime=messages,
-            segment_repository=segment_repository,
-            session_id=(
-                compression_runtime.session_id or ""
-                if compression_runtime is not None
-                else ""
-            ),
         )
         tool_components = assemble_tool_components(
             tools=self._tools,

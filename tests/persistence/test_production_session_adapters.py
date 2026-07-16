@@ -108,7 +108,7 @@ def test_redis_hot_session_store_round_trips_hot_state_and_refs() -> None:
         content="done",
         artifact_refs=(
             ArtifactRef(
-                artifact_id="art_1",
+                artifact_id="art_550e8400-e29b-41d4-a716-446655440000",
                 filename="pyproject.toml",
                 media_type="text/plain",
             ),
@@ -137,7 +137,7 @@ def test_redis_hot_session_store_round_trips_hot_state_and_refs() -> None:
 
     expected_artifact_refs = [
         {
-            "artifact_id": "art_1",
+            "artifact_id": "art_550e8400-e29b-41d4-a716-446655440000",
             "filename": "pyproject.toml",
             "media_type": "text/plain",
         },

@@ -64,7 +64,11 @@ def _recall_runtime(
 ) -> RecallRuntime:
     return RecallRuntime(
         message_runtime=messages,
-        segment_repository=SegmentRepository.from_runtime(index, messages),
+        segment_repository=SegmentRepository.from_runtime(
+            index,
+            messages,
+            session_id="session_1",
+        ),
         event_bus=event_bus,
         session_id="session_1",
     )

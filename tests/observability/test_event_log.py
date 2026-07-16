@@ -58,6 +58,7 @@ def test_context_compression_and_recall_emit_traceable_events() -> None:
         segment_repository=SegmentRepository.from_runtime(
             compression.index,
             messages,
+            session_id="s1",
         ),
         event_bus=bus,
         session_id="s1",

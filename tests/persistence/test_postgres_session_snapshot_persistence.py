@@ -214,7 +214,7 @@ def make_stored_message(*, tags: tuple[str, ...]) -> StoredMessage:
         content="",
         artifact_refs=(
             ArtifactRef(
-                artifact_id="art_drawing",
+                artifact_id="art_550e8400-e29b-41d4-a716-446655440000",
                 filename="drawing.png",
                 media_type="image/png",
             ),
