@@ -1,6 +1,6 @@
 # AgentOS Provider Adapter Contract Implementation Plan
 
-> 状态：待用户批准；依赖 Phase 3 Contract Addendum 和 Artifact Plan Task 0
+> 状态：已完成并集成（2026-07-16，集成基线 `23bd4ce`）
 
 **Goal:** 为 OpenAI Responses、OpenAI Chat Completions、OpenAI-Compatible Chat 和
 Anthropic 建立统一 Context Protocol Contract Matrix，并拆分超大 Compatible Adapter。
@@ -8,6 +8,17 @@ Anthropic 建立统一 Context Protocol Contract Matrix，并拆分超大 Compat
 **Architecture:** ProviderRequest 保持 Provider 无关且不可变；Adapter 只在最终 wire
 payload 做角色合并、多模态编码和响应解析。Provider 不读取 Context/Message/Artifact
 Store，不拥有 retry，不反写逻辑输入。
+
+## 完成记录
+
+- Tasks 0-8 已按本计划完成，Provider Adapter 提交已集成至 `23bd4ce`。
+- 独立收口验证：`tests/providers = 158 passed`；Provider/RequestBuilder 交叉集
+  `205 passed`；全量 `2632 passed, 15 skipped`。
+- 四类 Adapter Contract、binary mapping、strict-role、timeout/error、不可变输入和
+  Compatible 拆分均由测试覆盖；`ruff`、`compileall`、规模和 Public API 门禁通过。
+- 下方 checklist 保留原始 TDD 执行顺序；本节与顶部状态是当前完成状态记录。
+- Provider hosted state、真实网络 smoke 和分布式 File ID cache 继续按批准边界延期，
+  不属于 Phase 3B 遗留。
 
 ## Scope Contract
 

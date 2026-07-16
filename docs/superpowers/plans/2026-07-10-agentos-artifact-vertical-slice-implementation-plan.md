@@ -1,6 +1,6 @@
 # AgentOS Artifact Vertical Slice Implementation Plan
 
-> 状态：待用户批准；不得在 Phase 3 Contract Addendum 批准前执行
+> 状态：已完成并集成（2026-07-16，集成基线 `23bd4ce`）
 
 **Goal:** 建立 Session-scoped ArtifactStore、ArtifactRuntime、Catalog Projection 和
 ContextMount Projection，使附件原始内容保持在 MessageStore/Trace/Frontend 之外。
@@ -8,6 +8,17 @@ ContextMount Projection，使附件原始内容保持在 MessageStore/Trace/Fron
 **Architecture:** ArtifactStore 是内容与元数据真值；StoredMessage 只保存 ArtifactRef；
 ArtifactRuntime 管理 Session 操作和当前 Turn Mount；Projection 每次读取 Store 并生成
 ContextSlotProjection 或 Provider-neutral ContentPart。本阶段不接 Builder/QueryLoop。
+
+## 完成记录
+
+- Tasks 0-8 已按本计划完成，Artifact 领域提交已集成至 `23bd4ce`。
+- 独立收口验证：`tests/artifacts = 97 passed`；Phase 3A 交叉集
+  `779 passed, 2 skipped`；全量 `2632 passed, 15 skipped`。
+- `ruff`、`compileall`、module-size/Public API 架构门禁、禁止依赖扫描和
+  `git diff --check` 均通过。
+- 下方 checklist 保留原始 TDD 执行顺序；本节与顶部状态是当前完成状态记录。
+- Builder/QueryLoop 接线、Turn 清理和旧 `attachments` 删除仍按批准边界归 Phase 4，
+  不属于 Phase 3A 遗留。
 
 ## Scope Contract
 

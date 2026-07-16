@@ -1,6 +1,6 @@
 # AgentOS Skill / Plan / Memory Projection Implementation Plan
 
-> 状态：待用户批准；依赖 Phase 3 Contract Addendum
+> 状态：已完成并集成（2026-07-16，集成基线 `23bd4ce`）
 
 **Goal:** 把 Skill、Plan 和 Episodic/Semantic Memory 作为可组合 Extension 接入既有
 Context Projection Port，并把 Planner 领域从 4859 行 `multi/planner.py` 迁入
@@ -9,6 +9,18 @@ Context Projection Port，并把 Planner 领域从 4859 行 `multi/planner.py` �
 **Architecture:** Extension 只提交类型化 SystemSection/ContextSlot Projection；Context
 Renderer 不理解 Extension 业务。PlanStore、Skill Source、MemoryStore 保持真值；Projection
 每次重新读取。Kernel/QueryLoop 不导入任何 Extension。
+
+## 完成记录
+
+- Tasks 0-10 已按本计划完成，Skill/Plan/Memory 与 Planner 拆分提交已集成至
+  `23bd4ce`；旧 `multi/planner.py` 已删除。
+- 独立收口验证：三类 Projection 契约 `32 passed`；Extension 交叉集
+  `705 passed`；全量 `2632 passed, 15 skipped`。
+- `planning` 单一真值、Skill trust subject、Memory session/access/expiry 边界和 Kernel
+  依赖方向均有架构或行为测试；`ruff`、`compileall`、规模和 Public API 门禁通过。
+- 下方 checklist 保留原始 TDD 执行顺序；本节与顶部状态是当前完成状态记录。
+- Builder/Registry 聚合、Run-Plan 持久绑定和 Memory query 接线仍按批准边界归 Phase 4，
+  不属于 Phase 3C 遗留。
 
 ## Scope Contract
 
@@ -365,7 +377,7 @@ python -m compileall -q src tests
 python -m ruff check src tests
 python -m pytest tests/architecture/test_module_size_baseline.py tests/architecture/test_public_api.py tests/architecture/test_public_api_inventory.py -q
 rg -n "agentos\.multi\.planner|from agentos\.multi import .*Planner" src tests
-rg -n "agentos\.planning|PlannerRuntime|MemoryRuntime|SkillRuntime" src/agentos/runtime src/agentos/context
+rg -n "^(from|import) agentos\.(planning|memory|capabilities\.skill_runtime)" src/agentos/runtime src/agentos/context
 rg -n "agentos\.memory" src/agentos/recall src/agentos/compression src/agentos/persistence tests/recall tests/compression tests/persistence docs/README-OUTLINE.md docs/readme-online.md
 rg --files src/agentos/memory | rg "[\\/](embeddings|qdrant_index|recall_index|redis_store|serializers|store|types)\.py$"
 rg -n "MemoryRuntime.*(HotSessionStore|DurableSessionStore|RecallIndex)|src/agentos/memory/(runtime|store|recall_index|types)\.py" docs/README-OUTLINE.md docs/readme-online.md
