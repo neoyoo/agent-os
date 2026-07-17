@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import Literal, overload
+from typing import Literal, cast, overload
 
+from agentos.artifacts import ArtifactRuntime
 from agentos.runtime.agent_stream import AgentStream
 from agentos.runtime.errors import RunProtocolError
 from agentos.runtime.query_loop import QueryLoop
@@ -51,13 +52,13 @@ class Agent:
             raise ValueError(f"invalid query_loop_kwargs: {error}") from error
 
     @property
-    def attachments(self) -> object:
-        """返回当前 Agent 配置的 AttachmentRuntime。"""
+    def artifacts(self) -> ArtifactRuntime:
+        """返回当前 Agent 配置的 Session ArtifactRuntime。"""
 
-        runtime = self.query_loop.request_builder.attachment_runtime
+        runtime = self.query_loop.artifact_runtime
         if runtime is None:
-            raise RuntimeError("attachment runtime is not configured")
-        return runtime
+            raise RuntimeError("artifact runtime is not configured")
+        return cast(ArtifactRuntime, runtime)
 
     def interrupt(self) -> bool:
         """请求取消当前执行；空闲时返回 False。"""

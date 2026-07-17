@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
 from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
 from agentos.capabilities.skills import (
     FileSystemSkillSource,
@@ -21,6 +22,7 @@ from agentos.observability import (
     use_observability_context,
 )
 from agentos.observability.instrument import instrument_query_loop
+from agentos.observability.instrumented import InstrumentedProviderRequestBuilder
 from agentos.observability.query_loop import InstrumentedQueryLoop
 from agentos.providers import (
     FakeProvider,
@@ -42,6 +44,7 @@ from agentos.runtime import (
     WaitReason,
 )
 from agentos.runtime._execution_lease import ExecutionLease
+from agentos.runtime.continuation import ContinuationRuntime
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -319,9 +322,12 @@ def test_instrumented_query_loop_exposes_only_the_static_execution_contract(
 
     assert not hasattr(type(instrumented), "__getattr__")
     assert {name for name in vars(type(instrumented)) if not name.startswith("_")} == {
+        "artifact_runtime",
+        "continuation_runtime",
         "execute",
         "interrupt",
         "request_builder",
+        "run_runtime",
     }
     assert _run_turn(instrumented, "读取项目名")[-1].content == "项目名是 agent-os。"
 
@@ -420,6 +426,47 @@ def test_instrument_query_loop_does_not_mutate_original_loop(tmp_path: Path) -> 
     assert loop.request_builder is original_builder
     assert loop.tool_call_router is original_router
     assert loop.compression_runtime is original_compression
+
+
+def test_instrumented_request_builder_transparently_delegates_input_projections(
+    tmp_path: Path,
+) -> None:
+    loop, _, _ = _build_loop(tmp_path)
+    wrapper = InstrumentedProviderRequestBuilder(
+        loop.request_builder,
+        tracer=InMemoryTracer(),
+        capture_policy=CapturePolicy.metadata_only(),
+    )
+    replacement = ContinuationRuntime()
+
+    assert wrapper.input_projections is loop.request_builder.input_projections
+
+    wrapper.input_projections = (replacement,)
+
+    assert loop.request_builder.input_projections == (replacement,)
+
+
+def test_instrumented_query_loop_transparently_delegates_phase4_runtimes(
+    tmp_path: Path,
+) -> None:
+    loop, _, _ = _build_loop(tmp_path)
+    artifact_runtime = ArtifactRuntime(
+        session_id="s1",
+        store=InMemoryArtifactStore(),
+    )
+    loop.artifact_runtime = artifact_runtime
+
+    instrumented = instrument_query_loop(
+        loop,
+        ObservabilityConfig(
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        ),
+    )
+
+    assert instrumented.artifact_runtime is artifact_runtime
+    assert instrumented.run_runtime is loop.run_runtime
+    assert instrumented.continuation_runtime is loop.continuation_runtime
 
 
 def test_query_loop_records_trace_session_turn_and_user_metadata_on_all_spans(

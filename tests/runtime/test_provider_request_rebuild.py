@@ -1,6 +1,7 @@
 import pytest
 
-from agentos.attachments import AttachmentRuntime
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
+from agentos.artifacts.projection import ArtifactMountProjectionProvider
 from agentos.context import (
     ContextRuntime,
     ContextSnapshotRenderer,
@@ -15,7 +16,6 @@ from agentos.runtime.message_projection import project_stored_message
 from agentos.runtime.provider_request_builder import ProviderRequestReceipt
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
-from tests._provider_binary import payload_from_attachment
 
 
 class MutableProjectionProvider:
@@ -55,14 +55,16 @@ class MutableSystemEnvelopeRenderer:
 def configured_builder(
     messages: MessageRuntime,
     projections: MutableProjectionProvider,
-    attachments: AttachmentRuntime | None = None,
+    artifacts: ArtifactRuntime | None = None,
 ) -> ProviderRequestBuilder:
     return ProviderRequestBuilder(
         context_renderer=default_context_renderer(),
         message_runtime=messages,
         snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
         context_projections=projections,
-        attachment_runtime=attachments,
+        input_projections=(
+            () if artifacts is None else (ArtifactMountProjectionProvider(artifacts),)
+        ),
     )
 
 
@@ -215,45 +217,52 @@ def test_message_projection_rejects_invalid_role_fields(
         )
 
 
-def test_initial_uploaded_image_extends_the_business_user_item() -> None:
+def test_initial_uploaded_image_is_independent_context_mount() -> None:
     messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
     )
-    content = attachments.prepare_user_message("Analyze the image", [attachment])
-    messages.append_user(content)
+    artifact = artifacts.upload(
+        data=b"image-bytes",
+        filename="diagram.png",
+        media_type="image/png",
+    )
+    refs = artifacts.prepare_user_uploads((artifact.id,))
+    messages.append_user("Analyze the image", artifact_refs=refs)
 
     build = configured_builder(
         messages,
         MutableProjectionProvider(goal="image"),
-        attachments,
+        artifacts,
     ).build()
 
     user_item = build.request.messages[1]
     assert user_item.kind == "business_message"
-    assert user_item.content == (
-        TextPart("Analyze the image"),
-        ImagePart(payload_from_attachment(attachment)),
-    )
+    assert user_item.content == (TextPart("Analyze the image"),)
+    mount = build.request.messages[2]
+    assert mount.kind == "context_mount"
+    assert isinstance(mount.content[1], ImagePart)
+    assert mount.content[1].payload.handle == artifact.id
 
 
 def test_uploaded_image_remains_mounted_on_later_builds_in_the_turn() -> None:
     messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
     )
-    content = attachments.prepare_user_message("Analyze the image", [attachment])
-    messages.append_user(content)
+    artifact = artifacts.upload(
+        data=b"image-bytes",
+        filename="diagram.png",
+        media_type="image/png",
+    )
+    refs = artifacts.prepare_user_uploads((artifact.id,))
+    messages.append_user("Analyze the image", artifact_refs=refs)
     builder = configured_builder(
         messages,
         MutableProjectionProvider(goal="image"),
-        attachments,
+        artifacts,
     )
 
     builder.build()
@@ -264,34 +273,35 @@ def test_uploaded_image_remains_mounted_on_later_builds_in_the_turn() -> None:
         "business_message",
         "context_mount",
     ]
-    assert second.request.messages[-1].content == (
-        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(payload_from_attachment(attachment)),
-    )
+    mount = second.request.messages[-1]
+    assert "【用户上传附件】" in mount.content[0].text  # type: ignore[union-attr]
+    assert isinstance(mount.content[1], ImagePart)
+    assert mount.content[1].payload.handle == artifact.id
 
 
 def test_loaded_image_is_appended_as_context_mount() -> None:
     messages = MessageRuntime()
     messages.append_user("Inspect the loaded image")
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
     )
-    attachments.load_attachment_handle(f"att:{attachment.handle}")
+    artifact = artifacts.upload(
+        data=b"image-bytes",
+        filename="diagram.png",
+        media_type="image/png",
+    )
+    artifacts.load_attachment(artifact.id)
 
     build = configured_builder(
         messages,
         MutableProjectionProvider(goal="mount"),
-        attachments,
+        artifacts,
     ).build()
 
     mount = build.request.messages[-1]
     assert mount.kind == "context_mount"
-    assert mount.content[0] == TextPart(
-        f"Loaded attachment {attachment.handle} for inspection.",
-    )
+    assert "【工具结果附件】" in mount.content[0].text  # type: ignore[union-attr]
     image = mount.content[1]
     assert isinstance(image, ImagePart)
     assert image.payload.data == b"image-bytes"

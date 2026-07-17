@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -37,6 +36,7 @@ from agentos.runtime.event_bus import (
     ToolResultAppendedEvent,
 )
 from agentos.runtime._tool_observation import ToolObservationMapper
+from agentos.runtime.continuation import ContinuationRuntime
 from agentos.runtime.provider_attempt import (
     ProviderAttemptRunner,
     ensure_provider_response_usable,
@@ -51,6 +51,7 @@ from agentos.runtime.query_loop_support import (
     _FinalContent,
     _ToolCallFailure,
     ContextRuntimeBoundary,
+    ArtifactRuntimeBoundary,
     StructuredLoggerBoundary,
     ToolCallRouterBoundary,
     TurnNoticeProvider,
@@ -63,6 +64,8 @@ from agentos.runtime.query_loop_support import (
 )
 from agentos.runtime.retry import RetryPolicy
 from agentos.runtime.run import LocalContinuationInput, RunOptions, RunRequest, UserTurnInput
+from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
+from agentos.runtime.run_driver import RunDriver
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -79,7 +82,7 @@ from agentos.runtime.stream_events import (
 from agentos.runtime.tool_scheduler import ToolCallScheduler, ToolExecutionContext
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
-from agentos.runtime.waiting import WaitingRuntime
+from agentos.runtime.waiting import LocalWaitingRuntime, WaitingRuntime
 from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
@@ -98,6 +101,11 @@ class QueryLoop:
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
     waiting_runtime: WaitingRuntime | None = None
+    artifact_runtime: ArtifactRuntimeBoundary | None = None
+    continuation_runtime: ContinuationRuntime = field(
+        default_factory=ContinuationRuntime,
+    )
+    run_runtime: RunRuntime | None = None
     retry_policy: RetryPolicy | None = None
     structured_logger: StructuredLoggerBoundary | None = None
     tool_result_budget: ToolResultBudget = field(default_factory=ToolResultBudget)
@@ -108,8 +116,29 @@ class QueryLoop:
     _execution_lease: ExecutionLease = field(default_factory=ExecutionLease, init=False, repr=False)
     _hooks: QueryLoopHooks = field(init=False, repr=False)
     _lifecycle: TurnLifecycle = field(init=False, repr=False)
+    _run_driver: RunDriver = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.run_runtime is None:
+            session_id = (
+                self.session_state.id
+                if self.session_state is not None
+                else getattr(self.context_runtime, "session_id", None) or "session_local"
+            )
+            self.run_runtime = RunRuntime(
+                session_id=session_id,
+                store=InMemoryRunStore(),
+            )
+        if self.waiting_runtime is None:
+            self.waiting_runtime = LocalWaitingRuntime(self.run_runtime)
+        if all(
+            provider is not self.continuation_runtime
+            for provider in self.request_builder.input_projections
+        ):
+            self.request_builder.input_projections = (
+                self.continuation_runtime,
+                *self.request_builder.input_projections,
+            )
         self.request_builder._bind_context_source(
             self.context_runtime,
             self.token_counter,
@@ -118,13 +147,15 @@ class QueryLoop:
         self._lifecycle = TurnLifecycle(
             context_runtime=self.context_runtime,
             message_runtime=self.message_runtime,
-            attachment_runtime=self.request_builder.attachment_runtime,
+            artifact_runtime=self.artifact_runtime,
             session_state=self.session_state,
             turn_notice_provider=self.turn_notice_provider,
             waiting_runtime=self.waiting_runtime,
+            continuation_runtime=self.continuation_runtime,
             event_bus=self.event_bus,
             structured_logger=self.structured_logger,
         )
+        self._run_driver = RunDriver(self.run_runtime, self._lifecycle)
 
     async def execute(self, request: RunRequest) -> AgentStream:
         """校验请求、立即获取执行租约并返回惰性事件流。"""
@@ -135,12 +166,25 @@ class QueryLoop:
             raise TypeError("run request contains an unsupported input")
         self._lifecycle.session_state = self.session_state
         tracker = SyncWorkTracker()
-        events = bind_sync_work_tracker(self._execute_events(request), tracker)
-        return self._execution_lease.open_stream(
-            events,
-            cleanup=lambda: None,
-            pending_sync_work=tracker,
+        run_id = self._run_driver.prepare()
+        events = bind_sync_work_tracker(
+            self._run_driver.events(
+                request,
+                run_id,
+                self._run_provider_tool_events,
+            ),
+            tracker,
         )
+        try:
+            return self._execution_lease.open_stream(
+                events,
+                cleanup=lambda: self._run_driver.cancel_open(run_id),
+                pending_sync_work=tracker,
+            )
+        except BaseException:
+            self._run_driver.cancel_open(run_id)
+            await events.aclose()
+            raise
 
     def interrupt(self) -> bool:
         """请求取消当前执行租约。"""
@@ -149,50 +193,6 @@ class QueryLoop:
 
     def _wait_until_idle(self) -> None:
         self._execution_lease.wait_until_idle()
-
-    async def _execute_events(
-        self,
-        request: RunRequest,
-    ) -> AsyncIterator[TurnStreamEvent]:
-        turn: TurnState | None = None
-        pending: tuple[TurnStreamEvent, ...] = ()
-        continuation = isinstance(request.input, LocalContinuationInput)
-        waiting_requested = False
-        try:
-            if isinstance(request.input, UserTurnInput):
-                turn, pending = self._lifecycle.prepare_user_turn(request.input)
-            else:
-                turn, pending = self._lifecycle.prepare_continuation_turn()
-
-            final_content = ""
-            async with aclosing(self._run_provider_tool_events(turn, request.options)) as events:
-                async for event in events:
-                    if pending and isinstance(event, StatusUpdate) and event.stage == "context":
-                        pending += (event,)
-                        continue
-                    if pending:
-                        for prepared_event in pending:
-                            yield prepared_event
-                        pending = ()
-                    if isinstance(event, _FinalContent):
-                        final_content = event.content
-                    elif isinstance(event, WaitRequest):
-                        waiting_requested = True
-                        yield await self._lifecycle.commit_waiting(turn=turn, reason=event.reason)
-                        return
-                    else:
-                        yield event
-            yield self._lifecycle.complete(turn, final_content)
-        except asyncio.CancelledError:
-            self._lifecycle.cancel(turn)
-            raise
-        except Exception as error:
-            for prepared_event in pending:
-                yield prepared_event
-            yield self._lifecycle.fail(turn, error, mark_turn=not waiting_requested)
-            raise
-        finally:
-            self._lifecycle.cleanup(is_continuation=continuation)
 
     async def _run_provider_tool_events(
         self,
@@ -433,10 +433,7 @@ class QueryLoop:
     def _build_request(self) -> ProviderRequestBuild:
         if self.compression_runtime is not None:
             self.compression_runtime.maybe_compress()
-        try:
-            return self.request_builder.build()
-        finally:
-            self._lifecycle.clear_runtime_notices()
+        return self.request_builder.build()
 
     def _prepare_provider_call(
         self,

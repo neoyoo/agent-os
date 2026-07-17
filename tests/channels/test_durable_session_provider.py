@@ -109,7 +109,7 @@ class SnapshotTestFactory:
             .provider(provider)
             .context_runtime(context)
             .message_runtime(messages)
-            .build()
+            .build(session_id=session_id)
         )
 
     def create_snapshot(self, *, session_id: str, agent: Agent) -> SessionSnapshot:
@@ -524,7 +524,7 @@ def test_durable_session_provider_rejects_stale_snapshot_before_release() -> Non
                 .provider(FakeProvider(["seed"]))
                 .context_runtime(ContextRuntime(session_id="s1"))
                 .message_runtime(MessageRuntime())
-                .build()
+                .build(session_id="s1")
             ),
         ),
     )
@@ -546,7 +546,7 @@ def test_durable_session_provider_rejects_stale_snapshot_before_release() -> Non
                 .provider(FakeProvider(["external"]))
                 .context_runtime(ContextRuntime(session_id="s1"))
                 .message_runtime(MessageRuntime())
-                .build()
+                .build(session_id="s1")
             ),
         ),
     )

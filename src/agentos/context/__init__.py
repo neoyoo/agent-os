@@ -8,6 +8,10 @@ from agentos.context.projection import (
     ToolDeclaration,
     ToolGroup,
 )
+from agentos.context.projection_registry import (
+    ContextProjectionProvider,
+    ContextProjectionRegistry,
+)
 from agentos.context.renderer import ContextRenderer
 from agentos.context.models import ContextSnapshot, SystemEnvelope
 from agentos.context.runtime import ContextProtocolError, ContextRuntime
@@ -19,6 +23,8 @@ __all__ = [
     "CapabilityPlane",
     "CompressedSegment",
     "ContextProtocolError",
+    "ContextProjectionProvider",
+    "ContextProjectionRegistry",
     "ContextRenderer",
     "ContextRuntime",
     "ContextSnapshot",

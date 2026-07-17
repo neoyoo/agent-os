@@ -1,4 +1,5 @@
 import asyncio
+from itertools import count
 
 import pytest
 
@@ -33,8 +34,9 @@ from agentos.runtime import (
     TurnStreamWaiting,
     WaitReason,
 )
-from agentos.runtime.errors import WaitingUnsupportedError
 from agentos.runtime.session import SessionState
+from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
+from agentos.runtime.run_state import RunStatus
 from agentos.runtime.tool_scheduler import ToolCallScheduler
 from agentos.runtime.turn import TurnState
 from agentos.runtime.waiting import WaitingCommit, WaitingRuntime
@@ -62,6 +64,7 @@ class FailingWaitingRuntime:
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn_id: str,
         reason: WaitReason,
     ) -> WaitingCommit:
@@ -84,6 +87,13 @@ def _agent(
     router = ToolCallRouter(tool_registry=registry, context_runtime=context)
     session = RecordingSessionState()
     event_bus = EventBus()
+    run_number = count(1)
+    base_run_id = getattr(waiting_runtime, "run_id", "run_local")
+
+    def next_run_id() -> str:
+        number = next(run_number)
+        return base_run_id if number == 1 else f"{base_run_id}_{number}"
+
     return (
         Agent(
             QueryLoop(
@@ -99,6 +109,11 @@ def _agent(
                 session_state=session,
                 event_bus=event_bus,
                 waiting_runtime=waiting_runtime,
+                run_runtime=RunRuntime(
+                    session_id=session.id,
+                    store=InMemoryRunStore(),
+                    id_factory=next_run_id,
+                ),
                 hook_manager=hook_manager,
             ),
         ),
@@ -554,11 +569,16 @@ def test_non_streaming_wait_projects_outcome_after_authoritative_commit() -> Non
         assert outcome == AgentWaiting("run_2", reason)
         assert order == ["state_committed", "outcome_observed"]
         assert session.turns[0].status == "waiting"
+        assert agent.query_loop.run_runtime is not None
+        assert (
+            agent.query_loop.run_runtime.get_run("run_2").status
+            is RunStatus.WAITING
+        )
 
     asyncio.run(run())
 
 
-def test_wait_request_without_runtime_raises_without_terminal_or_tool_failure() -> None:
+def test_wait_request_uses_default_local_waiting_runtime() -> None:
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
         agent, session, _messages, event_bus = _agent(
@@ -574,16 +594,13 @@ def test_wait_request_without_runtime_raises_without_terminal_or_tool_failure() 
         stream = await agent.run("hello", stream=True)
         events: list[object] = []
 
-        with pytest.raises(WaitingUnsupportedError):
-            async for event in stream:
-                events.append(event)
+        async for event in stream:
+            events.append(event)
 
         assert stream.closed
-        assert session.turns[0].status == "running"
-        assert not any(
-            isinstance(event, (ToolStreamFailed, TurnStreamWaiting, TurnStreamCompleted))
-            for event in events
-        )
+        assert session.turns[0].status == "waiting"
+        assert any(isinstance(event, TurnStreamWaiting) for event in events)
+        assert not any(isinstance(event, ToolStreamFailed) for event in events)
         assert not any(isinstance(event, TurnCompletedEvent) for event in event_bus.events)
 
     asyncio.run(run())

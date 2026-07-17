@@ -24,56 +24,8 @@ PHASE0_PLAN = (
 )
 _REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
 
-_ROOT_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
-    {
-        "__version__",
-        "Agent",
-        "AgentBuilder",
-        "AllowAllChannelAuthPolicy",
-        "AsgiAgentApp",
-        _REMOVED_ASYNC_LOOP_NAME,
-        "ChannelAuthContext",
-        "ChannelAuthPolicy",
-        "CompareAndSavePlanStore",
-        "DistributedWebRuntimeProfile",
-        "DistributedWebSessionOperationsProfile",
-        "DurableAgentSessionProvider",
-        "InMemoryPlanStore",
-        "LeaseFencedSessionPersistence",
-        "LocalRuntimeProfile",
-        "LocalWorkspaceExecutionBackend",
-        "LocalWorkspaceProvider",
-        "PersistentAgentRegistry",
-        "PlanConflictError",
-        "PlanStoreRecord",
-        "PostgresAgentRegistryStore",
-        "PostgresPlanStore",
-        "ProductionReadinessEvidenceBundle",
-        "ProviderRequestBuilder",
-        "QueryLoop",
-        "ReadinessEvidenceCheck",
-        "ReadinessEvidenceStatus",
-        "RedisSessionLeaseStore",
-        "RejectAllChannelAuthPolicy",
-        "RELEASE_EVIDENCE_REQUIRED_GATES",
-        "ReleaseEvidenceGateStatus",
-        "ReleaseEvidenceValidationReport",
-        "ResourceAwareChannelAuthPolicy",
-        "RuntimeProfile",
-        "SandboxBackend",
-        "SessionLeaseStore",
-        "validate_release_candidate_evidence_manifest",
-        "validate_release_evidence_manifest",
-        "WebRuntimeProfile",
-        "WorkspaceExecutionBackend",
-        "WorkspaceExecutionPolicy",
-        "WorkspaceExecutionRequest",
-        "WorkspaceExecutionResult",
-        "WorkspaceHandle",
-        "WorkspacePolicy",
-        "WorkspaceProvider",
-        "WorkspaceRequest",
-    }
+_PHASE4_ROOT_STABLE_EXPORTS = frozenset(
+    {"__version__", "Agent", "AgentBuilder", "AgentResult", "RunOptions"},
 )
 _RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
     {
@@ -478,13 +430,11 @@ def test_public_api_stability_policy_contains_only_classifications() -> None:
     assert '"signature"' not in PUBLIC_API_STABILITY.read_text(encoding="utf-8")
 
 
-def test_single_async_query_loop_policy_applies_only_the_approved_delta() -> None:
+def test_phase4_root_policy_is_the_exact_level1_facade() -> None:
     policy = json.loads(PUBLIC_API_STABILITY.read_text(encoding="utf-8"))
     modules = policy["modules"]
 
-    assert set(modules["agentos"]["stable"]) == (
-        _ROOT_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER - {_REMOVED_ASYNC_LOOP_NAME}
-    )
+    assert set(modules["agentos"]["stable"]) == _PHASE4_ROOT_STABLE_EXPORTS
     assert modules["agentos"]["experimental"] == []
     assert set(modules["agentos.runtime"]["stable"]) == (
         _RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER

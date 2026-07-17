@@ -15,6 +15,7 @@ from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
 from agentos.multi.types import AgentEnvelope
 from agentos.runtime.agent import Agent
 from agentos.runtime.run import LocalContinuationInput
+from agentos.multi.team_notices import TeamNoticeStore
 from agentos.workspace import WorkspaceHandle, WorkspacePolicy, WorkspacePolicyError
 
 
@@ -1347,56 +1348,6 @@ def _after_message(
         if message.message_id == after_message_id:
             return messages[index + 1 :]
     return messages
-
-
-class TeamNoticeProvider:
-    """绑定单个 agent 的 team notice provider。"""
-
-    def __init__(self, store: "TeamNoticeStore", agent_id: str) -> None:
-        self._store = store
-        self._agent_id = agent_id
-
-    def consume_notices(self) -> tuple[str, ...]:
-        """返回并清空当前 agent 的 team notices。"""
-
-        return self._store.consume_notices(self._agent_id)
-
-
-class TeamNoticeStore:
-    """保存 team message continuation notices。"""
-
-    def __init__(self) -> None:
-        self._notices: dict[str, deque[str]] = defaultdict(deque)
-        self._lock = RLock()
-
-    def provider_for(self, agent_id: str) -> TeamNoticeProvider:
-        """返回绑定指定 agent 的 notice provider。"""
-
-        return TeamNoticeProvider(self, agent_id)
-
-    def add_team_message(
-        self,
-        agent_id: str,
-        *,
-        team_id: str,
-        message_id: str,
-    ) -> None:
-        """记录一条 team message notice。"""
-
-        notice = (
-            f"Team {team_id} received message {message_id}. "
-            "Call read_team_messages to inspect it."
-        )
-        with self._lock:
-            self._notices[agent_id].append(notice)
-
-    def consume_notices(self, agent_id: str) -> tuple[str, ...]:
-        """返回并清空指定 agent 的 notices。"""
-
-        with self._lock:
-            notices = tuple(self._notices[agent_id])
-            self._notices[agent_id].clear()
-            return notices
 
 
 class TeamWakeupTrigger(Protocol):

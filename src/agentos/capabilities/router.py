@@ -3,7 +3,6 @@ from typing import cast
 
 from agentos._sync_work import run_sync
 from agentos._json_values import thaw_json
-from agentos.attachments.types import AttachmentError
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
 from agentos.capabilities.executor import (
     ToolExecutionOutcome,
@@ -33,7 +32,6 @@ class ToolCallRouter:
     tool_registry: ToolRegistry
     context_runtime: ContextRuntime | None = None
     recall_runtime: RecallRuntime | None = None
-    attachment_runtime: object | None = None
     mcp_adapter: MCPToolAdapter | None = None
     security_policy: SecurityPolicy = field(default_factory=SecurityPolicy)
     backend: ExecutionBackend = field(default_factory=InProcessExecutionBackend)
@@ -135,9 +133,6 @@ class ToolCallRouter:
 
         if tool_call.name == "recall_context":
             return self._execute_recall_context(tool_call)
-        if tool_call.name == "load_attachment":
-            return self._execute_load_attachment(tool_call)
-
         if self.context_runtime is None:
             raise RuntimeError("context runtime is required for context tools")
 
@@ -212,47 +207,6 @@ class ToolCallRouter:
             )
         lines.append("</recalled-context>")
         return "\n".join(lines)
-
-    def _execute_load_attachment(
-        self,
-        tool_call: ProviderToolCall,
-    ) -> ToolExecutionResult:
-        """把附件加载工具调用交给 AttachmentRuntime。"""
-
-        if self.attachment_runtime is None:
-            raise RuntimeError(
-                f"attachment runtime is required for {tool_call.name}",
-            )
-        load_attachment_handle = getattr(
-            self.attachment_runtime,
-            "load_attachment_handle",
-            None,
-        )
-        if not callable(load_attachment_handle):
-            raise RuntimeError(
-                "attachment_runtime must define load_attachment_handle()",
-            )
-        handle = tool_call.arguments.get("handle")
-        if not isinstance(handle, str):
-            return ToolExecutionResult(
-                tool_call_id=tool_call.id,
-                content=f"{tool_call.name} failed: handle is required",
-            )
-        try:
-            attachment = load_attachment_handle(handle)
-        except AttachmentError as error:
-            return ToolExecutionResult(
-                tool_call_id=tool_call.id,
-                content=f"{tool_call.name} failed: {error}",
-            )
-        attachment_handle = str(getattr(attachment, "handle", handle))
-        return ToolExecutionResult(
-            tool_call_id=tool_call.id,
-            content=(
-                f"{tool_call.name} applied; loaded {attachment_handle} "
-                "for the rest of the current turn"
-            ),
-        )
 
     def _working_state_fields(
         self,

@@ -1,4 +1,3 @@
-from agentos.attachments import Attachment, BytesSource
 from agentos.providers.content import ProviderBinaryPayload
 
 
@@ -17,11 +16,11 @@ def binary_payload(
     )
 
 
-def payload_from_attachment(attachment: Attachment) -> ProviderBinaryPayload:
-    assert isinstance(attachment.source, BytesSource)
+def payload_from_attachment(attachment: object) -> ProviderBinaryPayload:
+    source = getattr(attachment, "source")
     return binary_payload(
-        handle=attachment.handle,
-        media_type=attachment.mime_type,
-        data=attachment.source.data,
-        filename=attachment.filename,
+        handle=str(getattr(attachment, "handle")),
+        media_type=str(getattr(attachment, "mime_type")),
+        data=getattr(source, "data"),
+        filename=getattr(attachment, "filename"),
     )

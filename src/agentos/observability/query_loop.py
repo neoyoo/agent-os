@@ -44,6 +44,9 @@ class QueryLoopBoundary(Protocol):
     max_tool_iterations: int
     request_builder: _RequestBuilderBoundary
     session_state: _SessionStateBoundary | None
+    artifact_runtime: object | None
+    run_runtime: object | None
+    continuation_runtime: object
 
     async def execute(self, request: RunRequest) -> AgentStream: ...
 
@@ -87,6 +90,18 @@ class InstrumentedQueryLoop:
     @property
     def request_builder(self) -> _RequestBuilderBoundary:
         return self._inner.request_builder
+
+    @property
+    def artifact_runtime(self) -> object | None:
+        return self._inner.artifact_runtime
+
+    @property
+    def run_runtime(self) -> object | None:
+        return self._inner.run_runtime
+
+    @property
+    def continuation_runtime(self) -> object:
+        return self._inner.continuation_runtime
 
     def interrupt(self) -> bool:
         return self._inner.interrupt()

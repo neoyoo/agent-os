@@ -73,7 +73,7 @@ stable surface is the set of `stable` exports in
 `docs/public-api-inventory.json`; module descriptions below summarize those
 governed exports and do not promote unlisted submodule names to stable API.
 
-- root `AgentBuilder`, `Agent`, `QueryLoop`, and `ProviderRequestBuilder`
+- root `Agent`, `AgentBuilder`, `AgentResult`, `RunOptions`, and `__version__`
 - stable `agentos.runtime` run contracts: `AgentResult`, `AgentWaiting`,
   `RunOutcome`, `RunRequest`, `RunInput`, `UserTurnInput`,
   `LocalContinuationInput`, `RunOptions`, `WaitReason`,
@@ -145,8 +145,9 @@ namespaces; adapter test suites should import contract runners from
   the change and a synchronized stability policy and generated inventory update.
 - The root `agentos` namespace is a stable facade. Only names in
   `agentos.__all__` and the root inventory are supported as root imports.
-  Stable or experimental names that are governed in submodules must be imported
-  from their owning namespace, for example `agentos.channels`,
+  The root facade is intentionally limited to the five Level 1 entry points;
+  all other stable or experimental names must be imported from their owning
+  namespace, for example `agentos.channels`,
   `agentos.multi`, `agentos.planning`, `agentos.runtime`, `agentos.sync`,
   `agentos.registry`, or `agentos.deployment`.
 - boundary-first ownership stays unchanged: SDK API exposes protocols, profiles,

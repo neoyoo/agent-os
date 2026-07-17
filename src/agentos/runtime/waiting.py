@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from agentos._waiting import WaitReason
+from agentos.runtime.run_runtime import RunRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +25,24 @@ class WaitingRuntime(Protocol):
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn_id: str,
         reason: WaitReason,
     ) -> WaitingCommit: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LocalWaitingRuntime:
+    """Commit WAITING to the Level 1 in-memory RunRuntime."""
+
+    runs: RunRuntime
+
+    async def commit_waiting(
+        self,
+        *,
+        run_id: str,
+        turn_id: str,
+        reason: WaitReason,
+    ) -> WaitingCommit:
+        self.runs.wait(run_id, reason=reason)
+        return WaitingCommit(run_id, reason)

@@ -1,23 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from uuid import uuid4
 
+from agentos._builder_local import assemble_local_state, assemble_provider_request_builder
 from agentos._builder_recall import assemble_recall_runtime
 from agentos._builder_tools import assemble_tool_components
-from agentos.attachments import AttachmentRuntime
+from agentos._builder_validation import require_unset
 from agentos.capabilities import RegisteredTool, ToolCallRouter
 from agentos.compression import CompressionRuntime, Compressor
-from agentos.context import ContextRenderer, ContextRuntime
+from agentos.context import ContextProjectionProvider, ContextRenderer, ContextRuntime
 from agentos.context.projection import default_system_section_registry
 from agentos.events import EventBus
 from agentos.messages import MessageRuntime
 from agentos.policies import BudgetPolicy, TokenBudgetPolicy, ToolResultBudget
 from agentos.providers import Provider
 from agentos.runtime import Agent
-from agentos.runtime.provider_request_builder import (
-    ProviderRequestBuilder,
-    SystemEnvelopeRenderer,
-)
+from agentos.runtime.provider_request_builder import SystemEnvelopeRenderer
 from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
@@ -50,60 +50,47 @@ class AgentBuilder:
     _compression_static_overhead_tokens: int = 0
     _compression_token_counter: TokenCounter | None = None
     _max_parallel_calls: int | None = None
+    _context_projection_providers: tuple[ContextProjectionProvider, ...] | None = None
 
     def provider(self, provider: Provider) -> "AgentBuilder":
         """设置模型 provider。"""
 
-        if self._provider is not None:
-            raise ValueError("AgentBuilder.provider() called twice. Remove one call.")
+        require_unset(self._provider, "provider")
         self._provider = provider
         return self
 
     def tools(self, tools: list[RegisteredTool]) -> "AgentBuilder":
         """设置外部工具声明。"""
 
-        if self._tools is not None:
-            raise ValueError("AgentBuilder.tools() called twice. Remove one call.")
+        require_unset(self._tools, "tools")
         self._tools = list(tools)
         return self
 
     def context_runtime(self, runtime: ContextRuntime) -> "AgentBuilder":
         """覆盖默认 context runtime。"""
 
-        if self._context_runtime is not None:
-            raise ValueError(
-                "AgentBuilder.context_runtime() called twice. Remove one call.",
-            )
+        require_unset(self._context_runtime, "context_runtime")
         self._context_runtime = runtime
         return self
 
     def message_runtime(self, runtime: MessageRuntime) -> "AgentBuilder":
         """覆盖默认 message runtime。"""
 
-        if self._message_runtime is not None:
-            raise ValueError(
-                "AgentBuilder.message_runtime() called twice. Remove one call.",
-            )
+        require_unset(self._message_runtime, "message_runtime")
         self._message_runtime = runtime
         return self
 
     def context_renderer(self, renderer: SystemEnvelopeRenderer) -> "AgentBuilder":
         """覆盖默认 context renderer。"""
 
-        if self._context_renderer is not None:
-            raise ValueError(
-                "AgentBuilder.context_renderer() called twice. Remove one call.",
-            )
+        require_unset(self._context_renderer, "context_renderer")
         self._context_renderer = renderer
         return self
 
     def compression_runtime(self, runtime: CompressionRuntime) -> "AgentBuilder":
         """覆盖默认 compression runtime。"""
 
-        if self._compression_runtime is not None:
-            raise ValueError(
-                "AgentBuilder.compression_runtime() called twice. Remove one call.",
-            )
+        require_unset(self._compression_runtime, "compression_runtime")
         if self._compression_requested:
             raise ValueError(
                 "AgentBuilder cannot use both .compression_runtime() and "
@@ -115,51 +102,55 @@ class AgentBuilder:
     def event_bus(self, bus: EventBus) -> "AgentBuilder":
         """覆盖默认 event bus。"""
 
-        if self._event_bus is not None:
-            raise ValueError("AgentBuilder.event_bus() called twice. Remove one call.")
+        require_unset(self._event_bus, "event_bus")
         self._event_bus = bus
         return self
 
     def tool_call_router(self, router: ToolCallRouter) -> "AgentBuilder":
         """覆盖默认 tool call router。"""
 
-        if self._tool_call_router is not None:
-            raise ValueError(
-                "AgentBuilder.tool_call_router() called twice. Remove one call.",
-            )
+        require_unset(self._tool_call_router, "tool_call_router")
         self._tool_call_router = router
         return self
 
     def tool_result_budget(self, budget: ToolResultBudget) -> "AgentBuilder":
         """覆盖默认 tool result token 预算。"""
 
-        if self._tool_result_budget is not None:
-            raise ValueError(
-                "AgentBuilder.tool_result_budget() called twice. Remove one call.",
-            )
+        require_unset(self._tool_result_budget, "tool_result_budget")
         self._tool_result_budget = budget
         return self
 
     def token_counter(self, counter: TokenCounter) -> "AgentBuilder":
         """覆盖默认 token counter。"""
 
-        if self._token_counter is not None:
-            raise ValueError(
-                "AgentBuilder.token_counter() called twice. Remove one call.",
-            )
+        require_unset(self._token_counter, "token_counter")
         self._token_counter = counter
         return self
 
     def max_parallel_calls(self, value: int) -> "AgentBuilder":
         """设置单个工具批次的最大并发调用数。"""
 
-        if self._max_parallel_calls is not None:
-            raise ValueError(
-                "AgentBuilder.max_parallel_calls() called twice. Remove one call.",
-            )
+        require_unset(self._max_parallel_calls, "max_parallel_calls")
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError("max_parallel_calls must be an integer greater than zero")
         self._max_parallel_calls = value
+        return self
+
+    def context_projections(
+        self,
+        providers: Iterable[ContextProjectionProvider],
+    ) -> "AgentBuilder":
+        """注册按每次 Provider attempt 重新读取的 Context 投影来源。"""
+
+        require_unset(self._context_projection_providers, "context_projections")
+        if isinstance(providers, (str, bytes)):
+            raise TypeError("context projection providers must be an iterable")
+        resolved = tuple(providers)
+        if any(not callable(getattr(provider, "projections", None)) for provider in resolved):
+            raise TypeError(
+                "context projection providers must satisfy ContextProjectionProvider",
+            )
+        self._context_projection_providers = resolved
         return self
 
     def with_compression(
@@ -192,12 +183,19 @@ class AgentBuilder:
         self._compression_token_counter = token_counter
         return self
 
-    def build(self) -> Agent:
+    def build(self, *, session_id: str | None = None) -> Agent:
         """构建标准 Agent facade。"""
 
-        return Agent(query_loop_kwargs=self._query_loop_kwargs())
+        if session_id is not None and not session_id.strip():
+            raise ValueError("session_id must not be empty")
+        resolved_session_id = (
+            f"session_{uuid4().hex}" if session_id is None else session_id
+        )
+        return Agent(
+            query_loop_kwargs=self._query_loop_kwargs(resolved_session_id),
+        )
 
-    def _query_loop_kwargs(self) -> dict[str, object]:
+    def _query_loop_kwargs(self, session_id: str) -> dict[str, object]:
         """组装唯一 QueryLoop 使用的组件。"""
 
         if self._provider is None:
@@ -207,8 +205,13 @@ class AgentBuilder:
             )
 
         messages = self._message_runtime or MessageRuntime()
-        context = self._context_runtime or ContextRuntime(event_bus=self._event_bus)
-        attachments = AttachmentRuntime()
+        local = assemble_local_state(
+            session_id=session_id,
+            context=self._context_runtime,
+            event_bus=self._event_bus,
+        )
+        context = local.context
+        artifacts = local.artifacts
         compression_runtime = self._compression_runtime
         if self._compression_requested:
             compression_runtime = CompressionRuntime(
@@ -227,16 +230,18 @@ class AgentBuilder:
             tool_call_router=self._tool_call_router,
             context_runtime=context,
             recall_runtime=recall_runtime,
-            attachment_runtime=attachments,
+            artifact_runtime=artifacts,
             max_parallel_calls=self._max_parallel_calls,
         )
         renderer = self._context_renderer or self._default_renderer()
-        request_builder = ProviderRequestBuilder(
-            context_renderer=renderer,
-            message_runtime=messages,
+        token_counter = self._token_counter or HeuristicTokenCounter()
+        request_builder = assemble_provider_request_builder(
+            renderer=renderer,
+            messages=messages,
             tools=tool_components.provider_tools,
-            attachment_runtime=attachments,
-            parallel_tool_calls=True,
+            token_counter=token_counter,
+            state=local,
+            extension_projections=self._context_projection_providers or (),
         )
         kwargs = {
             "context_runtime": context,
@@ -244,8 +249,11 @@ class AgentBuilder:
             "request_builder": request_builder,
             "provider": self._provider,
             "tool_result_budget": self._tool_result_budget or ToolResultBudget(),
-            "token_counter": self._token_counter or HeuristicTokenCounter(),
+            "token_counter": token_counter,
             "tool_scheduler": tool_components.scheduler,
+            "session_state": local.session,
+            "artifact_runtime": artifacts,
+            "run_runtime": local.runs,
         }
         kwargs["tool_call_router"] = tool_components.router
         if compression_runtime is not None:

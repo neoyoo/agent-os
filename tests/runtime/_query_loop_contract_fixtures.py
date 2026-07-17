@@ -11,6 +11,7 @@ from agentos.providers import ProviderRequest, ProviderResponse
 from agentos.runtime import EventBus, ProviderRequestBuilder, QueryLoop
 from agentos.runtime._execution_lease import ExecutionLease
 from agentos.runtime.agent_stream import AgentStream
+from agentos.runtime.run_runtime import RunRuntime
 from agentos.runtime.stream_events import TurnStreamEvent
 from agentos.runtime import WaitReason
 from agentos.runtime.waiting import WaitingCommit
@@ -45,17 +46,19 @@ class RecordingWaitingRuntime:
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn_id: str,
         reason: WaitReason,
     ) -> WaitingCommit:
         self.order.append("state_committed")
-        return WaitingCommit(self.run_id, reason)
+        return WaitingCommit(run_id, reason)
 
 
 class FailingWaitingRuntime:
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn_id: str,
         reason: WaitReason,
     ) -> WaitingCommit:
@@ -66,6 +69,7 @@ def make_query_loop(
     *,
     recorder: Recorder | None = None,
     waiting_runtime: object | None = None,
+    run_runtime: RunRuntime | None = None,
 ) -> QueryLoop:
     recorder = recorder or Recorder()
     context = ContextRuntime()
@@ -84,6 +88,8 @@ def make_query_loop(
     }
     if waiting_runtime is not None:
         kwargs["waiting_runtime"] = waiting_runtime
+    if run_runtime is not None:
+        kwargs["run_runtime"] = run_runtime
     return QueryLoop(**kwargs)
 
 

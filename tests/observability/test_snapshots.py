@@ -1,7 +1,10 @@
+import base64
+from datetime import UTC, datetime
+
 import pytest
 
 from agentos._json_values import thaw_json
-from agentos.attachments import Attachment, BytesSource, ImagePart, TextPart
+from agentos.artifacts import ArtifactRecord
 from agentos.capabilities import ToolExecutionResult
 from agentos.observability.config import CapturePolicy
 from agentos.observability.snapshots import (
@@ -14,15 +17,17 @@ from agentos.observability.snapshots import (
 from agentos.providers import (
     ProviderFunctionSpec,
     ProviderInputItem,
+    ImagePart,
+    ProviderBinaryPayload,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
     ProviderUsage,
+    TextPart,
     provider_tool_spec_to_dict,
 )
 from agentos.providers.input_serialization import provider_input_to_dict
-from tests._provider_binary import payload_from_attachment
 
 
 def test_provider_request_snapshot_metadata_mode_records_lengths_and_hashes_only() -> None:
@@ -94,13 +99,15 @@ def test_provider_request_snapshot_full_mode_captures_payloads() -> None:
     )
 
 
-def test_provider_request_snapshot_redacts_attachment_sources() -> None:
-    attachment = Attachment(
-        handle="att_1",
+def test_provider_request_snapshot_redacts_artifact_content() -> None:
+    sensitive_bytes = b"confidential-drawing-bytes"
+    artifact = ArtifactRecord(
+        id="art_550e8400-e29b-41d4-a716-446655440000",
+        session_id="session_1",
         filename="diagram.png",
-        mime_type="image/png",
-        size_bytes=11,
-        source=BytesSource(b"image-bytes"),
+        media_type="image/png",
+        size_bytes=len(sensitive_bytes),
+        created_at=datetime(2026, 7, 16, tzinfo=UTC),
     )
     request = ProviderRequest(
         system="system text",
@@ -108,7 +115,14 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
             ProviderInputItem.context_mount(
                 (
                     TextPart("分析图片"),
-                    ImagePart(payload_from_attachment(attachment)),
+                    ImagePart(
+                        ProviderBinaryPayload(
+                            handle=artifact.id,
+                            media_type=artifact.media_type,
+                            data=sensitive_bytes,
+                            filename=artifact.filename,
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -127,7 +141,7 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
                 {
                     "type": "image",
                     "payload": {
-                        "handle": "att_1",
+                        "handle": artifact.id,
                         "filename": "diagram.png",
                         "media_type": "image/png",
                     },
@@ -136,7 +150,9 @@ def test_provider_request_snapshot_redacts_attachment_sources() -> None:
             ],
         },
     )
-    assert "image-bytes" not in str(snapshot.messages)
+    rendered = str(snapshot.messages)
+    assert "confidential-drawing-bytes" not in rendered
+    assert base64.b64encode(sensitive_bytes).decode("ascii") not in rendered
     assert snapshot.messages_sha256 == stable_sha256(
         [provider_input_to_dict(message) for message in request.messages],
     )

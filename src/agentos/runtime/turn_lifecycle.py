@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentos._waiting import WaitReason
+from agentos.artifacts import ArtifactRef
 from agentos.messages import MessageRuntime
 from agentos.runtime.errors import (
     ContinuationUnavailableError,
+    RunProtocolError,
     WaitingUnsupportedError,
 )
+from agentos.runtime.continuation import ContinuationNotice, ContinuationRuntime
 from agentos.runtime.event_bus import (
     AgentEvent,
     EventBus,
@@ -17,7 +20,7 @@ from agentos.runtime.event_bus import (
     UserMessageAppendedEvent,
 )
 from agentos.runtime.query_loop_support import (
-    AttachmentRuntimeBoundary,
+    ArtifactRuntimeBoundary,
     ContextRuntimeBoundary,
     StructuredLoggerBoundary,
     TurnNoticeProvider,
@@ -43,10 +46,11 @@ class TurnLifecycle:
 
     context_runtime: ContextRuntimeBoundary
     message_runtime: MessageRuntime
-    attachment_runtime: AttachmentRuntimeBoundary | None = None
+    artifact_runtime: ArtifactRuntimeBoundary | None = None
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
     waiting_runtime: WaitingRuntime | None = None
+    continuation_runtime: ContinuationRuntime | None = None
     event_bus: EventBus | None = None
     structured_logger: StructuredLoggerBoundary | None = None
 
@@ -58,8 +62,11 @@ class TurnLifecycle:
 
         turn = self._start_turn(input.content)
         self._log("turn_start", user_message_length=len(input.content))
-        stored = self._prepare_user_message(input)
-        user = self.message_runtime.append_user(stored)
+        artifact_refs = self._prepare_user_artifacts(input)
+        user = self.message_runtime.append_user(
+            input.content,
+            artifact_refs=artifact_refs,
+        )
         self._emit(
             UserMessageAppendedEvent(
                 message_id=user.id,
@@ -86,7 +93,9 @@ class TurnLifecycle:
                 "local continuation requires a pending runtime notice",
             )
         turn = self._start_turn("", is_continuation=True)
-        self.context_runtime.set_runtime_notices(notices)
+        if self.continuation_runtime is None:
+            raise RuntimeError("continuation runtime is not configured")
+        self.continuation_runtime.set_notices(notices)
         return turn, (TurnStreamStarted(""),)
 
     def complete(
@@ -127,6 +136,7 @@ class TurnLifecycle:
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn: TurnState | None,
         reason: WaitReason,
     ) -> TurnStreamWaiting:
@@ -137,24 +147,22 @@ class TurnLifecycle:
         if self.waiting_runtime is None:
             raise WaitingUnsupportedError("waiting runtime is not configured")
         commit = await self.waiting_runtime.commit_waiting(
+            run_id=run_id,
             turn_id=turn.id,
             reason=reason,
         )
+        if commit.run_id != run_id:
+            raise RunProtocolError("waiting runtime returned another run id")
         turn.mark_waiting()
         return TurnStreamWaiting(commit.run_id, commit.reason)
-
-    def clear_runtime_notices(self) -> None:
-        """清理一次性 runtime notice 投影。"""
-
-        self.context_runtime.clear_runtime_notices()
 
     def cleanup(self, *, is_continuation: bool) -> None:
         """清理 Turn 级 runtime notice 和附件挂载。"""
 
-        if is_continuation:
-            self.clear_runtime_notices()
-        if self.attachment_runtime is not None:
-            self.attachment_runtime.clear_turn_loaded_attachments()
+        if self.continuation_runtime is not None:
+            self.continuation_runtime.clear()
+        if self.artifact_runtime is not None:
+            self.artifact_runtime.clear_mounts()
 
     def event_context(self, turn: TurnState | None) -> dict[str, str | None]:
         """返回 lifecycle event 使用的 session 与 turn 标识。"""
@@ -164,17 +172,17 @@ class TurnLifecycle:
             "turn_id": turn.id if turn else None,
         }
 
-    def _prepare_user_message(self, input: UserTurnInput) -> str:
-        if not input.attachments:
-            return input.content
-        if self.attachment_runtime is None:
-            raise RuntimeError("attachment runtime is required for attachments")
-        return self.attachment_runtime.prepare_user_message(
-            input.content,
-            list(input.attachments),
-        )
+    def _prepare_user_artifacts(
+        self,
+        input: UserTurnInput,
+    ) -> tuple[ArtifactRef, ...]:
+        if not input.artifact_handles:
+            return ()
+        if self.artifact_runtime is None:
+            raise RuntimeError("artifact runtime is required for artifact handles")
+        return self.artifact_runtime.prepare_user_uploads(input.artifact_handles)
 
-    def _consume_turn_notices(self) -> tuple[str, ...]:
+    def _consume_turn_notices(self) -> tuple[ContinuationNotice, ...]:
         if self.turn_notice_provider is None:
             return ()
         return self.turn_notice_provider.consume_notices()

@@ -1,10 +1,40 @@
 from pathlib import Path
 
-from agentos.capabilities import ToolCallRouter, ToolRegistry, read_file_tool
+from agentos.capabilities import (
+    RegisteredTool,
+    ToolCallRouter,
+    ToolConcurrencyPolicy,
+    ToolRegistry,
+    read_file_tool,
+)
 from agentos.observability import CapturePolicy, InMemoryTracer
 from agentos.observability.instrumented import InstrumentedToolCallRouter
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.providers import ProviderToolCall
+
+
+def test_instrumented_router_delegates_concurrency_policy_for_call() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="parallel_tool",
+            description="并发安全工具。",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: "ok",
+            concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
+        ),
+    )
+    instrumented = InstrumentedToolCallRouter(
+        ToolCallRouter(tool_registry=registry),
+        tracer=InMemoryTracer(),
+        capture_policy=CapturePolicy.metadata_only(),
+    )
+
+    policy = instrumented.concurrency_policy_for(
+        ProviderToolCall(id="call_parallel", name="parallel_tool", arguments={}),
+    )
+
+    assert policy is ToolConcurrencyPolicy.PARALLEL_SAFE
 
 
 def test_instrumented_router_records_tool_span(tmp_path: Path) -> None:

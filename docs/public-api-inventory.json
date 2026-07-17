@@ -8,222 +8,19 @@
           "stability": "stable"
         },
         "AgentBuilder": {
-          "signature": "(_provider: 'Provider | None' = None, _tools: 'list[RegisteredTool] | None' = None, _context_runtime: 'ContextRuntime | None' = None, _message_runtime: 'MessageRuntime | None' = None, _context_renderer: 'SystemEnvelopeRenderer | None' = None, _compression_runtime: 'CompressionRuntime | None' = None, _event_bus: 'EventBus | None' = None, _tool_call_router: 'ToolCallRouter | None' = None, _tool_result_budget: 'ToolResultBudget | None' = None, _token_counter: 'TokenCounter | None' = None, _compression_requested: 'bool' = False, _compressor: 'Compressor | None' = None, _compression_context_window: 'int | None' = None, _compression_reserve_output_tokens: 'int' = 4096, _compression_retain_latest_tokens: 'int' = 8000, _compression_static_overhead_tokens: 'int' = 0, _compression_token_counter: 'TokenCounter | None' = None, _max_parallel_calls: 'int | None' = None) -> None",
+          "signature": "(_provider: 'Provider | None' = None, _tools: 'list[RegisteredTool] | None' = None, _context_runtime: 'ContextRuntime | None' = None, _message_runtime: 'MessageRuntime | None' = None, _context_renderer: 'SystemEnvelopeRenderer | None' = None, _compression_runtime: 'CompressionRuntime | None' = None, _event_bus: 'EventBus | None' = None, _tool_call_router: 'ToolCallRouter | None' = None, _tool_result_budget: 'ToolResultBudget | None' = None, _token_counter: 'TokenCounter | None' = None, _compression_requested: 'bool' = False, _compressor: 'Compressor | None' = None, _compression_context_window: 'int | None' = None, _compression_reserve_output_tokens: 'int' = 4096, _compression_retain_latest_tokens: 'int' = 8000, _compression_static_overhead_tokens: 'int' = 0, _compression_token_counter: 'TokenCounter | None' = None, _max_parallel_calls: 'int | None' = None, _context_projection_providers: 'tuple[ContextProjectionProvider, ...] | None' = None) -> None",
           "stability": "stable"
         },
-        "AllowAllChannelAuthPolicy": {
-          "signature": "()",
+        "AgentResult": {
+          "signature": "(content: 'str') -> None",
           "stability": "stable"
         },
-        "AsgiAgentApp": {
-          "signature": "(*, sessions: 'AgentSessionProvider', auth_policy: 'ChannelAuthPolicy | None' = None, a2a_auth_policy: 'A2AInboundAuthPolicy | None' = None, a2a_server: 'A2AServerAdapter | None' = None, a2a_operations: 'A2AOperationServer | None' = None, max_body_bytes: 'int' = 1048576, readiness_checks: 'Mapping[str, Callable[[], object]] | None' = None, health_checks: 'Mapping[str, Callable[[], object]] | None' = None, rate_limiter: 'RateLimiter | None' = None, shutdown_handlers: 'list[Callable[[], object]] | None' = None, a2a_agent_card: 'A2AAgentCard | None' = None, sse_heartbeat_interval_seconds: 'float | None' = 15.0, sse_event_buffer: 'SseEventBuffer | None' = None, sse_resume_grace_seconds: 'float' = 30.0, sse_terminal_retention_seconds: 'float' = 60.0, sse_turn_control: 'SseTurnControlStore | None' = None, sse_turn_control_owner_id: 'str | None' = None, sse_turn_control_ttl_seconds: 'float' = 60.0, sse_turn_control_poll_interval_seconds: 'float | None' = None, session_lease_heartbeat_interval_seconds: 'float | None' = None, team_ui_stream: 'TeamUiStreamStore | None' = None, team_ui_auth_policy: 'TeamUiAuthPolicy | None' = None, team_ui_event_default_limit: 'int' = 256, team_ui_stream_poll_interval_seconds: 'float' = 1.0, team_ui_stream_idle_timeout_seconds: 'float | None' = 60.0, a2a_task_stream_poll_interval_seconds: 'float' = 1.0, a2a_task_stream_idle_timeout_seconds: 'float | None' = 60.0, expose_internal_errors: 'bool' = False) -> 'None'",
-          "stability": "stable"
-        },
-        "ChannelAuthContext": {
-          "signature": "(operation: 'str', method: 'str', path: 'str', session_id: 'str | None' = None, resource_type: 'str | None' = None, resource_id: 'str | None' = None) -> None",
-          "stability": "stable"
-        },
-        "ChannelAuthPolicy": {
-          "methods": {
-            "authorize": "(self, headers: 'Mapping[str, str]') -> 'None'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "CompareAndSavePlanStore": {
-          "methods": {
-            "get_plan_record": "(self, plan_id: 'str') -> 'PlanStoreRecord | None'",
-            "save_plan_if_unchanged": "(self, plan: 'PlanState', *, expected_revision: 'int') -> 'bool'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "DistributedWebRuntimeProfile": {
-          "signature": "(*, agent_factory: 'object', lease_store: 'object', snapshot_persistence: 'object', owner_id: 'str' = 'agentos-web-node', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0, auth_policy: 'object | None' = None, rate_limiter: 'object | None' = None, readiness_checks: 'Mapping[str, Callable[[], object]] | None' = None, health_checks: 'Mapping[str, Callable[[], object]] | None' = None, a2a_server: 'object | None' = None, sse_event_buffer: 'object | None' = None, sse_turn_control: 'object | None' = None, sse_turn_control_owner_id: 'str | None' = None, sse_turn_control_ttl_seconds: 'float' = 60.0, sse_turn_control_poll_interval_seconds: 'float | None' = None, session_lease_heartbeat_interval_seconds: 'float | None' = None, workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'distributed-web') -> 'None'",
-          "stability": "stable"
-        },
-        "DistributedWebSessionOperationsProfile": {
-          "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('durable_session_provider', 'lease_store', 'snapshot_persistence', 'snapshot_migration', 'lease_ttl_policy', 'stale_lease_recovery', 'shared_sse_event_buffer', 'sse_turn_control', 'session_lease_heartbeat', 'credential_policy', 'auth_tenant_policy', 'workspace_policy', 'live_backend_verification'), probe_name: 'str' = 'distributed_web_session_operations') -> None",
-          "stability": "stable"
-        },
-        "DurableAgentSessionProvider": {
-          "signature": "(*, agent_factory: 'SnapshotAgentFactory', persistence: 'SessionPersistence', lease_store: 'SessionLeaseStore', owner_id: 'str', lease_ttl_seconds: 'float' = 60.0, acquire_timeout_seconds: 'float | None' = 10.0, allow_unfenced_single_process_persistence: 'bool' = False) -> 'None'",
-          "stability": "stable"
-        },
-        "InMemoryPlanStore": {
-          "signature": "() -> 'None'",
-          "stability": "stable"
-        },
-        "LeaseFencedSessionPersistence": {
-          "methods": {
-            "delete": "(self, session_id: str) -> None",
-            "list_ids": "(self) -> list[str]",
-            "load": "(self, session_id: str) -> agentos.persistence.base.SessionSnapshot",
-            "load_record": "(self, session_id: 'str') -> 'SessionSnapshotRecord'",
-            "save": "(self, snapshot: agentos.persistence.base.SessionSnapshot) -> None",
-            "save_if_lease_owned": "(self, snapshot: 'SessionSnapshot', *, expected_revision: 'int', lease: 'SessionLease', lease_store: 'SessionLeaseStore') -> 'SessionSnapshotRecord'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "LocalRuntimeProfile": {
-          "signature": "(agent_builder: 'AgentBuilderLike', workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'local') -> None",
-          "stability": "stable"
-        },
-        "LocalWorkspaceExecutionBackend": {
-          "signature": "(policy: 'WorkspaceExecutionPolicy' = <factory>, clock: 'object | None' = None, inherit_environment: 'bool' = False) -> None",
-          "stability": "stable"
-        },
-        "LocalWorkspaceProvider": {
-          "signature": "(base_dir: 'Path | str | None' = None, create: 'bool' = False) -> None",
-          "stability": "stable"
-        },
-        "PersistentAgentRegistry": {
-          "signature": "(store: 'AgentRegistryStore', *, heartbeat_ttl_seconds: 'float' = 30, session_affinity_ttl_seconds: 'float' = 300, clock: 'Clock | None' = None) -> 'None'",
-          "stability": "stable"
-        },
-        "PlanConflictError": {
-          "signature": "unavailable",
-          "stability": "stable"
-        },
-        "PlanStoreRecord": {
-          "signature": "(plan: 'PlanState', revision: 'int') -> None",
-          "stability": "stable"
-        },
-        "PostgresAgentRegistryStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None) -> 'None'",
-          "stability": "stable"
-        },
-        "PostgresPlanStore": {
-          "signature": "(dsn: 'str', connection: 'object | None' = None, pool: 'object | None' = None) -> 'None'",
-          "stability": "stable"
-        },
-        "ProductionReadinessEvidenceBundle": {
-          "signature": "(checks: 'tuple[ReadinessEvidenceCheck, ...]', required_checks: 'tuple[str, ...]', bundle_name: 'str' = 'production_readiness', metadata: 'Mapping[str, object] | None' = None) -> None",
-          "stability": "stable"
-        },
-        "ProviderRequestBuilder": {
-          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.tool_specs.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, attachment_runtime: object | None = None, snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
-          "stability": "stable"
-        },
-        "QueryLoop": {
-          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
-          "stability": "stable"
-        },
-        "RELEASE_EVIDENCE_REQUIRED_GATES": {
-          "signature": "non-callable",
-          "stability": "stable"
-        },
-        "ReadinessEvidenceCheck": {
-          "signature": "(check_name: 'str', status: 'ReadinessEvidenceStatus', evidence: 'Mapping[str, object]', required: 'bool' = True, source: 'str' = 'readiness', blocking_reason: 'str' = '', metadata: 'Mapping[str, object] | None' = None) -> None",
-          "stability": "stable"
-        },
-        "ReadinessEvidenceStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "RedisSessionLeaseStore": {
-          "signature": "(url: 'str', client: 'object | None' = None, *, key_prefix: 'str' = 'agentos') -> 'None'",
-          "stability": "stable"
-        },
-        "RejectAllChannelAuthPolicy": {
-          "signature": "(reason: 'str' = 'channel auth policy required') -> 'None'",
-          "stability": "stable"
-        },
-        "ReleaseEvidenceGateStatus": {
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "ReleaseEvidenceValidationReport": {
-          "signature": "(accepted: 'bool', missing_gates: 'tuple[str, ...]', blocking_gates: 'tuple[str, ...]', gate_evidence_findings: 'tuple[str, ...]', secret_findings: 'tuple[str, ...]', gate_statuses: 'Mapping[str, str]', redacted_manifest: 'Mapping[str, object]', schema: 'str' = 'agentos.release_evidence.validation', schema_version: 'int' = 1) -> None",
-          "stability": "stable"
-        },
-        "ResourceAwareChannelAuthPolicy": {
-          "methods": {
-            "authorize_channel": "(self, headers: 'Mapping[str, str]', *, context: 'ChannelAuthContext') -> 'None'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "RuntimeProfile": {
-          "methods": {
-            "build_agent": "(self, session_id: 'str | None' = None) -> 'Agent'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "SandboxBackend": {
-          "methods": {
-            "async_run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'",
-            "run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "SessionLeaseStore": {
-          "methods": {
-            "acquire": "(self, session_id: 'str', *, owner_id: 'str', ttl_seconds: 'float', wait_timeout_seconds: 'float | None' = None) -> 'SessionLease'",
-            "ensure_owned": "(self, lease: 'SessionLease') -> 'None'",
-            "refresh": "(self, lease: 'SessionLease') -> 'SessionLease'",
-            "release": "(self, lease: 'SessionLease') -> 'None'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "WebRuntimeProfile": {
-          "signature": "(session_provider: 'AgentSessionProviderLike', auth_policy: 'object | None' = None, rate_limiter: 'object | None' = None, readiness_checks: 'Mapping[str, Callable[[], object]] | None' = None, health_checks: 'Mapping[str, Callable[[], object]] | None' = None, a2a_server: 'object | None' = None, session_lifecycle: \"Literal['single-process', 'durable-session']\" = 'single-process', workspace_provider: 'WorkspaceProvider | None' = None, workspace_request: 'WorkspaceRequest | None' = None, name: 'str' = 'web') -> None",
-          "stability": "stable"
-        },
-        "WorkspaceExecutionBackend": {
-          "methods": {
-            "async_run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'",
-            "run": "(self, request: 'WorkspaceExecutionRequest') -> 'WorkspaceExecutionResult'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "WorkspaceExecutionPolicy": {
-          "signature": "(allowed_capabilities: 'frozenset[str] | None' = None) -> None",
-          "stability": "stable"
-        },
-        "WorkspaceExecutionRequest": {
-          "signature": "(workspace: 'WorkspaceHandle', command: 'tuple[str, ...]', capability: 'str', cwd: 'str | None' = None, timeout_seconds: 'float | None' = None, env: 'Mapping[str, str]' = <factory>, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "stable"
-        },
-        "WorkspaceExecutionResult": {
-          "signature": "(backend: 'str', workspace_id: 'str', workspace_scope: 'WorkspaceScope', command: 'tuple[str, ...]', capability: 'str', cwd: 'str', exit_code: 'int | None', stdout: 'str' = '', stderr: 'str' = '', env_keys: 'tuple[str, ...]' = (), metadata: 'Mapping[str, object]' = <factory>, started_at: 'float | None' = None, finished_at: 'float | None' = None, timed_out: 'bool' = False, error: 'str | None' = None) -> None",
-          "stability": "stable"
-        },
-        "WorkspaceHandle": {
-          "signature": "(workspace_id: 'str', scope: 'WorkspaceScope', root: 'str | None' = None, parent_workspace_id: 'str | None' = None, metadata: 'Mapping[str, str]' = <factory>) -> None",
-          "stability": "stable"
-        },
-        "WorkspacePolicy": {
-          "signature": "(allow_parent_access: 'bool' = False, allowed_scopes: 'frozenset[WorkspaceScope]' = frozenset({'session', 'task'}), require_explicit_web_workspace: 'bool' = True) -> None",
-          "stability": "stable"
-        },
-        "WorkspaceProvider": {
-          "methods": {
-            "narrow_workspace": "(self, parent: 'WorkspaceHandle', *, child_id: 'str', scope: 'WorkspaceScope' = 'task') -> 'WorkspaceHandle'",
-            "resolve_workspace": "(self, request: 'WorkspaceRequest') -> 'WorkspaceHandle'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "stable"
-        },
-        "WorkspaceRequest": {
-          "signature": "(agent_id: 'str | None' = None, user_id: 'str | None' = None, session_id: 'str | None' = None, team_id: 'str | None' = None, task_id: 'str | None' = None, requested_scope: 'WorkspaceScope' = 'session') -> None",
+        "RunOptions": {
+          "signature": "(thinking: 'bool' = False, show_thinking: 'bool' = False) -> None",
           "stability": "stable"
         },
         "__version__": {
           "signature": "non-callable",
-          "stability": "stable"
-        },
-        "validate_release_candidate_evidence_manifest": {
-          "signature": "(manifest: 'Mapping[str, object]', *, expected_branch: 'str', expected_commit: 'str', expected_version: 'str', required_gates: 'tuple[str, ...]' = ('public_api_audit', 'full_test_suite', 'compileall', 'diff_hygiene', 'runtime_boundary_scan', 'docs_alignment', 'migration_index', 'api_stability_inventory', 'production_reference_honesty', 'planner_plan_store_concurrency', 'workspace_security_policy', 'independent_review'), expected_gate_results: 'Mapping[str, Mapping[str, object]] | None' = None) -> 'ReleaseEvidenceValidationReport'",
-          "stability": "stable"
-        },
-        "validate_release_evidence_manifest": {
-          "signature": "(manifest: 'Mapping[str, object]', *, required_gates: 'tuple[str, ...]' = ('public_api_audit', 'full_test_suite', 'compileall', 'diff_hygiene', 'runtime_boundary_scan', 'docs_alignment', 'migration_index', 'api_stability_inventory', 'production_reference_honesty', 'planner_plan_store_concurrency', 'workspace_security_policy', 'independent_review'), expected_branch: 'str | None' = None, expected_commit: 'str | None' = None, expected_version: 'str | None' = None, expected_gate_results: 'Mapping[str, Mapping[str, object]] | None' = None) -> 'ReleaseEvidenceValidationReport'",
           "stability": "stable"
         }
       }
@@ -1567,7 +1364,7 @@
           "stability": "experimental"
         },
         "TeamNoticeProvider": {
-          "signature": "(store: \"'TeamNoticeStore'\", agent_id: 'str') -> 'None'",
+          "signature": "(store: 'TeamNoticeStore', agent_id: 'str') -> 'None'",
           "stability": "experimental"
         },
         "TeamNoticeStore": {
@@ -2628,7 +2425,7 @@
           "stability": "experimental"
         },
         "ProviderRequestBuilder": {
-          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.tool_specs.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, attachment_runtime: object | None = None, snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
+          "signature": "(context_renderer: agentos.runtime.provider_request_builder.SystemEnvelopeRenderer, message_runtime: agentos.messages.runtime.MessageRuntime, tools: list[agentos.providers.tool_specs.ProviderToolSpec] = <factory>, parallel_tool_calls: bool | None = True, input_projections: tuple[agentos.runtime.provider_request_builder.ProviderInputProjectionProvider, ...] = (), snapshot_renderer: agentos.context.snapshot.ContextSnapshotRenderer | None = None, context_projections: agentos.runtime.provider_request_builder.ContextProjectionProvider | None = None) -> None",
           "stability": "stable"
         },
         "ProviderRequestBuiltEvent": {
@@ -2644,7 +2441,7 @@
           "stability": "experimental"
         },
         "QueryLoop": {
-          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
+          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
           "stability": "stable"
         },
         "RecallContextFailedEvent": {
@@ -2763,7 +2560,7 @@
         },
         "TurnNoticeProvider": {
           "methods": {
-            "consume_notices": "(self) -> 'tuple[str, ...]'"
+            "consume_notices": "(self) -> 'tuple[ContinuationNotice, ...]'"
           },
           "signature": "(*args, **kwargs)",
           "stability": "experimental"
@@ -2805,7 +2602,7 @@
           "stability": "experimental"
         },
         "UserTurnInput": {
-          "signature": "(content: 'str', attachments: 'tuple[Attachment, ...]' = ()) -> None",
+          "signature": "(content: 'str', artifact_handles: 'tuple[str, ...]' = ()) -> None",
           "stability": "stable"
         },
         "WaitReason": {

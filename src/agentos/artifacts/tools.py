@@ -1,3 +1,5 @@
+import json
+
 from agentos.artifacts.runtime import ArtifactRuntime
 from agentos.artifacts.types import ArtifactToolItem, ArtifactToolPage
 from agentos.providers.tool_specs import ProviderFunctionSpec, ProviderToolSpec
@@ -53,7 +55,7 @@ _ARTIFACT_TOOL_SPECS = (
 
 
 def artifact_tool_specs() -> tuple[ProviderToolSpec, ...]:
-    """返回尚未发布到全局 Registry 的 Artifact Tool schema。"""
+    """返回 Artifact Tool schema 的唯一权威定义。"""
 
     return _ARTIFACT_TOOL_SPECS
 
@@ -63,12 +65,12 @@ def list_attachments(
     *,
     cursor: str | None = None,
     limit: int = 20,
-) -> ArtifactToolPage:
-    """返回当前 Session 的模型安全 Artifact 分页。"""
+) -> str:
+    """返回当前 Session 的 canonical 模型安全 Artifact 分页。"""
 
     page = runtime.list(cursor=cursor, limit=limit)
     mounted_ids = frozenset(mount.artifact_id for mount in runtime.active_mounts())
-    return ArtifactToolPage(
+    tool_page = ArtifactToolPage(
         items=tuple(
             ArtifactToolItem(
                 handle=record.id,
@@ -79,6 +81,23 @@ def list_attachments(
             for record in page.items
         ),
         next_cursor=page.next_cursor,
+    )
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "handle": item.handle,
+                    "filename": item.filename,
+                    "media_type": item.media_type,
+                    "state": item.state,
+                }
+                for item in tool_page.items
+            ],
+            "next_cursor": tool_page.next_cursor,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
 
 

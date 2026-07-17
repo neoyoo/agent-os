@@ -23,6 +23,7 @@ from agentos.multi.team import (
 from agentos.multi.team import TeamRecord
 from agentos.multi.team import TeamNoticeStore, TeamRuntime
 from agentos.multi.types import AgentEnvelope, TaskRequest
+from agentos.runtime.continuation import ContinuationNotice
 from agentos.workspace import WorkspaceHandle
 from agentos.workspace import LocalWorkspaceProvider, WorkspaceRequest
 
@@ -104,8 +105,11 @@ def test_team_runtime_sends_directed_message_and_wakeup_notice() -> None:
     assert deliveries[0].envelope.type == "team_message"
     assert deliveries[0].envelope.payload == message
     assert notice_store.provider_for("worker").consume_notices() == (
-        "Team team_1 received message team_message_1. "
-        "Call read_team_messages to inspect it.",
+        ContinuationNotice(
+            kind="team_message",
+            subject_id="team_message_1",
+            action="team_read_messages",
+        ),
     )
 
 

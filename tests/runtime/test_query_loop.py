@@ -2,13 +2,15 @@ import asyncio
 
 import pytest
 
-from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
+from agentos.artifacts.projection import ArtifactMountProjectionProvider
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
 from agentos.providers import (
     FakeProvider,
+    ImagePart,
     ProviderToolCall,
     ProviderResponse,
 )
@@ -21,7 +23,6 @@ from agentos.runtime import (
     QueryLoop,
     UserTurnInput,
 )
-from tests._provider_binary import payload_from_attachment
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -79,14 +80,17 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
     assert "Run a fake provider loop." not in provider.requests[0].system
 
 
-def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
+def test_query_loop_mounts_user_artifact_for_only_its_turn() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
+    )
+    artifact = artifacts.upload(
+        data=b"image-bytes",
         filename="diagram.png",
-        mime_type="image/png",
+        media_type="image/png",
     )
     provider = FakeProvider(["first", "second"])
     loop = QueryLoop(
@@ -95,31 +99,35 @@ def test_query_loop_runs_turn_with_one_shot_attachment_expansion() -> None:
         request_builder=ProviderRequestBuilder(
             context_renderer=default_context_renderer(),
             message_runtime=messages,
-            attachment_runtime=attachments,
+            input_projections=(ArtifactMountProjectionProvider(artifacts),),
         ),
         provider=provider,
+        artifact_runtime=artifacts,
     )
 
-    _run(loop, UserTurnInput("分析图片", attachments=(attachment,)))
+    _run(loop, UserTurnInput("分析图片", artifact_handles=(artifact.id,)))
     _run(loop, "继续")
 
-    first_user = provider.requests[0].messages[1]
-    second_user = provider.requests[1].messages[1]
-    assert first_user.content == (
-        TextPart("分析图片"),
-        ImagePart(payload_from_attachment(attachment)),
+    assert [item.kind for item in provider.requests[0].messages][-1] == "context_mount"
+    first_mount = provider.requests[0].messages[-1]
+    assert isinstance(first_mount.content[1], ImagePart)
+    assert first_mount.content[1].payload.handle == artifact.id
+    assert all(
+        item.kind != "context_mount" for item in provider.requests[1].messages
     )
-    assert "Attachment att_1" in second_user.content[0].text  # type: ignore[union-attr]
 
 
 def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
+    )
+    artifact = artifacts.upload(
+        data=b"image-bytes",
         filename="diagram.png",
-        mime_type="image/png",
+        media_type="image/png",
     )
     registry = ToolRegistry()
     registry.register(
@@ -133,7 +141,6 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
     router = ToolCallRouter(
         tool_registry=registry,
         context_runtime=context,
-        attachment_runtime=attachments,
     )
     provider = FakeProvider(
         [
@@ -152,23 +159,21 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
             context_renderer=default_context_renderer(),
             message_runtime=messages,
             tools=router.tool_specs(),
-            attachment_runtime=attachments,
+            input_projections=(ArtifactMountProjectionProvider(artifacts),),
         ),
         provider=provider,
         tool_call_router=router,
+        artifact_runtime=artifacts,
     )
 
-    result = _run(loop, UserTurnInput("分析图片", attachments=(attachment,)))
+    result = _run(loop, UserTurnInput("分析图片", artifact_handles=(artifact.id,)))
 
     assert result == "inspected"
-    assert provider.requests[0].messages[1].content == (
-        TextPart("分析图片"),
-        ImagePart(payload_from_attachment(attachment)),
-    )
-    assert provider.requests[1].messages[-1].content == (
-        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(payload_from_attachment(attachment)),
-    )
+    for request in provider.requests:
+        mount = request.messages[-1]
+        assert mount.kind == "context_mount"
+        assert isinstance(mount.content[1], ImagePart)
+        assert mount.content[1].payload.handle == artifact.id
 
 
 def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:

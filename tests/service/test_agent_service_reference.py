@@ -92,7 +92,7 @@ class SnapshotFactory:
             AgentBuilder()
             .provider(FakeProvider([f"ok:{session_id}"]))
             .message_runtime(message_runtime)
-            .build()
+            .build(session_id=session_id)
         )
 
     def create_snapshot(self, *, session_id: str, agent) -> SessionSnapshot:

@@ -37,8 +37,6 @@ from agentos.multi.team import (
     TeamMessage,
     TeamMessageKind,
     TeamNotFoundError,
-    TeamNoticeProvider,
-    TeamNoticeStore,
     TeamRecord,
     TeamRuntime,
     TeamStatus,
@@ -74,6 +72,7 @@ from agentos.multi.team import (
     TeamWorkerSessionStatus,
     InMemoryTeamWorkerRetryStore,
 )
+from agentos.multi.team_notices import TeamNoticeProvider, TeamNoticeStore
 from agentos.multi.tools import AgentCoordinationTools
 from agentos.multi.types import (
     AgentCard,

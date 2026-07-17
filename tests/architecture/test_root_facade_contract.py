@@ -262,10 +262,17 @@ def test_root_facade_only_imports_declared_public_exports() -> None:
     assert violations == ()
 
 
-def test_root_facade_excludes_removed_loop_and_sync_adapter_exports() -> None:
+def test_root_facade_is_the_exact_phase4_level1_surface() -> None:
     agentos = importlib.import_module("agentos")
     sync = importlib.import_module("agentos.sync")
 
+    assert set(agentos.__all__) == {
+        "Agent",
+        "AgentBuilder",
+        "AgentResult",
+        "RunOptions",
+        "__version__",
+    }
     assert REMOVED_ASYNC_LOOP_NAME not in agentos.__all__
     assert not hasattr(agentos, REMOVED_ASYNC_LOOP_NAME)
     assert set(agentos.__all__).isdisjoint(sync.__all__)

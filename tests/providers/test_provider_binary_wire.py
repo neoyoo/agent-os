@@ -82,9 +82,9 @@ def test_responses_and_anthropic_file_encoding_preserves_payload() -> None:
     assert document.data == b"pdf-bytes"
 
 
-def test_provider_modules_do_not_depend_on_attachment_sources() -> None:
+def test_provider_modules_do_not_depend_on_artifact_runtime_sources() -> None:
     forbidden = (
-        "agentos" + ".attachments",
+        "agentos.artifacts.runtime",
         "ProviderFile" + "Source",
         "LocalFile" + "Source",
         "InlineBase64" + "Source",

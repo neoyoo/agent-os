@@ -1,6 +1,7 @@
 from typing import get_type_hints
 
 from agentos._json_values import FrozenJsonObject, thaw_json
+from agentos.artifacts import ArtifactRef
 from agentos.messages import (
     MessageRuntime,
     MessageStore,
@@ -22,6 +23,21 @@ def test_message_runtime_appends_original_messages_and_active_refs() -> None:
         user.id,
         assistant.id,
     ]
+
+
+def test_message_runtime_appends_artifact_refs_with_user_truth() -> None:
+    runtime = MessageRuntime()
+    artifact = ArtifactRef(
+        artifact_id="art_12345678-1234-4234-9234-123456789abc",
+        filename="drawing.png",
+        media_type="image/png",
+    )
+
+    user = runtime.append_user("分析图纸", artifact_refs=(artifact,))
+
+    assert user.content == "分析图纸"
+    assert user.artifact_refs == (artifact,)
+    assert runtime.store.get(user.id).artifact_refs == (artifact,)
 
 
 def test_active_messages_materialize_stored_truth() -> None:

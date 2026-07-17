@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from agentos.artifacts import ArtifactRef
 from agentos.messages.store import MessageStore
 from agentos.messages.types import MessageRef, MessageRole, StoredMessage, ToolCall
 from agentos.messages.window import ActiveWindow
@@ -12,10 +13,18 @@ class MessageRuntime:
     store: MessageStore = field(default_factory=MessageStore)
     active_window: ActiveWindow = field(default_factory=ActiveWindow)
 
-    def append_user(self, content: str) -> StoredMessage:
+    def append_user(
+        self,
+        content: str,
+        artifact_refs: tuple[ArtifactRef, ...] = (),
+    ) -> StoredMessage:
         """追加 user 消息并加入 active window。"""
 
-        return self._append_active(role="user", content=content)
+        return self._append_active(
+            role="user",
+            content=content,
+            artifact_refs=artifact_refs,
+        )
 
     def append_assistant(
         self,
@@ -90,6 +99,7 @@ class MessageRuntime:
         self,
         role: MessageRole,
         content: str,
+        artifact_refs: tuple[ArtifactRef, ...] = (),
         tool_calls: list[ToolCall] | None = None,
         tool_call_id: str | None = None,
     ) -> StoredMessage:
@@ -98,6 +108,7 @@ class MessageRuntime:
         message = self.store.append(
             role=role,
             content=content,
+            artifact_refs=artifact_refs,
             tool_calls=tool_calls,
             tool_call_id=tool_call_id,
         )

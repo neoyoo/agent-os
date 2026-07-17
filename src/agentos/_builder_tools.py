@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agentos.attachments import AttachmentRuntime
+from agentos.artifacts import ArtifactRuntime
+from agentos.artifacts.tool_adapter import ArtifactToolAdapter
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.context import ContextRuntime
 from agentos.providers import ProviderToolSpec
@@ -25,7 +26,7 @@ def assemble_tool_components(
     tool_call_router: ToolCallRouter | None,
     context_runtime: ContextRuntime,
     recall_runtime: RecallRuntime,
-    attachment_runtime: AttachmentRuntime,
+    artifact_runtime: ArtifactRuntime,
     max_parallel_calls: int | None,
 ) -> BuilderToolComponents:
     """组装工具注册、路由、Provider schema 和批次调度器。"""
@@ -39,14 +40,16 @@ def assemble_tool_components(
     registry = ToolRegistry()
     for tool in tools or ():
         registry.register(tool)
+    for tool in ArtifactToolAdapter(artifact_runtime).registered_tools():
+        registry.register(tool)
     router = tool_call_router or ToolCallRouter(
         tool_registry=registry,
         context_runtime=context_runtime,
         recall_runtime=recall_runtime,
-        attachment_runtime=attachment_runtime,
     )
-    if router.attachment_runtime is None:
-        router.attachment_runtime = attachment_runtime
+    if tool_call_router is not None:
+        for tool in ArtifactToolAdapter(artifact_runtime).registered_tools():
+            router.tool_registry.register(tool)
 
     return BuilderToolComponents(
         router=router,

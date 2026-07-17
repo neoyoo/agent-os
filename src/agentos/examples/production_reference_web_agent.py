@@ -5,18 +5,11 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from agentos import AgentBuilder
 from agentos._redaction import redact_secret_patterns
 from agentos.channels import (
     AsgiAgentApp,
     InMemorySessionLeaseStore,
-    InMemorySseEventBuffer,
-    InMemorySseTurnControlStore,
-    RedisSseEventBuffer,
-    RedisSseTurnControlStore,
 )
-from agentos.compression import CompressionIndex, CompressionRuntime
-from agentos.context import ContextRuntime
 from agentos.deployment import (
     BackendVerificationRecord,
     DeploymentLiveBackendVerificationProfile,
@@ -26,17 +19,27 @@ from agentos.deployment import (
     ProductionStatePlaneDeploymentProfile,
 )
 from agentos.examples.planner_patterns import build_plan_and_execute_example
+from agentos.examples._production_reference_fixtures import (
+    ReferenceNacosClient as ReferenceNacosClient,
+    ReferencePostgresConnection as ReferencePostgresConnection,
+    ReferenceRedisClient as ReferenceRedisClient,
+    ReferenceSnapshotAgentFactory as ReferenceSnapshotAgentFactory,
+)
+from agentos.examples._production_reference_support import (
+    backend_verification_profile as _backend_verification_profile,
+    contains_reference_no_network_fixture as _contains_reference_no_network_fixture,
+    json_safe_mapping as _json_safe_mapping,
+    reference_agent_card as _reference_agent_card,
+    reference_sse_event_buffer as _reference_sse_event_buffer,
+    reference_sse_turn_control as _reference_sse_turn_control,
+)
 from agentos.multi import (
-    AgentCard,
     PostgresTaskStore,
     RedisAgentMessageQueue,
 )
 from agentos.multi.postgres_plan import PostgresPlanStore
 from agentos.persistence import MemoryPersistence, PostgresSessionSnapshotPersistence
-from agentos.persistence.base import SessionSnapshot
-from agentos.policies import BudgetPolicy
 from agentos.probes import ReferenceLiveBackendProbePack
-from agentos.providers import FakeProvider
 from agentos.readiness import ProductionReadinessEvidenceBundle
 from agentos.registry import (
     NacosAgentCardResolver,
@@ -46,7 +49,6 @@ from agentos.registry import (
 from agentos.runtime import (
     DistributedWebRuntimeProfile,
     DistributedWebSessionOperationsProfile,
-    SessionState,
 )
 from agentos.service import (
     AGENT_SERVICE_REFERENCE_REQUIRED_COMPONENTS,
@@ -361,116 +363,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     return 0
-
-
-class ReferenceSnapshotAgentFactory:
-    """Small deterministic agent factory for durable session examples."""
-
-    def create_agent(
-        self,
-        *,
-        session_id: str,
-        snapshot: SessionSnapshot | None,
-    ):
-        context = ContextRuntime(session_id=session_id)
-        message_runtime = None
-        session_state = SessionState(id=session_id)
-        compression_index = CompressionIndex()
-        next_segment_number = 1
-        if snapshot is not None:
-            context = ContextRuntime(
-                state=snapshot.context_state,
-                session_id=session_id,
-            )
-            message_runtime = snapshot.message_runtime
-            session_state = snapshot.session_state
-            compression_index = snapshot.compression_index
-            next_segment_number = snapshot.next_segment_number
-        builder = (
-            AgentBuilder()
-            .provider(FakeProvider([f"ok:{session_id}"]))
-            .context_runtime(context)
-        )
-        if message_runtime is not None:
-            builder = builder.message_runtime(message_runtime)
-        agent = builder.build()
-        agent.query_loop.session_state = session_state
-        agent.query_loop.compression_runtime = CompressionRuntime(
-            context_runtime=context,
-            message_runtime=agent.query_loop.message_runtime,
-            budget_policy=BudgetPolicy(max_active_messages=1000),
-            index=compression_index,
-            session_id=session_id,
-            next_segment_number=next_segment_number,
-        )
-        return agent
-
-    def create_snapshot(self, *, session_id: str, agent) -> SessionSnapshot:
-        compression_runtime = agent.query_loop.compression_runtime
-        return SessionSnapshot(
-            session_state=agent.query_loop.session_state or SessionState(id=session_id),
-            context_state=agent.query_loop.context_runtime.snapshot(),
-            message_runtime=agent.query_loop.message_runtime,
-            compression_index=(
-                compression_runtime.index
-                if compression_runtime is not None
-                else CompressionIndex()
-            ),
-            next_segment_number=(
-                compression_runtime.next_segment_number()
-                if compression_runtime is not None
-                else 1
-            ),
-        )
-
-
-class ReferenceNacosClient:
-    """No-network Nacos client used only for adapter identity evidence."""
-
-    agentos_reference_no_network = True
-
-    def register_instance(self, **kwargs: object) -> None:
-        return None
-
-    def deregister_instance(self, **kwargs: object) -> None:
-        return None
-
-    def list_instances(self, **kwargs: object) -> Sequence[object]:
-        return ()
-
-
-class ReferenceRedisClient:
-    """No-network Redis client used only for adapter identity evidence."""
-
-    agentos_reference_no_network = True
-
-    def xgroup_create(self, *args: object, **kwargs: object) -> None:
-        return None
-
-    def xadd(self, *args: object, **kwargs: object) -> str:
-        return "0-1"
-
-    def xreadgroup(self, *args: object, **kwargs: object) -> list[object]:
-        return []
-
-    def xack(self, *args: object, **kwargs: object) -> int:
-        return 1
-
-
-class ReferencePostgresConnection:
-    """No-database Postgres connection used only for adapter identity evidence."""
-
-    agentos_reference_no_network = True
-
-    def execute(
-        self,
-        sql: str,
-        params: tuple[object, ...] = (),
-    ) -> object:
-        raise RuntimeError("reference example does not execute SQL")
-
-    def commit(self) -> None:
-        return None
 
 
 def _reference_state_plane_stack(
@@ -815,117 +707,6 @@ def _demo_served_runtime_reason(
     ) or _contains_reference_no_network_fixture(snapshot_persistence):
         return "reference app uses no-network reference runtime backend clients"
     return ""
-
-
-def _reference_sse_event_buffer(
-    lease_store: object,
-    *,
-    stream_resume_evidence_ready: bool = False,
-) -> object:
-    redis_url = getattr(lease_store, "backend_url", None)
-    redis_client = getattr(lease_store, "_client", None)
-    if isinstance(redis_url, str) and redis_url:
-        buffer = RedisSseEventBuffer(redis_url, client=redis_client)
-        if stream_resume_evidence_ready:
-            buffer.agentos_shared_backend_evidenced = True
-            buffer.agentos_cross_node_resume_evidenced = True
-        return buffer
-    return InMemorySseEventBuffer()
-
-
-def _reference_sse_turn_control(
-    lease_store: object,
-    *,
-    stream_resume_evidence_ready: bool = False,
-) -> object:
-    redis_url = getattr(lease_store, "backend_url", None)
-    redis_client = getattr(lease_store, "_client", None)
-    if isinstance(redis_url, str) and redis_url:
-        store = RedisSseTurnControlStore(redis_url, client=redis_client)
-        if stream_resume_evidence_ready:
-            store.agentos_shared_backend_evidenced = True
-        return store
-    return InMemorySseTurnControlStore()
-
-
-def _contains_reference_no_network_fixture(value: object) -> bool:
-    if bool(getattr(value, "agentos_reference_no_network", False)):
-        return True
-    if value.__class__.__name__ in {
-        "ReferenceNacosClient",
-        "ReferenceRedisClient",
-        "ReferencePostgresConnection",
-    }:
-        return True
-    for attribute_name in (
-        "_client",
-        "client",
-        "_connection",
-        "connection",
-        "_pool",
-        "pool",
-        "_active_connection",
-    ):
-        nested = getattr(value, attribute_name, None)
-        if nested is not None and bool(
-            getattr(nested, "agentos_reference_no_network", False),
-        ):
-            return True
-    return False
-
-
-def _backend_verification_profile(
-    *,
-    records: Sequence[BackendVerificationRecord] | None = None,
-) -> DeploymentLiveBackendVerificationProfile:
-    if records is None:
-        return DeploymentLiveBackendVerificationProfile(records=())
-    return DeploymentLiveBackendVerificationProfile(
-        records=tuple(records),
-    )
-
-
-def _reference_agent_card() -> dict[str, object]:
-    card = AgentCard(
-        agent_id="production-reference-web-agent",
-        name="Production Reference Web Agent",
-        description="AgentOS production reference web agent.",
-        capabilities=("web", "readiness", "planner"),
-        version="0.1.0",
-        endpoint="https://agentos.example.invalid",
-    )
-    return {
-        "agent_id": card.agent_id,
-        "name": card.name,
-        "capabilities": card.capabilities,
-        "version": card.version,
-        "endpoint": card.endpoint,
-    }
-
-
-def _backend_kind(name: str) -> str:
-    return {
-        "agent_registry": "nacos",
-        "message_queue": "redis",
-        "task_store": "postgres",
-        "plan_store": "postgres",
-        "worker_process_supervisor": "worker_process_supervisor",
-        "session_snapshot_persistence": "postgres",
-    }[name]
-
-
-def _json_safe_mapping(values: Mapping[str, object]) -> dict[str, object]:
-    return {str(key): _json_safe_value(value) for key, value in values.items()}
-
-
-def _json_safe_value(value: object) -> object:
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    if isinstance(value, tuple | list):
-        return [_json_safe_value(item) for item in value]
-    if isinstance(value, Mapping):
-        return _json_safe_mapping(value)
-    return repr(value)
 
 
 if __name__ == "__main__":

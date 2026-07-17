@@ -4,7 +4,7 @@ from typing import get_type_hints
 
 import pytest
 
-from agentos.attachments import AttachmentRuntime
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
 from agentos.context import ContextRuntime
 from agentos.events import (
     EventBus,
@@ -18,9 +18,10 @@ from agentos.runtime.errors import (
     ContinuationUnavailableError,
     WaitingUnsupportedError,
 )
+from agentos.runtime.continuation import ContinuationNotice, ContinuationRuntime
 from agentos.runtime import WaitReason
 from agentos.runtime.run import RunRequest, UserTurnInput
-from agentos.runtime.query_loop_support import AttachmentRuntimeBoundary
+from agentos.runtime.query_loop_support import ArtifactRuntimeBoundary
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     PlanUpdated,
@@ -46,10 +47,10 @@ class RecordingLogger:
 
 @dataclass(slots=True)
 class NoticeProvider:
-    notices: tuple[str, ...]
+    notices: tuple[ContinuationNotice, ...]
     calls: int = 0
 
-    def consume_notices(self) -> tuple[str, ...]:
+    def consume_notices(self) -> tuple[ContinuationNotice, ...]:
         self.calls += 1
         return self.notices
 
@@ -62,18 +63,20 @@ class RecordingWaitingRuntime:
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn_id: str,
         reason: WaitReason,
     ) -> WaitingCommit:
         assert turn_id == self.turn.id
         self.order.append(("commit", self.turn.status))
-        return WaitingCommit("run_1", reason)
+        return WaitingCommit(run_id, reason)
 
 
 class FailingWaitingRuntime:
     async def commit_waiting(
         self,
         *,
+        run_id: str,
         turn_id: str,
         reason: WaitReason,
     ) -> WaitingCommit:
@@ -84,8 +87,9 @@ def make_lifecycle(
     *,
     context: ContextRuntime | None = None,
     messages: MessageRuntime | None = None,
-    attachments: AttachmentRuntime | None = None,
+    artifacts: ArtifactRuntime | None = None,
     notices: NoticeProvider | None = None,
+    continuation: ContinuationRuntime | None = None,
     waiting_runtime: object | None = None,
     event_bus: EventBus | None = None,
     logger: RecordingLogger | None = None,
@@ -93,10 +97,11 @@ def make_lifecycle(
     return TurnLifecycle(
         context_runtime=context or ContextRuntime(),
         message_runtime=messages or MessageRuntime(),
-        attachment_runtime=attachments,
+        artifact_runtime=artifacts,
         session_state=SessionState("session_1"),
         turn_notice_provider=notices,
         waiting_runtime=waiting_runtime,  # type: ignore[arg-type]
+        continuation_runtime=continuation or ContinuationRuntime(),
         event_bus=event_bus,
         structured_logger=logger,
     )
@@ -164,26 +169,25 @@ def test_query_loop_uses_session_state_assigned_before_execute() -> None:
     asyncio.run(run())
 
 
-def test_prepare_user_turn_requires_attachment_runtime_for_attachments() -> None:
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image",
-        filename="diagram.png",
-        mime_type="image/png",
-    )
+def test_prepare_user_turn_requires_artifact_runtime_for_handles() -> None:
     lifecycle = make_lifecycle()
 
     with pytest.raises(
         RuntimeError,
-        match="attachment runtime is required for attachments",
+        match="artifact runtime is required for artifact handles",
     ):
-        lifecycle.prepare_user_turn(UserTurnInput("inspect", (attachment,)))
+        lifecycle.prepare_user_turn(
+            UserTurnInput(
+                "inspect",
+                ("art_12345678-1234-4234-9234-123456789abc",),
+            )
+        )
 
 
-def test_turn_lifecycle_depends_on_attachment_runtime_boundary() -> None:
+def test_turn_lifecycle_depends_on_artifact_runtime_boundary() -> None:
     annotations = get_type_hints(TurnLifecycle)
 
-    assert annotations["attachment_runtime"] == AttachmentRuntimeBoundary | None
+    assert annotations["artifact_runtime"] == ArtifactRuntimeBoundary | None
 
 
 def test_prepare_continuation_requires_pending_notice() -> None:
@@ -205,11 +209,14 @@ def test_prepare_continuation_sets_notice_without_user_message() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
     event_bus = EventBus()
-    notices = NoticeProvider(("Task task_1 completed.",))
+    notice = ContinuationNotice("task_completed", "task_1", "check_agent_tasks")
+    notices = NoticeProvider((notice,))
+    continuation = ContinuationRuntime()
     lifecycle = make_lifecycle(
         context=context,
         messages=messages,
         notices=notices,
+        continuation=continuation,
         event_bus=event_bus,
     )
 
@@ -218,7 +225,8 @@ def test_prepare_continuation_sets_notice_without_user_message() -> None:
     assert turn == TurnState("turn_1", "")
     assert events == (TurnStreamStarted(""),)
     assert messages.store.all() == []
-    assert context.snapshot().runtime_notices == ("Task task_1 completed.",)
+    assert continuation.inputs()[0].kind == "continuation_data"
+    assert "task_1" in continuation.inputs()[0].content[0].text  # type: ignore[union-attr]
     assert event_bus.events == [
         TurnStartedEvent(
             session_id="session_1",
@@ -282,22 +290,30 @@ def test_structured_logs_add_current_session_without_overwriting_caller() -> Non
     ]
 
 
-def test_cleanup_clears_continuation_notices_and_loaded_attachments() -> None:
-    context = ContextRuntime()
-    context.set_runtime_notices(("Task task_1 completed.",))
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image",
-        filename="diagram.png",
-        mime_type="image/png",
+def test_cleanup_clears_continuation_data_and_artifact_mounts() -> None:
+    continuation = ContinuationRuntime()
+    continuation.set_notices(
+        (ContinuationNotice("task_completed", "task_1", "check_agent_tasks"),)
     )
-    attachments.load_attachment_handle(f"att:{attachment.handle}")
-    lifecycle = make_lifecycle(context=context, attachments=attachments)
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
+    )
+    artifact = artifacts.upload(
+        data=b"image",
+        filename="diagram.png",
+        media_type="image/png",
+    )
+    artifacts.load_attachment(artifact.id)
+    lifecycle = make_lifecycle(
+        artifacts=artifacts,
+        continuation=continuation,
+    )
 
     lifecycle.cleanup(is_continuation=True)
 
-    assert context.snapshot().runtime_notices == ()
-    assert attachments._project_provider_inputs_compat(()) == ()
+    assert continuation.inputs() == ()
+    assert artifacts.active_mounts() == ()
 
 
 def test_commit_waiting_commits_before_state_transition_and_event_return() -> None:
@@ -309,6 +325,7 @@ def test_commit_waiting_commits_before_state_transition_and_event_return() -> No
         )
 
         event = await lifecycle.commit_waiting(
+            run_id="run_1",
             turn=turn,
             reason=WaitReason("human_input", "approval_1"),
         )
@@ -330,6 +347,7 @@ def test_commit_waiting_failure_does_not_change_turn_state() -> None:
 
         with pytest.raises(RuntimeError, match="commit failed"):
             await lifecycle.commit_waiting(
+                run_id="run_1",
                 turn=turn,
                 reason=WaitReason("human_input", "approval_1"),
             )
@@ -348,6 +366,7 @@ def test_commit_waiting_requires_waiting_runtime() -> None:
             match="waiting runtime is not configured",
         ):
             await lifecycle.commit_waiting(
+                run_id="run_1",
                 turn=TurnState("turn_1", "hello"),
                 reason=WaitReason("human_input", "approval_1"),
             )

@@ -1,12 +1,19 @@
 import asyncio
+from typing import get_type_hints
 
 import pytest
 
 from agentos import Agent, AgentBuilder
+from agentos.artifacts import ArtifactRuntime
 from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
 from agentos.compression import CompressionRuntime, RuleBasedCompressor
 from agentos.context import ContextRenderer, ContextRuntime
-from agentos.context.models import SystemEnvelope
+from agentos.context.models import (
+    ContextSlotProjection,
+    ProjectionVariant,
+    SystemEnvelope,
+)
+from agentos.context.xml import XmlElement
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.messages import MessageRuntime
 from agentos.persistence import (
@@ -19,6 +26,7 @@ from agentos.providers import ProviderResponse, ProviderToolCall
 from agentos.providers import provider_tool_spec_to_dict
 from agentos.recall import InMemoryRecallIndex, SegmentRepository
 from agentos.runtime import EventBus, QueryLoop, TurnStartedEvent
+from agentos.runtime.run import UserTurnInput
 
 
 class StructuralContextRendererStub:
@@ -32,6 +40,28 @@ class StructuralContextRendererStub:
 class NonRepositoryMemorySink:
     def record_compressed_segment(self, package: object) -> None:
         return None
+
+
+class StaticProjectionProvider:
+    def __init__(self, projection: ContextSlotProjection) -> None:
+        self.projection = projection
+        self.calls = 0
+
+    def projections(self) -> tuple[ContextSlotProjection, ...]:
+        self.calls += 1
+        return (self.projection,)
+
+
+def projection(
+    slot: str,
+    owner: str,
+    element: XmlElement,
+) -> ContextSlotProjection:
+    return ContextSlotProjection(
+        slot=slot,  # type: ignore[arg-type]
+        owner=owner,
+        variants=(ProjectionVariant(element),),
+    )
 
 
 def test_agent_builder_creates_runnable_standard_agent() -> None:
@@ -49,17 +79,145 @@ def test_agent_builder_creates_runnable_standard_agent() -> None:
     assert provider.requests[0].messages[1].content[0].text == "Build an agent."  # type: ignore[union-attr]
 
 
-def test_agent_builder_wires_attachment_runtime() -> None:
+def test_agent_builder_wires_session_scoped_artifact_runtime() -> None:
     provider = FakeProvider(["ok"])
 
-    agent = AgentBuilder().provider(provider).build()
-    attachment = agent.attachments.upload_bytes(
-        b"image-bytes",
+    agent = AgentBuilder().provider(provider).build(session_id="session_local")
+    artifact = agent.artifacts.upload(
+        data=b"image-bytes",
         filename="diagram.png",
-        mime_type="image/png",
+        media_type="image/png",
     )
 
-    assert attachment.handle.startswith("att_")
+    assert isinstance(agent.artifacts, ArtifactRuntime)
+    assert artifact.id.startswith("art_")
+    assert agent.artifacts.session_id == "session_local"
+    assert agent.query_loop.session_state is not None
+    assert agent.query_loop.session_state.id == "session_local"
+    assert agent.query_loop.context_runtime.session_id == "session_local"
+
+
+def test_agent_artifacts_property_has_domain_return_type() -> None:
+    assert Agent.artifacts.fget is not None
+    assert get_type_hints(Agent.artifacts.fget)["return"] is ArtifactRuntime
+
+
+def test_agent_builder_projects_user_upload_and_clears_turn_mount() -> None:
+    provider = FakeProvider(["图纸已分析"])
+    agent = AgentBuilder().provider(provider).build(session_id="session_local")
+    artifact = agent.artifacts.upload(
+        data=b"image-bytes",
+        filename="diagram.png",
+        media_type="image/png",
+    )
+
+    result = asyncio.run(
+        agent.run(
+            UserTurnInput(
+                content="分析图纸",
+                artifact_handles=(artifact.id,),
+            )
+        )
+    )
+
+    assert result.content == "图纸已分析"
+    assert [item.kind for item in provider.requests[0].messages] == [
+        "context_snapshot",
+        "business_message",
+        "context_mount",
+    ]
+    stored_user = agent.query_loop.message_runtime.store.all()[0]
+    assert stored_user.content == "分析图纸"
+    assert stored_user.artifact_refs[0].artifact_id == artifact.id
+    assert agent.artifacts.active_mounts() == ()
+
+
+def test_agent_builder_generates_isolated_default_session_ids() -> None:
+    builder = AgentBuilder().provider(FakeProvider(["one", "two"]))
+
+    first = builder.build()
+    second = builder.build()
+
+    assert first.artifacts.session_id.startswith("session_")
+    assert second.artifacts.session_id.startswith("session_")
+    assert first.artifacts.session_id != second.artifacts.session_id
+
+
+def test_agent_builder_rejects_explicit_empty_session_id() -> None:
+    builder = AgentBuilder().provider(FakeProvider(["unused"]))
+
+    with pytest.raises(ValueError, match="session_id must not be empty"):
+        builder.build(session_id="")
+
+
+def test_agent_builder_composes_extension_projection_providers() -> None:
+    plan = StaticProjectionProvider(
+        projection(
+            "active-plan",
+            "PlannerRuntime",
+            XmlElement(
+                "active-plan",
+                (("status", "in-progress"),),
+                children=(XmlElement("goal", text="ship phase 4"),),
+            ),
+        ),
+    )
+    memory = StaticProjectionProvider(
+        projection(
+            "memory-context",
+            "MemoryRuntime",
+            XmlElement(
+                "memory-context",
+                children=(
+                    XmlElement(
+                        "memory",
+                        (
+                            ("handle", "mem_1"),
+                            ("kind", "semantic"),
+                            ("category", "preference"),
+                            ("instructional", "false"),
+                        ),
+                        text="use Chinese",
+                    ),
+                ),
+            ),
+        ),
+    )
+    skills = StaticProjectionProvider(
+        projection(
+            "available-skills",
+            "SkillRuntime",
+            XmlElement(
+                "available-skills",
+                (("truncated", "false"),),
+                children=(
+                    XmlElement(
+                        "skill",
+                        (
+                            ("name", "review"),
+                            ("description", "review code"),
+                            ("loadable", "true"),
+                            ("trust", "trusted"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    provider = FakeProvider(["ok"])
+    agent = (
+        AgentBuilder()
+        .provider(provider)
+        .context_projections((skills, plan, memory))
+        .build(session_id="session_local")
+    )
+
+    asyncio.run(agent.run("hello"))
+
+    snapshot = provider.requests[0].messages[0].content[0].text  # type: ignore[union-attr]
+    assert snapshot.index("<active-plan") < snapshot.index("<memory-context")
+    assert snapshot.index("<memory-context") < snapshot.index("<available-skills")
+    assert plan.calls == memory.calls == skills.calls == 1
 
 
 def test_agent_builder_tools_are_available_only_through_provider_tools() -> None:
@@ -468,7 +626,21 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
     assert agent.query_loop.tool_call_router is router
     assert "router_tool" not in provider.requests[0].system
     assert provider.requests[1].messages[-1].content[0].text == "router tool result"  # type: ignore[union-attr]
-    assert router.attachment_runtime is agent.attachments
+    record = agent.artifacts.upload(
+        data=b"image",
+        filename="drawing.png",
+        media_type="image/png",
+    )
+    artifact_result = router.execute_tool_call(
+        ProviderToolCall(
+            id="call_artifact",
+            name="load_attachment",
+            arguments={"handle": record.id},
+        ),
+    )
+
+    assert artifact_result.content.startswith("附件已挂载：")
+    assert agent.artifacts.active_mounts()[0].artifact_id == record.id
 
 
 def test_agent_builder_rejects_missing_provider_and_duplicate_provider() -> None:
