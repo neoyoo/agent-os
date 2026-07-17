@@ -1,7 +1,8 @@
 import inspect
 from typing import get_type_hints
 
-from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
+from agentos.artifacts.projection import ArtifactMountProjectionProvider
 from agentos.builder import AgentBuilder
 from agentos.context import (
     ContextRenderer,
@@ -16,10 +17,10 @@ from agentos.context.projection import (
 )
 from agentos.messages import MessageRuntime
 from agentos.providers import (
+    ImagePart,
     ProviderFunctionSpec,
     ProviderToolSpec,
 )
-from tests._provider_binary import payload_from_attachment
 from agentos.runtime import ProviderRequestBuilder
 from agentos.tokens import HeuristicTokenCounter
 
@@ -64,13 +65,15 @@ def _configured_builder(
     messages: MessageRuntime,
     context: ContextRuntime | None = None,
     tools: list[ProviderToolSpec] | None = None,
-    attachments: AttachmentRuntime | None = None,
+    artifacts: ArtifactRuntime | None = None,
 ) -> ProviderRequestBuilder:
     return ProviderRequestBuilder(
         context_renderer=renderer,  # type: ignore[arg-type]
         message_runtime=messages,
         tools=[] if tools is None else tools,
-        attachment_runtime=attachments,
+        input_projections=(
+            () if artifacts is None else (ArtifactMountProjectionProvider(artifacts),)
+        ),
         snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
         context_projections=(
             EmptyProjectionProvider()
@@ -171,30 +174,36 @@ def test_provider_request_builder_provides_tool_schema_only_through_tools() -> N
     assert "secret" not in request.system
 
 
-def test_provider_request_builder_preserves_existing_attachment_projection() -> None:
+def test_provider_request_builder_reprojects_artifact_mount_for_each_build() -> None:
     messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="diagram.png",
-        mime_type="image/png",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
     )
-    content = attachments.prepare_user_message("Analyze the image", [attachment])
-    messages.append_user(content)
+    artifact = artifacts.upload(
+        data=b"image-bytes",
+        filename="diagram.png",
+        media_type="image/png",
+    )
+    refs = artifacts.prepare_user_uploads((artifact.id,))
+    messages.append_user("Analyze the image", artifact_refs=refs)
     builder = _configured_builder(
         renderer=_default_renderer(),
         messages=messages,
-        attachments=attachments,
+        artifacts=artifacts,
     )
 
     first_request = builder.build().request
     second_request = builder.build().request
 
-    assert first_request.messages[1].content == (
-        TextPart("Analyze the image"),
-        ImagePart(payload_from_attachment(attachment)),
-    )
-    assert second_request.messages[-1].content == (
-        TextPart(f"Loaded attachment {attachment.handle} for inspection."),
-        ImagePart(payload_from_attachment(attachment)),
-    )
+    assert [item.kind for item in first_request.messages] == [
+        "context_snapshot",
+        "business_message",
+        "context_mount",
+    ]
+    assert first_request.messages[1].content[0].text == "Analyze the image"  # type: ignore[union-attr]
+    first_mount = first_request.messages[2]
+    second_mount = second_request.messages[2]
+    assert isinstance(first_mount.content[1], ImagePart)
+    assert first_mount.content[1].payload.handle == artifact.id
+    assert first_mount == second_mount

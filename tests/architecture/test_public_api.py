@@ -76,11 +76,16 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
     assert required_modules <= set(modules)
 
     agentos_exports = modules["agentos"]["exports"]
-    assert agentos_exports["AgentBuilder"]["stability"] == "stable"
-    assert agentos_exports["AsgiAgentApp"]["stability"] == "stable"
-    assert agentos_exports["CompareAndSavePlanStore"]["stability"] == "stable"
-    assert agentos_exports["PlanStoreRecord"]["stability"] == "stable"
-    assert agentos_exports["PlanConflictError"]["stability"] == "stable"
+    assert set(agentos_exports) == {
+        "Agent",
+        "AgentBuilder",
+        "AgentResult",
+        "RunOptions",
+        "__version__",
+    }
+    assert {
+        payload["stability"] for payload in agentos_exports.values()
+    } == {"stable"}
     assert modules["agentos.channels"]["exports"]["A2AOperationServer"][
         "stability"
     ] == "experimental"
@@ -253,16 +258,15 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert hasattr(providers, "Provider")
     assert not hasattr(providers, "ProviderRuntime")
 
-    assert hasattr(agentos, "QueryLoop")
+    assert not hasattr(agentos, "QueryLoop")
     assert not hasattr(agentos, REMOVED_ASYNC_LOOP_NAME)
-    assert hasattr(agentos, "ProviderRequestBuilder")
+    assert not hasattr(agentos, "ProviderRequestBuilder")
     assert not hasattr(agentos, "Provider")
     assert not hasattr(agentos, "ToolCallRouter")
     assert not hasattr(agentos, "HookManager")
 
 
 def test_phase2_legacy_message_boundaries_are_removed() -> None:
-    attachments = importlib.import_module("agentos.attachments")
     messages = importlib.import_module("agentos.messages")
     providers = importlib.import_module("agentos.providers")
 
@@ -279,7 +283,8 @@ def test_phase2_legacy_message_boundaries_are_removed() -> None:
         assert not hasattr(providers, name), name
     assert importlib.util.find_spec("agentos.messages._migration") is None
     assert importlib.util.find_spec("agentos.providers.messages") is None
-    assert not hasattr(attachments.AttachmentRuntime, "project_provider_messages")
+    legacy_attachment_package = "agentos" + ".attachments"
+    assert importlib.util.find_spec(legacy_attachment_package) is None
 
     online_readme = ONLINE_README.read_text(encoding="utf-8")
     for legacy_reference in [
@@ -309,7 +314,6 @@ def test_context_protocol_public_constants_remain_available() -> None:
         "extend_schema",
         "start_chapter",
         "recall_context",
-        "load_attachment",
     }
 
 
@@ -605,17 +609,14 @@ def test_phase8_multi_agent_public_api_exports() -> None:
     assert not hasattr(multi, "PostgresPlanClaimStore")
 
     for name in [
+        "AgentCard",
+        "AgentCoordinator",
         "CompareAndSavePlanStore",
         "InMemoryPlanStore",
         "PlanConflictError",
         "PlanStoreRecord",
-        "PostgresPlanStore",
-    ]:
-        assert hasattr(agentos, name)
-    for name in [
-        "AgentCard",
-        "AgentCoordinator",
         "PlannerRuntime",
+        "PostgresPlanStore",
         "TeamRuntime",
         "PostgresPlanClaimStore",
         "PostgresTeamStore",
@@ -828,20 +829,17 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
         assert hasattr(channels, name)
 
     for name in [
+        "A2AAdapter",
+        "A2AOperationServer",
         "AsgiAgentApp",
         "DurableAgentSessionProvider",
         "LeaseFencedSessionPersistence",
+        "NacosAgentRegistryAdapter",
         "PersistentAgentRegistry",
         "PostgresAgentRegistryStore",
         "RedisSessionLeaseStore",
-        "SessionLeaseStore",
-    ]:
-        assert hasattr(agentos, name)
-    for name in [
-        "A2AAdapter",
-        "A2AOperationServer",
-        "NacosAgentRegistryAdapter",
         "RemoteTaskExecutor",
+        "SessionLeaseStore",
         "agent_card_to_nacos_metadata",
     ]:
         assert not hasattr(agentos, name)
@@ -927,7 +925,7 @@ def test_release_evidence_public_api_exports() -> None:
         "validate_release_evidence_manifest",
     ]:
         assert hasattr(release, name)
-        assert hasattr(agentos, name)
+        assert not hasattr(agentos, name)
 
 
 def test_skill_release_public_api_exports() -> None:
@@ -953,8 +951,8 @@ def test_distributed_session_adapter_public_api_exports() -> None:
     assert hasattr(channels, "RedisSessionLeaseStore")
     assert hasattr(channels, "LeaseFencedSessionPersistence")
     assert hasattr(persistence, "PostgresSessionSnapshotPersistence")
-    assert hasattr(agentos, "RedisSessionLeaseStore")
-    assert hasattr(agentos, "LeaseFencedSessionPersistence")
+    assert not hasattr(agentos, "RedisSessionLeaseStore")
+    assert not hasattr(agentos, "LeaseFencedSessionPersistence")
     assert not hasattr(agentos, "PostgresSessionSnapshotPersistence")
 
 
@@ -976,9 +974,9 @@ def test_distributed_web_runtime_profile_public_api_exports() -> None:
     runtime = importlib.import_module("agentos.runtime")
 
     assert hasattr(runtime, "DistributedWebRuntimeProfile")
-    assert hasattr(agentos, "DistributedWebRuntimeProfile")
+    assert not hasattr(agentos, "DistributedWebRuntimeProfile")
     assert hasattr(runtime, "DistributedWebSessionOperationsProfile")
-    assert hasattr(agentos, "DistributedWebSessionOperationsProfile")
+    assert not hasattr(agentos, "DistributedWebSessionOperationsProfile")
     assert hasattr(runtime, "DistributedTeamRuntimeProfile")
     assert not hasattr(agentos, "DistributedTeamRuntimeProfile")
     assert hasattr(runtime, "ProductionStatePlaneDeploymentProfile")
@@ -1072,7 +1070,7 @@ def test_deployment_worker_process_supervisor_public_api_exports() -> None:
 def test_runtime_context_messages_do_not_import_channels() -> None:
     for package in ["runtime", "context", "messages"]:
         for path in (PROJECT_ROOT / "src" / "agentos" / package).glob("*.py"):
-            if path.name == "profile.py":
+            if path.name.startswith("profile"):
                 continue
             assert "agentos.channels" not in path.read_text(encoding="utf-8")
 

@@ -83,6 +83,18 @@ def test_local_runtime_profile_builds_unified_agent() -> None:
     assert asyncio.run(agent.run("hello")).content == "ok"
 
 
+def test_local_runtime_profile_forwards_explicit_session_id() -> None:
+    profile = LocalRuntimeProfile(
+        agent_builder=AgentBuilder().provider(FakeProvider(["ok"])),
+    )
+
+    agent = profile.build_agent("session_profile")
+
+    assert agent.query_loop.session_state.id == "session_profile"
+    assert agent.query_loop.context_runtime.session_id == "session_profile"
+    assert agent.artifacts.session_id == "session_profile"
+
+
 def test_local_runtime_profile_rejects_removed_mode_selector() -> None:
     removed_selector = "loop" + "_mode"
     arguments = {
@@ -112,7 +124,9 @@ def test_local_runtime_profile_resolves_process_workspace(tmp_path: Path) -> Non
 
 def test_web_runtime_profile_requires_session_id_for_build_agent() -> None:
     provider = InMemoryAgentSessionProvider(
-        lambda session_id: AgentBuilder().provider(FakeProvider(["ok"])).build(),
+        lambda session_id: AgentBuilder()
+        .provider(FakeProvider(["ok"]))
+        .build(session_id=session_id),
     )
     profile = WebRuntimeProfile(
         session_provider=provider,
@@ -127,7 +141,7 @@ def test_web_runtime_profile_builds_agent_from_session_provider() -> None:
     provider = InMemoryAgentSessionProvider(
         lambda session_id: AgentBuilder()
         .provider(FakeProvider([f"ok:{session_id}"]))
-        .build(),
+        .build(session_id=session_id),
     )
     profile = WebRuntimeProfile(
         session_provider=provider,
@@ -141,7 +155,9 @@ def test_web_runtime_profile_builds_agent_from_session_provider() -> None:
 
 def test_web_runtime_profile_exposes_session_readiness_metadata() -> None:
     provider = InMemoryAgentSessionProvider(
-        lambda session_id: AgentBuilder().provider(FakeProvider(["ok"])).build(),
+        lambda session_id: AgentBuilder()
+        .provider(FakeProvider(["ok"]))
+        .build(session_id=session_id),
     )
 
     single_process_profile = WebRuntimeProfile(session_provider=provider)
@@ -160,7 +176,9 @@ def test_web_runtime_profile_exposes_session_readiness_metadata() -> None:
 
 def test_web_runtime_profile_exposes_explicit_workspace(tmp_path: Path) -> None:
     session_provider = InMemoryAgentSessionProvider(
-        lambda session_id: AgentBuilder().provider(FakeProvider(["ok"])).build(),
+        lambda session_id: AgentBuilder()
+        .provider(FakeProvider(["ok"]))
+        .build(session_id=session_id),
     )
     provider = LocalWorkspaceProvider(base_dir=tmp_path)
     profile = WebRuntimeProfile(
@@ -178,7 +196,9 @@ def test_web_runtime_profile_exposes_explicit_workspace(tmp_path: Path) -> None:
 
 def test_web_runtime_profile_builds_asgi_app() -> None:
     provider = InMemoryAgentSessionProvider(
-        lambda session_id: AgentBuilder().provider(FakeProvider(["web ok"])).build(),
+        lambda session_id: AgentBuilder()
+        .provider(FakeProvider(["web ok"]))
+        .build(session_id=session_id),
     )
     profile = WebRuntimeProfile(
         session_provider=provider,
@@ -275,7 +295,7 @@ class SnapshotFactory:
             .provider(provider)
             .context_runtime(context)
             .message_runtime(messages)
-            .build()
+            .build(session_id=session_id)
         )
 
     def create_snapshot(self, *, session_id: str, agent) -> SessionSnapshot:

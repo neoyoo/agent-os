@@ -95,7 +95,7 @@ def test_plan_codec_has_one_planning_owner() -> None:
     assert all(not hasattr(multi_serializers, name) for name in codec_names)
 
 
-def test_root_planner_exports_resolve_to_their_real_owners() -> None:
+def test_planner_exports_exist_only_on_their_real_owners() -> None:
     agentos = importlib.import_module("agentos")
     postgres_plan = importlib.import_module("agentos.multi.postgres_plan")
 
@@ -105,5 +105,7 @@ def test_root_planner_exports_resolve_to_their_real_owners() -> None:
         "PlanConflictError",
         "PlanStoreRecord",
     ):
-        assert getattr(agentos, name) is getattr(planning, name)
-    assert agentos.PostgresPlanStore is postgres_plan.PostgresPlanStore
+        assert hasattr(planning, name)
+        assert not hasattr(agentos, name)
+    assert hasattr(postgres_plan, "PostgresPlanStore")
+    assert not hasattr(agentos, "PostgresPlanStore")

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from agentos.attachments import AttachmentRuntime
-from agentos.artifacts import ArtifactRef
+from agentos.artifacts import ArtifactRef, ArtifactRuntime, InMemoryArtifactStore
+from agentos.artifacts.projection import ArtifactMountProjectionProvider
 from agentos.context import ContextProtocolError, ContextSnapshotRenderer
 from agentos.messages import (
     ConversationReadModel,
@@ -53,22 +53,31 @@ def test_turn_projection_order_and_temporary_receipt_are_rebuilt() -> None:
     messages.active_window.prepend_temporary((recalled.id,))
     messages.append_assistant(
         "",
-        [ToolCall("call_1", "load_attachment", {"handle": "att:pending"})],
+        [
+            ToolCall(
+                "call_1",
+                "load_attachment",
+                {"handle": "art_12345678-1234-4234-9234-123456789abc"},
+            )
+        ],
     )
     messages.append_tool_result("call_1", "attachment loaded")
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
-        filename="drawing.png",
-        mime_type="image/png",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
     )
-    attachments.load_attachment_handle(f"att:{attachment.handle}")
+    artifact = artifacts.upload(
+        data=b"image-bytes",
+        filename="drawing.png",
+        media_type="image/png",
+    )
+    artifacts.load_attachment(artifact.id)
     builder = ProviderRequestBuilder(
         context_renderer=default_context_renderer(),
         message_runtime=messages,
         snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
         context_projections=_EmptyProjections(),
-        attachment_runtime=attachments,
+        input_projections=(ArtifactMountProjectionProvider(artifacts),),
     )
 
     first = builder.build()

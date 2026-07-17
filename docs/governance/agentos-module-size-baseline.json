@@ -24,7 +24,7 @@
     },
     {
       "path": "src/agentos/multi/team.py",
-      "lines": 2034,
+      "lines": 1985,
       "gate": "no_new_responsibility"
     },
     {
@@ -53,18 +53,8 @@
       "gate": "no_new_responsibility"
     },
     {
-      "path": "src/agentos/examples/production_reference_web_agent.py",
-      "lines": 932,
-      "gate": "no_new_responsibility"
-    },
-    {
       "path": "src/agentos/observability/instrumented.py",
-      "lines": 931,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/runtime/profile.py",
-      "lines": 789,
+      "lines": 754,
       "gate": "split_or_exception"
     },
     {
@@ -80,6 +70,11 @@
     {
       "path": "src/agentos/multi/coordinator.py",
       "lines": 719,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/examples/production_reference_web_agent.py",
+      "lines": 713,
       "gate": "split_or_exception"
     },
     {
@@ -124,7 +119,7 @@
     },
     {
       "path": "src/agentos/runtime/query_loop.py",
-      "lines": 493,
+      "lines": 490,
       "gate": "responsibility_review"
     },
     {
@@ -150,11 +145,6 @@
     {
       "path": "src/agentos/planning/daemons.py",
       "lines": 451,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/examples/small_openai_agent.py",
-      "lines": 439,
       "gate": "responsibility_review"
     },
     {
@@ -218,8 +208,18 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/profile_web.py",
+      "lines": 329,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/testing/contracts/plan_store.py",
       "lines": 324,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/providers/input.py",
+      "lines": 319,
       "gate": "responsibility_review"
     },
     {
@@ -235,6 +235,11 @@
     {
       "path": "src/agentos/persistence/serializers.py",
       "lines": 308,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/artifacts/runtime.py",
+      "lines": 300,
       "gate": "responsibility_review"
     }
   ]

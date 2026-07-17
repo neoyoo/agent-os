@@ -23,6 +23,7 @@ ProviderInputKind: TypeAlias = Literal[
     "tool_result",
     "recalled_message",
     "model_task",
+    "continuation_data",
     "context_mount",
 ]
 InputOrigin: TypeAlias = Literal[
@@ -192,6 +193,22 @@ class ProviderInputItem(InternalTranscriptValue):
         )
 
     @classmethod
+    def continuation_data(cls, text: str) -> ProviderInputItem:
+        """创建 Runtime 事实的临时 ContinuationData 输入。"""
+
+        if not isinstance(text, str):
+            raise TypeError("continuation_data text must be str")
+        return cls(
+            role="user",
+            kind="continuation_data",
+            origin="runtime",
+            authority="context_data",
+            persistence="ephemeral",
+            visibility="internal",
+            content=(TextPart(text),),
+        )
+
+    @classmethod
     def context_mount(
         cls,
         content: Iterable[ProviderContentPart],
@@ -255,6 +272,7 @@ _ALLOWED_METADATA = frozenset(
         ("assistant", "recalled_message", "recall_runtime", "conversation_data", "ephemeral", "internal"),
         ("tool", "recalled_message", "recall_runtime", "tool_data", "ephemeral", "internal"),
         ("user", "model_task", "runtime", "context_data", "ephemeral", "internal"),
+        ("user", "continuation_data", "runtime", "context_data", "ephemeral", "internal"),
         ("user", "context_mount", "artifact_runtime", "artifact_data", "ephemeral", "internal"),
     },
 )
@@ -286,6 +304,12 @@ def _validate_provider_input_item(item: ProviderInputItem) -> None:
         len(item.content) != 1 or type(item.content[0]) is not TextPart
     ):
         raise ValueError("model_task provider input requires exactly one TextPart")
+    if item.kind == "continuation_data" and (
+        len(item.content) != 1 or type(item.content[0]) is not TextPart
+    ):
+        raise ValueError(
+            "continuation_data provider input requires exactly one TextPart"
+        )
     if item.role == "tool":
         if not isinstance(item.tool_call_id, str) or not item.tool_call_id:
             raise ValueError("tool provider input requires tool_call_id")

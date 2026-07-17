@@ -54,7 +54,7 @@ packages = ["src/agentos"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 markers = [
     "integration: live Postgres/Redis tests that require docker-compose.test.yml",
 ]

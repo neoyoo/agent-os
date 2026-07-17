@@ -3,7 +3,7 @@ from typing import Protocol
 
 from agentos.context import ContextSnapshotRenderer, ContextState, SystemEnvelope
 from agentos.context.models import ContextSlotProjection
-from agentos.context.projection import project_context_state
+from agentos.context.projection_registry import ContextRuntimeProjectionProvider
 from agentos.messages import MessageRuntime
 from agentos.providers import ProviderInputItem, ProviderRequest, ProviderToolSpec
 from agentos.runtime.message_projection import project_stored_message
@@ -31,12 +31,10 @@ class ContextStateSource(Protocol):
         """返回当前不可变 ContextState 快照。"""
 
 
-@dataclass(frozen=True, slots=True)
-class _ContextRuntimeProjectionProvider:
-    source: ContextStateSource
+class ProviderInputProjectionProvider(Protocol):
+    """Provide current ephemeral Message Plane inputs."""
 
-    def projections(self) -> tuple[ContextSlotProjection, ...]:
-        return project_context_state(self.source.snapshot())
+    def inputs(self) -> tuple[ProviderInputItem, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +81,7 @@ class ProviderRequestBuilder:
     message_runtime: MessageRuntime
     tools: list[ProviderToolSpec] = field(default_factory=list)
     parallel_tool_calls: bool | None = True
-    attachment_runtime: object | None = None
+    input_projections: tuple[ProviderInputProjectionProvider, ...] = ()
     snapshot_renderer: ContextSnapshotRenderer | None = None
     context_projections: ContextProjectionProvider | None = None
     _bound_context_source: ContextStateSource | None = field(
@@ -120,7 +118,7 @@ class ProviderRequestBuilder:
                 "provider request builder context projection is partially configured",
             )
         self.snapshot_renderer = ContextSnapshotRenderer(token_counter)
-        self.context_projections = _ContextRuntimeProjectionProvider(source)
+        self.context_projections = ContextRuntimeProjectionProvider(source)
         self._bound_context_source = source
         self._bound_token_counter = token_counter
 
@@ -143,17 +141,14 @@ class ProviderRequestBuilder:
                 for ref, message in active_snapshot
             ),
         )
-        if self.attachment_runtime is not None:
-            project_inputs = getattr(
-                self.attachment_runtime,
-                "_project_provider_inputs_compat",
-                None,
-            )
-            if not callable(project_inputs):
-                raise RuntimeError(
-                    "attachment_runtime must define _project_provider_inputs_compat()",
-                )
-            messages = project_inputs(messages)
+        messages = (
+            *messages,
+            *(
+                item
+                for provider in self.input_projections
+                for item in provider.inputs()
+            ),
+        )
         return ProviderRequestBuild(
             request=ProviderRequest(
                 system=envelope.text,

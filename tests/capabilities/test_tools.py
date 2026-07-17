@@ -4,7 +4,8 @@ from typing import get_type_hints
 import pytest
 
 import agentos.capabilities.router as router_module
-from agentos.attachments import AttachmentRuntime
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
+from agentos.artifacts.tool_adapter import ArtifactToolAdapter
 from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
 from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
@@ -209,13 +210,12 @@ def test_tool_call_router_exposes_context_protocol_tool_specs() -> None:
         for spec in runtime.tool_specs()
     ]
 
-    assert tool_names[:6] == [
+    assert tool_names[:5] == [
         "declare_schema",
         "update_state",
         "extend_schema",
         "start_chapter",
         "recall_context",
-        "load_attachment",
     ]
     assert "load_image" not in tool_names
 
@@ -367,61 +367,46 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
 
 
 def test_tool_call_router_routes_load_attachment_namespace() -> None:
-    attachments = AttachmentRuntime()
-    attachment = attachments.upload_bytes(
-        b"image-bytes",
+    artifacts = ArtifactRuntime(
+        session_id="session_1",
+        store=InMemoryArtifactStore(),
+    )
+    artifact = artifacts.upload(
+        data=b"image-bytes",
         filename="diagram.png",
-        mime_type="image/png",
+        media_type="image/png",
     )
-    runtime = ToolCallRouter(
-        tool_registry=ToolRegistry(),
-        attachment_runtime=attachments,
-    )
+    registry = ToolRegistry()
+    for tool in ArtifactToolAdapter(artifacts).registered_tools():
+        registry.register(tool)
+    runtime = ToolCallRouter(tool_registry=registry)
 
     result = runtime.execute_tool_call(
         ProviderToolCall(
             id="call_load_attachment",
             name="load_attachment",
-            arguments={"handle": f"att:{attachment.handle}"},
+            arguments={"handle": artifact.id},
         ),
     )
 
     assert result.tool_call_id == "call_load_attachment"
-    assert "load_attachment applied" in result.content
-    assert "rest of the current turn" in result.content
-
-
-def test_tool_call_router_returns_tool_result_for_unknown_attachment_handle() -> None:
-    runtime = ToolCallRouter(
-        tool_registry=ToolRegistry(),
-        attachment_runtime=AttachmentRuntime(),
+    assert result.content == (
+        f"附件已挂载：{artifact.id}。"
+        "附件内容将在下一次模型请求中作为当前轮次的工具结果数据提供。"
     )
-
-    result = runtime.execute_tool_call(
-        ProviderToolCall(
-            id="call_load_attachment",
-            name="load_attachment",
-            arguments={"handle": "att:missing"},
-        ),
-    )
-
-    assert result.tool_call_id == "call_load_attachment"
-    assert "load_attachment failed" in result.content
-    assert "unknown attachment" in result.content
 
 
 def test_tool_call_router_does_not_route_attachment_handles_through_recall_context() -> None:
-    runtime = ToolCallRouter(
-        tool_registry=ToolRegistry(),
-        attachment_runtime=AttachmentRuntime(),
-    )
+    runtime = ToolCallRouter(tool_registry=ToolRegistry())
 
     with pytest.raises(RuntimeError, match="recall runtime is required"):
         runtime.execute_tool_call(
             ProviderToolCall(
                 id="call_recall",
                 name="recall_context",
-                arguments={"handle": "att:missing"},
+                arguments={
+                    "handle": "art_12345678-1234-4234-9234-123456789abc"
+                },
             ),
         )
 

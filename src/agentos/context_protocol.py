@@ -33,10 +33,6 @@ CONTEXT_PROTOCOL_TOOL_DEFINITIONS = [
         name="recall_context",
         description="当压缩摘要不够时，按 handle 或 query 恢复相关压缩片段。",
     ),
-    ContextProtocolToolDefinition(
-        name="load_attachment",
-        description="加载已上传附件到当前 turn 的后续模型请求；当前稳定支持图片附件。",
-    ),
 ]
 """默认 context protocol tool 的 LLM 可见声明。"""
 
@@ -165,26 +161,6 @@ _CONTEXT_PROTOCOL_TOOL_SPECS: list[dict[str, object]] = [
                         "description": "query 召回的最多片段数，默认 1。",
                     },
                 },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "load_attachment",
-            "description": (
-                "加载已上传附件到当前 user turn 的后续模型请求；"
-                "当前稳定支持 att: 图片 handle。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "handle": {
-                        "type": "string",
-                        "description": "附件 handle，例如 att:att_1。",
-                    },
-                },
-                "required": ["handle"],
             },
         },
     },

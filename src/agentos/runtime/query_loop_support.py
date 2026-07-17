@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from agentos._waiting import WaitRequest
-from agentos.attachments import Attachment
+from agentos.artifacts import ArtifactRef
 from agentos.capabilities.executor import ToolExecutionOutcome, ToolExecutionResult
 from agentos.capabilities.tools import ToolConcurrencyPolicy
 from agentos.context import ContextState
@@ -15,6 +15,7 @@ from agentos.policies.tool_result_budget import cap_tool_result_content
 from agentos.providers import ProviderToolCall
 from agentos._json_values import thaw_json
 from agentos.runtime.event_bus import ToolResultCappedEvent
+from agentos.runtime.continuation import ContinuationNotice
 from agentos.runtime.stream_events import SkillLoaded, ToolStreamCompleted
 from agentos.runtime.tool_scheduler import ScheduledToolCallResult
 from agentos.tokens import TokenCounter
@@ -38,31 +39,23 @@ class ContextRuntimeBoundary(Protocol):
     def snapshot(self) -> ContextState:
         """返回可渲染的 context snapshot。"""
 
-    def set_runtime_notices(self, notices: tuple[str, ...]) -> None:
-        """设置本轮 provider request 可见的一次性 runtime notice。"""
+class ArtifactRuntimeBoundary(Protocol):
+    """TurnLifecycle 依赖的 Session Artifact 边界。"""
 
-    def clear_runtime_notices(self) -> None:
-        """清空一次性 runtime notice。"""
-
-
-class AttachmentRuntimeBoundary(Protocol):
-    """TurnLifecycle 依赖的附件投影与清理边界。"""
-
-    def prepare_user_message(
+    def prepare_user_uploads(
         self,
-        user_message: str,
-        attachments: list[Attachment],
-    ) -> str:
-        """准备带附件占位符的用户消息。"""
+        handles: tuple[str, ...],
+    ) -> tuple[ArtifactRef, ...]:
+        """解析用户 Artifact handle 并建立当前 Turn mount。"""
 
-    def clear_turn_loaded_attachments(self) -> None:
-        """清理当前 Turn 已加载的附件投影。"""
+    def clear_mounts(self) -> object:
+        """清理当前 Turn 的 Artifact mounts。"""
 
 
 class TurnNoticeProvider(Protocol):
     """QueryLoop 依赖的一次性 turn notice 边界。"""
 
-    def consume_notices(self) -> tuple[str, ...]:
+    def consume_notices(self) -> tuple[ContinuationNotice, ...]:
         """返回并消费本轮 runtime notices。"""
 
 

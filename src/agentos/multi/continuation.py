@@ -10,6 +10,7 @@ from typing import Protocol
 
 from agentos.events import AgentContinuationFailedEvent, EventBus
 from agentos.multi.continuation_runner import run_local_continuation
+from agentos.runtime.continuation import ContinuationNotice
 from agentos.sync import SyncAgent
 
 
@@ -29,7 +30,7 @@ class AgentTaskNoticeProvider:
         self._store = store
         self._agent_id = agent_id
 
-    def consume_notices(self) -> tuple[str, ...]:
+    def consume_notices(self) -> tuple[ContinuationNotice, ...]:
         """返回并消费当前 parent agent 的 runtime notices。"""
 
         return self._store.consume_notices(self._agent_id)
@@ -41,7 +42,7 @@ class AgentTaskNoticeStore:
     def __init__(self) -> None:
         """创建空 notice store。"""
 
-        self._notices: dict[str, deque[str]] = defaultdict(deque)
+        self._notices: dict[str, deque[ContinuationNotice]] = defaultdict(deque)
         self._lock = RLock()
 
     def provider_for(self, agent_id: str) -> AgentTaskNoticeProvider:
@@ -52,14 +53,18 @@ class AgentTaskNoticeStore:
     def add_task_completed(self, agent_id: str, task_id: str) -> None:
         """记录一个 task terminal notice。"""
 
-        notice = (
-            f"Task {task_id} completed. "
-            "Call check_agent_tasks to retrieve results."
+        notice = ContinuationNotice(
+            kind="task_completed",
+            subject_id=task_id,
+            action="check_agent_tasks",
         )
         with self._lock:
             self._notices[agent_id].append(notice)
 
-    def consume_notices(self, agent_id: str) -> tuple[str, ...]:
+    def consume_notices(
+        self,
+        agent_id: str,
+    ) -> tuple[ContinuationNotice, ...]:
         """返回并清空指定 parent agent 的 notices。"""
 
         with self._lock:

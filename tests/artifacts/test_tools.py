@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError, asdict
 from datetime import UTC, datetime
+import json
 
 import pytest
 
@@ -75,28 +76,47 @@ def test_artifact_tool_page_is_frozen_and_model_safe() -> None:
         item.state = "mounted"  # type: ignore[misc]
 
 
-def test_list_attachments_returns_safe_page_and_mounted_state() -> None:
+def test_list_attachments_returns_canonical_json_and_mounted_state() -> None:
     target = runtime()
     first = upload(target, "first.png")
-    second = upload(target, "second.png")
+    second = upload(target, "图纸.png")
     target.load_attachment(second.id)
 
-    page = list_attachments(target, limit=1)
+    result = list_attachments(target, limit=1)
 
-    assert page.items == (
-        ArtifactToolItem(
-            handle=second.id,
-            filename="second.png",
-            media_type="image/png",
-            state="mounted",
-        ),
+    assert result.startswith(
+        '{"items":[{"filename":"图纸.png",'
+        f'"handle":"{second.id}",'
+        '"media_type":"image/png","state":"mounted"}],'
+        '"next_cursor":"'
     )
-    assert page.next_cursor is not None
-    next_page = list_attachments(target, cursor=page.next_cursor, limit=1)
-    assert next_page.items[0].handle == first.id
-    assert next_page.items[0].state == "available"
-    assert "session-secret" not in repr(page)
-    assert "private-image" not in repr(page)
+    assert "\\u56fe" not in result
+
+    page = json.loads(result)
+    next_cursor = page["next_cursor"]
+    assert isinstance(next_cursor, str)
+    next_result = list_attachments(target, cursor=next_cursor, limit=1)
+    assert next_result == (
+        '{"items":[{"filename":"first.png",'
+        f'"handle":"{first.id}",'
+        '"media_type":"image/png","state":"available"}],'
+        '"next_cursor":null}'
+    )
+    for forbidden in (
+        "session-secret",
+        "private-image",
+        "created_at",
+        "size_bytes",
+        "bytes",
+        "path",
+        "base64",
+        "provider_file_id",
+    ):
+        assert forbidden not in result
+
+
+def test_list_attachments_empty_page_has_frozen_shape() -> None:
+    assert list_attachments(runtime()) == '{"items":[],"next_cursor":null}'
 
 
 def test_list_attachments_reuses_store_limit_validation() -> None:
@@ -137,7 +157,7 @@ def test_artifact_tool_specs_freeze_list_and_load_schema() -> None:
     assert "att:" not in repr(specs)
 
 
-def test_artifact_tools_remain_internal_until_phase4() -> None:
+def test_artifact_tools_have_no_legacy_or_unapproved_operations() -> None:
     assert not hasattr(public_artifacts, "artifact_tool_specs")
     global_names = {
         spec.function.name for spec in context_protocol_tool_specs()

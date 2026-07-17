@@ -3,7 +3,6 @@ from typing import get_args
 
 import pytest
 
-from agentos.attachments import Attachment, BytesSource
 from agentos.runtime.errors import (
     AgentBusyError,
     AgentRunError,
@@ -29,22 +28,12 @@ from agentos.runtime import WaitReason
 from agentos.runtime.run import RunOptions
 
 
-def _attachment() -> Attachment:
-    return Attachment(
-        handle="att_1",
-        filename="notes.txt",
-        mime_type="text/plain",
-        size_bytes=5,
-        source=BytesSource(b"hello"),
-    )
+def test_user_turn_input_is_frozen_and_uses_artifact_handle_tuple() -> None:
+    handle = "art_12345678-1234-4234-9234-123456789abc"
+    user_input = UserTurnInput(content="hello", artifact_handles=(handle,))
 
-
-def test_user_turn_input_is_frozen_and_uses_attachment_tuple() -> None:
-    attachment = _attachment()
-    user_input = UserTurnInput(content="hello", attachments=(attachment,))
-
-    assert user_input.attachments == (attachment,)
-    assert isinstance(user_input.attachments, tuple)
+    assert user_input.artifact_handles == (handle,)
+    assert isinstance(user_input.artifact_handles, tuple)
     assert not hasattr(user_input, "__dict__")
     with pytest.raises(FrozenInstanceError):
         user_input.content = "changed"  # type: ignore[misc]

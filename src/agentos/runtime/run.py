@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from agentos._waiting import AgentWaiting
-from agentos.attachments.types import Attachment
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +19,13 @@ class UserTurnInput:
     """用户发起的新一轮输入。"""
 
     content: str
-    attachments: tuple[Attachment, ...] = ()
+    artifact_handles: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        handles = tuple(self.artifact_handles)
+        if any(type(handle) is not str for handle in handles):
+            raise TypeError("artifact handles must contain str values")
+        object.__setattr__(self, "artifact_handles", handles)
 
 
 @dataclass(frozen=True, slots=True)

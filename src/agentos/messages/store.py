@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 
+from agentos.artifacts import ArtifactRef
 from agentos.messages.types import MessageRole, StoredMessage, ToolCall
 
 
@@ -16,6 +17,7 @@ class MessageStore:
         self,
         role: MessageRole,
         content: str,
+        artifact_refs: tuple[ArtifactRef, ...] = (),
         tool_calls: list[ToolCall] | None = None,
         tool_call_id: str | None = None,
     ) -> StoredMessage:
@@ -25,6 +27,7 @@ class MessageStore:
             id=self._new_id(),
             role=role,
             content=content,
+            artifact_refs=artifact_refs,
             tool_calls=tuple(tool_calls or ()),
             tool_call_id=tool_call_id,
         )

@@ -85,6 +85,7 @@ def test_provider_input_literal_sets_are_closed() -> None:
         "tool_result",
         "recalled_message",
         "model_task",
+        "continuation_data",
         "context_mount",
     }
     assert set(get_args(InputOrigin)) == {
@@ -195,6 +196,17 @@ def test_provider_input_literal_sets_are_closed() -> None:
             ),
         ),
         (
+            lambda: ProviderInputItem.continuation_data("<continuation-data/>\n"),
+            (
+                "user",
+                "continuation_data",
+                "runtime",
+                "context_data",
+                "ephemeral",
+                "internal",
+            ),
+        ),
+        (
             lambda: ProviderInputItem.context_mount((ImagePart(_binary_payload()),)),
             (
                 "user",
@@ -252,6 +264,28 @@ def test_model_task_rejects_direct_public_field_construction() -> None:
         )
 
 
+def test_continuation_data_item_has_fixed_text_content() -> None:
+    item = ProviderInputItem.continuation_data("<continuation-data/>\n")
+
+    assert item.content == (TextPart("<continuation-data/>\n"),)
+    assert item.tool_calls == ()
+    assert item.tool_call_id is None
+    with pytest.raises(TypeError, match="text"):
+        ProviderInputItem.continuation_data(object())  # type: ignore[arg-type]
+
+
+def test_continuation_data_rejects_non_text_content() -> None:
+    with pytest.raises(ValueError, match="exactly one TextPart"):
+        _raw_provider_input(
+            kind="continuation_data",
+            origin="runtime",
+            authority="context_data",
+            persistence="ephemeral",
+            visibility="internal",
+            content=(ImagePart(_binary_payload()),),
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -259,6 +293,14 @@ def test_model_task_rejects_direct_public_field_construction() -> None:
         {"kind": "tool_result", "tool_call_id": None},
         {"kind": "business_message", "origin": "recall_runtime"},
         {"kind": "recalled_message", "persistence": "stored"},
+        {
+            "role": "assistant",
+            "kind": "continuation_data",
+            "origin": "runtime",
+            "authority": "context_data",
+            "persistence": "ephemeral",
+            "visibility": "internal",
+        },
         {"kind": "context_mount", "authority": "conversation_data"},
         {"kind": "unknown"},
     ],

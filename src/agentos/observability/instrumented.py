@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import asdict
 from time import monotonic
 
 from agentos._sync_work import run_sync
-from agentos.capabilities import ToolCallRouter, ToolConcurrencyPolicy
 from agentos.runtime._async_bridge import iterate_sync_in_executor
-from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.observability.attributes import (
     apply_common_observability_attributes,
     metadata_identity_payload,
@@ -25,8 +23,6 @@ from agentos.observability.conventions import (
     GEN_AI_RESPONSE_ID,
     GEN_AI_RESPONSE_MODEL,
     GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK,
-    GEN_AI_TOOL_CALL_ID,
-    GEN_AI_TOOL_NAME,
     GEN_AI_USAGE_INPUT_TOKENS,
     GEN_AI_USAGE_OUTPUT_TOKENS,
     GEN_AI_USAGE_TOTAL_TOKENS,
@@ -39,12 +35,11 @@ from agentos.observability.conventions import (
 from agentos.observability.snapshots import (
     ProviderRequestSnapshot,
     ProviderResponseSnapshot,
-    ToolCallSnapshot,
-    ToolResultSnapshot,
     build_provider_request_snapshot,
     build_provider_response_snapshot,
-    build_tool_call_snapshot,
-    build_tool_result_snapshot,
+)
+from agentos.observability.instrumented_tools import (
+    InstrumentedToolCallRouter as InstrumentedToolCallRouter,
 )
 from agentos.observability.tracer import Tracer
 from agentos.providers import (
@@ -57,13 +52,15 @@ from agentos.providers import (
     ProviderStreamOptions,
     ProviderStreamStarted,
     ProviderThinkingDelta,
-    ProviderToolCall,
     ProviderToolCallDelta,
     ProviderUsage,
     complete_response_to_stream_events,
 )
 from agentos.runtime import ProviderRequestBuilder
-from agentos.runtime.provider_request_builder import ProviderRequestBuild
+from agentos.runtime.provider_request_builder import (
+    ProviderInputProjectionProvider,
+    ProviderRequestBuild,
+)
 
 
 class InstrumentedProvider:
@@ -652,8 +649,15 @@ class InstrumentedProviderRequestBuilder:
         self.latest_request_snapshot: ProviderRequestSnapshot | None = None
 
     @property
-    def attachment_runtime(self) -> object | None:
-        return self._inner.attachment_runtime
+    def input_projections(self) -> tuple[ProviderInputProjectionProvider, ...]:
+        return self._inner.input_projections
+
+    @input_projections.setter
+    def input_projections(
+        self,
+        value: tuple[ProviderInputProjectionProvider, ...],
+    ) -> None:
+        self._inner.input_projections = value
 
     def _bind_context_source(self, context_runtime: object, token_counter: object) -> None:
         self._inner._bind_context_source(context_runtime, token_counter)  # type: ignore[arg-type]
@@ -748,184 +752,3 @@ class InstrumentedCompressionRuntime:
             if result is not None and getattr(result, "id", None) is not None:
                 span.set_attribute("agentos.compression.segment_id", result.id)
             return result
-
-
-class InstrumentedToolCallRouter:
-    """在 tool routing boundary 上创建 tool span。"""
-
-    def __init__(
-        self,
-        inner: ToolCallRouter,
-        *,
-        tracer: Tracer,
-        capture_policy: CapturePolicy,
-    ) -> None:
-        """保存被包装 router 和观测配置。"""
-
-        self._inner = inner
-        self._tracer = tracer
-        self._capture_policy = capture_policy
-
-    def execute_tool_call(self, tool_call: ProviderToolCall) -> object:
-        """执行 tool call，并记录 tool span。"""
-
-        return self._record_tool_call(
-            tool_call,
-            lambda: self._inner.execute_tool_call(tool_call),
-        )
-
-    async def async_execute_tool_call(self, tool_call: ProviderToolCall) -> object:
-        """异步执行 tool call，并记录 tool span。"""
-
-        return await self._record_async_tool_call(
-            tool_call,
-            lambda: self._inner.async_execute_tool_call(tool_call),
-        )
-
-    def concurrency_policy_for(self, tool_name: str) -> ToolConcurrencyPolicy:
-        """返回底层 router 的显式并发策略。"""
-
-        return self._inner.concurrency_policy_for(tool_name)
-
-    def _record_tool_call(
-        self,
-        tool_call: ProviderToolCall,
-        execute: Callable[[], object],
-    ) -> object:
-        call_snapshot = build_tool_call_snapshot(tool_call, self._capture_policy)
-        with self._tracer.start_span(
-            f"tool.{tool_call.name}",
-            attributes={
-                LANGFUSE_OBSERVATION_TYPE: "tool",
-                GEN_AI_OPERATION_NAME: "execute_tool",
-                GEN_AI_TOOL_NAME: tool_call.name,
-                GEN_AI_TOOL_CALL_ID: tool_call.id,
-                "tool.name": tool_call.name,
-                "tool.call_id": tool_call.id,
-                "agentos.tool.kind": self._tool_kind(tool_call.name),
-                "agentos.tool.arguments.sha256": call_snapshot.arguments_sha256,
-            },
-        ) as span:
-            apply_common_observability_attributes(
-                span,
-                tracer=self._tracer,
-                capture_policy=self._capture_policy,
-            )
-            span.set_attribute(
-                LANGFUSE_OBSERVATION_INPUT,
-                json_attribute(
-                    self._tool_input_payload(call_snapshot),
-                    policy=self._capture_policy,
-                ),
-            )
-            result = execute()
-            result_snapshot = build_tool_result_snapshot(
-                result,
-                self._capture_policy,
-            )
-            span.set_attribute(
-                "agentos.tool.result.sha256",
-                result_snapshot.content_sha256,
-            )
-            span.set_attribute(
-                "agentos.tool.result.length",
-                result_snapshot.content_length,
-            )
-            span.set_attribute(
-                LANGFUSE_OBSERVATION_OUTPUT,
-                json_attribute(
-                    self._tool_output_payload(result_snapshot),
-                    policy=self._capture_policy,
-                ),
-            )
-            return result
-
-    async def _record_async_tool_call(
-        self,
-        tool_call: ProviderToolCall,
-        execute: Callable[[], Awaitable[object]],
-    ) -> object:
-        call_snapshot = build_tool_call_snapshot(tool_call, self._capture_policy)
-        with self._tracer.start_span(
-            f"tool.{tool_call.name}",
-            attributes={
-                LANGFUSE_OBSERVATION_TYPE: "tool",
-                GEN_AI_OPERATION_NAME: "execute_tool",
-                GEN_AI_TOOL_NAME: tool_call.name,
-                GEN_AI_TOOL_CALL_ID: tool_call.id,
-                "tool.name": tool_call.name,
-                "tool.call_id": tool_call.id,
-                "agentos.tool.kind": self._tool_kind(tool_call.name),
-                "agentos.tool.arguments.sha256": call_snapshot.arguments_sha256,
-            },
-        ) as span:
-            apply_common_observability_attributes(
-                span,
-                tracer=self._tracer,
-                capture_policy=self._capture_policy,
-            )
-            span.set_attribute(
-                LANGFUSE_OBSERVATION_INPUT,
-                json_attribute(
-                    self._tool_input_payload(call_snapshot),
-                    policy=self._capture_policy,
-                ),
-            )
-            result = await execute()
-            result_snapshot = build_tool_result_snapshot(
-                result,
-                self._capture_policy,
-            )
-            span.set_attribute(
-                "agentos.tool.result.sha256",
-                result_snapshot.content_sha256,
-            )
-            span.set_attribute(
-                "agentos.tool.result.length",
-                result_snapshot.content_length,
-            )
-            span.set_attribute(
-                LANGFUSE_OBSERVATION_OUTPUT,
-                json_attribute(
-                    self._tool_output_payload(result_snapshot),
-                    policy=self._capture_policy,
-                ),
-            )
-            return result
-
-    def tool_specs(self) -> object:
-        """透传 provider tool schemas。"""
-
-        return self._inner.tool_specs()
-
-    def _tool_kind(self, tool_name: str) -> str:
-        """推断 tool kind。"""
-
-        if tool_name in CONTEXT_PROTOCOL_TOOL_NAMES:
-            return "context"
-        if tool_name.startswith("mcp__"):
-            return "mcp"
-        try:
-            return self._inner.tool_registry.get(tool_name).kind
-        except KeyError:
-            return "unknown"
-
-    def _tool_input_payload(self, snapshot: ToolCallSnapshot) -> dict[str, object]:
-        """返回 tool span input payload。"""
-
-        if self._capture_policy.mode == "metadata":
-            return {
-                **metadata_identity_payload(capture_policy=self._capture_policy),
-                "arguments_hidden": True,
-            }
-        return {"arguments": snapshot.arguments}
-
-    def _tool_output_payload(self, snapshot: ToolResultSnapshot) -> dict[str, object]:
-        """返回 tool span output payload。"""
-
-        if self._capture_policy.mode == "metadata":
-            return {
-                **metadata_identity_payload(capture_policy=self._capture_policy),
-                "content_chars": snapshot.content_length,
-            }
-        return {"content": snapshot.content}

@@ -34,6 +34,7 @@ def test_waiting_runtime_exposes_only_async_commit_waiting() -> None:
     assert inspect.iscoroutinefunction(WaitingRuntime.commit_waiting)
 
     signature = inspect.signature(WaitingRuntime.commit_waiting)
+    assert signature.parameters["run_id"].kind is inspect.Parameter.KEYWORD_ONLY
     assert signature.parameters["turn_id"].kind is inspect.Parameter.KEYWORD_ONLY
     assert signature.parameters["reason"].kind is inspect.Parameter.KEYWORD_ONLY
     assert get_type_hints(WaitingRuntime.commit_waiting)["return"] is WaitingCommit

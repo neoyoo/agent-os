@@ -8,6 +8,7 @@ from agentos.artifacts.types import (
     ArtifactMountReason,
     ArtifactPage,
     ArtifactRecord,
+    ArtifactRef,
     ArtifactValidationError,
     ContextMount,
     validate_artifact_media_type,
@@ -164,6 +165,24 @@ class ArtifactRuntime:
         if created:
             self._emit_mounted(mount, record)
         return mount
+
+    def prepare_user_uploads(
+        self,
+        handles: tuple[str, ...],
+    ) -> tuple[ArtifactRef, ...]:
+        """Resolve user handles before atomically establishing their mounts."""
+
+        records = tuple(self._store.get(self._session_id, handle) for handle in handles)
+        for record in records:
+            self.mount_user_upload(record.id)
+        return tuple(
+            ArtifactRef(
+                artifact_id=record.id,
+                filename=record.filename,
+                media_type=record.media_type,
+            )
+            for record in records
+        )
 
     def active_mounts(self) -> tuple[ContextMount, ...]:
         """按建立顺序返回当前 Turn 的不可变 Mount 快照。"""

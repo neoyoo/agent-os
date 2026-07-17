@@ -3,8 +3,8 @@ import inspect
 
 import pytest
 
-from agentos import Agent
-from agentos.attachments import AttachmentRuntime, ImagePart, TextPart
+from agentos import Agent, AgentBuilder
+from agentos.providers import ImagePart, TextPart
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse
@@ -19,8 +19,8 @@ from agentos.runtime import (
     iter_jsonl,
     iter_sse,
 )
-from tests._provider_binary import payload_from_attachment
 from agentos.runtime.errors import AgentBusyError, ContinuationUnavailableError
+from agentos.runtime.continuation import ContinuationNotice
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -50,30 +50,15 @@ def build_agent(provider: object) -> Agent:
 
 
 def build_agent_with_attachments(provider: object) -> Agent:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    attachments = AttachmentRuntime()
-    return Agent(
-        query_loop_kwargs={
-            "context_runtime": context,
-            "message_runtime": messages,
-            "request_builder": ProviderRequestBuilder(
-                context_renderer=default_context_renderer(),
-                message_runtime=messages,
-                tools=[],
-                attachment_runtime=attachments,
-            ),
-            "provider": provider,
-        },
-    )
+    return AgentBuilder().provider(provider).build()  # type: ignore[arg-type]
 
 
 class StaticNoticeProvider:
-    def __init__(self, notices: tuple[str, ...]) -> None:
+    def __init__(self, notices: tuple[ContinuationNotice, ...]) -> None:
         self.notices = notices
         self.calls = 0
 
-    def consume_notices(self) -> tuple[str, ...]:
+    def consume_notices(self) -> tuple[ContinuationNotice, ...]:
         self.calls += 1
         notices = self.notices
         self.notices = ()
@@ -118,21 +103,23 @@ def test_agent_run_accepts_uploaded_attachments() -> None:
     async def run() -> None:
         provider = FakeProvider([ProviderResponse(content="ok")])
         agent = build_agent_with_attachments(provider)
-        attachment = agent.attachments.upload_bytes(
-            b"image-bytes",
+        artifact = agent.artifacts.upload(
+            data=b"image-bytes",
             filename="diagram.png",
-            mime_type="image/png",
+            media_type="image/png",
         )
 
         result = await agent.run(
-            UserTurnInput("inspect image", attachments=(attachment,)),
+            UserTurnInput("inspect image", artifact_handles=(artifact.id,)),
         )
 
         assert result.content == "ok"
-        assert provider.requests[0].messages[1].content == (
-            TextPart("inspect image"),
-            ImagePart(payload_from_attachment(attachment)),
-        )
+        assert provider.requests[0].messages[1].content == (TextPart("inspect image"),)
+        mount = provider.requests[0].messages[2]
+        assert mount.kind == "context_mount"
+        assert isinstance(mount.content[1], ImagePart)
+        assert mount.content[1].payload.handle == artifact.id
+        assert mount.content[1].payload.data == b"image-bytes"
 
     asyncio.run(run())
 
@@ -219,7 +206,9 @@ def test_agent_continuation_injects_notice_without_user_message() -> None:
     async def run() -> None:
         provider = FakeProvider([ProviderResponse(content="checked")])
         context = ContextRuntime()
-        notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+        notice_provider = StaticNoticeProvider(
+            (ContinuationNotice("task_completed", "task_1", "check_agent_tasks"),)
+        )
         agent = build_agent_with_context(provider, context, notice_provider)
 
         result = await agent.run(LocalContinuationInput())
@@ -227,12 +216,16 @@ def test_agent_continuation_injects_notice_without_user_message() -> None:
         assert result.content == "checked"
         assert [message.kind for message in provider.requests[0].messages] == [
             "context_snapshot",
+            "continuation_data",
         ]
         snapshot_text = provider.requests[0].messages[0].content[0].text  # type: ignore[union-attr]
-        assert "Task task_1 completed." not in snapshot_text
+        continuation_text = provider.requests[0].messages[1].content[0].text  # type: ignore[union-attr]
+        assert "task_1" not in snapshot_text
+        assert 'kind="task_completed"' in continuation_text
+        assert 'subject-id="task_1"' in continuation_text
+        assert 'action="check_agent_tasks"' in continuation_text
         assert "# Runtime Notice" not in provider.requests[0].system
-        assert "Task task_1 completed." not in provider.requests[0].system
-        assert context.snapshot().runtime_notices == ()
+        assert "task_1" not in provider.requests[0].system
         assert notice_provider.calls == 1
 
     asyncio.run(run())
@@ -262,7 +255,9 @@ def test_agent_continuation_turn_started_event_is_marked_continuation() -> None:
     async def run() -> None:
         provider = FakeProvider([ProviderResponse(content="checked")])
         context = ContextRuntime()
-        notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+        notice_provider = StaticNoticeProvider(
+            (ContinuationNotice("task_completed", "task_1", "check_agent_tasks"),)
+        )
         event_bus = EventBus()
         agent = build_agent_with_context(provider, context, notice_provider, event_bus)
 
@@ -287,7 +282,9 @@ def test_agent_continuation_clears_notice_when_stream_closes_before_request() ->
             ],
         )
         context = ContextRuntime()
-        notice_provider = StaticNoticeProvider(("Task task_1 completed.",))
+        notice_provider = StaticNoticeProvider(
+            (ContinuationNotice("task_completed", "task_1", "check_agent_tasks"),)
+        )
         agent = build_agent_with_context(provider, context, notice_provider)
 
         stream = await agent.run(LocalContinuationInput(), stream=True)
@@ -295,7 +292,6 @@ def test_agent_continuation_clears_notice_when_stream_closes_before_request() ->
         await stream.aclose()
 
         assert type(first_event).__name__ == "TurnStreamStarted"
-        assert context.snapshot().runtime_notices == ()
         assert notice_provider.calls == 1
         assert agent.interrupt() is False
 
@@ -303,7 +299,10 @@ def test_agent_continuation_clears_notice_when_stream_closes_before_request() ->
 
         assert result.content == "user answer"
         assert "# Runtime Notice" not in provider.requests[1].system
-        assert "Task task_1 completed." not in provider.requests[1].system
+        assert all(
+            message.kind != "continuation_data"
+            for message in provider.requests[1].messages
+        )
 
     asyncio.run(run())
 
