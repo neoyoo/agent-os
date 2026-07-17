@@ -45,9 +45,10 @@ Stores + Runtime State + Policies
 
 本设计不实施代码，也不要求部署方使用 PostgreSQL、Redis、Nacos、Kubernetes、向量数据库或外部对象存储。
 
-第一阶段附件能力明确不包含：
+AgentOS SDK 的附件能力明确不包含：
 
-- OCR 和图纸字段提取；
+- OCR、图纸字段提取和文档识别流水线。此类业务能力由应用侧 Ingestion
+  Extension 或独立服务负责，不进入 AgentOS SDK 路线图；
 - 自动附件摘要；
 - 向量和混合检索；
 - Workspace/Tenant 范围的附件共享；
@@ -378,7 +379,9 @@ Turn 1 上传图片
   -> 删除 Session 时删除对应附件
 ```
 
-第一阶段不使用 OCR、摘要模型、Embedding 模型、向量数据库或外部对象存储。
+第一阶段不使用摘要模型、Embedding 模型、向量数据库或外部对象存储。OCR
+永久不属于 AgentOS SDK 范围；应用可以把外部识别结果作为 Tool Result、Memory
+或 Artifact 元数据接入，但 Kernel 和 Durable Profile 不拥有识别语义。
 
 ### 12.2 核心类型
 
@@ -537,14 +540,16 @@ Event 包含 ID 和元数据，但不包含原始内容、Base64、Signed URL、
 
 ### 13.1 第二阶段
 
-- 异步 OCR 和 Preview；
+- 可选 Preview；
 - 可选的一行摘要；
 - 图号、零件名、版本、材料和页码等元数据；
 - 关键词和结构化字段搜索；
 - PDF Page 和 Image Region 局部加载；
 - 版本化索引刷新。
 
-摘要生成属于 Ingestion Pipeline，不是必需的 LLM Tool。涉及尺寸、公差或视觉细节的结论仍必须加载原始页面或图片。
+摘要生成属于可选 Ingestion Pipeline，不是必需的 LLM Tool。OCR 与文档识别由
+应用侧 Extension 或独立服务负责。涉及尺寸、公差或视觉细节的结论仍必须加载
+原始页面或图片。
 
 ### 13.2 第三阶段
 

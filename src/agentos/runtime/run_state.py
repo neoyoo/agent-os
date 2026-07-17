@@ -51,12 +51,13 @@ _ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
 
 @dataclass(frozen=True, slots=True)
 class RunState:
-    """一个 Session 内 Run 聚合根的进程内权威状态。"""
+    """一个 Session 内 Run 聚合根的权威状态。"""
 
     run_id: str
     session_id: str
     status: RunStatus = RunStatus.CREATED
     wait_reason: WaitReason | None = None
+    aggregate_version: int = 0
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():
@@ -67,6 +68,11 @@ class RunState:
             raise ValueError("waiting run requires a wait reason")
         if self.status is not RunStatus.WAITING and self.wait_reason is not None:
             raise ValueError("wait reason is only valid for a waiting run")
+        if (
+            type(self.aggregate_version) is not int
+            or self.aggregate_version < 0
+        ):
+            raise ValueError("aggregate_version must be a non-negative integer")
 
     def transition(
         self,
@@ -92,4 +98,5 @@ class RunState:
             self,
             status=status,
             wait_reason=wait_reason if status is RunStatus.WAITING else None,
+            aggregate_version=self.aggregate_version + 1,
         )

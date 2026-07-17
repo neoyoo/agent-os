@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 
@@ -8,6 +9,9 @@ from agentos.channels.a2a_execution import (
     execute_a2a_agent,
 )
 from agentos.runtime import AgentResult, AgentWaiting, WaitReason
+
+
+_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 
 class OutcomeAgent:
@@ -52,7 +56,7 @@ def test_execute_a2a_agent_maps_human_wait_to_input_required() -> None:
 
 
 def test_execute_a2a_agent_maps_non_human_wait_to_working() -> None:
-    reason = WaitReason("timer", "timer_1")
+    reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
     agent = OutcomeAgent(AgentWaiting("run_2", reason))
 
     result = asyncio.run(execute_a2a_agent(agent, "work"))
@@ -76,7 +80,7 @@ def test_execute_a2a_agent_maps_non_human_wait_to_working() -> None:
     ("reason", "expected_state"),
     [
         (WaitReason("human_input", "approval_1", "confirm"), "input-required"),
-        (WaitReason("timer", "timer_1"), "working"),
+        (WaitReason("timer", "timer_1", not_before=_TIMER_DUE), "working"),
     ],
 )
 def test_agent_a2a_operation_runner_projects_waiting_task(

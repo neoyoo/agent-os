@@ -4,7 +4,7 @@
     "agentos": {
       "exports": {
         "Agent": {
-          "signature": "(query_loop: 'QueryLoop | None' = None, query_loop_kwargs: 'dict[str, object] | None' = None) -> 'None'",
+          "signature": "(query_loop: 'QueryLoop | None' = None, query_loop_kwargs: 'dict[str, object] | None' = None, durable_command_runtime: 'DurableCommandRuntime | None' = None) -> 'None'",
           "stability": "stable"
         },
         "AgentBuilder": {
@@ -22,6 +22,217 @@
         "__version__": {
           "signature": "non-callable",
           "stability": "stable"
+        }
+      }
+    },
+    "agentos.artifacts": {
+      "exports": {
+        "ArtifactError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "ArtifactNotFoundError": {
+          "signature": "() -> 'None'",
+          "stability": "experimental"
+        },
+        "ArtifactPolicy": {
+          "signature": "(allowed_media_types: 'frozenset[str]' = frozenset({'application/pdf', 'image/gif', 'image/jpeg', 'image/png', 'image/webp'}), max_size_bytes: 'int' = 26214400) -> None",
+          "stability": "experimental"
+        },
+        "ArtifactRecord": {
+          "signature": "(id: 'str', session_id: 'str', filename: 'str | None', media_type: 'str', size_bytes: 'int', created_at: 'datetime') -> None",
+          "stability": "experimental"
+        },
+        "ArtifactRef": {
+          "signature": "(artifact_id: 'str', filename: 'str | None', media_type: 'str') -> None",
+          "stability": "experimental"
+        },
+        "ArtifactRuntime": {
+          "signature": "(*, session_id: 'str', store: 'ArtifactStore', policy: 'ArtifactPolicy | None' = None, event_bus: 'ArtifactEventSink | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "ArtifactStore": {
+          "methods": {
+            "delete": "(self, session_id: str, artifact_id: str) -> None",
+            "delete_session": "(self, session_id: str) -> None",
+            "get": "(self, session_id: str, artifact_id: str) -> agentos.artifacts.types.ArtifactRecord",
+            "list": "(self, session_id: str, cursor: str | None = None, limit: int = 20) -> agentos.artifacts.types.ArtifactPage",
+            "put": "(self, *, session_id: str, data: bytes, filename: str | None, media_type: str) -> agentos.artifacts.types.ArtifactRecord",
+            "read": "(self, session_id: str, artifact_id: str) -> bytes"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "ArtifactValidationError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "InMemoryArtifactStore": {
+          "signature": "(*, clock: 'Callable[[], datetime] | None' = None, id_factory: 'Callable[[], str] | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "SqliteFilesystemArtifactStore": {
+          "signature": "(*, database_path: 'str | Path', artifact_root: 'str | Path', clock: 'Callable[[], datetime] | None' = None, id_factory: 'Callable[[], str] | None' = None) -> 'None'",
+          "stability": "stable"
+        }
+      }
+    },
+    "agentos.capabilities": {
+      "exports": {
+        "AsyncToolHandler": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "BuiltinSkillSource": {
+          "signature": "(skills: 'Iterable[SkillDefinition]') -> 'None'",
+          "stability": "experimental"
+        },
+        "BuiltinToolError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "ChainedSkillSource": {
+          "signature": "(sources: 'Iterable[SkillContentSource]') -> 'None'",
+          "stability": "experimental"
+        },
+        "ExecutionBackend": {
+          "methods": {
+            "async_run": "(self, tool: 'RegisteredTool', arguments: 'dict[str, object]', *, resource_policy: 'ResourcePolicy') -> 'ToolHandlerResult'",
+            "run": "(self, tool: 'RegisteredTool', arguments: 'dict[str, object]', *, resource_policy: 'ResourcePolicy') -> 'ToolHandlerResult'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "FileSystemSkillSource": {
+          "signature": "(skill_dirs: 'Iterable[Path]', *, allowed: 'set[str] | None' = None) -> 'None'",
+          "stability": "experimental"
+        },
+        "InProcessExecutionBackend": {
+          "signature": "() -> None",
+          "stability": "experimental"
+        },
+        "MCPClient": {
+          "methods": {
+            "call_tool": "(self, tool_name: 'str', arguments: 'dict[str, object]') -> 'str'",
+            "list_tools": "(self) -> 'list[MCPToolInfo]'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "MCPRegistry": {
+          "signature": "() -> 'None'",
+          "stability": "experimental"
+        },
+        "MCPServerRegistration": {
+          "signature": "(name: 'str', description: 'str', client: 'MCPClient', endpoint: 'str | None' = None, allowed_tools: 'set[str] | None' = None, supports_parallel_tool_calls: 'bool' = False) -> None",
+          "stability": "experimental"
+        },
+        "MCPToolAdapter": {
+          "signature": "(registry: 'MCPRegistry') -> None",
+          "stability": "experimental"
+        },
+        "MCPToolInfo": {
+          "signature": "(name: 'str', description: 'str', input_schema: 'dict[str, object]' = <factory>, capability: 'str | None' = None, capabilities: 'tuple[str, ...]' = (), read_only_hint: 'bool' = False, parallel_safe: 'bool' = False) -> None",
+          "stability": "experimental"
+        },
+        "RegisteredTool": {
+          "signature": "(name: str, description: str, parameters: collections.abc.Mapping[str, None | bool | int | float | str | tuple['FrozenJsonValue', ...] | agentos._json_values.FrozenJsonObject], handler: collections.abc.Callable[[dict[str, object]], str | agentos._waiting.WaitRequest] | collections.abc.Callable[[dict[str, object]], collections.abc.Awaitable[str | agentos._waiting.WaitRequest]], kind: Literal['external', 'context', 'skill', 'mcp'] = 'external', concurrency_policy: agentos.capabilities.tools.ToolConcurrencyPolicy = <ToolConcurrencyPolicy.EXCLUSIVE: 'exclusive'>, metadata: collections.abc.Mapping[str, None | bool | int | float | str | tuple['FrozenJsonValue', ...] | agentos._json_values.FrozenJsonObject] = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "SQLiteSkillActivationStore": {
+          "signature": "(database_path: 'str | Path') -> 'None'",
+          "stability": "stable"
+        },
+        "SkillContentSource": {
+          "signature": "()",
+          "stability": "experimental"
+        },
+        "SkillDefinition": {
+          "signature": "(name: 'str', description: 'str', when_to_use: 'str', content: 'str', source: 'SkillSource' = 'filesystem', trust: 'SkillTrust' = 'untrusted', source_revision: 'str' = '1') -> None",
+          "stability": "experimental"
+        },
+        "SkillLoadResult": {
+          "signature": "(name: 'str', content: 'str', metadata: 'SkillMetadata', subject: 'SkillVerificationSubject') -> None",
+          "stability": "experimental"
+        },
+        "SkillRegistry": {
+          "signature": "(source: 'SkillContentSource | None' = None, skills: 'Iterable[SkillDescriptor]' = ()) -> 'None'",
+          "stability": "experimental"
+        },
+        "SkillResourceLoadResult": {
+          "signature": "(skill_name: 'str', path: 'str', content: 'str', mime_type: 'str' = 'text/plain') -> None",
+          "stability": "experimental"
+        },
+        "SkillResourceRef": {
+          "signature": "(path: 'str', mime_type: 'str' = 'text/plain') -> None",
+          "stability": "experimental"
+        },
+        "ToolCallRouter": {
+          "signature": "(tool_registry: agentos.capabilities.registry.ToolRegistry, context_runtime: agentos.context.runtime.ContextRuntime | None = None, recall_runtime: agentos.recall.runtime.RecallRuntime | None = None, mcp_adapter: agentos.capabilities.mcp.MCPToolAdapter | None = None, security_policy: agentos.policies.security.SecurityPolicy = <factory>, backend: agentos.capabilities.backend.ExecutionBackend = <factory>, resource_policy: agentos.policies.resource_policy.ResourcePolicy = <factory>, sandbox_policy: agentos.capabilities.sandbox.ToolSandboxPolicy | None = None, _executor: agentos.capabilities.executor.ToolExecutor | None = None) -> None",
+          "stability": "experimental"
+        },
+        "ToolConcurrencyPolicy": {
+          "signature": "(*values)",
+          "stability": "experimental"
+        },
+        "ToolExecutionError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "ToolExecutionOutcome": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "ToolExecutionResult": {
+          "signature": "(tool_call_id: str, content: str) -> None",
+          "stability": "experimental"
+        },
+        "ToolHandler": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "ToolHandlerResult": {
+          "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "ToolPathSandboxRule": {
+          "signature": "(argument_name: 'str') -> None",
+          "stability": "experimental"
+        },
+        "ToolRegistry": {
+          "signature": "() -> None",
+          "stability": "experimental"
+        },
+        "ToolSandboxError": {
+          "signature": "unavailable",
+          "stability": "experimental"
+        },
+        "ToolSandboxPolicy": {
+          "methods": {
+            "ensure_tool_call_allowed": "(self, tool: 'RegisteredTool', arguments: 'Mapping[str, object]') -> 'None'"
+          },
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "WaitRequest": {
+          "signature": "(reason: 'WaitReason') -> None",
+          "stability": "experimental"
+        },
+        "WorkspaceToolSandboxPolicy": {
+          "signature": "(workspace: 'WorkspaceHandle | None', path_rules: 'Mapping[str, Sequence[PathSandboxRuleInput]]' = <factory>, allowed_capabilities: 'frozenset[str] | None' = None, tool_capabilities: 'Mapping[str, str | Sequence[str]]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "builtin_schema_template_skill": {
+          "signature": "() -> 'SkillDefinition'",
+          "stability": "experimental"
+        },
+        "read_file_tool": {
+          "signature": "(root: str | pathlib.Path = '.') -> agentos.capabilities.tools.RegisteredTool",
+          "stability": "experimental"
+        },
+        "register_skill_loader_tools": {
+          "signature": "(tool_registry: 'ToolRegistry', skill_runtime: 'SkillRuntime', session_id: 'str') -> 'None'",
+          "stability": "experimental"
         }
       }
     },
@@ -1007,6 +1218,18 @@
         }
       }
     },
+    "agentos.durable": {
+      "exports": {
+        "DurableRuntimeProfile": {
+          "signature": "(*, agent_builder: 'AgentBuilder', database_path: 'str | Path', artifact_root: 'str | Path', clock: 'Callable[[], datetime] | None' = None) -> 'None'",
+          "stability": "stable"
+        },
+        "SQLiteDurableStore": {
+          "signature": "(database_path: 'str | Path', *, clock: 'Callable[[], datetime] | None' = None) -> 'None'",
+          "stability": "stable"
+        }
+      }
+    },
     "agentos.memory": {
       "exports": {
         "BoundMemoryProjectionProvider": {
@@ -1060,6 +1283,10 @@
           },
           "signature": "(*args, **kwargs)",
           "stability": "experimental"
+        },
+        "SQLiteMemoryStore": {
+          "signature": "(database_path: 'Path') -> 'None'",
+          "stability": "stable"
         },
         "SemanticCategory": {
           "signature": "(*args, **kwargs)",
@@ -2002,6 +2229,10 @@
           "signature": "(reports: 'tuple[PlanClaimedSchedulerTickReport, ...]' = (), configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('claimed_scheduler_tick_loop', 'worker_process_lifecycle', 'plan_claim_store', 'scheduler_lock_policy', 'stale_lease_recovery', 'compensation_policy', 'metrics_alerting', 'live_backend_verification'), probe_name: 'str' = 'planner_worker_dispatch_supervision', max_consecutive_failed_batches: 'int' = 1) -> None",
           "stability": "experimental"
         },
+        "SQLitePlanStore": {
+          "signature": "(database_path: 'str | Path') -> 'None'",
+          "stability": "stable"
+        },
         "SubAgentTemplate": {
           "signature": "(template_id: 'str', name: 'str', role: 'str', capabilities: 'tuple[str, ...]' = (), allowed_tool_names: 'tuple[str, ...]' = (), context_seed: 'tuple[str, ...]' = (), workspace_scope: 'WorkspaceScope' = 'task', target_agent_id: 'str | None' = None, timeout_seconds: 'float' = 300) -> None",
           "stability": "experimental"
@@ -2244,7 +2475,7 @@
     "agentos.runtime": {
       "exports": {
         "Agent": {
-          "signature": "(query_loop: 'QueryLoop | None' = None, query_loop_kwargs: 'dict[str, object] | None' = None) -> 'None'",
+          "signature": "(query_loop: 'QueryLoop | None' = None, query_loop_kwargs: 'dict[str, object] | None' = None, durable_command_runtime: 'DurableCommandRuntime | None' = None) -> 'None'",
           "stability": "stable"
         },
         "AgentBusyError": {
@@ -2388,6 +2619,14 @@
           "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('durable_session_provider', 'lease_store', 'snapshot_persistence', 'snapshot_migration', 'lease_ttl_policy', 'stale_lease_recovery', 'shared_sse_event_buffer', 'sse_turn_control', 'session_lease_heartbeat', 'credential_policy', 'auth_tenant_policy', 'workspace_policy', 'live_backend_verification'), probe_name: 'str' = 'distributed_web_session_operations') -> None",
           "stability": "stable"
         },
+        "DurableCommandReceipt": {
+          "signature": "(run_id: 'str', command_id: 'str', kind: 'DurableRunCommandKind', aggregate_version: 'int', duplicate: 'bool') -> None",
+          "stability": "stable"
+        },
+        "DurableRunCommand": {
+          "signature": "(run_id: 'str', command_id: 'str', kind: 'DurableRunCommandKind', payload: 'dict[str, object] | FrozenJsonObject | None' = None) -> 'None'",
+          "stability": "stable"
+        },
         "EventBus": {
           "signature": "(subscribers: list[agentos.events.bus.EventSubscriber] = <factory>, events: list[agentos.events.types.AgentEvent] = <factory>, subscriber_errors: list[str] = <factory>) -> None",
           "stability": "experimental"
@@ -2477,7 +2716,7 @@
           "stability": "stable"
         },
         "RunRequest": {
-          "signature": "(input: 'UserTurnInput | LocalContinuationInput', options: 'RunOptions' = <factory>) -> None",
+          "signature": "(input: 'UserTurnInput | LocalContinuationInput | AcceptedContinuationInput', options: 'RunOptions' = <factory>) -> None",
           "stability": "stable"
         },
         "RuntimeCompositionProfile": {
@@ -2606,7 +2845,7 @@
           "stability": "stable"
         },
         "WaitReason": {
-          "signature": "(kind: 'WaitReasonKind', handle: 'str', detail: 'str | None' = None) -> None",
+          "signature": "(kind: 'WaitReasonKind', handle: 'str', detail: 'str | None' = None, not_before: 'datetime | None' = None) -> None",
           "stability": "stable"
         },
         "WaitingUnsupportedError": {

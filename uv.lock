@@ -72,7 +72,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30" },
 ]
-provides-extras = ["dev", "server", "observability", "async-http", "redis", "qdrant", "postgres", "production-memory", "security"]
+provides-extras = ["durable", "dev", "server", "observability", "async-http", "redis", "qdrant", "postgres", "production-memory", "security"]
 
 [[package]]
 name = "annotated-types"

@@ -37,7 +37,7 @@ result = await agent.run("处理当前请求")
 ### 2.2 自检结论
 
 修正后没有目标偏移。本阶段仍只交付 M3 Local Agent，不引入 SQLite、Filesystem
-Artifact Adapter、Redis、PostgreSQL、Qdrant、OCR、附件摘要、向量召回、Worker、
+Artifact Adapter、Redis、PostgreSQL、Qdrant、OCR（永久排除）、附件摘要、向量召回、Worker、
 Transport、A2A 或 Distributed Team 语义。
 
 仓库当前不存在工程规范提到的 `ai-knowledge/wiki`，本阶段不能以该目录作为权威输入；
@@ -253,4 +253,4 @@ example 明确延期到 Phase 5/6。
 
 以下内容不计为 Phase 4 遗留：Durable Run Command、Checkpoint、SQLite、Filesystem
 Artifact Store、restart/resume、Redis/PostgreSQL、Worker、Transport、Distributed
-Wakeup/Claim、OCR、附件摘要、Semantic Artifact Recall、向量索引、生产 Web Runtime。
+Wakeup/Claim、OCR（永久排除）、附件摘要、Semantic Artifact Recall、向量索引、生产 Web Runtime。

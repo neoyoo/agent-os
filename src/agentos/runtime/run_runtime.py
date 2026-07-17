@@ -28,6 +28,8 @@ class RunStore(Protocol):
         run_id: str,
         status: RunStatus,
         wait_reason: WaitReason | None = None,
+        expected_version: int | None = None,
+        turn_id: str | None = None,
     ) -> RunState: ...
 
 
@@ -59,12 +61,21 @@ class InMemoryRunStore:
         run_id: str,
         status: RunStatus,
         wait_reason: WaitReason | None = None,
+        expected_version: int | None = None,
+        turn_id: str | None = None,
     ) -> RunState:
         key = (session_id, run_id)
         with self._lock:
             current = self._states.get(key)
             if current is None:
                 raise RunNotFoundError(f"run not found: {run_id}")
+            if (
+                expected_version is not None
+                and current.aggregate_version != expected_version
+            ):
+                from agentos.runtime.run_state import RunStateTransitionError
+
+                raise RunStateTransitionError("run aggregate version conflict")
             updated = current.transition(status, wait_reason=wait_reason)
             self._states[key] = updated
             return updated
@@ -119,28 +130,68 @@ class RunRuntime:
 
         return self._transition(run_id, RunStatus.RUNNING)
 
-    def complete(self, run_id: str) -> RunState:
+    def complete(
+        self,
+        run_id: str,
+        *,
+        expected_version: int | None = None,
+        turn_id: str | None = None,
+    ) -> RunState:
         """执行 RUNNING -> COMPLETED。"""
 
-        return self._transition(run_id, RunStatus.COMPLETED)
+        return self._transition(
+            run_id,
+            RunStatus.COMPLETED,
+            expected_version=expected_version,
+            turn_id=turn_id,
+        )
 
-    def fail(self, run_id: str) -> RunState:
+    def fail(
+        self,
+        run_id: str,
+        *,
+        expected_version: int | None = None,
+        turn_id: str | None = None,
+    ) -> RunState:
         """执行 RUNNING -> FAILED。"""
 
-        return self._transition(run_id, RunStatus.FAILED)
+        return self._transition(
+            run_id,
+            RunStatus.FAILED,
+            expected_version=expected_version,
+            turn_id=turn_id,
+        )
 
-    def cancel(self, run_id: str) -> RunState:
+    def cancel(
+        self,
+        run_id: str,
+        *,
+        expected_version: int | None = None,
+        turn_id: str | None = None,
+    ) -> RunState:
         """把任意非终态 Run 转为 CANCELLED。"""
 
-        return self._transition(run_id, RunStatus.CANCELLED)
+        return self._transition(
+            run_id,
+            RunStatus.CANCELLED,
+            expected_version=expected_version,
+            turn_id=turn_id,
+        )
 
-    def wait(self, run_id: str, *, reason: WaitReason) -> RunState:
+    def wait(
+        self,
+        run_id: str,
+        *,
+        reason: WaitReason,
+        expected_version: int | None = None,
+    ) -> RunState:
         """执行 RUNNING -> WAITING 并保存类型化原因。"""
 
         return self._transition(
             run_id,
             RunStatus.WAITING,
             wait_reason=reason,
+            expected_version=expected_version,
         )
 
     def _transition(
@@ -149,12 +200,16 @@ class RunRuntime:
         status: RunStatus,
         *,
         wait_reason: WaitReason | None = None,
+        expected_version: int | None = None,
+        turn_id: str | None = None,
     ) -> RunState:
         return self._store.transition(
             session_id=self._session_id,
             run_id=run_id,
             status=status,
             wait_reason=wait_reason,
+            expected_version=expected_version,
+            turn_id=turn_id,
         )
 
 

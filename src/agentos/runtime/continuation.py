@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import json
 from typing import Literal, TypeAlias
 
 from agentos.providers.input import ProviderInputItem
+from agentos._json_values import thaw_json_value
+from agentos.runtime.durable_commands import AcceptedContinuationInput
 
 
 ContinuationNoticeKind: TypeAlias = Literal["task_completed", "team_message"]
@@ -34,19 +37,28 @@ class ContinuationRuntime:
 
     def __init__(self) -> None:
         self._notices: tuple[ContinuationNotice, ...] = ()
+        self._durable: AcceptedContinuationInput | None = None
 
     def set_notices(self, notices: tuple[ContinuationNotice, ...]) -> None:
         if not notices or any(type(item) is not ContinuationNotice for item in notices):
             raise TypeError("continuation runtime requires typed notices")
         self._notices = tuple(notices)
+        self._durable = None
+
+    def set_durable(self, continuation: AcceptedContinuationInput) -> None:
+        if type(continuation) is not AcceptedContinuationInput:
+            raise TypeError("durable continuation input is invalid")
+        self._notices = ()
+        self._durable = continuation
 
     def clear(self) -> None:
         self._notices = ()
+        self._durable = None
 
     def inputs(self) -> tuple[ProviderInputItem, ...]:
-        if not self._notices:
-            return ()
-        return (project_continuation_data(self._notices),)
+        if self._durable is not None:
+            return (project_durable_continuation(self._durable),)
+        return () if not self._notices else (project_continuation_data(self._notices),)
 
 
 def project_continuation_data(
@@ -77,6 +89,34 @@ def project_continuation_data(
         )
     lines.append("</continuation-data>\n")
     return ProviderInputItem.continuation_data("".join(lines))
+
+
+def project_durable_continuation(
+    continuation: AcceptedContinuationInput,
+) -> ProviderInputItem:
+    """投影 Store 已批准的单 Turn Durable continuation data。"""
+
+    if type(continuation) is not AcceptedContinuationInput:
+        raise TypeError("durable continuation input is invalid")
+    payload = json.dumps(
+        thaw_json_value(continuation.payload),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    xml = (
+        '<continuation-data protocol="agentos.continuation" version="1.0"\n'
+        '    origin="runtime" authority="context-data" persistence="ephemeral"\n'
+        '    visibility="internal" source="durable-command"\n'
+        f'    run-id="{_escape_attribute(continuation.run_id)}"\n'
+        f'    command-id="{_escape_attribute(continuation.command_id)}"\n'
+        f'    kind="{continuation.kind}" '
+        f'aggregate-version="{continuation.aggregate_version}">\n'
+        f"  <payload-json>{_escape_attribute(payload)}</payload-json>\n"
+        "</continuation-data>\n"
+    )
+    return ProviderInputItem.continuation_data(xml)
 
 
 def _require_non_empty_string(value: object, field: str) -> None:

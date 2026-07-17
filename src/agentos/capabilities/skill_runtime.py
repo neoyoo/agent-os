@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from agentos.capabilities.skill_activation_store import (
+    SkillActivationRecord,
+    SkillActivationStore,
+)
 from agentos.capabilities.skill_projection import project_available_skills
 from agentos.capabilities.skill_trust import (
     SkillTrustPolicy,
@@ -15,7 +18,6 @@ from agentos.capabilities.skill_types import (
     SkillResourceRef,
     SkillTrustDecision,
 )
-from agentos.capabilities.tools import RegisteredTool
 from agentos.context.models import ContextSlotProjection, TrustedSkillInstruction
 
 if TYPE_CHECKING:
@@ -42,9 +44,11 @@ class SkillRuntime:
         self,
         registry: SkillRegistry,
         trust_policy: SkillTrustPolicy,
+        activation_store: SkillActivationStore | None = None,
     ) -> None:
         self._registry = registry
         self._trust_policy = trust_policy
+        self._activation_store = activation_store
         self._active: dict[tuple[str, str], _ActiveSkill] = {}
 
     @property
@@ -57,7 +61,7 @@ class SkillRuntime:
         """加载 Skill；只有 verified trusted Skill 才激活。"""
 
         key = self._activation_key(session_id, skill_name)
-        self._active.pop(key, None)
+        self._deactivate(key)
         loaded = await self._registry.load(skill_name)
         if loaded.metadata.trust == "untrusted":
             resources = await self._registry.list_resources(skill_name)
@@ -65,14 +69,51 @@ class SkillRuntime:
         decision = self._verify(loaded.metadata, loaded)
         if not self._registry.is_subject_current(loaded.subject):
             raise SkillTrustError("skill source revision changed during load")
-        self._active[key] = _ActiveSkill(loaded=loaded, decision=decision)
+        active = _ActiveSkill(loaded=loaded, decision=decision)
+        if self._activation_store is not None:
+            self._activation_store.save(
+                SkillActivationRecord(session_id, loaded.subject, decision.policy_id),
+            )
+        self._active[key] = active
         return f"Skill 已加载：{skill_name}。可信指令将在下一次模型请求中生效。"
+
+    async def restore(self, session_id: str) -> tuple[str, ...]:
+        """重新加载并复验持久激活；不一致记录会被删除。"""
+
+        self._validate_session_id(session_id)
+        if self._activation_store is None:
+            return ()
+        for key in tuple(self._active):
+            if key[0] == session_id:
+                del self._active[key]
+        restored = []
+        for record in self._activation_store.list(session_id):
+            try:
+                loaded = await self._registry.load(record.skill_name)
+                decision = self._verify(loaded.metadata, loaded)
+                valid = (
+                    loaded.subject == record.subject
+                    and decision.subject == record.subject
+                    and decision.policy_id == record.policy_id
+                    and self._registry.is_subject_current(loaded.subject)
+                )
+            except (KeyError, SkillTrustError, ValueError):
+                valid = False
+            if not valid:
+                self._activation_store.delete(session_id, record.skill_name)
+                continue
+            self._active[(session_id, record.skill_name)] = _ActiveSkill(
+                loaded=loaded,
+                decision=decision,
+            )
+            restored.append(record.skill_name)
+        return tuple(restored)
 
     def disable(self, session_id: str, skill_name: str) -> bool:
         """停用当前 Session 的 Skill。"""
 
         key = self._activation_key(session_id, skill_name)
-        return self._active.pop(key, None) is not None
+        return self._deactivate(key)
 
     def items(self, session_id: str) -> tuple[TrustedSkillInstruction, ...]:
         """返回当前 Session 仍通过 Policy 复验的可信指令。"""
@@ -101,7 +142,7 @@ class SkillRuntime:
                 ),
             )
         for key in invalid:
-            self._active.pop(key, None)
+            self._deactivate(key)
         return tuple(instructions)
 
     def projections(self, session_id: str) -> tuple[ContextSlotProjection, ...]:
@@ -117,6 +158,14 @@ class SkillRuntime:
         for key in tuple(self._active):
             if key[0] == session_id:
                 del self._active[key]
+        if self._activation_store is not None:
+            self._activation_store.delete_session(session_id)
+
+    def _deactivate(self, key: tuple[str, str]) -> bool:
+        removed = self._active.pop(key, None) is not None
+        if self._activation_store is not None:
+            removed = self._activation_store.delete(*key) or removed
+        return removed
 
     def _verify(
         self,
@@ -177,89 +226,3 @@ class BoundSkillProjectionProvider:
 
     def projections(self) -> tuple[ContextSlotProjection, ...]:
         return self.runtime.projections(self.session_id)
-
-
-@dataclass(frozen=True, slots=True)
-class BoundSkillTools:
-    """生成闭包捕获 Session 的 Skill 工具。"""
-
-    runtime: SkillRuntime
-    session_id: str
-
-    def registered_tools(self) -> tuple[RegisteredTool, ...]:
-        async def load_skill(arguments: dict[str, object]) -> str:
-            skill_name = str(arguments.get("skill_name", ""))
-            try:
-                return await self.runtime.load(self.session_id, skill_name)
-            except KeyError:
-                return json.dumps(
-                    {
-                        "error": f"Skill '{skill_name}' not found",
-                        "available_skills": (
-                            self.runtime.registry.available_skill_names()
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
-
-        def disable_skill(arguments: dict[str, object]) -> str:
-            skill_name = str(arguments.get("skill_name", ""))
-            self.runtime.disable(self.session_id, skill_name)
-            return f"Skill 已停用：{skill_name}。"
-
-        async def load_skill_resource(arguments: dict[str, object]) -> str:
-            skill_name = str(arguments.get("skill_name", ""))
-            path = str(arguments.get("path", ""))
-            try:
-                result = await self.runtime.registry.load_resource(skill_name, path)
-                return result.render_tool_result()
-            except KeyError:
-                return json.dumps(
-                    {
-                        "error": (
-                            f"Resource '{path}' for skill '{skill_name}' not found"
-                        ),
-                        "available_skills": (
-                            self.runtime.registry.available_skill_names()
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
-
-        parameters = {
-            "type": "object",
-            "properties": {"skill_name": {"type": "string"}},
-            "required": ["skill_name"],
-            "additionalProperties": False,
-        }
-        return (
-            RegisteredTool(
-                name="load_skill",
-                description="Load a Skill for the current Session.",
-                parameters=parameters,
-                handler=load_skill,
-                kind="skill",
-            ),
-            RegisteredTool(
-                name="disable_skill",
-                description="Disable an active Skill for the current Session.",
-                parameters=parameters,
-                handler=disable_skill,
-                kind="skill",
-            ),
-            RegisteredTool(
-                name="load_skill_resource",
-                description="Load an additional resource for a Skill by path.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "skill_name": {"type": "string"},
-                        "path": {"type": "string"},
-                    },
-                    "required": ["skill_name", "path"],
-                    "additionalProperties": False,
-                },
-                handler=load_skill_resource,
-                kind="skill",
-            ),
-        )

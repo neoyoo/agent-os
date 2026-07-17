@@ -5,7 +5,7 @@ import pytest
 from agentos.runtime import AgentResult, RunRequest, TurnStreamCompleted, UserTurnInput
 from agentos.runtime.errors import AgentBusyError
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
-from agentos.runtime.run_state import RunStatus
+from agentos.runtime.run_state import RunNotFoundError
 from tests.runtime._query_loop_contract_fixtures import (
     make_query_loop,
     make_recording_agent,
@@ -47,7 +47,7 @@ def test_query_loop_rejects_concurrent_run_until_stream_cleanup() -> None:
     asyncio.run(run())
 
 
-def test_query_loop_cancels_run_rejected_by_execution_lease() -> None:
+def test_query_loop_rejects_busy_execution_before_creating_run() -> None:
     async def run() -> None:
         run_ids = iter(("run_first", "run_busy"))
         runs = RunRuntime(
@@ -61,7 +61,8 @@ def test_query_loop_cancels_run_rejected_by_execution_lease() -> None:
         with pytest.raises(AgentBusyError):
             await loop.execute(RunRequest(UserTurnInput("two")))
 
-        assert runs.get_run("run_busy").status is RunStatus.CANCELLED
+        with pytest.raises(RunNotFoundError, match="run_busy"):
+            runs.get_run("run_busy")
         await first.aclose()
 
     asyncio.run(run())

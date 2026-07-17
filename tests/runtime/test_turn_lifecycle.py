@@ -66,8 +66,10 @@ class RecordingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit:
         assert turn_id == self.turn.id
+        assert expected_version == 2
         self.order.append(("commit", self.turn.status))
         return WaitingCommit(run_id, reason)
 
@@ -79,6 +81,7 @@ class FailingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit:
         raise RuntimeError("commit failed")
 
@@ -328,6 +331,7 @@ def test_commit_waiting_commits_before_state_transition_and_event_return() -> No
             run_id="run_1",
             turn=turn,
             reason=WaitReason("human_input", "approval_1"),
+            expected_version=2,
         )
         order.append(("event", turn.status))
 
@@ -350,6 +354,7 @@ def test_commit_waiting_failure_does_not_change_turn_state() -> None:
                 run_id="run_1",
                 turn=turn,
                 reason=WaitReason("human_input", "approval_1"),
+                expected_version=2,
             )
 
         assert turn.status == "running"
@@ -369,6 +374,7 @@ def test_commit_waiting_requires_waiting_runtime() -> None:
                 run_id="run_1",
                 turn=TurnState("turn_1", "hello"),
                 reason=WaitReason("human_input", "approval_1"),
+                expected_version=2,
             )
 
     asyncio.run(run())

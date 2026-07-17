@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agentos._builder_local import assemble_local_state, assemble_provider_request_builder
+from agentos._builder_state import RuntimeStateComponents
 from agentos._builder_recall import assemble_recall_runtime
 from agentos._builder_tools import assemble_tool_components
 from agentos._builder_validation import require_unset
@@ -195,7 +196,10 @@ class AgentBuilder:
             query_loop_kwargs=self._query_loop_kwargs(resolved_session_id),
         )
 
-    def _query_loop_kwargs(self, session_id: str) -> dict[str, object]:
+    def _query_loop_kwargs(
+        self, session_id: str, *, state: RuntimeStateComponents | None = None,
+        messages: MessageRuntime | None = None,
+    ) -> dict[str, object]:
         """组装唯一 QueryLoop 使用的组件。"""
 
         if self._provider is None:
@@ -204,14 +208,13 @@ class AgentBuilder:
                 'Pass a Provider instance, e.g. AnthropicProvider(api_key="...")',
             )
 
-        messages = self._message_runtime or MessageRuntime()
-        local = assemble_local_state(
-            session_id=session_id,
-            context=self._context_runtime,
+        messages = messages or self._message_runtime or MessageRuntime()
+        state = state or assemble_local_state(
+            session_id=session_id, context=self._context_runtime,
             event_bus=self._event_bus,
         )
-        context = local.context
-        artifacts = local.artifacts
+        context = state.context
+        artifacts = state.artifacts
         compression_runtime = self._compression_runtime
         if self._compression_requested:
             compression_runtime = CompressionRuntime(
@@ -240,7 +243,7 @@ class AgentBuilder:
             messages=messages,
             tools=tool_components.provider_tools,
             token_counter=token_counter,
-            state=local,
+            state=state,
             extension_projections=self._context_projection_providers or (),
         )
         kwargs = {
@@ -251,9 +254,9 @@ class AgentBuilder:
             "tool_result_budget": self._tool_result_budget or ToolResultBudget(),
             "token_counter": token_counter,
             "tool_scheduler": tool_components.scheduler,
-            "session_state": local.session,
+            "session_state": state.session,
             "artifact_runtime": artifacts,
-            "run_runtime": local.runs,
+            "run_runtime": state.runs,
         }
         kwargs["tool_call_router"] = tool_components.router
         if compression_runtime is not None:

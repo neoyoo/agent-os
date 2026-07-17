@@ -14,6 +14,64 @@
 
                                                      ]
                                 },
+                    "agentos.artifacts":  {
+                                              "stable":  [
+                                                             "SqliteFilesystemArtifactStore"
+                                                         ],
+                                              "experimental":  [
+                                                                   "ArtifactError",
+                                                                   "ArtifactNotFoundError",
+                                                                   "ArtifactPolicy",
+                                                                   "ArtifactRecord",
+                                                                   "ArtifactRef",
+                                                                   "ArtifactRuntime",
+                                                                   "ArtifactStore",
+                                                                   "ArtifactValidationError",
+                                                                   "InMemoryArtifactStore"
+                                                               ]
+                                          },
+                    "agentos.capabilities":  {
+                                                 "stable":  [
+                                                                "SQLiteSkillActivationStore"
+                                                            ],
+                                                 "experimental":  [
+                                                                      "AsyncToolHandler",
+                                                                      "BuiltinSkillSource",
+                                                                      "BuiltinToolError",
+                                                                      "ChainedSkillSource",
+                                                                      "ExecutionBackend",
+                                                                      "FileSystemSkillSource",
+                                                                      "InProcessExecutionBackend",
+                                                                      "MCPClient",
+                                                                      "MCPRegistry",
+                                                                      "MCPServerRegistration",
+                                                                      "MCPToolAdapter",
+                                                                      "MCPToolInfo",
+                                                                      "RegisteredTool",
+                                                                      "SkillContentSource",
+                                                                      "SkillDefinition",
+                                                                      "SkillLoadResult",
+                                                                      "SkillRegistry",
+                                                                      "SkillResourceLoadResult",
+                                                                      "SkillResourceRef",
+                                                                      "ToolCallRouter",
+                                                                      "ToolConcurrencyPolicy",
+                                                                      "ToolExecutionError",
+                                                                      "ToolExecutionOutcome",
+                                                                      "ToolExecutionResult",
+                                                                      "ToolHandler",
+                                                                      "ToolHandlerResult",
+                                                                      "ToolPathSandboxRule",
+                                                                      "ToolRegistry",
+                                                                      "ToolSandboxError",
+                                                                      "ToolSandboxPolicy",
+                                                                      "WaitRequest",
+                                                                      "WorkspaceToolSandboxPolicy",
+                                                                      "builtin_schema_template_skill",
+                                                                      "read_file_tool",
+                                                                      "register_skill_loader_tools"
+                                                                  ]
+                                             },
                     "agentos.channels":  {
                                              "stable":  [
                                                             "AllowAllChannelAuthPolicy",
@@ -339,6 +397,15 @@
                                                                "TeamWorkerSessionStatus"
                                                            ]
                                       },
+                    "agentos.durable":  {
+                                             "stable":  [
+                                                           "DurableRuntimeProfile",
+                                                           "SQLiteDurableStore"
+                                                       ],
+                                            "experimental":  [
+
+                                                             ]
+                                        },
                     "agentos.planning":  {
                                              "stable":  [
                                                             "ClaimGuardedPlanStore",
@@ -346,7 +413,8 @@
                                                             "InMemoryPlanStore",
                                                             "PlanConflictError",
                                                             "PlanStore",
-                                                            "PlanStoreRecord"
+                                                            "PlanStoreRecord",
+                                                            "SQLitePlanStore"
                                                         ],
                                              "experimental":  [
                                                                   "AuthorizedPlanSource",
@@ -445,7 +513,7 @@
                                        },
                     "agentos.memory":  {
                                            "stable":  [
-
+                                                          "SQLiteMemoryStore"
                                                       ],
                                            "experimental":  [
                                                                 "BoundMemoryProjectionProvider",
@@ -555,6 +623,8 @@
                                                            "ContinuationUnavailableError",
                                                            "DistributedWebRuntimeProfile",
                                                            "DistributedWebSessionOperationsProfile",
+                                                           "DurableCommandReceipt",
+                                                           "DurableRunCommand",
                                                            "FinalResult",
                                                            "iter_jsonl",
                                                            "iter_sse",

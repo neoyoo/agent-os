@@ -85,6 +85,7 @@ from agentos.planning.scheduling_profiles import (
     PlannerStaleClaimSweepProfile,
     PlannerWorkerDispatchSupervisionProfile,
 )
+from agentos.planning.sqlite import SQLitePlanStore
 from agentos.planning.store import (
     ClaimGuardedPlanStore,
     CompareAndSavePlanStore,
@@ -180,6 +181,7 @@ __all__ = [
     "PlannerSchedulerGovernanceDeploymentProfile",
     "PlannerStaleClaimSweepProfile",
     "PlannerWorkerDispatchSupervisionProfile",
+    "SQLitePlanStore",
     "PlannerLlmGovernanceEvidenceGateReport",
     "PlannerLlmGovernanceEvidenceRecord",
     "SubAgentTemplate",

@@ -44,6 +44,7 @@ from agentos.events import (
 )
 from agentos.runtime.agent import Agent
 from agentos.runtime.agent_stream import AgentStream
+from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
 from agentos.runtime.errors import (
     AgentBusyError,
     AgentRunError,
@@ -143,6 +144,8 @@ __all__ = [
     "DistributedTeamRuntimeProfile",
     "DistributedWebSessionOperationsProfile",
     "DistributedWebRuntimeProfile",
+    "DurableCommandReceipt",
+    "DurableRunCommand",
     "EventBus",
     "InheritedStateSetEvent",
     "LocalRuntimeProfile",

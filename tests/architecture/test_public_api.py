@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.generate_public_api_inventory import normalize_signature
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_API_INVENTORY = PROJECT_ROOT / "docs" / "public-api-inventory.json"
@@ -19,10 +21,7 @@ def _load_public_api_inventory() -> dict[str, object]:
 
 
 def _normalize_signature_text(signature: str) -> str:
-    return signature.replace("pathlib._local.Path", "pathlib.Path").replace(
-        "frozenset({'task', 'session'})",
-        "frozenset({'session', 'task'})",
-    )
+    return normalize_signature(signature)
 
 
 def test_public_api_signature_helper_normalizes_pathlib_local_path() -> None:

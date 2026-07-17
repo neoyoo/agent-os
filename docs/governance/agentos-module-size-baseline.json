@@ -113,13 +113,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/multi/tasks.py",
-      "lines": 495,
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 499,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/query_loop.py",
-      "lines": 490,
+      "path": "src/agentos/multi/tasks.py",
+      "lines": 495,
       "gate": "responsibility_review"
     },
     {
@@ -173,6 +173,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/artifacts/sqlite_filesystem.py",
+      "lines": 383,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/service.py",
       "lines": 371,
       "gate": "responsibility_review"
@@ -200,6 +205,11 @@
     {
       "path": "src/agentos/testing/contracts/plan_claim_store.py",
       "lines": 337,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/durable/sqlite_store.py",
+      "lines": 332,
       "gate": "responsibility_review"
     },
     {

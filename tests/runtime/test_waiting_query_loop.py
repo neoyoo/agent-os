@@ -1,7 +1,11 @@
 import asyncio
+from datetime import UTC, datetime
 from itertools import count
 
 import pytest
+
+
+_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 from agentos import Agent
 from agentos.capabilities import (
@@ -67,6 +71,7 @@ class FailingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit:
         self.order.append("commit_attempted")
         raise self.error
@@ -311,7 +316,7 @@ def test_default_exclusive_wait_stops_later_side_effect_tool() -> None:
 
 def test_parallel_wait_does_not_start_queued_or_later_segment_tools() -> None:
     async def run() -> None:
-        reason = WaitReason("timer", "timer_1")
+        reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
         running_started = asyncio.Event()
         release_running = asyncio.Event()
         started: list[str] = []
@@ -450,7 +455,7 @@ def test_tool_error_wins_over_wait_request_without_committing_waiting() -> None:
 def test_multiple_wait_requests_choose_lowest_provider_index() -> None:
     async def run() -> None:
         first = WaitReason("human_input", "approval_first")
-        second = WaitReason("timer", "timer_second")
+        second = WaitReason("timer", "timer_second", not_before=_TIMER_DUE)
         release_first = asyncio.Event()
 
         async def wait_first(_arguments: dict[str, object]) -> WaitRequest:
@@ -549,7 +554,7 @@ def test_after_tool_hook_failure_wins_over_wait_request() -> None:
 
 def test_non_streaming_wait_projects_outcome_after_authoritative_commit() -> None:
     async def run() -> None:
-        reason = WaitReason("timer", "timer_1")
+        reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
         order: list[str] = []
         agent, session, _messages, _event_bus = _agent(
             tools=[_wait_tool(reason)],

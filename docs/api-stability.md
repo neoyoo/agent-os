@@ -5,10 +5,16 @@ Canonical path: `docs/api-stability.md`.
 ## `0.2.0a1` Compatibility Target
 
 The `0.2.0a1` root `agentos` facade commits only to the stable entry points
-needed by the Level 1 local loop. ContextSnapshot, Artifact, Durable, and
-Distributed types that are not implemented for that level are not exported in
-advance. Later phases add public names only when their owning phase, behavior,
-and compatibility tests are implemented.
+needed by the Level 1 local loop. Level 2 Artifact and Durable APIs are exposed
+only from their owning modules; Distributed types that are not implemented for
+their level are not exported in advance. Later phases add public names only
+when their owning phase, behavior, and compatibility tests are implemented.
+
+Phase 5 adds the stable module-level Durable command, profile, and SQLite/
+filesystem adapter entry points. The `agentos[durable]` installation intent is
+an empty extra because the reference adapters use only the Python standard
+library. It does not add Redis or PostgreSQL dependencies, and it does not
+expand the root `agentos` facade.
 
 Phase 2 applies a breaking message-boundary reset: `StoredMessage` is the only
 business message truth type, while `ProviderInputItem` is the only accepted
@@ -51,7 +57,10 @@ Every namespace listed here must be represented in
 `docs/public-api-inventory.json`:
 
 - `agentos`
+- `agentos.artifacts`
+- `agentos.capabilities`
 - `agentos.channels`
+- `agentos.durable`
 - `agentos.multi`
 - `agentos.planning`
 - `agentos.persistence`
@@ -105,6 +114,12 @@ governed exports and do not promote unlisted submodule names to stable API.
   concurrency control for shared `PlanStore` mutation and are stable because
   planner/team workers need a reliable plan-store concurrency contract across
   nodes.
+- Level 2 Durable command entry points `DurableRunCommand` and
+  `DurableCommandReceipt` under `agentos.runtime`, with the concrete
+  `DurableRuntimeProfile` composition entry point under `agentos.durable`
+- standard-library Durable adapters: `SQLiteDurableStore`,
+  `SqliteFilesystemArtifactStore`, `SQLitePlanStore`, `SQLiteMemoryStore`, and
+  `SQLiteSkillActivationStore` under their owning module namespaces
 
 ## Experimental API
 
@@ -113,6 +128,10 @@ hardens. Changes must be noted in `CHANGELOG.md` and, when schema or state
 changes are involved, in migration notes.
 
 - advanced A2A operation and conformance surfaces
+- existing `agentos.artifacts` domain/runtime exports other than the stable
+  SQLite/filesystem adapter
+- existing `agentos.capabilities` tool, MCP, and Skill exports other than the
+  stable Skill activation store
 - `agentos.memory`: Episodic/Semantic memory records, selection scope,
   access/store ports, the Level 1 in-memory adapter, and request-bound
   `memory-context` selection/projection
@@ -147,9 +166,8 @@ namespaces; adapter test suites should import contract runners from
   `agentos.__all__` and the root inventory are supported as root imports.
   The root facade is intentionally limited to the five Level 1 entry points;
   all other stable or experimental names must be imported from their owning
-  namespace, for example `agentos.channels`,
-  `agentos.multi`, `agentos.planning`, `agentos.runtime`, `agentos.sync`,
-  `agentos.registry`, or `agentos.deployment`.
+  namespace, for example `agentos.artifacts`, `agentos.capabilities`,
+  `agentos.durable`, `agentos.planning`, `agentos.runtime`, or `agentos.sync`.
 - boundary-first ownership stays unchanged: SDK API exposes protocols, profiles,
   reference compositions, readiness, and audit evidence; deployment code owns
   real infrastructure, credentials, migrations execution, CI/CD, signing,

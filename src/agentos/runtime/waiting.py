@@ -28,6 +28,7 @@ class WaitingRuntime(Protocol):
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit: ...
 
 
@@ -43,6 +44,9 @@ class LocalWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit:
+        if self.runs.get_run(run_id).aggregate_version != expected_version:
+            raise RuntimeError("waiting run version conflict")
         self.runs.wait(run_id, reason=reason)
         return WaitingCommit(run_id, reason)

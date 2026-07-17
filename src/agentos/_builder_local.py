@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
-
 from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
+from agentos._builder_state import RuntimeStateComponents
 from agentos.artifacts.projection import (
     ArtifactCatalogProjectionProvider,
     ArtifactMountProjectionProvider,
@@ -27,25 +26,17 @@ from agentos.runtime.session import SessionState
 from agentos.tokens import TokenCounter
 
 
-@dataclass(frozen=True, slots=True)
-class LocalStateComponents:
-    context: ContextRuntime
-    artifacts: ArtifactRuntime
-    runs: RunRuntime
-    session: SessionState
-
-
 def assemble_local_state(
     *,
     session_id: str,
     context: ContextRuntime | None,
     event_bus: EventBus | None,
-) -> LocalStateComponents:
+) -> RuntimeStateComponents:
     resolved_context = context or ContextRuntime(event_bus=event_bus)
     if resolved_context.session_id not in (None, session_id):
         raise ValueError("context runtime belongs to another session")
     resolved_context.session_id = session_id
-    return LocalStateComponents(
+    return RuntimeStateComponents(
         context=resolved_context,
         artifacts=ArtifactRuntime(
             session_id=session_id,
@@ -63,7 +54,7 @@ def assemble_provider_request_builder(
     messages: MessageRuntime,
     tools: list[ProviderToolSpec],
     token_counter: TokenCounter,
-    state: LocalStateComponents,
+    state: RuntimeStateComponents,
     extension_projections: Iterable[ContextProjectionProvider] = (),
 ) -> ProviderRequestBuilder:
     return ProviderRequestBuilder(

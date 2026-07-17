@@ -12,10 +12,10 @@ from agentos.capabilities.skill_sources import (
 from agentos.capabilities.skill_runtime import (
     BoundSkillInstructionProvider,
     BoundSkillProjectionProvider,
-    BoundSkillTools,
     SkillRuntime,
     SkillTrustError,
 )
+from agentos.capabilities.skill_tools import BoundSkillTools
 from agentos.capabilities.skill_trust import (
     SkillTrustDecision,
     SkillTrustPolicy,

@@ -13,6 +13,7 @@ from agentos.memory.records import (
     SemanticCategory,
 )
 from agentos.memory.runtime import BoundMemoryProjectionProvider, MemoryRuntime
+from agentos.memory.sqlite import SQLiteMemoryStore
 
 __all__ = [
     "BoundMemoryProjectionProvider",
@@ -26,5 +27,6 @@ __all__ = [
     "MemoryRuntime",
     "MemorySelectionContext",
     "MemoryStore",
+    "SQLiteMemoryStore",
     "SemanticCategory",
 ]

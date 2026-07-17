@@ -1,8 +1,10 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from typing import get_args
 
 import pytest
 
+from agentos.runtime import DurableRunCommand, WaitReason
 from agentos.runtime.errors import (
     AgentBusyError,
     AgentRunError,
@@ -24,8 +26,10 @@ from agentos.runtime.run import (
     RunRequest,
     UserTurnInput,
 )
-from agentos.runtime import WaitReason
 from agentos.runtime.run import RunOptions
+
+
+_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 
 def test_user_turn_input_is_frozen_and_uses_artifact_handle_tuple() -> None:
@@ -55,6 +59,7 @@ def test_run_input_contains_all_supported_input_forms() -> None:
         str,
         UserTurnInput,
         LocalContinuationInput,
+        DurableRunCommand,
     }
 
 
@@ -85,7 +90,11 @@ def test_agent_result_and_waiting_are_distinct_outcomes() -> None:
         (
             AgentWaiting(
                 run_id="run_1",
-                reason=WaitReason(kind="timer", handle="timer_1"),
+                reason=WaitReason(
+                    kind="timer",
+                    handle="timer_1",
+                    not_before=_TIMER_DUE,
+                ),
             ),
             "run_id",
             "run_2",

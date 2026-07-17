@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Callable
 from concurrent.futures import Future
 from contextlib import asynccontextmanager, suppress
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 
 import pytest
 
@@ -16,6 +17,9 @@ from agentos.runtime.tool_scheduler import (
     ToolConcurrencyPolicy,
     ToolExecutionContext,
 )
+
+
+_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 
 def _parallel(call_id: str) -> ProviderToolCall:
@@ -627,7 +631,7 @@ def test_candidate_exclusive_wait_stops_later_calls() -> None:
 
 def test_candidate_parallel_wait_stops_refill_and_drains_running_calls() -> None:
     async def run() -> None:
-        reason = WaitReason("timer", "timer_1")
+        reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
         running_started = asyncio.Event()
         release_running = asyncio.Event()
         started: list[str] = []
@@ -680,7 +684,7 @@ def test_candidate_parallel_wait_stops_refill_and_drains_running_calls() -> None
 
 def test_candidate_parallel_wait_external_cancel_preserves_reason() -> None:
     async def run() -> None:
-        reason = WaitReason("timer", "timer_1")
+        reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
         running_started = asyncio.Event()
         running_cancelled = asyncio.Event()
         started: list[str] = []

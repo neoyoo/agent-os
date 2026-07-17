@@ -423,7 +423,7 @@ ToolCallRouter、QueryLoop、Root API、Public API Inventory/导出、Examples �
   restart recovery 仍使用原派发参数；
 - Phase 6：PostgreSQL/Redis Adapter、分布式 Claim/Worker、Transport、Provider File
   分布式缓存和故障注入；
-- Artifact OCR、摘要、向量检索、Workspace/Tenant Scope 仍按上位 Spec 延期。
+- Artifact OCR 永久排除；摘要、向量检索、Workspace/Tenant Scope 仍按上位 Spec 延期。
 
 ## 10. 验收
 

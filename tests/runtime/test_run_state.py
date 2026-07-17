@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 
 import pytest
 
@@ -11,6 +12,9 @@ from agentos.runtime.run_state import (
     RunStateTransitionError,
     RunStatus,
 )
+
+
+_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 
 def test_run_state_is_an_immutable_created_value() -> None:
@@ -100,7 +104,7 @@ def test_terminal_run_cannot_be_reactivated(
 def test_all_non_terminal_runs_can_be_cancelled(source: RunStatus) -> None:
     store = InMemoryRunStore()
     runtime = RunRuntime(session_id="session_1", store=store)
-    reason = WaitReason(kind="timer", handle="timer_1")
+    reason = WaitReason(kind="timer", handle="timer_1", not_before=_TIMER_DUE)
     store.create(
         RunState(
             run_id="run_1",
@@ -131,7 +135,7 @@ def test_illegal_transition_is_fail_closed(
 ) -> None:
     store = InMemoryRunStore()
     runtime = RunRuntime(session_id="session_1", store=store)
-    reason = WaitReason(kind="timer", handle="timer_1")
+    reason = WaitReason(kind="timer", handle="timer_1", not_before=_TIMER_DUE)
     state = RunState(
         run_id="run_1",
         session_id="session_1",

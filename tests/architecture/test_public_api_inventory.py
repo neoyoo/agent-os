@@ -141,6 +141,18 @@ _RUNTIME_STABLE_SINGLE_ASYNC_ADDITIONS = frozenset(
         "WaitReason",
     }
 )
+_RUNTIME_STABLE_PHASE5_ADDITIONS = frozenset(
+    {
+        "DurableCommandReceipt",
+        "DurableRunCommand",
+    }
+)
+_DURABLE_STABLE_PHASE5_EXPORTS = frozenset(
+    {
+        "DurableRuntimeProfile",
+        "SQLiteDurableStore",
+    }
+)
 _SYNC_STABLE_EXPORTS = frozenset(
     {
         "run",
@@ -430,7 +442,7 @@ def test_public_api_stability_policy_contains_only_classifications() -> None:
     assert '"signature"' not in PUBLIC_API_STABILITY.read_text(encoding="utf-8")
 
 
-def test_phase4_root_policy_is_the_exact_level1_facade() -> None:
+def test_phase5_policy_keeps_root_level1_and_adds_durable_api() -> None:
     policy = json.loads(PUBLIC_API_STABILITY.read_text(encoding="utf-8"))
     modules = policy["modules"]
 
@@ -440,11 +452,16 @@ def test_phase4_root_policy_is_the_exact_level1_facade() -> None:
         _RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER
         - {_REMOVED_ASYNC_LOOP_NAME}
         | _RUNTIME_STABLE_SINGLE_ASYNC_ADDITIONS
+        | _RUNTIME_STABLE_PHASE5_ADDITIONS
     )
     assert set(modules["agentos.runtime"]["experimental"]) == (
         _RUNTIME_EXPERIMENTAL_BEFORE_SINGLE_ASYNC_CUTOVER
         - {"AgentResult", "RunOptions"}
     )
+    assert set(modules["agentos.durable"]["stable"]) == (
+        _DURABLE_STABLE_PHASE5_EXPORTS
+    )
+    assert modules["agentos.durable"]["experimental"] == []
     assert set(modules["agentos.sync"]["stable"]) == _SYNC_STABLE_EXPORTS
     assert modules["agentos.sync"]["experimental"] == []
 

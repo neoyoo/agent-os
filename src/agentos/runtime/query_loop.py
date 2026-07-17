@@ -66,6 +66,7 @@ from agentos.runtime.retry import RetryPolicy
 from agentos.runtime.run import LocalContinuationInput, RunOptions, RunRequest, UserTurnInput
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
 from agentos.runtime.run_driver import RunDriver
+from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -86,7 +87,7 @@ from agentos.runtime.waiting import LocalWaitingRuntime, WaitingRuntime
 from agentos.tokens import HeuristicTokenCounter, TokenCounter
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, weakref_slot=True)
 class QueryLoop:
     """唯一的原生异步 agent turn 调度器。"""
 
@@ -162,29 +163,37 @@ class QueryLoop:
 
         if type(request) is not RunRequest:
             raise TypeError("request must be a RunRequest")
-        if not isinstance(request.input, (UserTurnInput, LocalContinuationInput)):
+        if not isinstance(
+            request.input,
+            (UserTurnInput, LocalContinuationInput, AcceptedContinuationInput),
+        ):
             raise TypeError("run request contains an unsupported input")
         self._lifecycle.session_state = self.session_state
-        tracker = SyncWorkTracker()
-        run_id = self._run_driver.prepare()
-        events = bind_sync_work_tracker(
-            self._run_driver.events(
-                request,
-                run_id,
-                self._run_provider_tool_events,
-            ),
-            tracker,
-        )
+        reservation = self._execution_lease.reserve()
         try:
-            return self._execution_lease.open_stream(
-                events,
-                cleanup=lambda: self._run_driver.cancel_open(run_id),
-                pending_sync_work=tracker,
+            tracker = SyncWorkTracker()
+            run_id = self._run_driver.prepare(request.input)
+            events = bind_sync_work_tracker(
+                self._run_driver.events(
+                    request,
+                    run_id,
+                    self._run_provider_tool_events,
+                ),
+                tracker,
             )
-        except BaseException:
-            self._run_driver.cancel_open(run_id)
-            await events.aclose()
-            raise
+            try:
+                return self._execution_lease.open_reserved_stream(
+                    reservation,
+                    events,
+                    cleanup=lambda: self._run_driver.cancel_open(run_id),
+                    pending_sync_work=tracker,
+                )
+            except BaseException:
+                self._run_driver.cancel_open(run_id)
+                await events.aclose()
+                raise
+        finally:
+            self._execution_lease.cancel_reservation(reservation)
 
     def interrupt(self) -> bool:
         """请求取消当前执行租约。"""

@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agentos._waiting import WaitRequest
 from agentos.runtime.query_loop_support import _FinalContent
+from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.errors import CommandStateError
 from agentos.runtime.run import LocalContinuationInput, RunRequest, UserTurnInput
 from agentos.runtime.run_runtime import RunRuntime
 from agentos.runtime.run_state import RunStatus
@@ -27,8 +29,21 @@ class RunDriver:
 
     runs: RunRuntime
     turns: TurnLifecycle
+    _execution_versions: dict[str, int] = field(default_factory=dict, init=False)
+    _turn_ids: dict[str, str] = field(default_factory=dict, init=False)
 
-    def prepare(self) -> str:
+    def prepare(
+        self,
+        input: UserTurnInput | LocalContinuationInput | AcceptedContinuationInput,
+    ) -> str:
+        if type(input) is AcceptedContinuationInput:
+            run = self.runs.get_run(input.run_id)
+            if (
+                run.status is not RunStatus.QUEUED
+                or run.aggregate_version != input.aggregate_version
+            ):
+                raise CommandStateError("accepted continuation is stale")
+            return input.run_id
         run = self.runs.create_run()
         self.runs.queue(run.run_id)
         return run.run_id
@@ -40,7 +55,16 @@ class RunDriver:
             RunStatus.QUEUED,
             RunStatus.RUNNING,
         }:
-            self.runs.cancel(run_id)
+            expected_version = self._execution_versions.get(run_id)
+            self.runs.cancel(
+                run_id,
+                expected_version=(
+                    expected_version if state.status is RunStatus.RUNNING else None
+                ),
+                turn_id=self._turn_ids.get(run_id),
+            )
+        self._execution_versions.pop(run_id, None)
+        self._turn_ids.pop(run_id, None)
 
     async def events(
         self,
@@ -50,14 +74,18 @@ class RunDriver:
     ) -> AsyncIterator[TurnStreamEvent]:
         turn: TurnState | None = None
         pending: tuple[TurnStreamEvent, ...] = ()
-        continuation = isinstance(request.input, LocalContinuationInput)
+        continuation = not isinstance(request.input, UserTurnInput)
         waiting_requested = False
         try:
-            self.runs.start(run_id)
+            running = self.runs.start(run_id)
+            execution_version = running.aggregate_version
+            self._execution_versions[run_id] = execution_version
             if isinstance(request.input, UserTurnInput):
                 turn, pending = self.turns.prepare_user_turn(request.input)
             else:
-                turn, pending = self.turns.prepare_continuation_turn()
+                turn, pending = self.turns.prepare_continuation_turn(request.input)
+            if turn is not None:
+                self._turn_ids[run_id] = turn.id
 
             final_content = ""
             async with aclosing(
@@ -79,14 +107,23 @@ class RunDriver:
                             run_id=run_id,
                             turn=turn,
                             reason=event.reason,
+                            expected_version=execution_version,
                         )
                         if self.runs.get_run(run_id).status is RunStatus.RUNNING:
-                            self.runs.wait(run_id, reason=event.reason)
+                            self.runs.wait(
+                                run_id,
+                                reason=event.reason,
+                                expected_version=execution_version,
+                            )
                         yield waiting
                         return
                     else:
                         yield event
-            self.runs.complete(run_id)
+            self.runs.complete(
+                run_id,
+                expected_version=execution_version,
+                turn_id=None if turn is None else turn.id,
+            )
             yield self.turns.complete(turn, final_content)
         except asyncio.CancelledError:
             self.turns.cancel(turn)
@@ -94,7 +131,11 @@ class RunDriver:
             raise
         except Exception as error:
             if self.runs.get_run(run_id).status is RunStatus.RUNNING:
-                self.runs.fail(run_id)
+                self.runs.fail(
+                    run_id,
+                    expected_version=self._execution_versions.get(run_id),
+                    turn_id=None if turn is None else turn.id,
+                )
             for prepared_event in pending:
                 yield prepared_event
             yield self.turns.fail(turn, error, mark_turn=not waiting_requested)

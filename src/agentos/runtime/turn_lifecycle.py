@@ -25,7 +25,8 @@ from agentos.runtime.query_loop_support import (
     StructuredLoggerBoundary,
     TurnNoticeProvider,
 )
-from agentos.runtime.run import UserTurnInput
+from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.run import LocalContinuationInput, UserTurnInput
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     PlanUpdated,
@@ -84,18 +85,24 @@ class TurnLifecycle:
 
     def prepare_continuation_turn(
         self,
+        input: LocalContinuationInput | AcceptedContinuationInput = LocalContinuationInput(),
     ) -> tuple[TurnState | None, tuple[TurnStreamEvent, ...]]:
         """消费本地 notice 并创建不追加用户消息的 continuation Turn。"""
 
-        notices = self._consume_turn_notices()
-        if not notices:
-            raise ContinuationUnavailableError(
-                "local continuation requires a pending runtime notice",
-            )
+        notices = ()
+        if type(input) is LocalContinuationInput:
+            notices = self._consume_turn_notices()
+            if not notices:
+                raise ContinuationUnavailableError(
+                    "local continuation requires a pending runtime notice",
+                )
         turn = self._start_turn("", is_continuation=True)
         if self.continuation_runtime is None:
             raise RuntimeError("continuation runtime is not configured")
-        self.continuation_runtime.set_notices(notices)
+        if type(input) is AcceptedContinuationInput:
+            self.continuation_runtime.set_durable(input)
+        else:
+            self.continuation_runtime.set_notices(notices)
         return turn, (TurnStreamStarted(""),)
 
     def complete(
@@ -139,6 +146,7 @@ class TurnLifecycle:
         run_id: str,
         turn: TurnState | None,
         reason: WaitReason,
+        expected_version: int,
     ) -> TurnStreamWaiting:
         """先提交权威等待状态，再迁移 Turn 并返回等待事件。"""
 
@@ -150,6 +158,7 @@ class TurnLifecycle:
             run_id=run_id,
             turn_id=turn.id,
             reason=reason,
+            expected_version=expected_version,
         )
         if commit.run_id != run_id:
             raise RunProtocolError("waiting runtime returned another run id")

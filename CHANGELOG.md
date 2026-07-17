@@ -5,6 +5,17 @@ here.
 
 ## Unreleased
 
+### Phase 5: Durable Runtime Profile
+
+- Added stable module-level Durable command and profile APIs together with the
+  SQLite Durable, Artifact, Plan, Memory, and Skill activation stores.
+- Extended the stable `Agent`, `RunRequest`, and `WaitReason` signatures with
+  additive Durable command and timer continuation inputs.
+- Added the empty `agentos[durable]` installation extra; the reference Durable
+  path remains standard-library only and does not require Redis or PostgreSQL.
+- Kept all Durable adapters out of the root `agentos` facade and kept OCR out
+  of the SDK scope.
+
 ### Phase 3C: Extension Projections
 
 - Added request-bound Episodic/Semantic memory selection with explicit Session,

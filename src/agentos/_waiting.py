@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal, TypeAlias
 
 
@@ -20,6 +21,33 @@ class WaitReason:
     kind: WaitReasonKind
     handle: str
     detail: str | None = None
+    not_before: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in {
+            "human_input",
+            "timer",
+            "remote_result",
+            "resource_availability",
+            "retry_backoff",
+        }:
+            raise ValueError("wait reason kind is invalid")
+        if type(self.handle) is not str or not self.handle.strip():
+            raise ValueError("wait reason handle must not be empty")
+        if self.detail is not None and type(self.detail) is not str:
+            raise TypeError("wait reason detail must be str or None")
+        timed = self.kind in {"timer", "retry_backoff"}
+        if timed and self.not_before is None:
+            raise ValueError("timed wait reason requires not_before")
+        if not timed and self.not_before is not None:
+            raise ValueError("not_before is only valid for timed wait reasons")
+        if self.not_before is not None:
+            if (
+                not isinstance(self.not_before, datetime)
+                or self.not_before.utcoffset() is None
+            ):
+                raise ValueError("wait reason not_before must be timezone-aware")
+            object.__setattr__(self, "not_before", self.not_before.astimezone(UTC))
 
 
 @dataclass(frozen=True, slots=True)

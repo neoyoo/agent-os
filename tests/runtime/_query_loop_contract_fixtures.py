@@ -49,6 +49,7 @@ class RecordingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit:
         self.order.append("state_committed")
         return WaitingCommit(run_id, reason)
@@ -61,6 +62,7 @@ class FailingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        expected_version: int,
     ) -> WaitingCommit:
         raise RuntimeError("commit failed")
 

@@ -14,6 +14,7 @@ agent-os-small-agent = "agentos.examples.small_openai_agent:main"
 agent-os = "agentos.cli:main"
 
 [project.optional-dependencies]
+durable = []
 dev = [
     "pyyaml>=6.0",
     "pytest>=8.0",

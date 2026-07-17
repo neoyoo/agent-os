@@ -1,5 +1,14 @@
 ﻿# Ephemeral Attachment Lifecycle 设计
 
+> status: superseded
+>
+> superseded_by:
+> `2026-07-10-agentos-next-generation-sdk-architecture-design.md`、
+> `2026-07-10-agentos-context-protocol-v1-design.md`
+>
+> 本文仅保留历史设计过程，不再定义 AgentOS 附件协议或路线图。OCR 永久不属于
+> AgentOS SDK；媒体识别由应用侧 Extension 或独立服务拥有。
+
 ## Scope Contract
 
 本设计补齐 agentos 的大文件 / 多模态附件上下文生命周期。
@@ -22,7 +31,7 @@
 
 - 不实现通用视频理解 pipeline；当前 SDK 只面向 OpenAI 和 Anthropic API。
 - 不实现跨 session 永久文件库。
-- 不实现自动 OCR / 抽帧 / 转写，只预留 tool 降级边界。
+- 不实现自动媒体识别、抽帧或转写；旧的 tool 降级设想已被上位设计取代。
 - 不把 URL/base64 暴露为 v1 平级 public API。
 - 不改 memory runtime 默认持久化策略。
 
@@ -341,7 +350,7 @@ UserMessage(
 If the selected provider cannot consume a given attachment type directly, runtime should not send invalid provider payload. It should either:
 
 - fail with a deterministic unsupported error, or
-- route to a configured media tool, such as OCR or text extraction.
+- route to an application-owned media extraction extension.
 
 V1 should prefer deterministic unsupported errors unless a media tool is explicitly registered.
 
