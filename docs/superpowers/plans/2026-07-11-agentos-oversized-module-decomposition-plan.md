@@ -6,6 +6,13 @@
 >
 > 上位规范：`docs/governance/agentos-engineering-standard.md`
 
+> **Phase 6 取代声明（2026-07-19）**：
+> `docs/superpowers/specs/2026-07-17-agentos-phase6-distributed-runtime-transport-contract.md`
+> 已取代本文要求长期保留兼容 facade、re-export 和旧入口的条款。本文的 leaf-first
+> 拆分顺序、共享文件单 Owner、文件规模门禁和 no-growth 规则继续有效；最终删除范围与
+> canonical import 以 Phase 6 Contract 及
+> `docs/migrations/phase6-distributed-runtime-breaking-map.md` 为准。
+
 ## 1. 目的
 
 Phase 0 的模块规模扫描发现下列本次触碰文件超过 800 行。Task 4 只删除未使用导入或修正既有异常变量绑定，净行数不增加，也不新增职责。实际拆分按既定架构阶段执行，不能在基线清理提交中混入行为迁移。
