@@ -35,11 +35,12 @@ from agentos.runtime.checkpoint import (
     SessionCheckpoint,
 )
 from agentos.runtime.durable_commands import (
-    AcceptedContinuationInput,
     DurableCommandReceipt,
     DurableRunCommand,
 )
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.errors import CheckpointConflictError, DurableStoreClosedError
+from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunAlreadyExistsError, RunState, RunStatus
 from agentos.runtime.session import SessionState
 
@@ -90,7 +91,7 @@ class SQLiteDurableStore:
             if connection is not None:
                 connection.close()
 
-    def initialize_session(self, session: SessionState) -> None:
+    async def initialize_session(self, session: SessionState) -> None:
         """幂等初始化 Session 恢复记录。"""
 
         if type(session) is not SessionState:
@@ -120,7 +121,7 @@ class SQLiteDurableStore:
                 )
             self._sources[session_id] = source
 
-    def create(self, state: RunState) -> RunState:
+    async def create(self, state: RunState) -> RunState:
         """创建 Run，并拒绝同 Session 的第二个非终态 Run。"""
 
         with self._transaction() as connection:
@@ -138,24 +139,24 @@ class SQLiteDurableStore:
             insert_run(connection, state)
         return state
 
-    def get(self, *, session_id: str, run_id: str) -> RunState | None:
+    async def get(self, *, session_id: str, run_id: str) -> RunState | None:
         """按 Session Scope 读取 Run；不存在时返回 None。"""
 
         with self._lock:
             row = select_run(self._ensure_open(), session_id, run_id)
             return None if row is None else row_to_state(row)
 
-    def transition(
+    async def transition(
         self,
         *,
         session_id: str,
         run_id: str,
         status: RunStatus,
         wait_reason: WaitReason | None = None,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
         turn_id: str | None = None,
     ) -> RunState:
-        """执行带可选版本检查的非 WAITING Run 状态转换。"""
+        """执行带强制版本检查的非 WAITING Run 状态转换。"""
 
         if status is RunStatus.WAITING:
             raise CheckpointConflictError(
@@ -172,10 +173,11 @@ class SQLiteDurableStore:
         )
         with self._transaction() as connection:
             current = require_run(connection, session_id, run_id)
-            if (
-                expected_version is not None
-                and current.aggregate_version != expected_version
-            ):
+            if guard.claim_id is not None:
+                raise CheckpointConflictError(
+                    "durable sqlite store does not accept fenced writes",
+                )
+            if current.aggregate_version != guard.expected_version:
                 raise CheckpointConflictError(
                     "durable run aggregate version conflict",
                 )
@@ -191,14 +193,14 @@ class SQLiteDurableStore:
             update_run(connection, updated)
         return updated
 
-    def commit_waiting(
+    async def commit_waiting(
         self,
         *,
         session_id: str,
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> RunCheckpoint:
         """原子提交恢复状态、checkpoint 与 RUNNING 到 WAITING 转换。"""
 
@@ -208,7 +210,11 @@ class SQLiteDurableStore:
         snapshot = source.capture()
         with self._transaction() as connection:
             current = require_run(connection, session_id, run_id)
-            if current.aggregate_version != expected_version:
+            if guard.claim_id is not None:
+                raise CheckpointConflictError(
+                    "durable sqlite store does not accept fenced writes",
+                )
+            if current.aggregate_version != guard.expected_version:
                 raise CheckpointConflictError(
                     "durable run aggregate version conflict",
                 )
@@ -223,13 +229,13 @@ class SQLiteDurableStore:
             update_run(connection, updated)
         return checkpoint
 
-    def accept_command(
+    async def accept_command(
         self,
         *,
         session_id: str,
         command: DurableRunCommand,
         now: datetime,
-    ) -> AcceptedContinuationInput | DurableCommandReceipt:
+    ) -> AcceptedTurnExecution | DurableCommandReceipt:
         """原子接受、去重并应用一个 Durable Command。"""
 
         with self._transaction() as connection:
@@ -240,18 +246,21 @@ class SQLiteDurableStore:
                 now=now,
             )
 
-    def load_checkpoint(self, session_id: str) -> SessionCheckpoint | None:
+    async def load_checkpoint(
+        self,
+        session_id: str,
+    ) -> SessionCheckpoint | None:
         """读取 Session 最新 checkpoint；不存在时返回 None。"""
 
         with self._lock:
             return load_checkpoint(self._ensure_open(), session_id)
 
-    def load_pending_continuation(
+    async def load_pending_continuation(
         self,
         *,
         session_id: str,
         run_id: str,
-    ) -> AcceptedContinuationInput | None:
+    ) -> AcceptedTurnExecution | None:
         """读取崩溃前已接受且仍为 QUEUED 的 continuation。"""
 
         with self._lock:
@@ -261,7 +270,7 @@ class SQLiteDurableStore:
                 run_id=run_id,
             )
 
-    def latest_checkpoint(
+    async def latest_checkpoint(
         self,
         session_id: str,
         run_id: str,
@@ -271,7 +280,10 @@ class SQLiteDurableStore:
         with self._lock:
             return latest_checkpoint(self._ensure_open(), session_id, run_id)
 
-    def recover_abandoned_runs(self, session_id: str) -> tuple[RunState, ...]:
+    async def recover_abandoned_runs(
+        self,
+        session_id: str,
+    ) -> tuple[RunState, ...]:
         """把 Session 中遗留的 RUNNING Run 以 fail-closed 方式标记失败。"""
 
         with self._transaction() as connection:

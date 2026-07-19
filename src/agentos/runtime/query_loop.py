@@ -63,10 +63,11 @@ from agentos.runtime.query_loop_support import (
     waiting_peer_completion,
 )
 from agentos.runtime.retry import RetryPolicy
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run import LocalContinuationInput, RunOptions, RunRequest, UserTurnInput
+from agentos.runtime.run_commit import RunCommitRuntime
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
 from agentos.runtime.run_driver import RunDriver
-from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
     AssistantCompleted,
@@ -151,12 +152,11 @@ class QueryLoop:
             artifact_runtime=self.artifact_runtime,
             session_state=self.session_state,
             turn_notice_provider=self.turn_notice_provider,
-            waiting_runtime=self.waiting_runtime,
             continuation_runtime=self.continuation_runtime,
             event_bus=self.event_bus,
             structured_logger=self.structured_logger,
         )
-        self._run_driver = RunDriver(self.run_runtime, self._lifecycle)
+        self._run_driver = RunDriver(self.run_runtime, self._lifecycle, RunCommitRuntime(self.run_runtime, self.waiting_runtime))
 
     async def execute(self, request: RunRequest) -> AgentStream:
         """校验请求、立即获取执行租约并返回惰性事件流。"""
@@ -165,14 +165,14 @@ class QueryLoop:
             raise TypeError("request must be a RunRequest")
         if not isinstance(
             request.input,
-            (UserTurnInput, LocalContinuationInput, AcceptedContinuationInput),
+            (UserTurnInput, LocalContinuationInput, AcceptedTurnExecution),
         ):
             raise TypeError("run request contains an unsupported input")
         self._lifecycle.session_state = self.session_state
         reservation = self._execution_lease.reserve()
         try:
             tracker = SyncWorkTracker()
-            run_id = self._run_driver.prepare(request.input)
+            run_id = await self._run_driver.prepare(request.input)
             events = bind_sync_work_tracker(
                 self._run_driver.events(
                     request,
@@ -185,11 +185,11 @@ class QueryLoop:
                 return self._execution_lease.open_reserved_stream(
                     reservation,
                     events,
-                    cleanup=lambda: self._run_driver.cancel_open(run_id),
+                    cleanup=lambda: self._run_driver.cleanup_open(run_id),
                     pending_sync_work=tracker,
                 )
             except BaseException:
-                self._run_driver.cancel_open(run_id)
+                await self._run_driver.cancel_open(run_id)
                 await events.aclose()
                 raise
         finally:

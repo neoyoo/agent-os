@@ -9,8 +9,9 @@ from agentos._waiting import WaitReason
 from agentos.durable import SQLiteDurableStore
 from agentos.runtime.durable_runtime import DurableWaitingRuntime
 from agentos.runtime.errors import CheckpointConflictError, CheckpointCorruptedError
-from agentos.runtime.run_runtime import RunRuntime
+from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
+from tests.durable._async_support import create_running, run
 from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
 
@@ -18,12 +19,10 @@ def test_wait_checkpoint_survives_store_restart(tmp_path) -> None:
     path = database_path(tmp_path)
     store = SQLiteDurableStore(path, clock=lambda: NOW)
     source = checkpoint_source()
-    store.initialize_session(source.session)
+    run(store.initialize_session(source.session))
     store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
-    runs.create_run(run_id="run_1")
-    runs.queue("run_1")
-    running = runs.start("run_1")
+    running = run(create_running(runs, "run_1"))
 
     commit = asyncio.run(
         DurableWaitingRuntime(
@@ -33,21 +32,21 @@ def test_wait_checkpoint_survives_store_restart(tmp_path) -> None:
             run_id="run_1",
             turn_id="turn_1",
             reason=WaitReason("human_input", "approval_1"),
-            expected_version=running.aggregate_version,
+            guard=RunWriteGuard(running.aggregate_version),
         )
     )
-    version = runs.get_run("run_1").aggregate_version
+    version = run(runs.get_run("run_1")).aggregate_version
     store.close()
 
     reopened = SQLiteDurableStore(path, clock=lambda: NOW)
-    restored = reopened.load_checkpoint("session_1")
-    run = reopened.get(session_id="session_1", run_id="run_1")
+    restored = run(reopened.load_checkpoint("session_1"))
+    stored_run = run(reopened.get(session_id="session_1", run_id="run_1"))
 
     assert commit.run_id == "run_1"
-    assert run is not None
-    assert run.status is RunStatus.WAITING
-    assert run.wait_reason == WaitReason("human_input", "approval_1")
-    assert run.aggregate_version == version
+    assert stored_run is not None
+    assert stored_run.status is RunStatus.WAITING
+    assert stored_run.wait_reason == WaitReason("human_input", "approval_1")
+    assert stored_run.aggregate_version == version
     assert restored is not None
     assert restored.messages[0].content == "question"
     assert restored.context.working_state == {
@@ -86,22 +85,20 @@ def test_abandoned_running_run_fails_closed_without_execution(tmp_path) -> None:
     path = database_path(tmp_path)
     store = SQLiteDurableStore(path, clock=lambda: NOW)
     source = checkpoint_source()
-    store.initialize_session(source.session)
+    run(store.initialize_session(source.session))
     runs = RunRuntime(session_id="session_1", store=store)
-    runs.create_run(run_id="run_1")
-    runs.queue("run_1")
-    running = runs.start("run_1")
+    running = run(create_running(runs, "run_1"))
     store.close()
 
     reopened = SQLiteDurableStore(path, clock=lambda: NOW)
-    recovered = reopened.recover_abandoned_runs("session_1")
-    state = reopened.get(session_id="session_1", run_id="run_1")
+    recovered = run(reopened.recover_abandoned_runs("session_1"))
+    state = run(reopened.get(session_id="session_1", run_id="run_1"))
 
     assert [item.run_id for item in recovered] == ["run_1"]
     assert state is not None
     assert state.status is RunStatus.FAILED
     assert state.aggregate_version == running.aggregate_version + 1
-    assert reopened.recover_abandoned_runs("session_1") == ()
+    assert run(reopened.recover_abandoned_runs("session_1")) == ()
     reopened.close()
 
 

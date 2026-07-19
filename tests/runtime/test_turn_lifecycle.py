@@ -33,7 +33,6 @@ from agentos.runtime.stream_events import (
 )
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
-from agentos.runtime.waiting import WaitingCommit
 from tests.runtime._query_loop_contract_fixtures import make_query_loop
 
 
@@ -55,37 +54,6 @@ class NoticeProvider:
         return self.notices
 
 
-class RecordingWaitingRuntime:
-    def __init__(self, turn: TurnState, order: list[tuple[str, str]]) -> None:
-        self.turn = turn
-        self.order = order
-
-    async def commit_waiting(
-        self,
-        *,
-        run_id: str,
-        turn_id: str,
-        reason: WaitReason,
-        expected_version: int,
-    ) -> WaitingCommit:
-        assert turn_id == self.turn.id
-        assert expected_version == 2
-        self.order.append(("commit", self.turn.status))
-        return WaitingCommit(run_id, reason)
-
-
-class FailingWaitingRuntime:
-    async def commit_waiting(
-        self,
-        *,
-        run_id: str,
-        turn_id: str,
-        reason: WaitReason,
-        expected_version: int,
-    ) -> WaitingCommit:
-        raise RuntimeError("commit failed")
-
-
 def make_lifecycle(
     *,
     context: ContextRuntime | None = None,
@@ -93,7 +61,6 @@ def make_lifecycle(
     artifacts: ArtifactRuntime | None = None,
     notices: NoticeProvider | None = None,
     continuation: ContinuationRuntime | None = None,
-    waiting_runtime: object | None = None,
     event_bus: EventBus | None = None,
     logger: RecordingLogger | None = None,
 ) -> TurnLifecycle:
@@ -103,7 +70,6 @@ def make_lifecycle(
         artifact_runtime=artifacts,
         session_state=SessionState("session_1"),
         turn_notice_provider=notices,
-        waiting_runtime=waiting_runtime,  # type: ignore[arg-type]
         continuation_runtime=continuation or ContinuationRuntime(),
         event_bus=event_bus,
         structured_logger=logger,
@@ -319,62 +285,32 @@ def test_cleanup_clears_continuation_data_and_artifact_mounts() -> None:
     assert artifacts.active_mounts() == ()
 
 
-def test_commit_waiting_commits_before_state_transition_and_event_return() -> None:
-    async def run() -> None:
-        turn = TurnState("turn_1", "hello")
-        order: list[tuple[str, str]] = []
-        lifecycle = make_lifecycle(
-            waiting_runtime=RecordingWaitingRuntime(turn, order),
-        )
+def test_mark_waiting_transitions_turn_after_authoritative_commit() -> None:
+    turn = TurnState("turn_1", "hello")
+    lifecycle = make_lifecycle()
 
-        event = await lifecycle.commit_waiting(
+    event = lifecycle.mark_waiting(
+        run_id="run_1",
+        turn=turn,
+        reason=WaitReason("human_input", "approval_1"),
+    )
+
+    assert turn.status == "waiting"
+    assert event == TurnStreamWaiting(
+        "run_1",
+        WaitReason("human_input", "approval_1"),
+    )
+
+
+def test_mark_waiting_requires_turn_state() -> None:
+    lifecycle = make_lifecycle()
+
+    with pytest.raises(
+        WaitingUnsupportedError,
+        match="waiting requires session turn state",
+    ):
+        lifecycle.mark_waiting(
             run_id="run_1",
-            turn=turn,
+            turn=None,
             reason=WaitReason("human_input", "approval_1"),
-            expected_version=2,
         )
-        order.append(("event", turn.status))
-
-        assert order == [("commit", "running"), ("event", "waiting")]
-        assert event == TurnStreamWaiting(
-            "run_1",
-            WaitReason("human_input", "approval_1"),
-        )
-
-    asyncio.run(run())
-
-
-def test_commit_waiting_failure_does_not_change_turn_state() -> None:
-    async def run() -> None:
-        turn = TurnState("turn_1", "hello")
-        lifecycle = make_lifecycle(waiting_runtime=FailingWaitingRuntime())
-
-        with pytest.raises(RuntimeError, match="commit failed"):
-            await lifecycle.commit_waiting(
-                run_id="run_1",
-                turn=turn,
-                reason=WaitReason("human_input", "approval_1"),
-                expected_version=2,
-            )
-
-        assert turn.status == "running"
-
-    asyncio.run(run())
-
-
-def test_commit_waiting_requires_waiting_runtime() -> None:
-    async def run() -> None:
-        lifecycle = make_lifecycle()
-
-        with pytest.raises(
-            WaitingUnsupportedError,
-            match="waiting runtime is not configured",
-        ):
-            await lifecycle.commit_waiting(
-                run_id="run_1",
-                turn=TurnState("turn_1", "hello"),
-                reason=WaitReason("human_input", "approval_1"),
-                expected_version=2,
-            )
-
-    asyncio.run(run())

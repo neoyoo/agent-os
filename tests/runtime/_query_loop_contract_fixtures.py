@@ -11,7 +11,7 @@ from agentos.providers import ProviderRequest, ProviderResponse
 from agentos.runtime import EventBus, ProviderRequestBuilder, QueryLoop
 from agentos.runtime._execution_lease import ExecutionLease
 from agentos.runtime.agent_stream import AgentStream
-from agentos.runtime.run_runtime import RunRuntime
+from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.stream_events import TurnStreamEvent
 from agentos.runtime import WaitReason
 from agentos.runtime.waiting import WaitingCommit
@@ -42,6 +42,10 @@ class RecordingWaitingRuntime:
     def __init__(self, order: list[str], *, run_id: str = "run_1") -> None:
         self.order = order
         self.run_id = run_id
+        self.runs: RunRuntime | None = None
+
+    def bind_runs(self, runs: RunRuntime) -> None:
+        self.runs = runs
 
     async def commit_waiting(
         self,
@@ -49,10 +53,13 @@ class RecordingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> WaitingCommit:
         self.order.append("state_committed")
-        return WaitingCommit(run_id, reason)
+        if self.runs is None:
+            raise RuntimeError("recording waiting runtime is not bound")
+        waiting = await self.runs.wait(run_id, reason=reason, guard=guard)
+        return WaitingCommit(run_id, reason, waiting.aggregate_version)
 
 
 class FailingWaitingRuntime:
@@ -62,7 +69,7 @@ class FailingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> WaitingCommit:
         raise RuntimeError("commit failed")
 

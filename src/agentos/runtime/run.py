@@ -5,9 +5,9 @@ from typing import TypeAlias
 
 from agentos._waiting import AgentWaiting
 from agentos.runtime.durable_commands import (
-    AcceptedContinuationInput,
     DurableRunCommand,
 )
+from agentos.runtime.execution import AcceptedTurnExecution
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,14 +40,20 @@ class LocalContinuationInput:
     """
 
 
-RunInput: TypeAlias = str | UserTurnInput | LocalContinuationInput | DurableRunCommand
+RunInput: TypeAlias = (
+    str
+    | UserTurnInput
+    | LocalContinuationInput
+    | DurableRunCommand
+    | AcceptedTurnExecution
+)
 
 
 @dataclass(frozen=True, slots=True)
 class RunRequest:
     """规范化后的单次运行请求。"""
 
-    input: UserTurnInput | LocalContinuationInput | AcceptedContinuationInput
+    input: UserTurnInput | LocalContinuationInput | AcceptedTurnExecution
     options: RunOptions = field(default_factory=RunOptions)
 
 

@@ -11,6 +11,7 @@ from agentos.runtime.durable_commands import (
     DurableRunCommand,
 )
 from agentos.runtime.durable_runtime import DurableCommandRuntime
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.errors import (
     CommandConflictError,
     CommandNotDueError,
@@ -18,27 +19,26 @@ from agentos.runtime.errors import (
     CheckpointCorruptedError,
     DurableUnsafeDataError,
 )
-from agentos.runtime.run_runtime import RunRuntime
+from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
+from tests.durable._async_support import create_running, run
 from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
 
 def waiting_run(tmp_path, reason: WaitReason):
     store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
     source = checkpoint_source()
-    store.initialize_session(source.session)
+    run(store.initialize_session(source.session))
     store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
-    runs.create_run(run_id="run_1")
-    runs.queue("run_1")
-    running = runs.start("run_1")
-    store.commit_waiting(
+    running = run(create_running(runs, "run_1"))
+    run(store.commit_waiting(
         session_id="session_1",
         run_id="run_1",
         turn_id="turn_1",
         reason=reason,
-        expected_version=running.aggregate_version,
-    )
+        guard=RunWriteGuard(running.aggregate_version),
+    ))
     return store, runs
 
 
@@ -54,14 +54,15 @@ def test_exact_duplicate_command_is_not_applied_twice(tmp_path) -> None:
     )
     command = DurableRunCommand("run_1", "cmd_1", "hitl_answer", {"answer": "yes"})
 
-    accepted = runtime.accept(command)
-    duplicate = runtime.accept(command)
+    accepted = run(runtime.accept(command))
+    duplicate = run(runtime.accept(command))
 
-    assert isinstance(accepted, AcceptedContinuationInput)
+    assert isinstance(accepted, AcceptedTurnExecution)
+    assert isinstance(accepted.input, AcceptedContinuationInput)
     assert isinstance(duplicate, DurableCommandReceipt)
     assert duplicate.duplicate is True
-    assert duplicate.aggregate_version == accepted.aggregate_version
-    assert runs.get_run("run_1").status is RunStatus.QUEUED
+    assert duplicate.aggregate_version == accepted.guard.expected_version
+    assert run(runs.get_run("run_1")).status is RunStatus.QUEUED
     store.close()
 
 
@@ -69,35 +70,45 @@ def test_accepted_queued_continuation_can_be_recovered_after_crash(tmp_path) -> 
     path = database_path(tmp_path)
     store, _ = waiting_run(tmp_path, WaitReason("human_input", "approval_1"))
     command = DurableRunCommand("run_1", "cmd_1", "resume", {"answer": "yes"})
-    accepted = DurableCommandRuntime(
+    accepted = run(DurableCommandRuntime(
         "session_1",
         store,
         clock=lambda: NOW,
-    ).accept(command)
-    assert isinstance(accepted, AcceptedContinuationInput)
+    ).accept(command))
+    assert isinstance(accepted, AcceptedTurnExecution)
+    assert isinstance(accepted.input, AcceptedContinuationInput)
+    accepted_turn_id = accepted.input.turn_id
     store.close()
 
     reopened = SQLiteDurableStore(path, clock=lambda: NOW)
-    assert reopened.load_pending_continuation(
+    recovered = run(reopened.load_pending_continuation(
         session_id="session_1",
         run_id="run_1",
-    ) == accepted
+    ))
+    assert recovered == accepted
+    assert recovered is not None
+    assert recovered.input.turn_id == accepted_turn_id
 
-    RunRuntime(session_id="session_1", store=reopened).start("run_1")
-    assert reopened.load_pending_continuation(
+    run(RunRuntime(session_id="session_1", store=reopened).start(
+        "run_1",
+        guard=accepted.guard,
+    ))
+    assert run(reopened.load_pending_continuation(
         session_id="session_1",
         run_id="run_1",
-    ) is None
+    )) is None
     reopened.close()
 
 
 def test_conflicting_duplicate_command_is_rejected(tmp_path) -> None:
     store, _ = waiting_run(tmp_path, WaitReason("human_input", "approval_1"))
     runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
-    runtime.accept(DurableRunCommand("run_1", "cmd_1", "resume", {}))
+    run(runtime.accept(DurableRunCommand("run_1", "cmd_1", "resume", {})))
 
     with pytest.raises(CommandConflictError):
-        runtime.accept(DurableRunCommand("run_1", "cmd_1", "resume", {"x": 1}))
+        run(runtime.accept(
+            DurableRunCommand("run_1", "cmd_1", "resume", {"x": 1}),
+        ))
 
     store.close()
 
@@ -112,6 +123,7 @@ def test_conflicting_duplicate_command_is_rejected(tmp_path) -> None:
         ("payload_json", sqlite3.Binary(b"{}")),
         ("payload_json", "{"),
         ("payload_json", "[]"),
+        ("turn_id", None),
         ("aggregate_version", -1),
         ("aggregate_version", "invalid-version"),
     ),
@@ -125,7 +137,7 @@ def test_corrupted_duplicate_command_record_uses_stable_error(
     store, _ = waiting_run(tmp_path, WaitReason("human_input", "approval_1"))
     runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
     command = DurableRunCommand("run_1", "cmd_1", "resume", {})
-    runtime.accept(command)
+    run(runtime.accept(command))
     with sqlite3.connect(path) as connection:
         connection.execute(
             f"UPDATE durable_commands SET {column} = ? WHERE command_id = ?",
@@ -136,7 +148,7 @@ def test_corrupted_duplicate_command_record_uses_stable_error(
         CheckpointCorruptedError,
         match="^durable command record is corrupted$",
     ):
-        runtime.accept(command)
+        run(runtime.accept(command))
 
     store.close()
 
@@ -147,11 +159,11 @@ def test_cancel_command_persists_and_deduplicates(tmp_path) -> None:
     runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
     command = DurableRunCommand("run_1", "cmd_cancel", "cancel", {})
 
-    first = runtime.accept(command)
-    duplicate = runtime.accept(command)
+    first = run(runtime.accept(command))
+    duplicate = run(runtime.accept(command))
     store.close()
     reopened = SQLiteDurableStore(path, clock=lambda: NOW)
-    state = reopened.get(session_id="session_1", run_id="run_1")
+    state = run(reopened.get(session_id="session_1", run_id="run_1"))
 
     assert isinstance(first, DurableCommandReceipt)
     assert first.duplicate is False
@@ -176,31 +188,36 @@ def test_timer_command_is_rejected_until_due_without_being_recorded(tmp_path) ->
     command = DurableRunCommand("run_1", "cmd_early", "wakeup", {})
 
     with pytest.raises(CommandNotDueError):
-        early.accept(command)
-    assert runs.get_run("run_1").status is RunStatus.WAITING
+        run(early.accept(command))
+    assert run(runs.get_run("run_1")).status is RunStatus.WAITING
 
     due_runtime = DurableCommandRuntime("session_1", store, clock=lambda: due)
-    accepted = due_runtime.accept(command)
-    assert isinstance(accepted, AcceptedContinuationInput)
-    assert runs.get_run("run_1").status is RunStatus.QUEUED
+    accepted = run(due_runtime.accept(command))
+    assert isinstance(accepted, AcceptedTurnExecution)
+    assert isinstance(accepted.input, AcceptedContinuationInput)
+    assert run(runs.get_run("run_1")).status is RunStatus.QUEUED
     store.close()
 
 
 def test_terminal_and_nonwaiting_resume_are_rejected(tmp_path) -> None:
     store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
     source = checkpoint_source()
-    store.initialize_session(source.session)
+    run(store.initialize_session(source.session))
     runs = RunRuntime(session_id="session_1", store=store)
-    runs.create_run(run_id="run_1")
+    created = run(runs.create_run(run_id="run_1"))
     runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
 
     with pytest.raises(CommandStateError):
-        runtime.accept(DurableRunCommand("run_1", "cmd_created", "resume", {}))
-    runs.queue("run_1")
-    runs.start("run_1")
-    runs.complete("run_1")
+        run(runtime.accept(
+            DurableRunCommand("run_1", "cmd_created", "resume", {}),
+        ))
+    queued = run(runs.queue("run_1", guard=RunWriteGuard(created.aggregate_version)))
+    running = run(runs.start("run_1", guard=RunWriteGuard(queued.aggregate_version)))
+    run(runs.complete("run_1", guard=RunWriteGuard(running.aggregate_version)))
     with pytest.raises(CommandStateError):
-        runtime.accept(DurableRunCommand("run_1", "cmd_terminal", "resume", {}))
+        run(runtime.accept(
+            DurableRunCommand("run_1", "cmd_terminal", "resume", {}),
+        ))
 
     store.close()
 
@@ -218,7 +235,11 @@ def test_unsafe_command_payload_is_rejected_without_state_change(tmp_path) -> No
     )
 
     with pytest.raises(DurableUnsafeDataError):
-        DurableCommandRuntime("session_1", store, clock=lambda: NOW).accept(command)
+        run(DurableCommandRuntime(
+            "session_1",
+            store,
+            clock=lambda: NOW,
+        ).accept(command))
 
-    assert runs.get_run("run_1").status is RunStatus.WAITING
+    assert run(runs.get_run("run_1")).status is RunStatus.WAITING
     store.close()

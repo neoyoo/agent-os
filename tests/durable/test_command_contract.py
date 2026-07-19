@@ -53,7 +53,7 @@ def test_accepted_input_and_receipt_are_frozen_domain_values() -> None:
         command_id="cmd_1",
         kind="resume",
         payload={},
-        aggregate_version=4,
+        turn_id="turn_4",
     )
     receipt = DurableCommandReceipt(
         run_id="run_1",
@@ -63,7 +63,8 @@ def test_accepted_input_and_receipt_are_frozen_domain_values() -> None:
         duplicate=True,
     )
 
-    assert accepted.aggregate_version == 4
+    assert accepted.turn_id == "turn_4"
+    assert not hasattr(accepted, "aggregate_version")
     assert receipt.duplicate is True
     assert not hasattr(accepted, "__dict__")
     assert not hasattr(receipt, "__dict__")

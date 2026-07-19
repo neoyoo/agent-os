@@ -15,6 +15,7 @@ from agentos.runtime import (
     WaitReason,
 )
 from agentos.runtime.errors import DurableCommandUnsupportedError
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run_state import RunStatus
 
 
@@ -52,7 +53,7 @@ def test_profile_restarts_and_continues_same_run_with_new_turn(tmp_path) -> None
             ),
             **paths,
         ) as first_profile:
-            first_agent = first_profile.build_agent(session_id="session_1")
+            first_agent = await first_profile.build_agent(session_id="session_1")
             waiting = await first_agent.run("review drawing")
             assert isinstance(waiting, AgentWaiting)
             run_id = waiting.run_id
@@ -73,11 +74,13 @@ def test_profile_restarts_and_continues_same_run_with_new_turn(tmp_path) -> None
             ),
             **paths,
         ) as restarted_profile:
-            restarted = restarted_profile.build_agent(session_id="session_1")
+            restarted = await restarted_profile.build_agent(session_id="session_1")
             result = await restarted.run(command)
 
             assert result == AgentResult("resumed after restart")
-            assert restarted.query_loop.run_runtime.get_run(run_id).status is RunStatus.COMPLETED
+            assert (
+                await restarted.query_loop.run_runtime.get_run(run_id)
+            ).status is RunStatus.COMPLETED
             assert restarted.query_loop.session_state.next_turn_number() == 3
             assert all(
                 "approved-secret-value" not in message.content
@@ -127,7 +130,7 @@ def test_profile_recovers_command_accepted_before_loop_entry(tmp_path) -> None:
         }
 
         with DurableRuntimeProfile(**profile_args) as profile:
-            agent = profile.build_agent(session_id="session_1")
+            agent = await profile.build_agent(session_id="session_1")
             waiting = await agent.run("start")
             assert isinstance(waiting, AgentWaiting)
             command = DurableRunCommand(
@@ -136,11 +139,12 @@ def test_profile_recovers_command_accepted_before_loop_entry(tmp_path) -> None:
                 "hitl_answer",
                 {"answer": "continue"},
             )
-            accepted = agent._durable_command_runtime.accept(command)
-            assert accepted.run_id == waiting.run_id
+            accepted = await agent._durable_command_runtime.accept(command)
+            assert isinstance(accepted, AcceptedTurnExecution)
+            assert accepted.input.run_id == waiting.run_id
 
         with DurableRuntimeProfile(**profile_args) as restarted_profile:
-            restarted = restarted_profile.build_agent(session_id="session_1")
+            restarted = await restarted_profile.build_agent(session_id="session_1")
             result = await restarted.run(command)
 
         assert result == AgentResult("recovered pending continuation")
@@ -187,7 +191,7 @@ def test_closing_unconsumed_command_stream_does_not_reaccept_command(
         }
 
         with DurableRuntimeProfile(**profile_args) as profile:
-            agent = profile.build_agent(session_id="session_1")
+            agent = await profile.build_agent(session_id="session_1")
             waiting = await agent.run("start")
             assert isinstance(waiting, AgentWaiting)
             command = DurableRunCommand(
@@ -201,7 +205,9 @@ def test_closing_unconsumed_command_stream_does_not_reaccept_command(
             assert isinstance(stream, AgentStream)
             await stream.aclose()
             assert stream.closed
-            assert agent.query_loop.run_runtime.get_run(waiting.run_id).status is RunStatus.CANCELLED
+            assert (
+                await agent.query_loop.run_runtime.get_run(waiting.run_id)
+            ).status is RunStatus.CANCELLED
 
             duplicate = await agent.run(command)
             assert isinstance(duplicate, DurableCommandReceipt)

@@ -65,7 +65,7 @@ class AcceptedContinuationInput:
     command_id: str
     kind: DurableContinuationKind
     payload: FrozenJsonObject
-    aggregate_version: int
+    turn_id: str
 
     def __init__(
         self,
@@ -73,13 +73,13 @@ class AcceptedContinuationInput:
         command_id: str,
         kind: DurableContinuationKind,
         payload: dict[str, object] | FrozenJsonObject | None,
-        aggregate_version: int,
+        turn_id: str,
     ) -> None:
         _require_identifier(run_id, "run_id")
         _require_identifier(command_id, "command_id")
+        _require_identifier(turn_id, "turn_id")
         if kind not in _CONTINUATION_KINDS:
             raise ValueError("accepted continuation kind is invalid")
-        _require_version(aggregate_version)
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "command_id", command_id)
         object.__setattr__(self, "kind", kind)
@@ -88,7 +88,7 @@ class AcceptedContinuationInput:
             "payload",
             freeze_json_mapping({} if payload is None else payload),
         )
-        object.__setattr__(self, "aggregate_version", aggregate_version)
+        object.__setattr__(self, "turn_id", turn_id)
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,7 +19,7 @@ def _profile(tmp_path, provider: FakeProvider) -> DurableRuntimeProfile:
 
 def test_artifact_bytes_reload_and_project_after_profile_restart(tmp_path) -> None:
     with _profile(tmp_path, FakeProvider([])) as first:
-        record = first.build_agent("session_1").artifacts.upload(
+        record = asyncio.run(first.build_agent("session_1")).artifacts.upload(
             data=ARTIFACT_BYTES,
             filename="drawing.png",
             media_type="image/png",
@@ -27,7 +27,7 @@ def test_artifact_bytes_reload_and_project_after_profile_restart(tmp_path) -> No
 
     provider = FakeProvider(["image restored"])
     with _profile(tmp_path, provider) as restarted:
-        agent = restarted.build_agent("session_1")
+        agent = asyncio.run(restarted.build_agent("session_1"))
         result = asyncio.run(
             agent.run(
                 UserTurnInput(

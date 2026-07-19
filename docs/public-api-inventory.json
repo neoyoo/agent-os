@@ -2716,7 +2716,7 @@
           "stability": "stable"
         },
         "RunRequest": {
-          "signature": "(input: 'UserTurnInput | LocalContinuationInput | AcceptedContinuationInput', options: 'RunOptions' = <factory>) -> None",
+          "signature": "(input: 'UserTurnInput | LocalContinuationInput | AcceptedTurnExecution', options: 'RunOptions' = <factory>) -> None",
           "stability": "stable"
         },
         "RuntimeCompositionProfile": {

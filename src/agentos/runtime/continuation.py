@@ -111,8 +111,8 @@ def project_durable_continuation(
         '    visibility="internal" source="durable-command"\n'
         f'    run-id="{_escape_attribute(continuation.run_id)}"\n'
         f'    command-id="{_escape_attribute(continuation.command_id)}"\n'
-        f'    kind="{continuation.kind}" '
-        f'aggregate-version="{continuation.aggregate_version}">\n'
+        f'    turn-id="{_escape_attribute(continuation.turn_id)}"\n'
+        f'    kind="{continuation.kind}">\n'
         f"  <payload-json>{_escape_attribute(payload)}</payload-json>\n"
         "</continuation-data>\n"
     )

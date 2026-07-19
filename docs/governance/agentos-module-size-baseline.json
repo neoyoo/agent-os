@@ -203,13 +203,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/testing/contracts/plan_claim_store.py",
-      "lines": 337,
+      "path": "src/agentos/durable/sqlite_store.py",
+      "lines": 344,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/durable/sqlite_store.py",
-      "lines": 332,
+      "path": "src/agentos/testing/contracts/plan_claim_store.py",
+      "lines": 337,
       "gate": "responsibility_review"
     },
     {

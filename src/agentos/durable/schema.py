@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS durable_schema (
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS durable_commands (
     run_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     payload_json TEXT NOT NULL,
+    turn_id TEXT,
     aggregate_version INTEGER NOT NULL,
     FOREIGN KEY (session_id, run_id)
         REFERENCES durable_runs(session_id, run_id)
@@ -100,6 +101,7 @@ _EXPECTED_COLUMNS = {
         ("run_id", "TEXT", 1, 0),
         ("kind", "TEXT", 1, 0),
         ("payload_json", "TEXT", 1, 0),
+        ("turn_id", "TEXT", 0, 0),
         ("aggregate_version", "INTEGER", 1, 0),
     ),
     "durable_checkpoints": (

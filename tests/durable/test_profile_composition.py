@@ -134,7 +134,8 @@ def test_profile_plan_and_memory_stores_restart_and_project_current_truth(
                 BoundMemoryProjectionProvider(memory, _selection()),
             )
         )
-        result = asyncio.run(restarted.build_agent("session_1").run("继续"))
+        agent = asyncio.run(restarted.build_agent("session_1"))
+        result = asyncio.run(agent.run("继续"))
 
     assert result.content == "restored"
     snapshot = provider.requests[0].messages[0]
@@ -200,7 +201,7 @@ def test_profile_extension_store_access_is_closed_with_profile(tmp_path) -> None
 
 def test_profile_close_invalidates_old_agent_artifact_access(tmp_path) -> None:
     profile = _profile(tmp_path, AgentBuilder().provider(FakeProvider([])))
-    agent = profile.build_agent("session_1")
+    agent = asyncio.run(profile.build_agent("session_1"))
     record = agent.artifacts.upload(
         data=b"drawing",
         filename="drawing.png",
@@ -248,14 +249,14 @@ def test_profile_uses_one_live_agent_and_checkpoint_source_per_session(
     builder = AgentBuilder().provider(provider).tools([wait_tool])
 
     with _profile(tmp_path, builder) as profile:
-        first = profile.build_agent("session_1")
-        second = profile.build_agent("session_1")
+        first = asyncio.run(profile.build_agent("session_1"))
+        second = asyncio.run(profile.build_agent("session_1"))
         assert second.query_loop is first.query_loop
         waiting = asyncio.run(first.run("checkpoint owner"))
         assert isinstance(waiting, AgentWaiting)
 
     with _profile(tmp_path, builder) as restarted:
-        hydrated = restarted.build_agent("session_1")
+        hydrated = asyncio.run(restarted.build_agent("session_1"))
         assert hydrated.query_loop.message_runtime.store.all()[0].content == (
             "checkpoint owner"
         )
@@ -263,14 +264,14 @@ def test_profile_uses_one_live_agent_and_checkpoint_source_per_session(
 
 def test_profile_does_not_retain_idle_session_query_loop(tmp_path) -> None:
     with _profile(tmp_path, AgentBuilder().provider(FakeProvider([]))) as profile:
-        agent = profile.build_agent("session_1")
+        agent = asyncio.run(profile.build_agent("session_1"))
         loop_ref = weakref.ref(agent.query_loop)
 
         del agent
         gc.collect()
 
         assert loop_ref() is None
-        replacement = profile.build_agent("session_1")
+        replacement = asyncio.run(profile.build_agent("session_1"))
         assert replacement.query_loop is not loop_ref()
 
 
@@ -279,14 +280,14 @@ def test_profile_reuses_stream_owned_query_loop_without_agent_facade(
 ) -> None:
     async def scenario() -> None:
         profile = _profile(tmp_path, AgentBuilder().provider(FakeProvider(["done"])))
-        agent = profile.build_agent("session_1")
+        agent = await profile.build_agent("session_1")
         stream = await agent.run("start", stream=True)
         query_loop = agent.query_loop
 
         del agent
         gc.collect()
 
-        replacement = profile.build_agent("session_1")
+        replacement = await profile.build_agent("session_1")
         assert replacement.query_loop is query_loop
         await stream.aclose()
         profile.close()
@@ -297,8 +298,8 @@ def test_profile_reuses_stream_owned_query_loop_without_agent_facade(
 def test_same_session_facades_share_execution_lease(tmp_path) -> None:
     async def scenario() -> None:
         profile = _profile(tmp_path, AgentBuilder().provider(FakeProvider(["done"])))
-        first = profile.build_agent("session_1")
-        second = profile.build_agent("session_1")
+        first = await profile.build_agent("session_1")
+        second = await profile.build_agent("session_1")
         stream = await first.run("start", stream=True)
 
         with pytest.raises(AgentBusyError, match="active execution"):
@@ -332,7 +333,7 @@ def test_stream_keeps_checkpoint_source_alive_until_wait_is_committed(
             tmp_path,
             AgentBuilder().provider(provider).tools([wait_tool]),
         )
-        agent = profile.build_agent("session_1")
+        agent = await profile.build_agent("session_1")
         loop_ref = weakref.ref(agent.query_loop)
         stream = await agent.run("checkpoint owner", stream=True)
 
@@ -346,7 +347,7 @@ def test_stream_keeps_checkpoint_source_alive_until_wait_is_committed(
         del stream
         gc.collect()
         assert loop_ref() is None
-        hydrated = profile.build_agent("session_1")
+        hydrated = await profile.build_agent("session_1")
         assert hydrated.query_loop.message_runtime.store.all()[0].content == (
             "checkpoint owner"
         )
@@ -360,13 +361,14 @@ def test_profile_close_rejects_active_stream_without_closing_store(
 ) -> None:
     async def scenario() -> None:
         profile = _profile(tmp_path, AgentBuilder().provider(FakeProvider(["done"])))
-        agent = profile.build_agent("session_1")
+        agent = await profile.build_agent("session_1")
         stream = await agent.run("start", stream=True)
 
         with pytest.raises(AgentBusyError, match="active execution"):
             profile.close()
 
-        assert profile.build_agent("session_1").query_loop is agent.query_loop
+        rebuilt = await profile.build_agent("session_1")
+        assert rebuilt.query_loop is agent.query_loop
         await stream.aclose()
         profile.close()
         profile.close()
@@ -379,17 +381,17 @@ def test_profile_close_observes_execution_reservation_during_prepare(
     monkeypatch,
 ) -> None:
     profile = _profile(tmp_path, AgentBuilder().provider(FakeProvider(["done"])))
-    agent = profile.build_agent("session_1")
+    agent = asyncio.run(profile.build_agent("session_1"))
     prepare_entered = Event()
     allow_prepare = Event()
     original_create = profile._store.create
     errors: list[BaseException] = []
 
-    def blocked_create(state):  # type: ignore[no-untyped-def]
+    async def blocked_create(state):  # type: ignore[no-untyped-def]
         prepare_entered.set()
         if not allow_prepare.wait(5):
             raise TimeoutError("test did not release run prepare")
-        return original_create(state)
+        return await original_create(state)
 
     monkeypatch.setattr(profile._store, "create", blocked_create)
 
@@ -423,7 +425,7 @@ def test_profile_close_reservation_blocks_new_run_until_store_is_closed(
     monkeypatch,
 ) -> None:
     profile = _profile(tmp_path, AgentBuilder().provider(FakeProvider(["done"])))
-    agent = profile.build_agent("session_1")
+    agent = asyncio.run(profile.build_agent("session_1"))
     close_entered = Event()
     allow_close = Event()
     original_close = profile._skill_activation_store.close
@@ -474,8 +476,8 @@ def test_profile_close_rolls_back_other_session_reservations_when_busy(
             tmp_path,
             AgentBuilder().provider(FakeProvider(["one", "two"])),
         )
-        idle_agent = profile.build_agent("session_idle")
-        busy_agent = profile.build_agent("session_busy")
+        idle_agent = await profile.build_agent("session_idle")
+        busy_agent = await profile.build_agent("session_busy")
         busy_stream = await busy_agent.run("busy", stream=True)
 
         with pytest.raises(AgentBusyError, match="active execution"):

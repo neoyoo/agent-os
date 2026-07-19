@@ -6,12 +6,12 @@ from typing import Literal, cast, overload
 from agentos.artifacts import ArtifactRuntime
 from agentos.runtime.agent_stream import AgentStream
 from agentos.runtime.durable_commands import (
-    AcceptedContinuationInput,
     DurableCommandReceipt,
     DurableRunCommand,
 )
 from agentos.runtime.durable_runtime import DurableCommandRuntime
 from agentos.runtime.errors import DurableCommandUnsupportedError, RunProtocolError
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.query_loop import QueryLoop
 from agentos.runtime.run import (
     AgentResult,
@@ -113,11 +113,11 @@ class Agent:
         """执行用户/continuation 输入，Durable receipt 不进入 QueryLoop。"""
 
         reservation: object | None = None
-        normalized: UserTurnInput | LocalContinuationInput | AcceptedContinuationInput
+        normalized: UserTurnInput | LocalContinuationInput | AcceptedTurnExecution
         try:
             if type(input) is DurableRunCommand:
                 reservation = self.query_loop._execution_lease.reserve()
-                accepted = self._accept_durable_command(input)
+                accepted = await self._accept_durable_command(input)
                 if type(accepted) is DurableCommandReceipt:
                     return accepted
                 normalized = accepted
@@ -133,27 +133,39 @@ class Agent:
         return await self._collect_outcome(events)
 
     @staticmethod
-    def _normalize_input(input: RunInput) -> UserTurnInput | LocalContinuationInput:
+    def _normalize_input(
+        input: RunInput,
+    ) -> UserTurnInput | LocalContinuationInput | AcceptedTurnExecution:
         if isinstance(input, str):
             return UserTurnInput(input)
-        if type(input) in {UserTurnInput, LocalContinuationInput}:
+        if type(input) in {
+            UserTurnInput,
+            LocalContinuationInput,
+            AcceptedTurnExecution,
+        }:
             return input
-        raise TypeError("agent input must be str, UserTurnInput, or LocalContinuationInput")
+        raise TypeError(
+            "agent input must be str, UserTurnInput, LocalContinuationInput, "
+            "or AcceptedTurnExecution",
+        )
 
-    def _accept_durable_command(
+    async def _accept_durable_command(
         self,
         command: DurableRunCommand,
-    ) -> AcceptedContinuationInput | DurableCommandReceipt:
+    ) -> AcceptedTurnExecution | DurableCommandReceipt:
         runtime = self._durable_command_runtime
         if runtime is None:
             raise DurableCommandUnsupportedError(
                 "durable command runtime is not configured",
             )
-        accepted = runtime.accept(command)
+        accepted = await runtime.accept(command)
         if not isinstance(accepted, DurableCommandReceipt) or not accepted.duplicate:
             return accepted
-        pending = runtime.pending(command.run_id)
-        if pending is not None and pending.command_id == command.command_id:
+        pending = await runtime.pending(command.run_id)
+        if (
+            pending is not None
+            and pending.input.command_id == command.command_id
+        ):
             return pending
         return accepted
 

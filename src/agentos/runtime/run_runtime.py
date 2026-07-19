@@ -45,18 +45,18 @@ class RunWriteGuard:
 class RunStore(Protocol):
     """RunRuntime 使用的最小权威状态 Store 边界。"""
 
-    def create(self, state: RunState) -> RunState: ...
+    async def create(self, state: RunState) -> RunState: ...
 
-    def get(self, *, session_id: str, run_id: str) -> RunState | None: ...
+    async def get(self, *, session_id: str, run_id: str) -> RunState | None: ...
 
-    def transition(
+    async def transition(
         self,
         *,
         session_id: str,
         run_id: str,
         status: RunStatus,
         wait_reason: WaitReason | None = None,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
         turn_id: str | None = None,
     ) -> RunState: ...
 
@@ -68,7 +68,7 @@ class InMemoryRunStore:
         self._states: dict[tuple[str, str], RunState] = {}
         self._lock = RLock()
 
-    def create(self, state: RunState) -> RunState:
+    async def create(self, state: RunState) -> RunState:
         key = (state.session_id, state.run_id)
         with self._lock:
             if key in self._states:
@@ -78,18 +78,18 @@ class InMemoryRunStore:
             self._states[key] = state
             return state
 
-    def get(self, *, session_id: str, run_id: str) -> RunState | None:
+    async def get(self, *, session_id: str, run_id: str) -> RunState | None:
         with self._lock:
             return self._states.get((session_id, run_id))
 
-    def transition(
+    async def transition(
         self,
         *,
         session_id: str,
         run_id: str,
         status: RunStatus,
         wait_reason: WaitReason | None = None,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
         turn_id: str | None = None,
     ) -> RunState:
         key = (session_id, run_id)
@@ -97,10 +97,13 @@ class InMemoryRunStore:
             current = self._states.get(key)
             if current is None:
                 raise RunNotFoundError(f"run not found: {run_id}")
-            if (
-                expected_version is not None
-                and current.aggregate_version != expected_version
-            ):
+            if guard.claim_id is not None:
+                from agentos.runtime.run_state import RunStateTransitionError
+
+                raise RunStateTransitionError(
+                    "in-memory run store does not accept fenced writes",
+                )
+            if current.aggregate_version != guard.expected_version:
                 from agentos.runtime.run_state import RunStateTransitionError
 
                 raise RunStateTransitionError("run aggregate version conflict")
@@ -131,112 +134,120 @@ class RunRuntime:
 
         return self._session_id
 
-    def create_run(self, *, run_id: str | None = None) -> RunState:
+    def new_run_id(self) -> str:
+        """为尚未持久化的 Run 分配稳定标识。"""
+
+        return self._id_factory()
+
+    async def create_run(self, *, run_id: str | None = None) -> RunState:
         """创建一个 CREATED Run。"""
 
         state = RunState(
-            run_id=self._id_factory() if run_id is None else run_id,
+            run_id=self.new_run_id() if run_id is None else run_id,
             session_id=self._session_id,
         )
-        return self._store.create(state)
+        return await self._store.create(state)
 
-    def get_run(self, run_id: str) -> RunState:
+    async def get_run(self, run_id: str) -> RunState:
         """读取当前 Session 的 Run，不存在时 fail-closed。"""
 
-        state = self._store.get(session_id=self._session_id, run_id=run_id)
+        state = await self._store.get(
+            session_id=self._session_id,
+            run_id=run_id,
+        )
         if state is None:
             raise RunNotFoundError(f"run not found: {run_id}")
         return state
 
-    def queue(self, run_id: str) -> RunState:
+    async def queue(self, run_id: str, *, guard: RunWriteGuard) -> RunState:
         """执行 CREATED/WAITING -> QUEUED。"""
 
-        return self._transition(run_id, RunStatus.QUEUED)
+        return await self._transition(run_id, RunStatus.QUEUED, guard=guard)
 
-    def start(self, run_id: str) -> RunState:
+    async def start(self, run_id: str, *, guard: RunWriteGuard) -> RunState:
         """执行 QUEUED -> RUNNING。"""
 
-        return self._transition(run_id, RunStatus.RUNNING)
+        return await self._transition(run_id, RunStatus.RUNNING, guard=guard)
 
-    def complete(
+    async def complete(
         self,
         run_id: str,
         *,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
         turn_id: str | None = None,
     ) -> RunState:
         """执行 RUNNING -> COMPLETED。"""
 
-        return self._transition(
+        return await self._transition(
             run_id,
             RunStatus.COMPLETED,
-            expected_version=expected_version,
+            guard=guard,
             turn_id=turn_id,
         )
 
-    def fail(
+    async def fail(
         self,
         run_id: str,
         *,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
         turn_id: str | None = None,
     ) -> RunState:
         """执行 RUNNING -> FAILED。"""
 
-        return self._transition(
+        return await self._transition(
             run_id,
             RunStatus.FAILED,
-            expected_version=expected_version,
+            guard=guard,
             turn_id=turn_id,
         )
 
-    def cancel(
+    async def cancel(
         self,
         run_id: str,
         *,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
         turn_id: str | None = None,
     ) -> RunState:
         """把任意非终态 Run 转为 CANCELLED。"""
 
-        return self._transition(
+        return await self._transition(
             run_id,
             RunStatus.CANCELLED,
-            expected_version=expected_version,
+            guard=guard,
             turn_id=turn_id,
         )
 
-    def wait(
+    async def wait(
         self,
         run_id: str,
         *,
         reason: WaitReason,
-        expected_version: int | None = None,
+        guard: RunWriteGuard,
     ) -> RunState:
         """执行 RUNNING -> WAITING 并保存类型化原因。"""
 
-        return self._transition(
+        return await self._transition(
             run_id,
             RunStatus.WAITING,
             wait_reason=reason,
-            expected_version=expected_version,
+            guard=guard,
         )
 
-    def _transition(
+    async def _transition(
         self,
         run_id: str,
         status: RunStatus,
         *,
+        guard: RunWriteGuard,
         wait_reason: WaitReason | None = None,
-        expected_version: int | None = None,
         turn_id: str | None = None,
     ) -> RunState:
-        return self._store.transition(
+        return await self._store.transition(
             session_id=self._session_id,
             run_id=run_id,
             status=status,
             wait_reason=wait_reason,
-            expected_version=expected_version,
+            guard=guard,
             turn_id=turn_id,
         )
 

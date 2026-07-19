@@ -39,7 +39,7 @@ from agentos.runtime import (
     WaitReason,
 )
 from agentos.runtime.session import SessionState
-from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
+from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
 from agentos.runtime.tool_scheduler import ToolCallScheduler
 from agentos.runtime.turn import TurnState
@@ -54,8 +54,13 @@ class RecordingSessionState(SessionState):
         super().__init__("session_1")
         self.turns: list[TurnState] = []
 
-    def new_turn(self, user_input: str) -> TurnState:
-        turn = super().new_turn(user_input)
+    def new_turn(
+        self,
+        user_input: str,
+        *,
+        turn_id: str | None = None,
+    ) -> TurnState:
+        turn = super().new_turn(user_input, turn_id=turn_id)
         self.turns.append(turn)
         return turn
 
@@ -71,7 +76,7 @@ class FailingWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> WaitingCommit:
         self.order.append("commit_attempted")
         raise self.error
@@ -99,6 +104,14 @@ def _agent(
         number = next(run_number)
         return base_run_id if number == 1 else f"{base_run_id}_{number}"
 
+    run_runtime = RunRuntime(
+        session_id=session.id,
+        store=InMemoryRunStore(),
+        id_factory=next_run_id,
+    )
+    if isinstance(waiting_runtime, RecordingWaitingRuntime):
+        waiting_runtime.bind_runs(run_runtime)
+
     return (
         Agent(
             QueryLoop(
@@ -114,11 +127,7 @@ def _agent(
                 session_state=session,
                 event_bus=event_bus,
                 waiting_runtime=waiting_runtime,
-                run_runtime=RunRuntime(
-                    session_id=session.id,
-                    store=InMemoryRunStore(),
-                    id_factory=next_run_id,
-                ),
+                run_runtime=run_runtime,
                 hook_manager=hook_manager,
             ),
         ),
@@ -576,7 +585,7 @@ def test_non_streaming_wait_projects_outcome_after_authoritative_commit() -> Non
         assert session.turns[0].status == "waiting"
         assert agent.query_loop.run_runtime is not None
         assert (
-            agent.query_loop.run_runtime.get_run("run_2").status
+            (await agent.query_loop.run_runtime.get_run("run_2")).status
             is RunStatus.WAITING
         )
 

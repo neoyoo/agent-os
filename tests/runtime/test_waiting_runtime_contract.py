@@ -14,10 +14,11 @@ def test_waiting_commit_is_a_frozen_slotted_value() -> None:
         handle="worker_pool",
         detail="capacity exhausted",
     )
-    commit = WaitingCommit(run_id="run_1", reason=reason)
+    commit = WaitingCommit(run_id="run_1", reason=reason, aggregate_version=4)
 
     assert commit.run_id == "run_1"
     assert commit.reason == reason
+    assert commit.aggregate_version == 4
     assert not hasattr(commit, "__dict__")
     with pytest.raises(FrozenInstanceError):
         commit.run_id = "run_2"  # type: ignore[misc]

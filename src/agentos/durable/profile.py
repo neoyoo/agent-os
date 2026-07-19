@@ -130,7 +130,7 @@ class DurableRuntimeProfile:
         self._ensure_open()
         return self._skill_activation_store
 
-    def build_agent(self, session_id: str | None = None) -> Agent:
+    async def build_agent(self, session_id: str | None = None) -> Agent:
         """为指定 Session 水合或创建标准 Agent。"""
 
         with self._lock:
@@ -147,7 +147,7 @@ class DurableRuntimeProfile:
                         self._clock,
                     ),
                 )
-            agent = build_durable_agent(
+            agent = await build_durable_agent(
                 builder=self._builder,
                 store=self._store,
                 artifact_store=self._artifact_store,

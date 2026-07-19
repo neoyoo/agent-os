@@ -8,7 +8,8 @@ from agentos._waiting import WaitReason
 from agentos.durable import SQLiteDurableStore
 from agentos.messages import ToolCall
 from agentos.runtime.errors import CheckpointCorruptedError, DurableUnsafeDataError
-from agentos.runtime.run_runtime import RunRuntime
+from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
+from tests.durable._async_support import create_running, run
 from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
 
@@ -16,12 +17,10 @@ def _checkpoint(tmp_path):
     path = database_path(tmp_path)
     store = SQLiteDurableStore(path, clock=lambda: NOW)
     source = checkpoint_source()
-    store.initialize_session(source.session)
+    run(store.initialize_session(source.session))
     store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
-    runs.create_run(run_id="run_1")
-    runs.queue("run_1")
-    running = runs.start("run_1")
+    running = run(create_running(runs, "run_1"))
     return path, store, source, running.aggregate_version
 
 
@@ -33,15 +32,15 @@ def test_tool_call_arguments_are_redacted_from_sqlite_checkpoint(tmp_path) -> No
         [ToolCall("call_1", "lookup", {"api_key": marker, "query": "value"})],
     )
     source.messages.append_tool_result("call_1", "bounded result")
-    store.commit_waiting(
+    run(store.commit_waiting(
         session_id="session_1",
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
-        expected_version=version,
-    )
+        guard=RunWriteGuard(version),
+    ))
 
-    restored = store.load_checkpoint("session_1")
+    restored = run(store.load_checkpoint("session_1"))
     assert restored is not None
     assert restored.messages[1].tool_calls[0].arguments == {}
     store.close()
@@ -53,15 +52,15 @@ def test_memory_projection_is_not_checkpointed_as_recovery_truth(tmp_path) -> No
     path, store, source, version = _checkpoint(tmp_path)
     source.context.set_memory_context([marker])
 
-    store.commit_waiting(
+    run(store.commit_waiting(
         session_id="session_1",
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
-        expected_version=version,
-    )
+        guard=RunWriteGuard(version),
+    ))
 
-    restored = store.load_checkpoint("session_1")
+    restored = run(store.load_checkpoint("session_1"))
     assert restored is not None
     store.close()
     assert marker.encode() not in path.read_bytes()
@@ -87,16 +86,18 @@ def test_checkpoint_rejects_forbidden_durable_representations(
         DurableUnsafeDataError,
         match="^durable data contains a forbidden representation$",
     ):
-        store.commit_waiting(
+        run(store.commit_waiting(
             session_id="session_1",
             run_id="run_1",
             turn_id="turn_1",
             reason=WaitReason("human_input", "approval_1"),
-            expected_version=version,
-        )
+            guard=RunWriteGuard(version),
+        ))
 
-    assert store.get(session_id="session_1", run_id="run_1").status.value == "running"
-    assert store.latest_checkpoint("session_1", "run_1") is None
+    stored_run = run(store.get(session_id="session_1", run_id="run_1"))
+    assert stored_run is not None
+    assert stored_run.status.value == "running"
+    assert run(store.latest_checkpoint("session_1", "run_1")) is None
     store.close()
     assert marker.encode() not in path.read_bytes()
 
@@ -136,13 +137,13 @@ def test_corrupted_durable_rows_fail_with_stable_domain_error(
     operation: str,
 ) -> None:
     path, store, _source, version = _checkpoint(tmp_path)
-    store.commit_waiting(
+    run(store.commit_waiting(
         session_id="session_1",
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
-        expected_version=version,
-    )
+        guard=RunWriteGuard(version),
+    ))
     with sqlite3.connect(path) as connection:
         connection.execute(statement, parameters)
 
@@ -151,7 +152,7 @@ def test_corrupted_durable_rows_fail_with_stable_domain_error(
         match="corrupted",
     ):
         if operation == "load":
-            store.load_checkpoint("session_1")
+            run(store.load_checkpoint("session_1"))
         else:
-            store.get(session_id="session_1", run_id="run_1")
+            run(store.get(session_id="session_1", run_id="run_1"))
     store.close()

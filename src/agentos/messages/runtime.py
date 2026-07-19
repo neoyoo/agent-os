@@ -17,6 +17,8 @@ class MessageRuntime:
         self,
         content: str,
         artifact_refs: tuple[ArtifactRef, ...] = (),
+        *,
+        message_id: str | None = None,
     ) -> StoredMessage:
         """追加 user 消息并加入 active window。"""
 
@@ -24,6 +26,7 @@ class MessageRuntime:
             role="user",
             content=content,
             artifact_refs=artifact_refs,
+            message_id=message_id,
         )
 
     def append_assistant(
@@ -102,15 +105,27 @@ class MessageRuntime:
         artifact_refs: tuple[ArtifactRef, ...] = (),
         tool_calls: list[ToolCall] | None = None,
         tool_call_id: str | None = None,
+        message_id: str | None = None,
     ) -> StoredMessage:
         """追加消息并同步 active ref。"""
 
-        message = self.store.append(
-            role=role,
-            content=content,
-            artifact_refs=artifact_refs,
-            tool_calls=tool_calls,
-            tool_call_id=tool_call_id,
-        )
+        if message_id is None:
+            message = self.store.append(
+                role=role,
+                content=content,
+                artifact_refs=artifact_refs,
+                tool_calls=tool_calls,
+                tool_call_id=tool_call_id,
+            )
+        else:
+            message = StoredMessage(
+                id=message_id,
+                role=role,
+                content=content,
+                artifact_refs=artifact_refs,
+                tool_calls=tuple(tool_calls or ()),
+                tool_call_id=tool_call_id,
+            )
+            self.store.put(message)
         self.active_window.append(message.id)
         return message

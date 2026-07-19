@@ -5,6 +5,7 @@ from typing import get_args
 import pytest
 
 from agentos.runtime import DurableRunCommand, WaitReason
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.errors import (
     AgentBusyError,
     AgentRunError,
@@ -60,6 +61,7 @@ def test_run_input_contains_all_supported_input_forms() -> None:
         UserTurnInput,
         LocalContinuationInput,
         DurableRunCommand,
+        AcceptedTurnExecution,
     }
 
 

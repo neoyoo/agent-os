@@ -62,7 +62,7 @@ def test_query_loop_rejects_busy_execution_before_creating_run() -> None:
             await loop.execute(RunRequest(UserTurnInput("two")))
 
         with pytest.raises(RunNotFoundError, match="run_busy"):
-            runs.get_run("run_busy")
+            await runs.get_run("run_busy")
         await first.aclose()
 
     asyncio.run(run())

@@ -12,23 +12,23 @@ from agentos.runtime.checkpoint import (
     SessionCheckpoint,
 )
 from agentos.runtime.durable_commands import (
-    AcceptedContinuationInput,
     DurableCommandReceipt,
     DurableRunCommand,
 )
-from agentos.runtime.run_runtime import RunStore
+from agentos.runtime.execution import AcceptedTurnExecution
+from agentos.runtime.run_runtime import RunStore, RunWriteGuard
 from agentos.runtime.run_state import RunState
 from agentos.runtime.session import SessionState
 from agentos.runtime.waiting import WaitingCommit
 
 
-CommandAcceptance = AcceptedContinuationInput | DurableCommandReceipt
+CommandAcceptance = AcceptedTurnExecution | DurableCommandReceipt
 
 
 class DurableStateStore(RunStore, Protocol):
     """Durable Profile 依赖的 Run、Command 和 Checkpoint Port。"""
 
-    def initialize_session(self, session: SessionState) -> None: ...
+    async def initialize_session(self, session: SessionState) -> None: ...
 
     def bind_checkpoint_source(
         self,
@@ -36,17 +36,17 @@ class DurableStateStore(RunStore, Protocol):
         source: RuntimeCheckpointSource,
     ) -> None: ...
 
-    def commit_waiting(
+    async def commit_waiting(
         self,
         *,
         session_id: str,
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> RunCheckpoint: ...
 
-    def accept_command(
+    async def accept_command(
         self,
         *,
         session_id: str,
@@ -54,16 +54,22 @@ class DurableStateStore(RunStore, Protocol):
         now: datetime,
     ) -> CommandAcceptance: ...
 
-    def load_checkpoint(self, session_id: str) -> SessionCheckpoint | None: ...
+    async def load_checkpoint(
+        self,
+        session_id: str,
+    ) -> SessionCheckpoint | None: ...
 
-    def load_pending_continuation(
+    async def load_pending_continuation(
         self,
         *,
         session_id: str,
         run_id: str,
-    ) -> AcceptedContinuationInput | None: ...
+    ) -> AcceptedTurnExecution | None: ...
 
-    def recover_abandoned_runs(self, session_id: str) -> tuple[RunState, ...]: ...
+    async def recover_abandoned_runs(
+        self,
+        session_id: str,
+    ) -> tuple[RunState, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,16 +86,20 @@ class DurableWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> WaitingCommit:
-        self.store.commit_waiting(
+        checkpoint = await self.store.commit_waiting(
             session_id=self.session_id,
             run_id=run_id,
             turn_id=turn_id,
             reason=reason,
-            expected_version=expected_version,
+            guard=guard,
         )
-        return WaitingCommit(run_id=run_id, reason=reason)
+        return WaitingCommit(
+            run_id=run_id,
+            reason=reason,
+            aggregate_version=checkpoint.aggregate_version,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,21 +110,21 @@ class DurableCommandRuntime:
     store: DurableStateStore
     clock: Callable[[], datetime]
 
-    def accept(self, command: DurableRunCommand) -> CommandAcceptance:
+    async def accept(self, command: DurableRunCommand) -> CommandAcceptance:
         """返回已接受的 continuation 或不进入 Loop 的 command receipt。"""
 
         if type(command) is not DurableRunCommand:
             raise TypeError("command must be DurableRunCommand")
-        return self.store.accept_command(
+        return await self.store.accept_command(
             session_id=self.session_id,
             command=command,
             now=self.clock(),
         )
 
-    def pending(self, run_id: str) -> AcceptedContinuationInput | None:
+    async def pending(self, run_id: str) -> AcceptedTurnExecution | None:
         """读取崩溃前已接受但尚未开始的 continuation。"""
 
-        return self.store.load_pending_continuation(
+        return await self.store.load_pending_continuation(
             session_id=self.session_id,
             run_id=run_id,
         )

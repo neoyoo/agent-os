@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from agentos._waiting import WaitReason
-from agentos.runtime.run_runtime import RunRuntime
+from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +13,11 @@ class WaitingCommit:
 
     run_id: str
     reason: WaitReason
+    aggregate_version: int
+
+    def __post_init__(self) -> None:
+        if type(self.aggregate_version) is not int or self.aggregate_version < 0:
+            raise ValueError("waiting commit aggregate_version is invalid")
 
 
 class WaitingRuntime(Protocol):
@@ -28,7 +33,7 @@ class WaitingRuntime(Protocol):
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> WaitingCommit: ...
 
 
@@ -44,9 +49,11 @@ class LocalWaitingRuntime:
         run_id: str,
         turn_id: str,
         reason: WaitReason,
-        expected_version: int,
+        guard: RunWriteGuard,
     ) -> WaitingCommit:
-        if self.runs.get_run(run_id).aggregate_version != expected_version:
-            raise RuntimeError("waiting run version conflict")
-        self.runs.wait(run_id, reason=reason)
-        return WaitingCommit(run_id, reason)
+        waiting = await self.runs.wait(
+            run_id,
+            reason=reason,
+            guard=guard,
+        )
+        return WaitingCommit(run_id, reason, waiting.aggregate_version)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from agentos.runtime.durable_commands import AcceptedContinuationInput
-from agentos.runtime.run import UserTurnInput
 from agentos.runtime.run_runtime import RunWriteGuard
+
+if TYPE_CHECKING:
+    from agentos.runtime.run import UserTurnInput
 
 
 ExecutionMode: TypeAlias = Literal["start", "recover"]
@@ -32,6 +34,8 @@ class AcceptedStartInput:
     user_message_id: str
 
     def __post_init__(self) -> None:
+        from agentos.runtime.run import UserTurnInput
+
         _require_identifier(self.run_id, "run_id")
         _require_identifier(self.submission_id, "submission_id")
         _require_identifier(self.turn_id, "turn_id")

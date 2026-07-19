@@ -7,7 +7,6 @@ from agentos.artifacts import ArtifactRef
 from agentos.messages import MessageRuntime
 from agentos.runtime.errors import (
     ContinuationUnavailableError,
-    RunProtocolError,
     WaitingUnsupportedError,
 )
 from agentos.runtime.continuation import ContinuationNotice, ContinuationRuntime
@@ -38,7 +37,6 @@ from agentos.runtime.stream_events import (
     TurnStreamWaiting,
 )
 from agentos.runtime.turn import TurnState
-from agentos.runtime.waiting import WaitingRuntime
 
 
 @dataclass(slots=True)
@@ -50,7 +48,6 @@ class TurnLifecycle:
     artifact_runtime: ArtifactRuntimeBoundary | None = None
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
-    waiting_runtime: WaitingRuntime | None = None
     continuation_runtime: ContinuationRuntime | None = None
     event_bus: EventBus | None = None
     structured_logger: StructuredLoggerBoundary | None = None
@@ -58,15 +55,19 @@ class TurnLifecycle:
     def prepare_user_turn(
         self,
         input: UserTurnInput,
+        *,
+        turn_id: str | None = None,
+        user_message_id: str | None = None,
     ) -> tuple[TurnState | None, tuple[TurnStreamEvent, ...]]:
         """创建用户 Turn、追加消息并返回起始流事件。"""
 
-        turn = self._start_turn(input.content)
+        turn = self._start_turn(input.content, turn_id=turn_id)
         self._log("turn_start", user_message_length=len(input.content))
         artifact_refs = self._prepare_user_artifacts(input)
         user = self.message_runtime.append_user(
             input.content,
             artifact_refs=artifact_refs,
+            message_id=user_message_id,
         )
         self._emit(
             UserMessageAppendedEvent(
@@ -96,7 +97,11 @@ class TurnLifecycle:
                 raise ContinuationUnavailableError(
                     "local continuation requires a pending runtime notice",
                 )
-        turn = self._start_turn("", is_continuation=True)
+        turn = self._start_turn(
+            "",
+            is_continuation=True,
+            turn_id=input.turn_id if type(input) is AcceptedContinuationInput else None,
+        )
         if self.continuation_runtime is None:
             raise RuntimeError("continuation runtime is not configured")
         if type(input) is AcceptedContinuationInput:
@@ -140,30 +145,19 @@ class TurnLifecycle:
         if turn is not None and turn.status == "running":
             turn.cancel()
 
-    async def commit_waiting(
+    def mark_waiting(
         self,
         *,
         run_id: str,
         turn: TurnState | None,
         reason: WaitReason,
-        expected_version: int,
     ) -> TurnStreamWaiting:
-        """先提交权威等待状态，再迁移 Turn 并返回等待事件。"""
+        """在权威提交完成后迁移 Turn 并返回等待事件。"""
 
         if turn is None:
             raise WaitingUnsupportedError("waiting requires session turn state")
-        if self.waiting_runtime is None:
-            raise WaitingUnsupportedError("waiting runtime is not configured")
-        commit = await self.waiting_runtime.commit_waiting(
-            run_id=run_id,
-            turn_id=turn.id,
-            reason=reason,
-            expected_version=expected_version,
-        )
-        if commit.run_id != run_id:
-            raise RunProtocolError("waiting runtime returned another run id")
         turn.mark_waiting()
-        return TurnStreamWaiting(commit.run_id, commit.reason)
+        return TurnStreamWaiting(run_id, reason)
 
     def cleanup(self, *, is_continuation: bool) -> None:
         """清理 Turn 级 runtime notice 和附件挂载。"""
@@ -201,9 +195,10 @@ class TurnLifecycle:
         content: str,
         *,
         is_continuation: bool = False,
+        turn_id: str | None = None,
     ) -> TurnState | None:
         turn = (
-            self.session_state.new_turn(content)
+            self.session_state.new_turn(content, turn_id=turn_id)
             if self.session_state is not None
             else None
         )

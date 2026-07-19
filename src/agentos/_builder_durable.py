@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from agentos.events import EventBus
 
 
-def build_durable_agent(
+async def build_durable_agent(
     *,
     builder: AgentBuilder,
     store: DurableStateStore,
@@ -41,8 +41,8 @@ def build_durable_agent(
 ) -> Agent:
     """水合权威状态，并复用 AgentBuilder 的唯一 QueryLoop 装配路径。"""
 
-    store.recover_abandoned_runs(session_id)
-    checkpoint = store.load_checkpoint(session_id)
+    await store.recover_abandoned_runs(session_id)
+    checkpoint = await store.load_checkpoint(session_id)
     state, messages = _runtime_components(
         checkpoint=checkpoint,
         session_id=session_id,
@@ -50,7 +50,7 @@ def build_durable_agent(
         artifact_store=artifact_store,
         event_bus=builder._event_bus,
     )
-    store.initialize_session(state.session)
+    await store.initialize_session(state.session)
     checkpoint_source = RuntimeCheckpointSource(
         state.session,
         messages,

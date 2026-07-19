@@ -12,6 +12,7 @@ from agentos.runtime.durable_commands import (
     DurableCommandReceipt,
     DurableRunCommand,
 )
+from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.errors import (
     CommandConflictError,
     CommandNotDueError,
@@ -20,6 +21,7 @@ from agentos.runtime.errors import (
     DurableUnsafeDataError,
 )
 from agentos.runtime.run_state import RunState, RunStatus
+from agentos.runtime.run_runtime import RunWriteGuard
 
 
 def accept_command(
@@ -28,7 +30,7 @@ def accept_command(
     session_id: str,
     command: DurableRunCommand,
     now: datetime,
-) -> AcceptedContinuationInput | DurableCommandReceipt:
+) -> AcceptedTurnExecution | DurableCommandReceipt:
     payload_json = dump_json(thaw_json_value(command.payload))
     duplicate = connection.execute(
         "SELECT * FROM durable_commands WHERE command_id = ?",
@@ -45,19 +47,22 @@ def accept_command(
     if command.kind == "cancel":
         _require_non_terminal(current)
         updated = current.transition(RunStatus.CANCELLED)
+        turn_id = None
     else:
         _validate_continuation(command, current, now)
         updated = current.transition(RunStatus.QUEUED)
+        turn_id = _allocate_turn_id(connection, session_id)
     connection.execute(
         "INSERT INTO durable_commands "
-        "(command_id, session_id, run_id, kind, payload_json, aggregate_version) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(command_id, session_id, run_id, kind, payload_json, turn_id, "
+        "aggregate_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             command.command_id,
             session_id,
             command.run_id,
             command.kind,
             payload_json,
+            turn_id,
             updated.aggregate_version,
         ),
     )
@@ -70,12 +75,17 @@ def accept_command(
             updated.aggregate_version,
             False,
         )
-    return AcceptedContinuationInput(
-        command.run_id,
-        command.command_id,
-        command.kind,
-        command.payload,
-        updated.aggregate_version,
+    assert turn_id is not None
+    return AcceptedTurnExecution(
+        input=AcceptedContinuationInput(
+            command.run_id,
+            command.command_id,
+            command.kind,
+            command.payload,
+            turn_id,
+        ),
+        guard=RunWriteGuard(updated.aggregate_version),
+        mode="start",
     )
 
 
@@ -84,12 +94,12 @@ def load_pending_continuation(
     *,
     session_id: str,
     run_id: str,
-) -> AcceptedContinuationInput | None:
+) -> AcceptedTurnExecution | None:
     """读取已接受但尚未开始执行的 QUEUED continuation。"""
 
     row = connection.execute(
         """
-        SELECT command_id, run_id, kind, payload_json, aggregate_version
+        SELECT command_id, run_id, kind, payload_json, turn_id, aggregate_version
         FROM durable_commands
         WHERE session_id = ? AND run_id = ? AND kind != 'cancel'
           AND aggregate_version = (
@@ -106,12 +116,16 @@ def load_pending_continuation(
         payload = row["payload_json"]
         if not isinstance(payload, str):
             raise TypeError("payload_json")
-        return AcceptedContinuationInput(
-            run_id=row["run_id"],
-            command_id=row["command_id"],
-            kind=cast(object, row["kind"]),  # type: ignore[arg-type]
-            payload=load_json_object(payload),
-            aggregate_version=row["aggregate_version"],
+        return AcceptedTurnExecution(
+            input=AcceptedContinuationInput(
+                run_id=row["run_id"],
+                command_id=row["command_id"],
+                kind=cast(object, row["kind"]),  # type: ignore[arg-type]
+                payload=load_json_object(payload),
+                turn_id=row["turn_id"],
+            ),
+            guard=RunWriteGuard(row["aggregate_version"]),
+            mode="start",
         )
     except (KeyError, TypeError, ValueError):
         raise CheckpointCorruptedError(
@@ -139,6 +153,26 @@ def _validate_continuation(
         raise CommandNotDueError("durable command is not due")
 
 
+def _allocate_turn_id(
+    connection: sqlite3.Connection,
+    session_id: str,
+) -> str:
+    row = connection.execute(
+        "SELECT next_turn_number FROM durable_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if row is None:
+        raise CheckpointCorruptedError("durable session record is missing")
+    next_turn_number = row["next_turn_number"]
+    if type(next_turn_number) is not int or next_turn_number < 1:
+        raise CheckpointCorruptedError("durable session record is corrupted")
+    connection.execute(
+        "UPDATE durable_sessions SET next_turn_number = ? WHERE session_id = ?",
+        (next_turn_number + 1, session_id),
+    )
+    return f"turn_{next_turn_number}"
+
+
 def _duplicate_receipt(
     row: sqlite3.Row,
     *,
@@ -152,6 +186,7 @@ def _duplicate_receipt(
         stored_command_id = row["command_id"]
         stored_kind = row["kind"]
         stored_payload_json = row["payload_json"]
+        stored_turn_id = row["turn_id"]
         stored_version = row["aggregate_version"]
         if type(stored_session_id) is not str or not stored_session_id.strip():
             raise TypeError("session_id")
@@ -167,6 +202,11 @@ def _duplicate_receipt(
             aggregate_version=stored_version,
             duplicate=True,
         )
+        if receipt.kind == "cancel":
+            if stored_turn_id is not None:
+                raise ValueError("turn_id")
+        elif type(stored_turn_id) is not str or not stored_turn_id.strip():
+            raise TypeError("turn_id")
     except (
         CheckpointCorruptedError,
         DurableUnsafeDataError,

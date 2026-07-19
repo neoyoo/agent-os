@@ -59,7 +59,7 @@ def test_cancel_command_persists_across_profile_restart_without_provider_reentry
     clock = _Clock()
 
     with _profile(tmp_path, builder, clock) as first:
-        agent = first.build_agent("session_1")
+        agent = asyncio.run(first.build_agent("session_1"))
         waiting = asyncio.run(agent.run("start"))
         assert isinstance(waiting, AgentWaiting)
         command = DurableRunCommand(waiting.run_id, "cancel_1", "cancel", {})
@@ -68,8 +68,10 @@ def test_cancel_command_persists_across_profile_restart_without_provider_reentry
         assert receipt.duplicate is False
 
     with _profile(tmp_path, builder, clock) as restarted:
-        agent = restarted.build_agent("session_1")
-        assert agent.query_loop.run_runtime.get_run(waiting.run_id).status is RunStatus.CANCELLED
+        agent = asyncio.run(restarted.build_agent("session_1"))
+        assert asyncio.run(
+            agent.query_loop.run_runtime.get_run(waiting.run_id),
+        ).status is RunStatus.CANCELLED
         duplicate = asyncio.run(agent.run(command))
 
     assert isinstance(duplicate, DurableCommandReceipt)
@@ -109,7 +111,7 @@ def test_scheduled_command_is_rejected_until_due_then_continues_same_run(
     clock = _Clock()
 
     with _profile(tmp_path, builder, clock) as profile:
-        agent = profile.build_agent("session_1")
+        agent = asyncio.run(profile.build_agent("session_1"))
         waiting = asyncio.run(agent.run("start"))
         assert isinstance(waiting, AgentWaiting)
         command = DurableRunCommand(
@@ -121,7 +123,9 @@ def test_scheduled_command_is_rejected_until_due_then_continues_same_run(
 
         with pytest.raises(CommandNotDueError, match="not due"):
             asyncio.run(agent.run(command))
-        assert agent.query_loop.run_runtime.get_run(waiting.run_id).status is RunStatus.WAITING
+        assert asyncio.run(
+            agent.query_loop.run_runtime.get_run(waiting.run_id),
+        ).status is RunStatus.WAITING
 
         clock.now = due
         result = asyncio.run(agent.run(command))
@@ -147,7 +151,7 @@ def test_command_accept_reservation_blocks_profile_close(
         [_wait_tool(WaitReason("human_input", "approval_1"))]
     )
     profile = _profile(tmp_path, builder, _Clock())
-    agent = profile.build_agent("session_1")
+    agent = asyncio.run(profile.build_agent("session_1"))
     waiting = asyncio.run(agent.run("start"))
     assert isinstance(waiting, AgentWaiting)
     command = DurableRunCommand(waiting.run_id, "resume_1", "resume", {})
@@ -157,11 +161,11 @@ def test_command_accept_reservation_blocks_profile_close(
     outcomes: list[object] = []
     errors: list[BaseException] = []
 
-    def blocked_accept(**kwargs):  # type: ignore[no-untyped-def]
+    async def blocked_accept(**kwargs):  # type: ignore[no-untyped-def]
         accept_entered.set()
         if not allow_accept.wait(5):
             raise TimeoutError("test did not release command accept")
-        return original_accept(**kwargs)
+        return await original_accept(**kwargs)
 
     monkeypatch.setattr(profile._store, "accept_command", blocked_accept)
 
