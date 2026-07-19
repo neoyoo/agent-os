@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from threading import RLock
 from typing import Protocol
 from uuid import uuid4
@@ -12,6 +13,33 @@ from agentos.runtime.run_state import (
     RunState,
     RunStatus,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RunWriteGuard:
+    """一次 Run 聚合写入必须满足的版本与执行权条件。"""
+
+    expected_version: int
+    claim_id: str | None = None
+    fencing_token: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.expected_version) is not int
+            or self.expected_version < 0
+        ):
+            raise ValueError("expected_version must be a non-negative integer")
+        local_write = self.claim_id is None and self.fencing_token is None
+        distributed_write = (
+            type(self.claim_id) is str
+            and bool(self.claim_id.strip())
+            and type(self.fencing_token) is int
+            and self.fencing_token > 0
+        )
+        if not local_write and not distributed_write:
+            raise ValueError(
+                "claim_id and fencing_token must be absent or form a valid fence",
+            )
 
 
 class RunStore(Protocol):
