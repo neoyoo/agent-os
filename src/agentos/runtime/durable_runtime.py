@@ -8,7 +8,6 @@ from typing import Protocol
 from agentos._waiting import WaitReason
 from agentos.runtime.checkpoint import (
     RunCheckpoint,
-    RuntimeCheckpointSource,
     SessionCheckpoint,
 )
 from agentos.runtime.durable_commands import (
@@ -19,7 +18,7 @@ from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run_runtime import RunStore, RunWriteGuard
 from agentos.runtime.run_state import RunState
 from agentos.runtime.session import SessionState
-from agentos.runtime.waiting import WaitingCommit
+from agentos.runtime.run_commit import RunTerminalStatus
 
 
 CommandAcceptance = AcceptedTurnExecution | DurableCommandReceipt
@@ -30,19 +29,32 @@ class DurableStateStore(RunStore, Protocol):
 
     async def initialize_session(self, session: SessionState) -> None: ...
 
-    def bind_checkpoint_source(
+    async def commit_running(
         self,
-        session_id: str,
-        source: RuntimeCheckpointSource,
-    ) -> None: ...
+        *,
+        checkpoint: SessionCheckpoint,
+        run_id: str,
+        turn_id: str,
+        guard: RunWriteGuard,
+    ) -> RunCheckpoint: ...
 
     async def commit_waiting(
         self,
         *,
-        session_id: str,
+        checkpoint: SessionCheckpoint,
         run_id: str,
         turn_id: str,
         reason: WaitReason,
+        guard: RunWriteGuard,
+    ) -> RunCheckpoint: ...
+
+    async def commit_terminal(
+        self,
+        *,
+        checkpoint: SessionCheckpoint,
+        run_id: str,
+        turn_id: str,
+        status: RunTerminalStatus,
         guard: RunWriteGuard,
     ) -> RunCheckpoint: ...
 
@@ -70,36 +82,6 @@ class DurableStateStore(RunStore, Protocol):
         self,
         session_id: str,
     ) -> tuple[RunState, ...]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class DurableWaitingRuntime:
-    """把 WAITING 与恢复 checkpoint 原子提交到 Durable Store。"""
-
-    session_id: str
-    store: DurableStateStore
-    checkpoint_source: RuntimeCheckpointSource | None = None
-
-    async def commit_waiting(
-        self,
-        *,
-        run_id: str,
-        turn_id: str,
-        reason: WaitReason,
-        guard: RunWriteGuard,
-    ) -> WaitingCommit:
-        checkpoint = await self.store.commit_waiting(
-            session_id=self.session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            reason=reason,
-            guard=guard,
-        )
-        return WaitingCommit(
-            run_id=run_id,
-            reason=reason,
-            aggregate_version=checkpoint.aggregate_version,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,5 +116,4 @@ __all__ = [
     "CommandAcceptance",
     "DurableCommandRuntime",
     "DurableStateStore",
-    "DurableWaitingRuntime",
 ]

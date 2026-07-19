@@ -7,9 +7,13 @@ from agentos.runtime import (
     AgentWaiting,
     DurableRunCommand,
 )
+from agentos.security import FernetPayloadProtector
 
 
 def test_durable_example_restarts_and_resumes_same_run(tmp_path) -> None:
+    payload_protector = FernetPayloadProtector(
+        FernetPayloadProtector.generate_key(),
+    )
     provider = FakeProvider(
         [
             ProviderResponse(
@@ -26,12 +30,20 @@ def test_durable_example_restarts_and_resumes_same_run(tmp_path) -> None:
     )
 
     async def scenario() -> tuple[AgentWaiting, AgentResult]:
-        with build_durable_profile(provider, tmp_path) as first:
+        with build_durable_profile(
+            provider,
+            tmp_path,
+            payload_protector=payload_protector,
+        ) as first:
             first_agent = await first.build_agent("session_1")
             waiting = await first_agent.run("submit")
             assert isinstance(waiting, AgentWaiting)
 
-        with build_durable_profile(provider, tmp_path) as restarted:
+        with build_durable_profile(
+            provider,
+            tmp_path,
+            payload_protector=payload_protector,
+        ) as restarted:
             restarted_agent = await restarted.build_agent("session_1")
             result = await restarted_agent.run(
                 DurableRunCommand(

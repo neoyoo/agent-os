@@ -159,6 +159,14 @@ class TurnLifecycle:
         turn.mark_waiting()
         return TurnStreamWaiting(run_id, reason)
 
+    def apply_waiting_projection(self, message_ids: tuple[str, ...]) -> None:
+        """在权威 WAITING 提交成功后更新真实 ActiveWindow。"""
+
+        self.message_runtime.active_window.remove_refs(
+            list(message_ids),
+            self.message_runtime.store,
+        )
+
     def cleanup(self, *, is_continuation: bool) -> None:
         """清理 Turn 级 runtime notice 和附件挂载。"""
 

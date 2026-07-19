@@ -6,6 +6,7 @@ from agentos._waiting import WaitReason
 from agentos.durable import SQLiteDurableStore
 from agentos.runtime.durable_commands import DurableRunCommand
 from agentos.runtime.errors import CheckpointConflictError
+from agentos.runtime.execution import RunExecutionCursor
 from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
 from tests.durable._async_support import create_running, run
@@ -16,7 +17,6 @@ def test_waiting_and_checkpoint_roll_back_together(tmp_path, monkeypatch) -> Non
     store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
     source = checkpoint_source()
     run(store.initialize_session(source.session))
-    store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
     running = run(create_running(runs, "run_1"))
 
@@ -27,7 +27,7 @@ def test_waiting_and_checkpoint_roll_back_together(tmp_path, monkeypatch) -> Non
 
     with pytest.raises(OSError, match="injected checkpoint failure"):
         run(store.commit_waiting(
-            session_id="session_1",
+            checkpoint=source.capture(),
             run_id="run_1",
             turn_id="turn_1",
             reason=WaitReason("human_input", "approval_1"),
@@ -45,11 +45,10 @@ def test_stale_runtime_cannot_overwrite_newer_running_continuation(tmp_path) -> 
     first = SQLiteDurableStore(path, clock=lambda: NOW)
     source = checkpoint_source()
     run(first.initialize_session(source.session))
-    first.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=first)
     original_running = run(create_running(runs, "run_1"))
     run(first.commit_waiting(
-        session_id="session_1",
+        checkpoint=source.capture(),
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
@@ -71,7 +70,7 @@ def test_stale_runtime_cannot_overwrite_newer_running_continuation(tmp_path) -> 
 
     with pytest.raises(CheckpointConflictError, match="version"):
         run(first.commit_waiting(
-            session_id="session_1",
+            checkpoint=source.capture(),
             run_id="run_1",
             turn_id="stale_turn",
             reason=WaitReason("human_input", "stale"),
@@ -88,11 +87,10 @@ def test_stale_runtime_cannot_fail_newer_running_continuation(tmp_path) -> None:
     first = SQLiteDurableStore(path, clock=lambda: NOW)
     source = checkpoint_source()
     run(first.initialize_session(source.session))
-    first.bind_checkpoint_source("session_1", source)
     original = RunRuntime(session_id="session_1", store=first)
     original_running = run(create_running(original, "run_1"))
     run(first.commit_waiting(
-        session_id="session_1",
+        checkpoint=source.capture(),
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
@@ -148,14 +146,13 @@ def test_each_waiting_persistence_step_rolls_back_atomically(
     store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
     source = checkpoint_source()
     run(store.initialize_session(source.session))
-    store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
     running = run(create_running(runs, "run_1"))
     store._connection.execute(trigger_sql)
 
     with pytest.raises(sqlite3.IntegrityError, match="injected failure"):
         run(store.commit_waiting(
-            session_id="session_1",
+            checkpoint=source.capture(),
             run_id="run_1",
             turn_id="turn_1",
             reason=WaitReason("human_input", "approval_1"),
@@ -171,7 +168,6 @@ def test_commit_failure_rolls_back_waiting_transaction(tmp_path) -> None:
     store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
     source = checkpoint_source()
     run(store.initialize_session(source.session))
-    store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
     running = run(create_running(runs, "run_1"))
     connection = store._connection
@@ -192,7 +188,7 @@ def test_commit_failure_rolls_back_waiting_transaction(tmp_path) -> None:
     store._connection = FailingCommitConnection()  # type: ignore[assignment]
     with pytest.raises(RuntimeError, match="commit failed"):
         run(store.commit_waiting(
-            session_id="session_1",
+            checkpoint=source.capture(),
             run_id="run_1",
             turn_id="turn_1",
             reason=WaitReason("human_input", "approval_1"),
@@ -201,4 +197,44 @@ def test_commit_failure_rolls_back_waiting_transaction(tmp_path) -> None:
 
     assert run(runs.get_run("run_1")) == running
     assert run(store.load_checkpoint("session_1")) is None
+    store.close()
+
+
+def test_abandoned_cursor_delete_failure_rolls_back_run_recovery(tmp_path) -> None:
+    store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
+    source = checkpoint_source()
+    run(store.initialize_session(source.session))
+    runs = RunRuntime(session_id="session_1", store=store)
+    running = run(create_running(runs, "run_1"))
+    committed = run(store.commit_running(
+        checkpoint=source.capture(
+            execution_cursor=RunExecutionCursor(
+                "turn_1",
+                "before_provider",
+                0,
+            ),
+        ),
+        run_id="run_1",
+        turn_id="turn_1",
+        guard=RunWriteGuard(running.aggregate_version),
+    ))
+    store._connection.execute(
+        "CREATE TRIGGER fail_cursor_delete BEFORE DELETE "
+        "ON durable_execution_cursors "
+        "BEGIN SELECT RAISE(ABORT, 'injected cursor delete failure'); END",
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="cursor delete failure"):
+        run(store.recover_abandoned_runs("session_1"))
+
+    state = run(runs.get_run("run_1"))
+    checkpoint = run(store.load_checkpoint("session_1"))
+    assert state.status is RunStatus.RUNNING
+    assert state.aggregate_version == committed.aggregate_version
+    assert checkpoint is not None
+    assert checkpoint.execution_cursor == RunExecutionCursor(
+        "turn_1",
+        "before_provider",
+        0,
+    )
     store.close()

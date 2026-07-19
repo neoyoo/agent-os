@@ -113,13 +113,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/query_loop.py",
-      "lines": 499,
+      "path": "src/agentos/multi/tasks.py",
+      "lines": 495,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/multi/tasks.py",
-      "lines": 495,
+      "path": "src/agentos/runtime/run_driver.py",
+      "lines": 483,
       "gate": "responsibility_review"
     },
     {
@@ -148,6 +148,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 447,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/planning/tools.py",
       "lines": 439,
       "gate": "responsibility_review"
@@ -168,12 +173,22 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/durable/serialization.py",
+      "lines": 397,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/capabilities/skill_sources.py",
       "lines": 387,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/artifacts/sqlite_filesystem.py",
+      "lines": 383,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/durable/sqlite_store.py",
       "lines": 383,
       "gate": "responsibility_review"
     },
@@ -200,11 +215,6 @@
     {
       "path": "src/agentos/channels/sse_turn_control.py",
       "lines": 348,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/durable/sqlite_store.py",
-      "lines": 344,
       "gate": "responsibility_review"
     },
     {
@@ -245,6 +255,11 @@
     {
       "path": "src/agentos/persistence/serializers.py",
       "lines": 308,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/runtime/tool_payloads.py",
+      "lines": 303,
       "gate": "responsibility_review"
     },
     {

@@ -3,10 +3,10 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from weakref import WeakValueDictionary
 
 from agentos._waiting import WaitReason
 from agentos.durable.schema import initialize_durable_schema
@@ -31,7 +31,6 @@ from agentos.durable.sqlite_records import (
 )
 from agentos.runtime.checkpoint import (
     RunCheckpoint,
-    RuntimeCheckpointSource,
     SessionCheckpoint,
 )
 from agentos.runtime.durable_commands import (
@@ -42,6 +41,7 @@ from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.errors import CheckpointConflictError, DurableStoreClosedError
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunAlreadyExistsError, RunState, RunStatus
+from agentos.runtime.run_commit import RunTerminalStatus
 from agentos.runtime.session import SessionState
 
 
@@ -59,9 +59,6 @@ class SQLiteDurableStore:
     ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock = RLock()
-        self._sources: WeakValueDictionary[str, RuntimeCheckpointSource] = (
-            WeakValueDictionary()
-        )
         self._connection: sqlite3.Connection | None = sqlite3.connect(
             str(database_path),
             isolation_level=None,
@@ -87,7 +84,6 @@ class SQLiteDurableStore:
 
         with self._lock:
             connection, self._connection = self._connection, None
-            self._sources.clear()
             if connection is not None:
                 connection.close()
 
@@ -102,24 +98,6 @@ class SQLiteDurableStore:
                 "(session_id, status, next_turn_number) VALUES (?, ?, ?)",
                 (session.id, session.status, session.next_turn_number()),
             )
-
-    def bind_checkpoint_source(
-        self,
-        session_id: str,
-        source: RuntimeCheckpointSource,
-    ) -> None:
-        """为 Session 弱绑定唯一存活的 checkpoint source。"""
-
-        if source.session.id != session_id:
-            raise ValueError("checkpoint source belongs to another session")
-        with self._lock:
-            self._ensure_open()
-            existing = self._sources.get(session_id)
-            if existing is not None and existing is not source:
-                raise CheckpointConflictError(
-                    "checkpoint source is already bound",
-                )
-            self._sources[session_id] = source
 
     async def create(self, state: RunState) -> RunState:
         """创建 Run，并拒绝同 Session 的第二个非终态 Run。"""
@@ -162,15 +140,6 @@ class SQLiteDurableStore:
             raise CheckpointConflictError(
                 "durable WAITING requires atomic commit_waiting",
             )
-        source = self._checkpoint_source(session_id)
-        snapshot = (
-            source.capture()
-            if source is not None
-            and turn_id is not None
-            and status
-            in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
-            else None
-        )
         with self._transaction() as connection:
             current = require_run(connection, session_id, run_id)
             if guard.claim_id is not None:
@@ -182,21 +151,53 @@ class SQLiteDurableStore:
                     "durable run aggregate version conflict",
                 )
             updated = current.transition(status, wait_reason=wait_reason)
-            if snapshot is not None:
-                self._write_checkpoint_state(
-                    connection,
-                    snapshot,
-                    run_id=run_id,
-                    turn_id=turn_id,
-                    aggregate_version=updated.aggregate_version,
-                )
             update_run(connection, updated)
         return updated
+
+    async def commit_running(
+        self,
+        *,
+        checkpoint: SessionCheckpoint,
+        run_id: str,
+        turn_id: str,
+        guard: RunWriteGuard,
+    ) -> RunCheckpoint:
+        """原子提交 RUNNING 恢复状态并推进 aggregate version。"""
+
+        cursor = checkpoint.execution_cursor
+        if cursor is None:
+            raise CheckpointConflictError("running checkpoint requires a cursor")
+        if cursor.turn_id != turn_id:
+            raise CheckpointConflictError(
+                "running checkpoint cursor does not match turn_id",
+            )
+        with self._transaction() as connection:
+            current = self._require_checkpoint_write(
+                connection,
+                checkpoint,
+                run_id=run_id,
+                guard=guard,
+            )
+            if current.status is not RunStatus.RUNNING:
+                raise CheckpointConflictError("running checkpoint requires a running run")
+            updated = replace(
+                current,
+                aggregate_version=current.aggregate_version + 1,
+            )
+            committed = self._write_checkpoint_state(
+                connection,
+                checkpoint,
+                run_id=run_id,
+                turn_id=turn_id,
+                aggregate_version=updated.aggregate_version,
+            )
+            update_run(connection, updated)
+        return committed
 
     async def commit_waiting(
         self,
         *,
-        session_id: str,
+        checkpoint: SessionCheckpoint,
         run_id: str,
         turn_id: str,
         reason: WaitReason,
@@ -204,30 +205,57 @@ class SQLiteDurableStore:
     ) -> RunCheckpoint:
         """原子提交恢复状态、checkpoint 与 RUNNING 到 WAITING 转换。"""
 
-        source = self._checkpoint_source(session_id)
-        if source is None:
-            raise CheckpointConflictError("checkpoint source is not bound")
-        snapshot = source.capture()
+        if checkpoint.execution_cursor is not None:
+            raise CheckpointConflictError("waiting checkpoint cannot retain a cursor")
         with self._transaction() as connection:
-            current = require_run(connection, session_id, run_id)
-            if guard.claim_id is not None:
-                raise CheckpointConflictError(
-                    "durable sqlite store does not accept fenced writes",
-                )
-            if current.aggregate_version != guard.expected_version:
-                raise CheckpointConflictError(
-                    "durable run aggregate version conflict",
-                )
-            updated = current.transition(RunStatus.WAITING, wait_reason=reason)
-            checkpoint = self._write_checkpoint_state(
+            current = self._require_checkpoint_write(
                 connection,
-                snapshot,
+                checkpoint,
+                run_id=run_id,
+                guard=guard,
+            )
+            updated = current.transition(RunStatus.WAITING, wait_reason=reason)
+            committed = self._write_checkpoint_state(
+                connection,
+                checkpoint,
                 run_id=run_id,
                 turn_id=turn_id,
                 aggregate_version=updated.aggregate_version,
             )
             update_run(connection, updated)
-        return checkpoint
+        return committed
+
+    async def commit_terminal(
+        self,
+        *,
+        checkpoint: SessionCheckpoint,
+        run_id: str,
+        turn_id: str,
+        status: RunTerminalStatus,
+        guard: RunWriteGuard,
+    ) -> RunCheckpoint:
+        """原子提交恢复状态、清 cursor 并转换 execution 终态。"""
+
+        if checkpoint.execution_cursor is not None:
+            raise CheckpointConflictError("terminal checkpoint cannot retain a cursor")
+        terminal = RunStatus(status)
+        with self._transaction() as connection:
+            current = self._require_checkpoint_write(
+                connection,
+                checkpoint,
+                run_id=run_id,
+                guard=guard,
+            )
+            updated = current.transition(terminal)
+            committed = self._write_checkpoint_state(
+                connection,
+                checkpoint,
+                run_id=run_id,
+                turn_id=turn_id,
+                aggregate_version=updated.aggregate_version,
+            )
+            update_run(connection, updated)
+        return committed
 
     async def accept_command(
         self,
@@ -308,13 +336,24 @@ class SQLiteDurableStore:
             write_context=self._write_context_state,
         )
 
-    def _checkpoint_source(
+    def _require_checkpoint_write(
         self,
-        session_id: str,
-    ) -> RuntimeCheckpointSource | None:
-        with self._lock:
-            self._ensure_open()
-            return self._sources.get(session_id)
+        connection: sqlite3.Connection,
+        checkpoint: SessionCheckpoint,
+        *,
+        run_id: str,
+        guard: RunWriteGuard,
+    ) -> RunState:
+        current = require_run(connection, checkpoint.session_id, run_id)
+        if guard.claim_id is not None:
+            raise CheckpointConflictError(
+                "durable sqlite store does not accept fenced writes",
+            )
+        if current.aggregate_version != guard.expected_version:
+            raise CheckpointConflictError(
+                "durable run aggregate version conflict",
+            )
+        return current
 
     def _write_context_state(
         self,

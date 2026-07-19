@@ -17,6 +17,12 @@ from agentos.runtime import (
 from agentos.runtime.errors import DurableCommandUnsupportedError
 from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run_state import RunStatus
+from agentos.security import FernetPayloadProtector
+
+
+_PAYLOAD_PROTECTOR = FernetPayloadProtector(
+    FernetPayloadProtector.generate_key(),
+)
 
 
 def _wait_tool() -> RegisteredTool:
@@ -45,6 +51,7 @@ def test_profile_restarts_and_continues_same_run_with_new_turn(tmp_path) -> None
         paths = {
             "database_path": tmp_path / "state.db",
             "artifact_root": tmp_path / "artifacts",
+            "payload_protector": _PAYLOAD_PROTECTOR,
         }
 
         with DurableRuntimeProfile(
@@ -92,7 +99,7 @@ def test_profile_restarts_and_continues_same_run_with_new_turn(tmp_path) -> None
                 run_id,
                 "command_1",
                 "hitl_answer",
-                aggregate_version=4,
+                aggregate_version=6,
                 duplicate=True,
             )
             assert len(first_provider.requests) == 1
@@ -127,6 +134,7 @@ def test_profile_recovers_command_accepted_before_loop_entry(tmp_path) -> None:
             "agent_builder": builder,
             "database_path": tmp_path / "state.db",
             "artifact_root": tmp_path / "artifacts",
+            "payload_protector": _PAYLOAD_PROTECTOR,
         }
 
         with DurableRuntimeProfile(**profile_args) as profile:
@@ -188,6 +196,7 @@ def test_closing_unconsumed_command_stream_does_not_reaccept_command(
             "agent_builder": builder,
             "database_path": tmp_path / "state.db",
             "artifact_root": tmp_path / "artifacts",
+            "payload_protector": _PAYLOAD_PROTECTOR,
         }
 
         with DurableRuntimeProfile(**profile_args) as profile:

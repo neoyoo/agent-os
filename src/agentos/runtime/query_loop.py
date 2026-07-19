@@ -5,9 +5,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from functools import partial
 
-from agentos._waiting import WaitRequest
 from agentos._sync_work import SyncWorkTracker, bind_sync_work_tracker, run_sync
-from agentos.capabilities.executor import ToolExecutionOutcome, ToolExecutionResult
 from agentos.compression import CompressionRuntime
 from agentos.hooks import HookManager
 from agentos.messages import MessageRuntime, ToolCall
@@ -32,10 +30,13 @@ from agentos.runtime.event_bus import (
     ProviderRequestBuiltEvent,
     ProviderResponseReceivedEvent,
     ProviderRetryEvent,
-    ToolCallRequestedEvent,
-    ToolResultAppendedEvent,
 )
-from agentos.runtime._tool_observation import ToolObservationMapper
+from agentos.runtime._execution_control import (
+    ExecutionControl,
+    PendingToolsCheckpointRequest,
+    RunningCheckpointRequest,
+    WaitingCheckpointRequest,
+)
 from agentos.runtime.continuation import ContinuationRuntime
 from agentos.runtime.provider_attempt import (
     ProviderAttemptRunner,
@@ -49,23 +50,20 @@ from agentos.runtime.provider_request_builder import (
 from agentos.runtime.query_loop_hooks import QueryLoopHooks
 from agentos.runtime.query_loop_support import (
     _FinalContent,
-    _ToolCallFailure,
     ContextRuntimeBoundary,
     ArtifactRuntimeBoundary,
     StructuredLoggerBoundary,
     ToolCallRouterBoundary,
     TurnNoticeProvider,
-    duplicate_tool_call_result,
-    map_tool_result_cap,
-    resolve_waiting_tool_batch,
-    skill_loaded_event,
-    tool_call_signature,
-    waiting_peer_completion,
+    restored_tool_loop_state,
 )
 from agentos.runtime.retry import RetryPolicy
 from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run import LocalContinuationInput, RunOptions, RunRequest, UserTurnInput
 from agentos.runtime.run_commit import RunCommitRuntime
+from agentos.runtime.run_commit import CheckpointCommitStore
+from agentos.runtime.checkpoint import RuntimeCheckpointSource
+from agentos.runtime.execution import RunExecutionCursor
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
 from agentos.runtime.run_driver import RunDriver
 from agentos.runtime.session import SessionState
@@ -76,12 +74,11 @@ from agentos.runtime.stream_events import (
     ContextLoaded,
     FinalResult,
     StatusUpdate,
-    ToolStreamCompleted,
-    ToolStreamFailed,
-    ToolStreamStarted,
     TurnStreamEvent,
 )
-from agentos.runtime.tool_scheduler import ToolCallScheduler, ToolExecutionContext
+from agentos.runtime.tool_batch import ToolBatchRunner
+from agentos.runtime.tool_payloads import ToolPayloadRuntime
+from agentos.runtime.tool_scheduler import ToolCallScheduler
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
 from agentos.runtime.waiting import LocalWaitingRuntime, WaitingRuntime
@@ -103,6 +100,10 @@ class QueryLoop:
     session_state: SessionState | None = None
     turn_notice_provider: TurnNoticeProvider | None = None
     waiting_runtime: WaitingRuntime | None = None
+    checkpoint_source: RuntimeCheckpointSource | None = None
+    checkpoint_store: CheckpointCommitStore | None = None
+    recovery_cursor: RunExecutionCursor | None = None
+    tool_payload_runtime: ToolPayloadRuntime | None = None
     artifact_runtime: ArtifactRuntimeBoundary | None = None
     continuation_runtime: ContinuationRuntime = field(
         default_factory=ContinuationRuntime,
@@ -156,7 +157,18 @@ class QueryLoop:
             event_bus=self.event_bus,
             structured_logger=self.structured_logger,
         )
-        self._run_driver = RunDriver(self.run_runtime, self._lifecycle, RunCommitRuntime(self.run_runtime, self.waiting_runtime))
+        self._run_driver = RunDriver(
+            self.run_runtime,
+            self._lifecycle,
+            RunCommitRuntime(
+                self.run_runtime,
+                self.waiting_runtime,
+                checkpoint_source=self.checkpoint_source,
+                checkpoint_store=self.checkpoint_store,
+            ),
+            recovery_cursor=self.recovery_cursor,
+            tool_payloads=self.tool_payload_runtime,
+        )
 
     async def execute(self, request: RunRequest) -> AgentStream:
         """校验请求、立即获取执行租约并返回惰性事件流。"""
@@ -205,49 +217,89 @@ class QueryLoop:
 
     async def _run_provider_tool_events(
         self,
+        run_id: str,
         turn: TurnState | None,
         options: RunOptions,
-    ) -> AsyncIterator[TurnStreamEvent | _FinalContent | WaitRequest]:
+        recovery_cursor: RunExecutionCursor | None,
+    ) -> AsyncIterator[TurnStreamEvent | _FinalContent | ExecutionControl]:
         iterations = 0
         applied_signatures: set[str] = set()
+        provider_call_index = 0
+        recovered_calls: tuple[ProviderToolCall, ...] | None = None
+        recovered_assistant_id: str | None = None
+        if recovery_cursor is not None:
+            iterations, applied_signatures = restored_tool_loop_state(
+                self.message_runtime,
+                recovery_cursor,
+            )
+            provider_call_index = recovery_cursor.provider_call_index
+            if recovery_cursor.stage == "pending_tools":
+                recovered_calls = self._require_tool_payload_runtime().restore_pending_calls(
+                    run_id=run_id,
+                    cursor=recovery_cursor,
+                )
+                recovered_assistant_id = recovery_cursor.assistant_message_id
+            elif recovery_cursor.stage == "after_tools":
+                provider_call_index += 1
+
         while True:
-            yield StatusUpdate(
-                "context",
-                "正在装载会话上下文、工作状态和可用能力。",
-            )
-            response: ProviderResponse | None = None
-            async with aclosing(self._provider_attempt_events(options, turn)) as events:
-                async for event in events:
-                    if isinstance(event, ProviderContentDelta):
-                        yield AssistantContentDelta(event.index, event.text)
-                    elif isinstance(event, ProviderThinkingDelta):
-                        if options.show_thinking:
-                            yield AssistantThinkingDelta(event.index, event.text)
-                    elif isinstance(event, ProviderStreamCompleted):
-                        response = event.response
-                    elif isinstance(event, (ContextLoaded, StatusUpdate)):
-                        yield event
-            if response is None:
-                raise RuntimeError("provider stream ended without completion event")
-            self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
-            assistant = self.message_runtime.append_assistant(
-                response.content,
-                tool_calls=[
-                    ToolCall(call.id, call.name, call.arguments)
-                    for call in response.tool_calls
-                ],
-            )
-            self._emit(
-                AssistantMessageAppendedEvent(
+            if recovered_calls is None:
+                yield StatusUpdate(
+                    "context",
+                    "正在装载会话上下文、工作状态和可用能力。",
+                )
+                response: ProviderResponse | None = None
+                async with aclosing(
+                    self._provider_attempt_events(options, turn),
+                ) as events:
+                    async for event in events:
+                        if isinstance(event, ProviderContentDelta):
+                            yield AssistantContentDelta(event.index, event.text)
+                        elif isinstance(event, ProviderThinkingDelta):
+                            if options.show_thinking:
+                                yield AssistantThinkingDelta(event.index, event.text)
+                        elif isinstance(event, ProviderStreamCompleted):
+                            response = event.response
+                        elif isinstance(event, (ContextLoaded, StatusUpdate)):
+                            yield event
+                if response is None:
+                    raise RuntimeError("provider stream ended without completion event")
+                self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
+                assistant = self.message_runtime.append_assistant(
+                    response.content,
+                    tool_calls=[
+                        ToolCall(call.id, call.name, call.arguments)
+                        for call in response.tool_calls
+                    ],
+                )
+                self._emit(AssistantMessageAppendedEvent(
                     message_id=assistant.id,
                     **self._event_context(turn),
-                ),
-            )
-            yield AssistantCompleted(response)
-            if not response.tool_calls:
-                yield FinalResult(response.content)
-                yield _FinalContent(response.content)
-                return
+                ))
+                yield AssistantCompleted(
+                    content=response.content,
+                    stop_reason=response.stop_reason,
+                    tool_call_count=len(response.tool_calls),
+                )
+                if not response.tool_calls:
+                    yield FinalResult(response.content)
+                    yield _FinalContent(response.content)
+                    return
+                calls = tuple(response.tool_calls)
+                assistant_id = assistant.id
+                yield PendingToolsCheckpointRequest(
+                    provider_call_index,
+                    assistant_id,
+                    calls,
+                )
+            else:
+                calls = recovered_calls
+                assistant_id = recovered_assistant_id
+                recovered_calls = None
+                recovered_assistant_id = None
+                if assistant_id is None:
+                    raise RuntimeError("pending tool recovery requires assistant message")
+
             if self.tool_call_router is None:
                 raise RuntimeError("tool call router is required for tool calls")
             iterations += 1
@@ -255,147 +307,43 @@ class QueryLoop:
                 raise RuntimeError("provider tool-call loop exceeded max iterations")
             if turn is not None:
                 turn.increment_tool_iteration()
-            async with aclosing(
-                self._run_tool_batch(
-                    tuple(response.tool_calls),
-                    turn,
-                    applied_signatures,
-                    assistant.id,
-                ),
-            ) as events:
+            runner = ToolBatchRunner(
+                messages=self.message_runtime,
+                router=self.tool_call_router,
+                scheduler=self.tool_scheduler,
+                hooks=self._hooks,
+                result_budget=self.tool_result_budget,
+                token_counter=self.token_counter,
+                event_context=self._event_context(turn),
+                emit=self._emit,
+                logger=self.structured_logger,
+            )
+            async with aclosing(runner.events(
+                calls=calls,
+                applied_signatures=applied_signatures,
+                assistant_id=assistant_id,
+            )) as events:
                 async for event in events:
-                    if isinstance(event, WaitRequest):
+                    if isinstance(event, WaitingCheckpointRequest):
                         yield event
                         return
                     yield event
+            if turn is not None:
+                yield RunningCheckpointRequest(
+                    RunExecutionCursor(
+                        turn_id=turn.id,
+                        stage="after_tools",
+                        provider_call_index=provider_call_index,
+                        assistant_message_id=assistant_id,
+                    ),
+                )
+            provider_call_index += 1
 
-    async def _run_tool_batch(
-        self,
-        calls: tuple[ProviderToolCall, ...],
-        turn: TurnState | None,
-        applied_signatures: set[str],
-        assistant_id: str,
-    ) -> AsyncIterator[TurnStreamEvent | WaitRequest]:
-        immediate: dict[str, ToolExecutionResult] = {}
-        # 保留原 batch 索引与大小，避免 immediate 结果让后续调用重编号。
-        scheduled: list[tuple[int, ProviderToolCall]] = []
-        appended_result_ids: list[str] = []
-        started_calls: list[ProviderToolCall] = []
-        started_events_emitted = False
-        try:
-            for batch_index, call in enumerate(calls):
-                yield StatusUpdate("tool", f"准备调用工具 `{call.name}`。", call.id)
-                self._emit(ToolCallRequestedEvent(
-                    tool_name=call.name,
-                    tool_call_id=call.id,
-                    **self._event_context(turn),
-                ))
-                result = duplicate_tool_call_result(call, applied_signatures)
-                if result is None:
-                    result = self._hooks.before_tool_call(call)
-                    applied_signatures.add(tool_call_signature(call))
-                if result is None:
-                    scheduled.append((batch_index, call))
-                else:
-                    immediate[call.id] = result
-                    started_calls.append(call)
-
-            observation = ToolObservationMapper(**self._event_context(turn))
-            cap_result = partial(
-                map_tool_result_cap, budget=self.tool_result_budget,
-                token_counter=self.token_counter, **self._event_context(turn),
-            )
-
-            async def execute(call: ProviderToolCall, context: ToolExecutionContext) -> ToolExecutionOutcome:
-                started_calls.append(call)
-                self._log("tool_exec", tool_name=call.name, tool_call_id=call.id)
-                self._emit(observation.started(call, context))
-                try:
-                    return await self._execute_tool_call(call)
-                except Exception as error:
-                    raise _ToolCallFailure(call, error) from error
-
-            completed = await self.tool_scheduler.execute_batch(
-                calls=tuple(call for _, call in scheduled),
-                batch_indexes=tuple(index for index, _ in scheduled),
-                batch_size=len(calls),
-                policy_for=self.tool_call_router.concurrency_policy_for,
-                execute=execute,
-                on_completed=lambda item: self._emit(observation.completed(item)),
-            )
-            waiting = resolve_waiting_tool_batch(
-                calls=calls,
-                immediate=immediate,
-                completed=completed,
-            )
-            if waiting is not None:
-                for call in started_calls:
-                    if call.id in waiting.visible_started_call_ids:
-                        yield ToolStreamStarted(call.name, call.id)
-                started_events_emitted = True
-                for call, result in waiting.peer_results:
-                    completed_event, cap_event = waiting_peer_completion(
-                        call, result, self._hooks.after_tool_call, cap_result,
-                    )
-                    if cap_event is not None:
-                        self._emit(cap_event)
-                    yield completed_event
-                self._rollback_tool_batch(assistant_id, appended_result_ids)
-                yield waiting.request
-                return
-            for call in started_calls:
-                yield ToolStreamStarted(call.name, call.id)
-            started_events_emitted = True
-            raw_results = immediate | {item.tool_call.id: item.result for item in completed}
-            final_results: list[tuple[ProviderToolCall, ToolExecutionResult, AgentEvent | None]] = []
-            for call in calls:
-                result = self._hooks.after_tool_call(call, raw_results[call.id])
-                capped = cap_result(call, result)
-                final_results.append((call, capped.result, capped.event))
-            committed_results: list[
-                tuple[ProviderToolCall, ToolExecutionResult, str, AgentEvent | None]
-            ] = []
-            for call, result, cap_event in final_results:
-                stored = self.message_runtime.append_tool_result(result.tool_call_id, result.content)
-                appended_result_ids.append(stored.id)
-                committed_results.append((call, result, stored.id, cap_event))
-        except _ToolCallFailure as failure:
-            if not started_events_emitted:
-                for call in started_calls:
-                    yield ToolStreamStarted(call.name, call.id)
-            self._rollback_tool_batch(assistant_id, appended_result_ids)
-            yield ToolStreamFailed(failure.call.name, failure.call.id, failure.error)
-            raise failure.error from None
-        except BaseException:
-            self._rollback_tool_batch(assistant_id, appended_result_ids)
-            raise
-
-        for call, _result, message_id, cap_event in committed_results:
-            if cap_event is not None:
-                self._emit(cap_event)
-            self._emit(ToolResultAppendedEvent(
-                tool_name=call.name,
-                tool_call_id=call.id,
-                message_id=message_id,
-                **self._event_context(turn),
-            ))
-        for call, result, _message_id, _cap_event in committed_results:
-            yield ToolStreamCompleted(call.name, call.id, result.content)
-            skill_event = skill_loaded_event(call, result)
-            if skill_event is not None:
-                yield skill_event
-            yield StatusUpdate("tool_result", f"已读取 `{call.name}` 的结果，继续推理。", call.id)
-
-    def _rollback_tool_batch(self, assistant_id: str, result_ids: list[str]) -> None:
-        self.message_runtime.active_window.remove_refs(
-            [assistant_id, *result_ids],
-            self.message_runtime.store,
-        )
-
-    async def _execute_tool_call(self, call: ProviderToolCall) -> ToolExecutionOutcome:
-        if self.tool_call_router is None:
-            raise RuntimeError("tool call router is required for tool calls")
-        return await self.tool_call_router.async_execute_tool_call(call)
+    def _require_tool_payload_runtime(self) -> ToolPayloadRuntime:
+        payloads = self.tool_payload_runtime
+        if payloads is None:
+            raise RuntimeError("tool payload runtime is required for recovery")
+        return payloads
 
     async def _provider_attempt_events(
         self,

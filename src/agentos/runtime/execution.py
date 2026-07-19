@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.run_runtime import RunWriteGuard
 
 if TYPE_CHECKING:
@@ -65,21 +66,6 @@ class AcceptedTurnExecution:
             raise TypeError("guard must be RunWriteGuard")
         if self.mode not in _EXECUTION_MODES:
             raise ValueError("execution mode is invalid")
-
-
-@dataclass(frozen=True, slots=True, repr=False)
-class ProtectedPayloadRef:
-    """PayloadProtector 产生的 opaque envelope，不暴露其存储表示。"""
-
-    token: str
-    digest: str
-
-    def __post_init__(self) -> None:
-        _require_identifier(self.token, "token")
-        _require_identifier(self.digest, "digest")
-
-    def __repr__(self) -> str:
-        return "ProtectedPayloadRef(<redacted>)"
 
 
 @dataclass(frozen=True, slots=True)

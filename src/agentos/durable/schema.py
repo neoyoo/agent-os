@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS durable_schema (
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS durable_checkpoints (
     turn_id TEXT NOT NULL,
     aggregate_version INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+    schema_version INTEGER NOT NULL CHECK (schema_version = 2),
     FOREIGN KEY (session_id, run_id)
         REFERENCES durable_runs(session_id, run_id)
 );
@@ -73,6 +73,15 @@ CREATE TABLE IF NOT EXISTS durable_context_states (
     session_id TEXT PRIMARY KEY,
     payload_json TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES durable_sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS durable_execution_cursors (
+    session_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (session_id, run_id),
+    FOREIGN KEY (session_id, run_id)
+        REFERENCES durable_runs(session_id, run_id)
 );
 """
 
@@ -128,6 +137,11 @@ _EXPECTED_COLUMNS = {
         ("session_id", "TEXT", 0, 1),
         ("payload_json", "TEXT", 1, 0),
     ),
+    "durable_execution_cursors": (
+        ("session_id", "TEXT", 1, 1),
+        ("run_id", "TEXT", 1, 2),
+        ("payload_json", "TEXT", 1, 0),
+    ),
 }
 _EXPECTED_UNIQUE = {
     "durable_sessions": {("session_id",)},
@@ -143,6 +157,7 @@ _EXPECTED_UNIQUE = {
         ("session_id", "message_id"),
     },
     "durable_context_states": {("session_id",)},
+    "durable_execution_cursors": {("session_id", "run_id")},
 }
 _EXPECTED_FOREIGN_TARGETS = {
     "durable_runs": {"durable_sessions"},
@@ -151,6 +166,7 @@ _EXPECTED_FOREIGN_TARGETS = {
     "durable_messages": {"durable_sessions"},
     "durable_active_refs": {"durable_messages"},
     "durable_context_states": {"durable_sessions"},
+    "durable_execution_cursors": {"durable_runs"},
 }
 
 

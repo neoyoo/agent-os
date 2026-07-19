@@ -16,9 +16,13 @@ from agentos.runtime import (
 from agentos.runtime.errors import AgentBusyError, CommandNotDueError
 from agentos.durable import DurableRuntimeProfile
 from agentos.runtime.run_state import RunStatus
+from agentos.security import FernetPayloadProtector
 
 
 NOW = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
+_PAYLOAD_PROTECTOR = FernetPayloadProtector(
+    FernetPayloadProtector.generate_key(),
+)
 
 
 class _Clock:
@@ -44,6 +48,7 @@ def _profile(tmp_path, builder: AgentBuilder, clock: _Clock) -> DurableRuntimePr
         database_path=tmp_path / "state.db",
         artifact_root=tmp_path / "artifacts",
         clock=clock,
+        payload_protector=_PAYLOAD_PROTECTOR,
     )
 
 

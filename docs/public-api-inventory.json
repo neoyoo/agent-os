@@ -1221,7 +1221,7 @@
     "agentos.durable": {
       "exports": {
         "DurableRuntimeProfile": {
-          "signature": "(*, agent_builder: 'AgentBuilder', database_path: 'str | Path', artifact_root: 'str | Path', clock: 'Callable[[], datetime] | None' = None) -> 'None'",
+          "signature": "(*, agent_builder: 'AgentBuilder', database_path: 'str | Path', artifact_root: 'str | Path', clock: 'Callable[[], datetime] | None' = None, payload_protector: 'PayloadProtector | None' = None) -> 'None'",
           "stability": "stable"
         },
         "SQLiteDurableStore": {
@@ -2539,7 +2539,7 @@
           "stability": "stable"
         },
         "AssistantCompleted": {
-          "signature": "(response: 'ProviderResponse') -> None",
+          "signature": "(content: 'str', stop_reason: 'str | None', tool_call_count: 'int') -> None",
           "stability": "experimental"
         },
         "AssistantContentDelta": {
@@ -2680,7 +2680,7 @@
           "stability": "experimental"
         },
         "QueryLoop": {
-          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
+          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, checkpoint_source: 'RuntimeCheckpointSource | None' = None, checkpoint_store: 'CheckpointCommitStore | None' = None, recovery_cursor: 'RunExecutionCursor | None' = None, tool_payload_runtime: 'ToolPayloadRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
           "stability": "stable"
         },
         "RecallContextFailedEvent": {

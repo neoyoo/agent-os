@@ -16,6 +16,7 @@ from agentos.planning.sqlite import SQLitePlanStore
 from agentos.runtime.agent import Agent
 from agentos.runtime.durable_runtime import DurableCommandRuntime
 from agentos.runtime.errors import DurableStoreClosedError
+from agentos.runtime.payloads import PayloadProtector
 
 if TYPE_CHECKING:
     from agentos.builder import AgentBuilder
@@ -34,10 +35,12 @@ class DurableRuntimeProfile:
         database_path: str | Path,
         artifact_root: str | Path,
         clock: Callable[[], datetime] | None = None,
+        payload_protector: PayloadProtector | None = None,
     ) -> None:
         validate_durable_builder(agent_builder)
         self._builder = agent_builder
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._payload_protector = payload_protector
         self._lock = RLock()
         self._query_loops: WeakValueDictionary[str, QueryLoop] = (
             WeakValueDictionary()
@@ -153,6 +156,7 @@ class DurableRuntimeProfile:
                 artifact_store=self._artifact_store,
                 session_id=session_id,
                 clock=self._clock,
+                payload_protector=self._payload_protector,
             )
             self._query_loops[session_id] = agent.query_loop
             return agent

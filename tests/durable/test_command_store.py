@@ -29,11 +29,10 @@ def waiting_run(tmp_path, reason: WaitReason):
     store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
     source = checkpoint_source()
     run(store.initialize_session(source.session))
-    store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
     running = run(create_running(runs, "run_1"))
     run(store.commit_waiting(
-        session_id="session_1",
+        checkpoint=source.capture(),
         run_id="run_1",
         turn_id="turn_1",
         reason=reason,

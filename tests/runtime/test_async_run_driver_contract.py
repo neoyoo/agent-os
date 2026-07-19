@@ -8,7 +8,7 @@ from agentos import Agent
 from agentos._waiting import WaitRequest, WaitReason
 from agentos.context import ContextRuntime
 from agentos.events import TurnStartedEvent
-from agentos.messages import MessageRuntime
+from agentos.messages import MessageRuntime, StoredMessage
 from agentos.providers import ProviderResponse
 from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.continuation import ContinuationRuntime
@@ -20,6 +20,9 @@ from agentos.runtime.run import RunRequest
 from agentos.runtime.run import UserTurnInput
 from agentos.runtime.run_commit import RunCommitRuntime
 from agentos.runtime.run_driver import RunDriver
+from agentos.runtime._execution_control import RunningCheckpointRequest
+from agentos.runtime.execution import RunExecutionCursor
+from agentos.runtime.query_loop_support import _FinalContent
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import (
     RunAlreadyExistsError,
@@ -28,6 +31,11 @@ from agentos.runtime.run_state import (
     RunStatus,
 )
 from agentos.runtime.session import SessionState
+from agentos.runtime.stream_events import (
+    FinalResult,
+    TurnStreamCompleted,
+    TurnStreamFailed,
+)
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
 from agentos.runtime.waiting import LocalWaitingRuntime
@@ -311,6 +319,83 @@ def test_agent_executes_accepted_start_with_the_claim_guard() -> None:
     asyncio.run(run())
 
 
+def test_accepted_start_recovery_is_idempotent_after_checkpoint_hydration() -> None:
+    async def run() -> None:
+        store = _PostCommitSuspendingStore(None)
+        store.state = RunState(
+            "run_1",
+            "session_1",
+            status=RunStatus.RUNNING,
+            aggregate_version=4,
+        )
+        session = SessionState.from_snapshot("session_1", "running", 2)
+        messages = MessageRuntime()
+        user = StoredMessage("message_stable", "user", "hello")
+        messages.hydrate_messages([user])
+        messages.active_window.append(user.id)
+        runs = RunRuntime(session_id="session_1", store=store)
+        turns = TurnLifecycle(
+            context_runtime=ContextRuntime(),
+            message_runtime=messages,
+            session_state=session,
+            continuation_runtime=ContinuationRuntime(),
+        )
+        driver = RunDriver(
+            runs=runs,
+            turns=turns,
+            commits=RunCommitRuntime(
+                runs,
+                LocalWaitingRuntime(runs),
+            ),
+            recovery_cursor=RunExecutionCursor("turn_1", "before_provider", 0),
+        )
+        execution = AcceptedTurnExecution(
+            input=AcceptedStartInput(
+                run_id="run_1",
+                submission_id="submission_1",
+                input=UserTurnInput("hello"),
+                turn_id="turn_1",
+                user_message_id=user.id,
+            ),
+            guard=RunWriteGuard(4, claim_id="claim_1", fencing_token=7),
+            mode="recover",
+        )
+        request = RunRequest(execution)
+        run_id = await driver.prepare(request.input)
+
+        async def provider_events(  # type: ignore[no-untyped-def]
+            _run_id,
+            turn,
+            _options,
+            recovery_cursor,
+        ):
+            assert turn is not None
+            assert turn.id == "turn_1"
+            assert recovery_cursor == RunExecutionCursor(
+                "turn_1",
+                "before_provider",
+                0,
+            )
+            yield FinalResult("done")
+            yield _FinalContent("done")
+
+        events = [
+            event
+            async for event in driver.events(
+                request,
+                run_id,
+                provider_events,
+            )
+        ]
+
+        assert any(isinstance(event, TurnStreamCompleted) for event in events)
+        assert messages.store.all() == [user]
+        assert [ref.message_id for ref in messages.active_window.refs] == [user.id]
+        assert session.next_turn_number() == 2
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     ("mode", "status"),
     [("start", RunStatus.QUEUED), ("recover", RunStatus.RUNNING)],
@@ -445,7 +530,12 @@ def test_cancellation_after_authoritative_commit_preserves_committed_outcome(
         request = RunRequest(UserTurnInput("hello"))
         run_id = await driver.prepare(request.input)
 
-        async def provider_events(turn, options):  # type: ignore[no-untyped-def]
+        async def provider_events(  # type: ignore[no-untyped-def]
+            run_id,
+            turn,
+            options,
+            recovery_cursor,
+        ):
             if blocked_status is RunStatus.WAITING:
                 yield WaitRequest(WaitReason("human_input", "approval_1"))
             return
@@ -490,7 +580,12 @@ def test_provider_failure_uses_original_guard_after_external_version_advance() -
         request = RunRequest(UserTurnInput("hello"))
         run_id = await driver.prepare(request.input)
 
-        async def provider_events(turn, options):  # type: ignore[no-untyped-def]
+        async def provider_events(  # type: ignore[no-untyped-def]
+            run_id,
+            turn,
+            options,
+            recovery_cursor,
+        ):
             assert store.state is not None
             store.state = replace(
                 store.state,
@@ -514,5 +609,76 @@ def test_provider_failure_uses_original_guard_after_external_version_advance() -
         assert all(
             status is not RunStatus.FAILED for status, _guard in store.transitions
         )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure_boundary", ["checkpoint", "terminal"])
+def test_commit_failure_does_not_publish_failure_or_terminal_events(
+    failure_boundary: str,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        runs = RunRuntime(
+            session_id="session_1",
+            store=InMemoryRunStore(),
+            id_factory=lambda: "run_1",
+        )
+        driver, session, _messages = _recording_driver(runs)
+        request = RunRequest(UserTurnInput("hello"))
+        run_id = await driver.prepare(request.input)
+        original_commit_running = RunCommitRuntime.commit_running
+        running_commits = 0
+
+        async def fail_checkpoint(self, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal running_commits
+            running_commits += 1
+            if running_commits == 2:
+                raise RuntimeError("checkpoint commit failed")
+            return await original_commit_running(self, **kwargs)
+
+        async def fail_terminal(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("terminal commit failed")
+
+        if failure_boundary == "checkpoint":
+            monkeypatch.setattr(RunCommitRuntime, "commit_running", fail_checkpoint)
+        else:
+            monkeypatch.setattr(RunCommitRuntime, "commit_terminal", fail_terminal)
+
+        async def provider_events(  # type: ignore[no-untyped-def]
+            _run_id,
+            turn,
+            _options,
+            _recovery_cursor,
+        ):
+            if failure_boundary == "checkpoint":
+                assert turn is not None
+                yield RunningCheckpointRequest(
+                    RunExecutionCursor(
+                        turn.id,
+                        "after_tools",
+                        0,
+                        "assistant_1",
+                    ),
+                )
+            else:
+                yield FinalResult("done")
+                yield _FinalContent("done")
+
+        published = []
+        with pytest.raises(RuntimeError, match="commit failed"):
+            async for event in driver.events(
+                request,
+                run_id,
+                provider_events,
+            ):
+                published.append(event)
+
+        assert not any(
+            isinstance(event, (FinalResult, TurnStreamCompleted, TurnStreamFailed))
+            for event in published
+        )
+        assert (await runs.get_run(run_id)).status is RunStatus.RUNNING
+        assert session.turns[0].status == "running"
 
     asyncio.run(run())

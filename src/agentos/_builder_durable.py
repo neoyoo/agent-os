@@ -19,12 +19,13 @@ from agentos.runtime.agent import Agent
 from agentos.runtime.checkpoint import RuntimeCheckpointSource, SessionCheckpoint
 from agentos.runtime.durable_runtime import (
     DurableCommandRuntime,
-    DurableWaitingRuntime,
     DurableStateStore,
 )
 from agentos.runtime.errors import CheckpointCorruptedError
+from agentos.runtime.payloads import PayloadProtectionContext, PayloadProtector
 from agentos.runtime.run_runtime import RunRuntime
 from agentos.runtime.session import SessionState
+from agentos.runtime.tool_payloads import ToolPayloadRuntime
 
 if TYPE_CHECKING:
     from agentos.builder import AgentBuilder
@@ -38,34 +39,41 @@ async def build_durable_agent(
     artifact_store: SqliteFilesystemArtifactStore,
     session_id: str,
     clock: Callable[[], datetime],
+    payload_protector: PayloadProtector | None,
 ) -> Agent:
     """水合权威状态，并复用 AgentBuilder 的唯一 QueryLoop 装配路径。"""
 
     await store.recover_abandoned_runs(session_id)
     checkpoint = await store.load_checkpoint(session_id)
+    payloads = ToolPayloadRuntime(
+        payload_protector,
+        PayloadProtectionContext(None, session_id),
+    )
     state, messages = _runtime_components(
         checkpoint=checkpoint,
         session_id=session_id,
         store=store,
         artifact_store=artifact_store,
         event_bus=builder._event_bus,
+        payloads=payloads,
     )
     await store.initialize_session(state.session)
     checkpoint_source = RuntimeCheckpointSource(
         state.session,
         messages,
         state.context,
+        payloads,
     )
-    store.bind_checkpoint_source(session_id, checkpoint_source)
     kwargs = builder._query_loop_kwargs(
         session_id,
         state=state,
         messages=messages,
     )
-    kwargs["waiting_runtime"] = DurableWaitingRuntime(
-        session_id,
-        store,
-        checkpoint_source,
+    kwargs["checkpoint_source"] = checkpoint_source
+    kwargs["checkpoint_store"] = store
+    kwargs["tool_payload_runtime"] = payloads
+    kwargs["recovery_cursor"] = (
+        None if checkpoint is None else checkpoint.execution_cursor
     )
     command_runtime = DurableCommandRuntime(session_id, store, clock)
     return Agent(
@@ -94,13 +102,14 @@ def _runtime_components(
     store: DurableStateStore,
     artifact_store: SqliteFilesystemArtifactStore,
     event_bus: EventBus | None,
+    payloads: ToolPayloadRuntime,
 ) -> tuple[RuntimeStateComponents, MessageRuntime]:
     if checkpoint is None:
         session = SessionState(session_id)
         messages = MessageRuntime()
         context = ContextRuntime(event_bus=event_bus, session_id=session_id)
     else:
-        session, messages, context = _hydrate(checkpoint, event_bus)
+        session, messages, context = _hydrate(checkpoint, event_bus, payloads)
     return (
         RuntimeStateComponents(
             context=context,
@@ -119,6 +128,7 @@ def _runtime_components(
 def _hydrate(
     checkpoint: SessionCheckpoint,
     event_bus: EventBus | None,
+    payloads: ToolPayloadRuntime,
 ) -> tuple[SessionState, MessageRuntime, ContextRuntime]:
     try:
         fields = validate_working_state_fields(
@@ -132,7 +142,7 @@ def _hydrate(
         for name, value in working.items():
             validate_working_state_value(declared[name].type, value)
         messages = MessageRuntime()
-        messages.hydrate_messages(list(checkpoint.messages))
+        messages.hydrate_messages(list(payloads.restore_messages(checkpoint.messages)))
         messages.active_window = ActiveWindow(
             MessageRef(message_id) for message_id in checkpoint.active_refs
         )

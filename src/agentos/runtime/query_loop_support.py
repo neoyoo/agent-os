@@ -10,11 +10,13 @@ from agentos.artifacts import ArtifactRef
 from agentos.capabilities.executor import ToolExecutionOutcome, ToolExecutionResult
 from agentos.capabilities.tools import ToolConcurrencyPolicy
 from agentos.context import ContextState
+from agentos.messages import MessageRuntime
 from agentos.policies import ToolResultBudget
 from agentos.policies.tool_result_budget import cap_tool_result_content
 from agentos.providers import ProviderToolCall
 from agentos._json_values import thaw_json
 from agentos.runtime.event_bus import ToolResultCappedEvent
+from agentos.runtime.execution import RunExecutionCursor
 from agentos.runtime.continuation import ContinuationNotice
 from agentos.runtime.stream_events import SkillLoaded, ToolStreamCompleted
 from agentos.runtime.tool_scheduler import ScheduledToolCallResult
@@ -27,10 +29,17 @@ class _FinalContent:
 
 
 class _ToolCallFailure(Exception):
-    def __init__(self, call: ProviderToolCall, error: Exception) -> None:
+    def __init__(
+        self,
+        call: ProviderToolCall,
+        error: Exception,
+        *,
+        expose_error: bool = True,
+    ) -> None:
         super().__init__(str(error))
         self.call = call
         self.error = error
+        self.expose_error = expose_error
 
 
 class ContextRuntimeBoundary(Protocol):
@@ -242,3 +251,44 @@ def tool_call_signature(tool_call: ProviderToolCall) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def restored_tool_loop_state(
+    messages: MessageRuntime,
+    cursor: RunExecutionCursor,
+) -> tuple[int, set[str]]:
+    """从持久化消息和执行游标重建当前 Turn 的工具循环状态。"""
+
+    completed_batches = cursor.provider_call_index
+    stored = messages.store.all()
+    boundary = len(stored)
+    if cursor.assistant_message_id is not None:
+        matched_boundary = next(
+            (
+                index
+                for index, message in enumerate(stored)
+                if message.id == cursor.assistant_message_id
+            ),
+            None,
+        )
+        if matched_boundary is None:
+            raise RuntimeError("recovery cursor assistant message is missing")
+        boundary = matched_boundary
+    if cursor.stage == "after_tools":
+        completed_batches += 1
+        boundary += 1
+    if completed_batches == 0:
+        return 0, set()
+    assistant_batches = [
+        message
+        for message in stored[:boundary]
+        if message.role == "assistant" and message.tool_calls
+    ]
+    signatures = {
+        tool_call_signature(
+            ProviderToolCall(call.id, call.name, call.arguments),
+        )
+        for message in assistant_batches[-completed_batches:]
+        for call in message.tool_calls
+    }
+    return completed_batches, signatures

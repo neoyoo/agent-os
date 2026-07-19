@@ -58,6 +58,14 @@ class DurableUnsafeDataError(AgentRunError):
     """待持久化状态包含禁止进入 Durable Store 的表示。"""
 
 
+class PayloadProtectionError(AgentRunError):
+    """受保护 Tool payload 无法在当前授权 scope 中打开。"""
+
+
+class PayloadProtectorRequiredError(PayloadProtectionError):
+    """持久执行 Tool 前必须配置 PayloadProtector。"""
+
+
 class SyncAdapterEventLoopError(AgentRunError):
     pass
 

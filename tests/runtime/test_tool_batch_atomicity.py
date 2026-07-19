@@ -10,6 +10,7 @@ from agentos.capabilities import (
     ToolConcurrencyPolicy,
     ToolRegistry,
 )
+from agentos.capabilities.executor import ToolExecutionError
 from agentos.context import ContextRuntime
 from agentos.events import (
     EventBus,
@@ -23,7 +24,11 @@ from agentos.policies import ToolResultBudget
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import ProviderRequestBuilder, QueryLoop
 from agentos.runtime.errors import AgentBusyError
-from agentos.runtime.stream_events import ToolStreamCompleted, ToolStreamStarted
+from agentos.runtime.stream_events import (
+    ToolStreamCompleted,
+    ToolStreamFailed,
+    ToolStreamStarted,
+)
 from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -148,13 +153,53 @@ def test_batch_failure_appends_no_partial_tool_results_and_clears_window() -> No
         ),
     )
 
-    with pytest.raises(RuntimeError, match="tool failed"):
+    with pytest.raises(ToolExecutionError, match="^tool execution failed$"):
         asyncio.run(agent.run("hello"))
 
     assert [message.role for message in messages.materialize_active()] == ["user"]
     assert not any(
         isinstance(event, ToolResultAppendedEvent) for event in event_bus.events
     )
+
+
+def test_tool_handler_failure_does_not_expose_argument_values() -> None:
+    async def scenario() -> None:
+        secret = "secret-tool-argument-must-not-leak"
+
+        async def fail(arguments: dict[str, object]) -> str:
+            raise RuntimeError(f"backend rejected {arguments['api_key']}")
+
+        agent, _messages, _event_bus, _provider = _agent(
+            [RegisteredTool("lookup", "lookup", {"type": "object"}, fail)],
+            ProviderResponse(
+                tool_calls=(
+                    ProviderToolCall("call_1", "lookup", {"api_key": secret}),
+                ),
+            ),
+        )
+        stream = await agent.run("hello", stream=True)
+        streamed_events: list[object] = []
+
+        with pytest.raises(
+            ToolExecutionError,
+            match="^tool execution failed$",
+        ) as caught:
+            async for event in stream:
+                streamed_events.append(event)
+
+        failed = next(
+            event
+            for event in streamed_events
+            if isinstance(event, ToolStreamFailed)
+        )
+        assert type(failed.error) is ToolExecutionError
+        assert str(failed.error) == "tool execution failed"
+        assert secret not in str(failed.error)
+        assert secret not in str(caught.value)
+        assert failed.error.__context__ is None
+        assert caught.value.__context__ is None
+
+    asyncio.run(scenario())
 
 
 def test_before_tool_hook_failure_rolls_back_assistant_batch() -> None:

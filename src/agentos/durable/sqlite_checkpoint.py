@@ -8,6 +8,8 @@ from uuid import uuid4
 from agentos.durable.serialization import (
     context_from_json,
     context_to_json,
+    execution_cursor_from_json,
+    execution_cursor_to_json,
     message_from_json,
     message_to_json,
 )
@@ -41,6 +43,7 @@ def write_checkpoint_state(
     _write_messages(connection, snapshot)
     _write_active_refs(connection, snapshot)
     write_context(connection, snapshot)
+    _write_execution_cursor(connection, snapshot, run_id=run_id)
     checkpoint = RunCheckpoint(
         checkpoint_id=f"checkpoint_{uuid4().hex}",
         session_id=snapshot.session_id,
@@ -99,6 +102,11 @@ def load_checkpoint(
         "SELECT payload_json FROM durable_context_states WHERE session_id = ?",
         (session_id,),
     ).fetchone()
+    cursor = connection.execute(
+        "SELECT payload_json FROM durable_execution_cursors "
+        "WHERE session_id = ? AND run_id = ?",
+        (session_id, latest["run_id"]),
+    ).fetchone()
     if session is None or context is None:
         raise CheckpointCorruptedError("checkpoint state is incomplete")
     try:
@@ -128,6 +136,11 @@ def load_checkpoint(
             messages=messages,
             active_refs=active_refs,
             context=context_from_json(payload),
+            execution_cursor=(
+                None
+                if cursor is None
+                else execution_cursor_from_json(cursor["payload_json"])
+            ),
         )
     except CheckpointCorruptedError:
         raise
@@ -184,3 +197,30 @@ def _write_active_refs(
             "(session_id, position, message_id) VALUES (?, ?, ?)",
             (snapshot.session_id, position, message_id),
         )
+
+
+def _write_execution_cursor(
+    connection: sqlite3.Connection,
+    snapshot: SessionCheckpoint,
+    *,
+    run_id: str,
+) -> None:
+    cursor = snapshot.execution_cursor
+    if cursor is None:
+        connection.execute(
+            "DELETE FROM durable_execution_cursors "
+            "WHERE session_id = ? AND run_id = ?",
+            (snapshot.session_id, run_id),
+        )
+        return
+    connection.execute(
+        "INSERT INTO durable_execution_cursors "
+        "(session_id, run_id, payload_json) VALUES (?, ?, ?) "
+        "ON CONFLICT(session_id, run_id) DO UPDATE SET "
+        "payload_json = excluded.payload_json",
+        (
+            snapshot.session_id,
+            run_id,
+            execution_cursor_to_json(cursor),
+        ),
+    )

@@ -4,9 +4,6 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from agentos._waiting import WaitReason
-from agentos.providers import ProviderResponse
-
-
 @dataclass(frozen=True, slots=True)
 class TurnStreamStarted:
     """agent turn stream 已开始。"""
@@ -68,7 +65,9 @@ class AssistantThinkingDelta:
 class AssistantCompleted:
     """assistant 最终响应已完成。"""
 
-    response: ProviderResponse
+    content: str
+    stop_reason: str | None
+    tool_call_count: int
 
 
 @dataclass(frozen=True, slots=True)

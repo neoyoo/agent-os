@@ -5,10 +5,16 @@ import sqlite3
 import pytest
 
 from agentos._waiting import WaitReason
+from agentos._json_values import freeze_json_mapping
 from agentos.durable import SQLiteDurableStore
 from agentos.messages import ToolCall
+from agentos.providers import ProviderToolCall
+from agentos.runtime.checkpoint import RuntimeCheckpointSource
 from agentos.runtime.errors import CheckpointCorruptedError, DurableUnsafeDataError
+from agentos.runtime.payloads import PayloadProtectionContext
 from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
+from agentos.runtime.tool_payloads import ToolPayloadRuntime
+from agentos.security import FernetPayloadProtector
 from tests.durable._async_support import create_running, run
 from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
@@ -18,7 +24,6 @@ def _checkpoint(tmp_path):
     store = SQLiteDurableStore(path, clock=lambda: NOW)
     source = checkpoint_source()
     run(store.initialize_session(source.session))
-    store.bind_checkpoint_source("session_1", source)
     runs = RunRuntime(session_id="session_1", store=store)
     running = run(create_running(runs, "run_1"))
     return path, store, source, running.aggregate_version
@@ -27,13 +32,38 @@ def _checkpoint(tmp_path):
 def test_tool_call_arguments_are_redacted_from_sqlite_checkpoint(tmp_path) -> None:
     marker = "secret-api-key-must-not-persist"
     path, store, source, version = _checkpoint(tmp_path)
-    source.messages.append_assistant(
+    protector = FernetPayloadProtector(FernetPayloadProtector.generate_key())
+    payloads = ToolPayloadRuntime(
+        protector=protector,
+        context=PayloadProtectionContext(None, "session_1"),
+    )
+    source = RuntimeCheckpointSource(
+        source.session,
+        source.messages,
+        source.context,
+        payloads=payloads,
+    )
+    calls = (
+        ProviderToolCall(
+            "call_1",
+            "lookup",
+            freeze_json_mapping({"api_key": marker, "query": "value"}),
+        ),
+    )
+    assistant = source.messages.append_assistant(
         "calling tool",
-        [ToolCall("call_1", "lookup", {"api_key": marker, "query": "value"})],
+        [ToolCall(call.id, call.name, call.arguments) for call in calls],
+    )
+    payloads.pending_cursor(
+        run_id="run_1",
+        turn_id="turn_1",
+        provider_call_index=0,
+        assistant_message_id=assistant.id,
+        calls=calls,
     )
     source.messages.append_tool_result("call_1", "bounded result")
     run(store.commit_waiting(
-        session_id="session_1",
+        checkpoint=source.capture(),
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
@@ -42,7 +72,11 @@ def test_tool_call_arguments_are_redacted_from_sqlite_checkpoint(tmp_path) -> No
 
     restored = run(store.load_checkpoint("session_1"))
     assert restored is not None
-    assert restored.messages[1].tool_calls[0].arguments == {}
+    hydrated = ToolPayloadRuntime(
+        protector=protector,
+        context=PayloadProtectionContext(None, "session_1"),
+    ).restore_messages(restored.messages)
+    assert hydrated[1].tool_calls[0].arguments == calls[0].arguments
     store.close()
     assert marker.encode() not in path.read_bytes()
 
@@ -53,7 +87,7 @@ def test_memory_projection_is_not_checkpointed_as_recovery_truth(tmp_path) -> No
     source.context.set_memory_context([marker])
 
     run(store.commit_waiting(
-        session_id="session_1",
+        checkpoint=source.capture(),
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),
@@ -87,7 +121,7 @@ def test_checkpoint_rejects_forbidden_durable_representations(
         match="^durable data contains a forbidden representation$",
     ):
         run(store.commit_waiting(
-            session_id="session_1",
+            checkpoint=source.capture(),
             run_id="run_1",
             turn_id="turn_1",
             reason=WaitReason("human_input", "approval_1"),
@@ -138,7 +172,7 @@ def test_corrupted_durable_rows_fail_with_stable_domain_error(
 ) -> None:
     path, store, _source, version = _checkpoint(tmp_path)
     run(store.commit_waiting(
-        session_id="session_1",
+        checkpoint=_source.capture(),
         run_id="run_1",
         turn_id="turn_1",
         reason=WaitReason("human_input", "approval_1"),

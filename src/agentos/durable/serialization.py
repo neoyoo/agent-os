@@ -9,8 +9,16 @@ from agentos.artifacts import ArtifactRef
 from agentos.context import WorkingStateField
 from agentos.context.state import CompressedSegment
 from agentos.durable.safety import validate_durable_data
-from agentos.messages import StoredMessage, ToolCall
-from agentos.runtime.checkpoint import ContextCheckpoint
+from agentos.runtime.checkpoint import (
+    CheckpointStoredMessage,
+    CheckpointToolCall,
+    ContextCheckpoint,
+)
+from agentos.runtime.execution import (
+    PendingToolInvocation,
+    RunExecutionCursor,
+)
+from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.errors import CheckpointCorruptedError
 
 
@@ -18,6 +26,10 @@ def dump_json(value: object) -> str:
     """生成确定性的 SQLite JSON 文本。"""
 
     validate_durable_data(value)
+    return _encode_json(value)
+
+
+def _encode_json(value: object) -> str:
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -30,44 +42,74 @@ def dump_json(value: object) -> str:
 def load_json_object(value: str) -> dict[str, object]:
     """严格读取 JSON object，并把损坏数据映射为领域错误。"""
 
+    loaded = _parse_json_object(value)
+    validate_durable_data(loaded)
+    return loaded
+
+
+def _parse_json_object(value: str) -> dict[str, object]:
     try:
         loaded = json.loads(value, parse_constant=_reject_json_constant)
     except (TypeError, ValueError, json.JSONDecodeError):
         raise CheckpointCorruptedError("durable JSON record is corrupted") from None
     if type(loaded) is not dict:
         raise CheckpointCorruptedError("durable JSON record is corrupted")
-    validate_durable_data(loaded)
     return cast(dict[str, object], loaded)
 
 
-def message_to_json(message: StoredMessage) -> str:
-    return dump_json(
-        {
-            "artifact_refs": [
-                {
-                    "artifact_id": item.artifact_id,
-                    "filename": item.filename,
-                    "media_type": item.media_type,
-                }
-                for item in message.artifact_refs
-            ],
-            "content": message.content,
-            "id": message.id,
-            "role": message.role,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": [
-                {
-                    "id": item.id,
-                    "name": item.name,
-                }
-                for item in message.tool_calls
-            ],
-        },
+def message_to_json(message: CheckpointStoredMessage) -> str:
+    payload = _message_payload(message, redact_protected_refs=False)
+    validate_durable_data(
+        _message_payload(message, redact_protected_refs=True),
     )
+    return _encode_json(payload)
 
 
-def message_from_json(value: str) -> StoredMessage:
-    data = load_json_object(value)
+def _message_payload(
+    message: CheckpointStoredMessage,
+    *,
+    redact_protected_refs: bool,
+) -> dict[str, object]:
+    return {
+        "artifact_refs": [
+            {
+                "artifact_id": item.artifact_id,
+                "filename": item.filename,
+                "media_type": item.media_type,
+            }
+            for item in message.artifact_refs
+        ],
+        "content": message.content,
+        "id": message.id,
+        "role": message.role,
+        "tool_call_id": message.tool_call_id,
+        "tool_calls": [
+            {
+                "id": item.id,
+                "invocation_id": item.invocation_id,
+                "invocation_ref": {
+                    "digest": (
+                        "protected-integrity-tag"
+                        if redact_protected_refs
+                        else item.invocation_ref.digest
+                    ),
+                    "token": (
+                        "protected-payload-token"
+                        if redact_protected_refs
+                        else item.invocation_ref.token
+                    ),
+                },
+                "name": item.name,
+                "run_id": item.run_id,
+                "turn_id": item.turn_id,
+            }
+            for item in message.tool_calls
+        ],
+    }
+
+
+def message_from_json(value: str) -> CheckpointStoredMessage:
+    data = _parse_json_object(value)
     try:
         _require_keys(
             data,
@@ -81,14 +123,25 @@ def message_from_json(value: str) -> StoredMessage:
         for item in artifact_refs:
             _require_keys(item, {"artifact_id", "filename", "media_type"})
         for item in tool_calls:
-            _require_keys(item, {"id", "name"})
+            _require_keys(
+                item,
+                {
+                    "id",
+                    "invocation_id",
+                    "invocation_ref",
+                    "name",
+                    "run_id",
+                    "turn_id",
+                },
+            )
+            _require_keys(_object(item, "invocation_ref"), {"digest", "token"})
         tool_call_id = _optional_string(data, "tool_call_id")
         if role == "tool":
             if not tool_call_id or tool_calls or artifact_refs:
                 raise ValueError("invalid tool result message")
         elif tool_call_id is not None or (tool_calls and role != "assistant"):
             raise ValueError("invalid stored message tool fields")
-        return StoredMessage(
+        message = CheckpointStoredMessage(
             id=_non_empty_string(data, "id"),
             role=cast(object, role),  # type: ignore[arg-type]
             content=_string(data, "content"),
@@ -101,15 +154,31 @@ def message_from_json(value: str) -> StoredMessage:
                 for item in artifact_refs
             ),
             tool_calls=tuple(
-                ToolCall(
+                CheckpointToolCall(
                     id=_non_empty_string(item, "id"),
                     name=_non_empty_string(item, "name"),
-                    arguments={},
+                    run_id=_non_empty_string(item, "run_id"),
+                    turn_id=_non_empty_string(item, "turn_id"),
+                    invocation_id=_non_empty_string(item, "invocation_id"),
+                    invocation_ref=ProtectedPayloadRef(
+                        token=_non_empty_string(
+                            _object(item, "invocation_ref"),
+                            "token",
+                        ),
+                        digest=_non_empty_string(
+                            _object(item, "invocation_ref"),
+                            "digest",
+                        ),
+                    ),
                 )
                 for item in tool_calls
             ),
             tool_call_id=tool_call_id,
         )
+        validate_durable_data(
+            _message_payload(message, redact_protected_refs=True),
+        )
+        return message
     except (KeyError, TypeError, ValueError):
         raise CheckpointCorruptedError("stored message record is corrupted") from None
 
@@ -162,6 +231,116 @@ def context_from_json(value: str) -> ContextCheckpoint:
         )
     except (KeyError, TypeError, ValueError):
         raise CheckpointCorruptedError("context checkpoint is corrupted") from None
+
+
+def execution_cursor_to_json(cursor: RunExecutionCursor) -> str:
+    """序列化唯一 running execution cursor。"""
+
+    payload = _execution_cursor_payload(cursor, redact_protected_refs=False)
+    validate_durable_data(
+        _execution_cursor_payload(cursor, redact_protected_refs=True),
+    )
+    return _encode_json(payload)
+
+
+def _execution_cursor_payload(
+    cursor: RunExecutionCursor,
+    *,
+    redact_protected_refs: bool,
+) -> dict[str, object]:
+    return {
+        "assistant_message_id": cursor.assistant_message_id,
+        "pending_tools": [
+            {
+                "invocation_id": item.invocation_id,
+                "invocation_ref": {
+                    "digest": (
+                        "protected-integrity-tag"
+                        if redact_protected_refs
+                        else item.invocation_ref.digest
+                    ),
+                    "token": (
+                        "protected-payload-token"
+                        if redact_protected_refs
+                        else item.invocation_ref.token
+                    ),
+                },
+                "provider_tool_call_id": item.provider_tool_call_id,
+                "tool_name": item.tool_name,
+            }
+            for item in cursor.pending_tools
+        ],
+        "provider_call_index": cursor.provider_call_index,
+        "stage": cursor.stage,
+        "turn_id": cursor.turn_id,
+    }
+
+
+def execution_cursor_from_json(value: str) -> RunExecutionCursor:
+    """严格恢复 running execution cursor。"""
+
+    data = _parse_json_object(value)
+    try:
+        _require_keys(
+            data,
+            {
+                "assistant_message_id",
+                "pending_tools",
+                "provider_call_index",
+                "stage",
+                "turn_id",
+            },
+        )
+        pending = _object_list(data, "pending_tools")
+        for item in pending:
+            _require_keys(
+                item,
+                {
+                    "invocation_id",
+                    "invocation_ref",
+                    "provider_tool_call_id",
+                    "tool_name",
+                },
+            )
+            _require_keys(_object(item, "invocation_ref"), {"digest", "token"})
+        provider_call_index = data["provider_call_index"]
+        if type(provider_call_index) is not int:
+            raise TypeError("provider_call_index")
+        cursor = RunExecutionCursor(
+            turn_id=_non_empty_string(data, "turn_id"),
+            stage=cast(object, _non_empty_string(data, "stage")),  # type: ignore[arg-type]
+            provider_call_index=provider_call_index,
+            assistant_message_id=_optional_string(data, "assistant_message_id"),
+            pending_tools=tuple(
+                PendingToolInvocation(
+                    invocation_id=_non_empty_string(item, "invocation_id"),
+                    provider_tool_call_id=_non_empty_string(
+                        item,
+                        "provider_tool_call_id",
+                    ),
+                    tool_name=_non_empty_string(item, "tool_name"),
+                    invocation_ref=ProtectedPayloadRef(
+                        token=_non_empty_string(
+                            _object(item, "invocation_ref"),
+                            "token",
+                        ),
+                        digest=_non_empty_string(
+                            _object(item, "invocation_ref"),
+                            "digest",
+                        ),
+                    ),
+                )
+                for item in pending
+            ),
+        )
+        validate_durable_data(
+            _execution_cursor_payload(cursor, redact_protected_refs=True),
+        )
+        return cursor
+    except (KeyError, TypeError, ValueError):
+        raise CheckpointCorruptedError(
+            "execution cursor is corrupted",
+        ) from None
 
 
 def _string(data: Mapping[str, object], key: str) -> str:

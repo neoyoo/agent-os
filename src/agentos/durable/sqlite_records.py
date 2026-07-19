@@ -129,6 +129,11 @@ def recover_abandoned_running(
     recovered = []
     for row in rows:
         updated = row_to_state(row).transition(RunStatus.FAILED)
+        connection.execute(
+            "DELETE FROM durable_execution_cursors "
+            "WHERE session_id = ? AND run_id = ?",
+            (updated.session_id, updated.run_id),
+        )
         update_run(
             connection,
             updated,

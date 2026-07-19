@@ -5,6 +5,7 @@ from agentos.capabilities import RegisteredTool, WaitRequest
 from agentos.durable import DurableRuntimeProfile
 from agentos.providers import Provider
 from agentos.runtime import WaitReason
+from agentos.runtime.payloads import PayloadProtector
 
 
 def _approval_tool() -> RegisteredTool:
@@ -22,6 +23,8 @@ def _approval_tool() -> RegisteredTool:
 def build_durable_profile(
     provider: Provider,
     state_root: str | Path,
+    *,
+    payload_protector: PayloadProtector,
 ) -> DurableRuntimeProfile:
     """构建由调用方通过 context manager 管理的单机 Durable Profile。"""
 
@@ -32,6 +35,7 @@ def build_durable_profile(
         ),
         database_path=root / "state.db",
         artifact_root=root / "artifacts",
+        payload_protector=payload_protector,
     )
 
 

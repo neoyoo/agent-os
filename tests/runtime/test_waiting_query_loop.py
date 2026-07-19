@@ -15,6 +15,7 @@ from agentos.capabilities import (
     ToolRegistry,
     WaitRequest,
 )
+from agentos.capabilities.executor import ToolExecutionError
 from agentos.context import ContextRuntime
 from agentos.events import (
     EventBus,
@@ -452,10 +453,12 @@ def test_tool_error_wins_over_wait_request_without_committing_waiting() -> None:
             waiting_runtime=RecordingWaitingRuntime(order, run_id="unused"),
         )
 
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(
+            ToolExecutionError,
+            match="^tool execution failed$",
+        ):
             await agent.run("hello")
 
-        assert caught.value is error
         assert order == []
 
     asyncio.run(run())
@@ -595,7 +598,7 @@ def test_non_streaming_wait_projects_outcome_after_authoritative_commit() -> Non
 def test_wait_request_uses_default_local_waiting_runtime() -> None:
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
-        agent, session, _messages, event_bus = _agent(
+        agent, session, messages, event_bus = _agent(
             tools=[_wait_tool(reason)],
             responses=[
                 ProviderResponse(
@@ -625,7 +628,7 @@ def test_waiting_commit_failure_leaves_turn_running_and_emits_no_waiting() -> No
         reason = WaitReason("human_input", "approval_1")
         order: list[str] = []
         error = RuntimeError("commit failed")
-        agent, session, _messages, event_bus = _agent(
+        agent, session, messages, event_bus = _agent(
             tools=[_wait_tool(reason)],
             responses=[
                 ProviderResponse(
@@ -647,6 +650,10 @@ def test_waiting_commit_failure_leaves_turn_running_and_emits_no_waiting() -> No
         assert stream.closed
         assert order == ["commit_attempted"]
         assert session.turns[0].status == "running"
+        assert [message.role for message in messages.materialize_active()] == [
+            "user",
+            "assistant",
+        ]
         assert not any(
             isinstance(event, (ToolStreamFailed, TurnStreamWaiting, TurnStreamCompleted))
             for event in events
