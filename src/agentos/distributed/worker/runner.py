@@ -98,6 +98,8 @@ class WorkerRunner:
         ):
             if value <= timedelta(0):
                 raise ValueError(f"{name} must be positive")
+        if self.heartbeat_interval >= min(self.claim_ttl, self.lease_ttl):
+            raise ValueError("heartbeat_interval must be less than claim and lease TTL")
 
     async def run_delivery(self, delivery: QueueDelivery) -> bool:
         """执行或去重一个 delivery；返回是否已成功 ACK。"""
@@ -135,51 +137,60 @@ class WorkerRunner:
                 ttl=self.claim_ttl,
             )
             if claimed is None:
+                refreshed = await self.claims.resolve_delivery(
+                    outbox_id=delivery.outbox_id,
+                )
+                if refreshed is None or refreshed.run.status not in _ACKABLE_STATUSES:
+                    return False
                 await self._ack(delivery)
                 return True
             if claimed.target != target:
                 raise RuntimeError("claim does not match the resolved delivery target")
             await self.leases.ensure_owned(scope=target.scope, lease=lease)
-            agent = await self.agent_factory.hydrate(claimed=claimed)
-            stream = await agent.run(claimed.execution, stream=True)
-            await self._consume_claimed_stream(
+            await self._run_claimed(
                 claimed=claimed,
                 lease=lease,
-                stream=stream,
             )
             await self._ack(delivery)
             return True
         finally:
             await self.leases.release(scope=target.scope, lease=lease)
 
-    async def _consume_claimed_stream(
+    async def _run_claimed(
         self,
         *,
         claimed: ClaimedExecution,
         lease: SessionLease,
-        stream: AgentStream,
     ) -> None:
-        consumer = asyncio.create_task(self._consume_events(claimed, stream))
         heartbeat = asyncio.create_task(
             self._heartbeat(claimed, lease),
         )
+        execution = asyncio.create_task(self._hydrate_and_consume(claimed))
         try:
             done, _ = await asyncio.wait(
-                (consumer, heartbeat),
+                (execution, heartbeat),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if heartbeat in done:
                 await heartbeat
                 raise RuntimeError("claim heartbeat stopped before execution")
-            await consumer
+            await execution
         except BaseException:
-            try:
-                await stream.aclose()
-            finally:
-                await _cancel_and_wait(consumer)
+            await _cancel_and_wait(execution)
             raise
         finally:
             await _cancel_and_wait(heartbeat)
+
+    async def _hydrate_and_consume(self, claimed: ClaimedExecution) -> None:
+        stream: AgentStream | None = None
+        try:
+            agent = await self.agent_factory.hydrate(claimed=claimed)
+            stream = await agent.run(claimed.execution, stream=True)
+            await self._consume_events(claimed, stream)
+        except BaseException:
+            if stream is not None:
+                await stream.aclose()
+            raise
 
     async def _consume_events(
         self,

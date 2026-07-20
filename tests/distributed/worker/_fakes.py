@@ -83,9 +83,11 @@ class FakeQueue:
         self,
         trace: list[str],
         deliveries: tuple[QueueDelivery, ...] = (),
+        reclaimed: tuple[QueueDelivery, ...] = (),
     ) -> None:
         self.trace = trace
         self.deliveries = list(deliveries)
+        self.reclaimed = list(reclaimed)
         self.acked: list[QueueDelivery] = []
         self.acknowledged = asyncio.Event()
         self.receive_started = asyncio.Event()
@@ -132,7 +134,10 @@ class FakeQueue:
         min_idle: timedelta,
         limit: int,
     ) -> tuple[QueueDelivery, ...]:
-        return ()
+        self.trace.append("queue.reclaim")
+        batch = tuple(self.reclaimed[:limit])
+        del self.reclaimed[:limit]
+        return batch
 
     async def ack(
         self,
@@ -160,13 +165,16 @@ class FakeClaims:
         self.trace = trace
         self.target = target
         self.claimed = claimed
+        self.target_after_claim: RunDeliveryTarget | None = None
         self.resolve_error: BaseException | None = None
+        self.resolve_calls = 0
         self.claim_error: BaseException | None = None
         self.heartbeat_error: BaseException | None = None
         self.release_calls = 0
 
     async def resolve_delivery(self, *, outbox_id: str) -> RunDeliveryTarget | None:
         self.trace.append("postgres.resolve")
+        self.resolve_calls += 1
         if self.resolve_error is not None:
             raise self.resolve_error
         return self.target
@@ -182,6 +190,8 @@ class FakeClaims:
         self.trace.append("postgres.claim")
         if self.claim_error is not None:
             raise self.claim_error
+        if self.target_after_claim is not None:
+            self.target = self.target_after_claim
         return self.claimed
 
     async def heartbeat(
@@ -354,10 +364,20 @@ class FakeAgentFactory:
         self.trace = trace
         self.agent = agent
         self.claimed: list[ClaimedExecution] = []
+        self.hydrate_started = asyncio.Event()
+        self.hydrate_cancelled = asyncio.Event()
+        self.hydrate_gate: asyncio.Event | None = None
 
     async def hydrate(self, *, claimed: ClaimedExecution) -> FakeAgent:
         self.trace.append("agent.hydrate")
         self.claimed.append(claimed)
+        self.hydrate_started.set()
+        if self.hydrate_gate is not None:
+            try:
+                await self.hydrate_gate.wait()
+            except asyncio.CancelledError:
+                self.hydrate_cancelled.set()
+                raise
         return self.agent
 
 

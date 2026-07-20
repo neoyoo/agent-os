@@ -224,7 +224,7 @@ def test_postgres_resolve_or_claim_failure_and_redis_lease_miss_fail_closed() ->
     asyncio.run(scenario())
 
 
-def test_unclaimable_duplicate_is_acked_without_hydration() -> None:
+def test_unclaimable_nonterminal_delivery_is_not_acked() -> None:
     async def scenario() -> None:
         trace: list[str] = []
         target = delivery_target()
@@ -240,9 +240,10 @@ def test_unclaimable_duplicate_is_acked_without_hydration() -> None:
             stream=stream,
         )
 
-        assert await runner.run_delivery(DELIVERY) is True
-        assert queue.acked == [DELIVERY]
+        assert await runner.run_delivery(DELIVERY) is False
+        assert queue.acked == []
         assert factory.claimed == []
+        assert claims.resolve_calls == 2
 
     asyncio.run(scenario())
 

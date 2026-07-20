@@ -41,7 +41,7 @@ class DistributedWorker:
         self._last_heartbeat_at: datetime | None = None
         self._drain_started_at: datetime | None = None
         self._receiver: asyncio.Task[None] | None = None
-        self._receiver_error: BaseException | None = None
+        self._failure: BaseException | None = None
         self._active: set[asyncio.Task[bool]] = set()
         self._capacity = asyncio.Event()
         self._capacity.set()
@@ -55,7 +55,7 @@ class DistributedWorker:
             worker_id=self._worker_id,
             status=self._status,
             accepting_claims=(
-                self._status == "running" and self._receiver_error is None
+                self._status == "running" and self._failure is None
             ),
             active_claim_count=len(self._active),
             last_heartbeat_at=self._last_heartbeat_at,
@@ -94,8 +94,9 @@ class DistributedWorker:
             receiver, self._receiver = self._receiver, None
         receiver_error = await _cancel_receiver(receiver)
         await self._finish_active(float(timeout))
-        if receiver_error is not None:
-            raise receiver_error
+        failure = receiver_error or self._failure
+        if failure is not None:
+            raise failure
 
     async def close(self) -> None:
         """幂等关闭 Worker；未 drain 的活动执行立即进入 cleanup。"""
@@ -123,11 +124,18 @@ class DistributedWorker:
                 self._capacity.clear()
                 await self._capacity.wait()
                 continue
-            deliveries = await self._queue.receive(
+            deliveries = await self._queue.reclaim(
                 topic=self._topic,
                 consumer_id=self._worker_id,
+                min_idle=self._runner.claim_ttl,
                 limit=available,
             )
+            if not deliveries:
+                deliveries = await self._queue.receive(
+                    topic=self._topic,
+                    consumer_id=self._worker_id,
+                    limit=available,
+                )
             self._last_heartbeat_at = self._clock()
             if self._status != "running":
                 return
@@ -142,19 +150,26 @@ class DistributedWorker:
         self._active.discard(task)
         self._last_heartbeat_at = self._clock()
         self._capacity.set()
-        try:
-            task.exception()
-        except asyncio.CancelledError:
-            pass
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is None:
+            return
+        if self._failure is None:
+            self._failure = error
+        receiver = self._receiver
+        if receiver is not None and not receiver.done():
+            receiver.cancel()
 
     def _receiver_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
             return
         error = task.exception()
         if error is not None:
-            self._receiver_error = error
+            if self._failure is None:
+                self._failure = error
         elif self._status == "running":
-            self._receiver_error = RuntimeError("worker receive loop stopped")
+            self._failure = RuntimeError("worker receive loop stopped")
 
     async def _finish_active(self, timeout: float) -> None:
         active = tuple(self._active)

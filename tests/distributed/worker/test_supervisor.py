@@ -5,7 +5,10 @@ from datetime import timedelta
 
 import pytest
 
-from agentos.distributed.errors import DeliveryUnavailableError
+from agentos.distributed.errors import (
+    DeliveryUnavailableError,
+    DistributedBackendUnavailableError,
+)
 from agentos.distributed.worker.runner import WorkerRunner
 from agentos.distributed.worker.supervisor import DistributedWorker
 from agentos.runtime.stream_events import TurnStreamCompleted
@@ -189,3 +192,47 @@ def test_receive_failure_stops_accepting_claims_and_surfaces_on_drain() -> None:
         assert queue.closed
 
     asyncio.run(scenario())
+
+
+def test_worker_processes_reclaimed_pending_delivery_before_new_receive() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace, reclaimed=(DELIVERY,))
+        stream = ScriptedStream(trace, (TurnStreamCompleted("done"),))
+        worker, _, _ = build_worker(trace=trace, queue=queue, stream=stream)
+
+        await worker.start()
+        await asyncio.wait_for(queue.acknowledged.wait(), timeout=1)
+        await worker.drain(timeout=1)
+
+        assert trace.index("queue.reclaim") < trace.index("postgres.resolve")
+        assert queue.acked == [DELIVERY]
+        await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_delivery_failure_stops_receive_and_fails_readiness() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace, deliveries=(DELIVERY, DELIVERY))
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        worker, claims, _ = build_worker(trace=trace, queue=queue, stream=stream)
+        claims.claim_error = DistributedBackendUnavailableError()
+
+        await worker.start()
+        await asyncio.wait_for(_wait_until_not_accepting(worker), timeout=1)
+
+        assert queue.acked == []
+        assert len(queue.deliveries) == 1
+        with pytest.raises(DistributedBackendUnavailableError):
+            await worker.close()
+        assert worker.state.status == "closed"
+        assert queue.closed
+
+    asyncio.run(scenario())
+
+
+async def _wait_until_not_accepting(worker: DistributedWorker) -> None:
+    while worker.state.accepting_claims:
+        await asyncio.sleep(0)
