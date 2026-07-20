@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import FrozenInstanceError
 from datetime import timedelta
 
 import pytest
@@ -143,3 +144,57 @@ def test_cancelled_close_can_be_retried_after_active_batch() -> None:
         await relay.close()
 
     asyncio.run(scenario())
+
+
+def test_queued_batch_is_rejected_when_close_starts_before_lock_entry() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        relay, _, queue = build_blocking_relay(trace)
+        active = asyncio.create_task(relay.relay_once())
+        await queue.publish_started.wait()
+
+        queued = asyncio.create_task(relay.relay_once())
+        await asyncio.sleep(0)
+        closing = asyncio.create_task(relay.close())
+        await asyncio.sleep(0)
+        queue.publish_release.set()
+
+        assert await active == 1
+        with pytest.raises(RuntimeError, match="relay is closing or closed"):
+            await queued
+        await closing
+
+    asyncio.run(scenario())
+
+
+def test_close_waits_for_cancelled_batch_to_release_claim() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        relay, outbox, queue = build_blocking_relay(trace)
+        active = asyncio.create_task(relay.relay_once())
+        await queue.publish_started.wait()
+
+        closing = asyncio.create_task(relay.close())
+        await asyncio.sleep(0)
+        active.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await active
+        await closing
+        assert outbox.released == [outbox.claim]
+        assert outbox.marked == []
+        assert trace[-1] == "outbox.release"
+
+    asyncio.run(scenario())
+
+
+def test_relay_configuration_remains_frozen_after_construction() -> None:
+    relay, _, _ = build_relay([])
+
+    for name, value in (
+        ("owner_id", "relay_2"),
+        ("batch_size", 1),
+        ("claim_ttl", timedelta(seconds=1)),
+    ):
+        with pytest.raises(FrozenInstanceError):
+            setattr(relay, name, value)
