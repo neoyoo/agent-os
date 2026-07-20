@@ -14,6 +14,7 @@ from agentos.capabilities.invocation import ToolInvocation
 from agentos.capabilities.result_refs import (
     ArtifactToolResultRef,
     InlineToolResultRef,
+    ToolResultRef,
 )
 from agentos.capabilities.tools import SideEffectPolicy, ToolExecutionContract
 from agentos.runtime.run_runtime import RunWriteGuard
@@ -34,6 +35,7 @@ from agentos.runtime.side_effect_types import (
 )
 from agentos.runtime.tool_identity import invocation_digest
 from agentos.runtime.tool_invocations import ToolInvocationPlan, ToolInvocationPlanEntry
+from agentos.runtime.tool_result_refs import ToolResultRefProjector
 from agentos.policies.security import SecurityPolicyError
 
 
@@ -41,6 +43,7 @@ ToolResultProducer = Callable[
     [ToolInvocation],
     Awaitable[ToolExecutionOutcome],
 ]
+ToolResultMapper = Callable[[ToolExecutionResult], ToolExecutionResult]
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,7 @@ class ToolSideEffectRuntime:
 
     store: SideEffectStore
     completed_result_projector: CompletedResultProjector | None = None
+    result_ref_projector: ToolResultRefProjector | None = None
 
     async def restore_after_tools(
         self,
@@ -113,6 +117,7 @@ class ToolSideEffectRuntime:
         *,
         guard: RunWriteGuard,
         produce: ToolResultProducer,
+        map_result: ToolResultMapper | None = None,
     ) -> ToolExecutionResult | WaitingToolHandoff:
         invocation = entry.invocation
         context = invocation.context
@@ -129,9 +134,10 @@ class ToolSideEffectRuntime:
             self._require_contract(current, entry, contract)
 
         if current.status is SideEffectStatus.COMPLETED:
-            return await self._replay_completed(
+            return _map_replayed_result(
                 current,
-                invocation,
+                await self._replay_completed(current, invocation),
+                map_result,
             )
         if current.status is SideEffectStatus.STARTED:
             if contract.side_effect_policy in {
@@ -157,9 +163,13 @@ class ToolSideEffectRuntime:
             return _reconciliation_handoff(current)
         elif current.status is SideEffectStatus.RESOLVED:
             if current.resolution is SideEffectResolutionOutcome.ACCEPTED:
-                return self._replay_resolved(
+                return _map_replayed_result(
                     current,
-                    invocation.context.tool_call_id,
+                    self._replay_resolved(
+                        current,
+                        invocation.context.tool_call_id,
+                    ),
+                    map_result,
                 )
             raise SideEffectTransitionError
         elif current.status is not SideEffectStatus.RESERVED:
@@ -209,7 +219,17 @@ class ToolSideEffectRuntime:
                 ),
             )
         assert type(outcome) is ToolExecutionResult
-        reference = InlineToolResultRef(outcome.content)
+        reference = await self._project_result_ref(invocation, outcome.content)
+        visible_result = (
+            _result_from_reference(reference, outcome.tool_call_id)
+            if map_result is None
+            else _map_visible_result(outcome, map_result)
+        )
+        if (
+            type(reference) is ArtifactToolResultRef
+            and visible_result.content != reference.preview
+        ):
+            raise ValueError("artifact tool result preview does not match visible result")
         await self.store.complete(
             attempt_id=current.attempt_id,
             completion=SideEffectCompletion(
@@ -219,7 +239,19 @@ class ToolSideEffectRuntime:
             ),
             guard=guard,
         )
-        return outcome
+        return visible_result
+
+    async def _project_result_ref(
+        self,
+        invocation: ToolInvocation,
+        content: str,
+    ) -> ToolResultRef:
+        if self.result_ref_projector is None:
+            return InlineToolResultRef(content)
+        reference = await self.result_ref_projector.project(invocation, content)
+        if type(reference) not in {InlineToolResultRef, ArtifactToolResultRef}:
+            raise TypeError("tool result projector returned an invalid reference")
+        return reference
 
     @staticmethod
     def _require_contract(
@@ -266,6 +298,13 @@ def _result_from_record(
     reference = record.result_ref
     if reference is None or result_ref_digest(reference) != record.result_digest:
         raise SideEffectTransitionError
+    return _result_from_reference(reference, tool_call_id)
+
+
+def _result_from_reference(
+    reference: ToolResultRef,
+    tool_call_id: str,
+) -> ToolExecutionResult:
     content = (
         reference.content
         if type(reference) is InlineToolResultRef
@@ -276,6 +315,28 @@ def _result_from_record(
     if content is None:
         raise SideEffectTransitionError
     return ToolExecutionResult(tool_call_id, content)
+
+
+def _map_visible_result(
+    result: ToolExecutionResult,
+    mapper: ToolResultMapper | None,
+) -> ToolExecutionResult:
+    if mapper is None:
+        return result
+    mapped = mapper(result)
+    if type(mapped) is not ToolExecutionResult or mapped.tool_call_id != result.tool_call_id:
+        raise TypeError("tool result mapper returned an invalid result")
+    return mapped
+
+
+def _map_replayed_result(
+    record: SideEffectRecord,
+    result: ToolExecutionResult,
+    mapper: ToolResultMapper | None,
+) -> ToolExecutionResult:
+    if type(record.result_ref) is ArtifactToolResultRef:
+        return result
+    return _map_visible_result(result, mapper)
 
 
 def _validate_produced_outcome(

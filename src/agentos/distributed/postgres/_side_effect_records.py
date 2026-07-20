@@ -21,10 +21,17 @@ async def require_current(
     attempt_id: SideEffectAttemptId,
     guard: RunWriteGuard,
 ) -> SideEffectRecord:
-    current = await load_current(connection, attempt_id, lock=True)
-    if current is None or current.attempt_id != attempt_id:
+    candidate = await load_current(connection, attempt_id, lock=False)
+    if candidate is None or candidate.attempt_id != attempt_id:
         raise SideEffectTransitionError()
-    await require_guard(connection, current.run_id, attempt_id, guard)
+    await require_guard(connection, candidate.run_id, attempt_id, guard)
+    current = await load_current(connection, attempt_id, lock=True)
+    if (
+        current is None
+        or current.attempt_id != attempt_id
+        or current.run_id != candidate.run_id
+    ):
+        raise SideEffectTransitionError()
     return current
 
 

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from agentos._builder_hydration import hydrate_runtime_checkpoint
 from agentos._builder_state import RuntimeStateComponents
 from agentos.artifacts import ArtifactRuntime
 from agentos.context import ContextRuntime
 from agentos.distributed._claim_artifacts import ClaimArtifactStore
+from agentos.distributed._tool_result_artifacts import (
+    DistributedToolResultRefProjector,
+)
 from agentos.distributed.models import ClaimedExecution, RequestScope
 from agentos.distributed.protocols import DistributedArtifactPort
 from agentos.messages import MessageRuntime
+from agentos.policies import ToolResultBudget
 from agentos.runtime.agent import Agent
 from agentos.runtime.checkpoint import RuntimeCheckpointSource
 from agentos.runtime.durable_runtime import DurableStateStore
@@ -20,6 +24,7 @@ from agentos.runtime.session import SessionState
 from agentos.runtime.side_effect_resume_validator import SideEffectResumeValidator
 from agentos.runtime.side_effect_store import SideEffectStore
 from agentos.runtime.tool_payloads import ToolPayloadRuntime
+from agentos.tokens import TokenCounter
 
 from typing import TYPE_CHECKING
 
@@ -95,6 +100,13 @@ class ClaimScopedAgentFactory:
         kwargs["side_effect_store"] = self.side_effect_store
         kwargs["side_effect_resume_validator"] = self.side_effect_resume_validator
         kwargs["tool_payload_runtime"] = payloads
+        kwargs["tool_result_ref_projector"] = DistributedToolResultRefProjector(
+            scope=scope,
+            session_id=session_id,
+            artifacts=self.artifact_store,
+            budget=cast(ToolResultBudget, kwargs["tool_result_budget"]),
+            token_counter=cast(TokenCounter, kwargs["token_counter"]),
+        )
         return Agent(query_loop_kwargs=kwargs)
 
 

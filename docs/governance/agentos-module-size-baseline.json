@@ -113,6 +113,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 497,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/multi/tasks.py",
       "lines": 495,
       "gate": "responsibility_review"
@@ -120,11 +125,6 @@
     {
       "path": "src/agentos/runtime/run_driver.py",
       "lines": 495,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/runtime/query_loop.py",
-      "lines": 494,
       "gate": "responsibility_review"
     },
     {
@@ -153,6 +153,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/side_effect_types.py",
+      "lines": 468,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/planning/dispatch.py",
       "lines": 467,
       "gate": "responsibility_review"
@@ -160,11 +165,6 @@
     {
       "path": "src/agentos/planning/daemons.py",
       "lines": 458,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/runtime/side_effect_types.py",
-      "lines": 456,
       "gate": "responsibility_review"
     },
     {
@@ -223,8 +223,18 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/profile.py",
+      "lines": 379,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/service.py",
       "lines": 371,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/runtime/tool_side_effect_runtime.py",
+      "lines": 366,
       "gate": "responsibility_review"
     },
     {
@@ -243,6 +253,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/postgres/schema.py",
+      "lines": 354,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/testing/contracts/plan_claim_store.py",
       "lines": 350,
       "gate": "responsibility_review"
@@ -253,8 +268,8 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/postgres/schema.py",
-      "lines": 343,
+      "path": "src/agentos/distributed/postgres/artifacts.py",
+      "lines": 344,
       "gate": "responsibility_review"
     },
     {
@@ -270,11 +285,6 @@
     {
       "path": "src/agentos/runtime/profile_web.py",
       "lines": 329,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/distributed/postgres/artifacts.py",
-      "lines": 327,
       "gate": "responsibility_review"
     },
     {
@@ -300,11 +310,6 @@
     {
       "path": "src/agentos/persistence/serializers.py",
       "lines": 308,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/runtime/tool_side_effect_runtime.py",
-      "lines": 305,
       "gate": "responsibility_review"
     },
     {

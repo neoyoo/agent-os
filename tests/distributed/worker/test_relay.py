@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 
 import pytest
 
 from agentos.distributed.errors import DeliveryUnavailableError
-from agentos.distributed.models import OutboxRecord
+from agentos.distributed.models import OutboxClaim, OutboxRecord
 from agentos.distributed.worker.relay import OutboxRelay
 
 from tests.distributed.worker._fakes import FakeOutbox, FakeQueue, outbox_claim
@@ -36,6 +36,101 @@ class BlockingPublishQueue(FakeQueue):
         self.publish_started.set()
         await self.publish_release.wait()
         return await super().publish(record=record)
+
+
+class BlockingSecondPublishQueue(FakeQueue):
+    def __init__(self, trace: list[str]) -> None:
+        super().__init__(trace)
+        self.second_publish_started = asyncio.Event()
+
+    async def publish(self, *, record: OutboxRecord) -> str:
+        if len(self.published) == 1:
+            self.second_publish_started.set()
+            await asyncio.Event().wait()
+        return await super().publish(record=record)
+
+
+class BatchOutbox(FakeOutbox):
+    def __init__(
+        self,
+        trace: list[str],
+        claims: tuple[OutboxClaim, ...],
+        *,
+        mark_failure_at: int | None = None,
+    ) -> None:
+        super().__init__(trace, claims[0])
+        self.claims = claims
+        self.mark_failure_at = mark_failure_at
+        self.mark_attempts = 0
+
+    async def claim_batch(
+        self,
+        *,
+        owner_id: str,
+        limit: int,
+        ttl: timedelta,
+    ) -> tuple[OutboxClaim, ...]:
+        self.trace.append("outbox.claim")
+        self.claim_calls += 1
+        return self.claims
+
+    async def mark_published(
+        self,
+        *,
+        claim: OutboxClaim,
+        queue_entry_id: str,
+    ) -> None:
+        self.trace.append("outbox.mark")
+        self.mark_attempts += 1
+        if self.mark_attempts == self.mark_failure_at:
+            raise RuntimeError("mark interrupted")
+        self.marked.append((claim, queue_entry_id))
+
+
+class ReleaseFailingBatchOutbox(BatchOutbox):
+    def __init__(self, trace: list[str], claims: tuple[OutboxClaim, ...]) -> None:
+        super().__init__(trace, claims, mark_failure_at=1)
+        self.release_attempts: list[OutboxClaim] = []
+
+    async def release_claim(self, *, claim: OutboxClaim) -> None:
+        self.release_attempts.append(claim)
+        if len(self.release_attempts) == 1:
+            raise RuntimeError("release interrupted")
+        await super().release_claim(claim=claim)
+
+
+def batch_claims() -> tuple[OutboxClaim, ...]:
+    claim = outbox_claim()
+    return tuple(
+        replace(
+            claim,
+            record=replace(claim.record, outbox_id=f"outbox_{index}"),
+            claim_id=f"relay_claim_{index}",
+        )
+        for index in range(1, 4)
+    )
+
+
+def build_batch_relay(
+    trace: list[str],
+    *,
+    mark_failure_at: int | None = None,
+    queue: FakeQueue | None = None,
+) -> tuple[OutboxRelay, BatchOutbox, FakeQueue]:
+    outbox = BatchOutbox(
+        trace,
+        batch_claims(),
+        mark_failure_at=mark_failure_at,
+    )
+    selected_queue = queue or FakeQueue(trace)
+    relay = OutboxRelay(
+        outbox=outbox,
+        queue=selected_queue,
+        owner_id="relay_1",
+        batch_size=10,
+        claim_ttl=timedelta(seconds=30),
+    )
+    return relay, outbox, selected_queue
 
 
 def build_blocking_relay(
@@ -89,12 +184,72 @@ def test_mark_failure_allows_same_outbox_to_be_published_again() -> None:
 
         with pytest.raises(RuntimeError, match="mark interrupted"):
             await relay.relay_once()
-        assert outbox.released == []
+        assert outbox.released == [outbox.claim]
         assert outbox.marked == []
 
         assert await relay.relay_once() == 1
         assert queue.published == [outbox.claim.record, outbox.claim.record]
         assert outbox.marked == [(outbox.claim, "entry-2")]
+
+    asyncio.run(scenario())
+
+
+def test_mark_failure_releases_current_and_unprocessed_batch_claims() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        relay, outbox, queue = build_batch_relay(trace, mark_failure_at=2)
+
+        with pytest.raises(RuntimeError, match="mark interrupted"):
+            await relay.relay_once()
+
+        assert queue.published == [
+            outbox.claims[0].record,
+            outbox.claims[1].record,
+        ]
+        assert outbox.marked == [(outbox.claims[0], "entry-1")]
+        assert outbox.released == list(outbox.claims[1:])
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_batch_releases_current_and_unprocessed_claims() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = BlockingSecondPublishQueue(trace)
+        relay, outbox, _ = build_batch_relay(trace, queue=queue)
+        batch = asyncio.create_task(relay.relay_once())
+        await queue.second_publish_started.wait()
+
+        batch.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await batch
+        assert outbox.marked == [(outbox.claims[0], "entry-1")]
+        assert outbox.released == list(outbox.claims[1:])
+
+    asyncio.run(scenario())
+
+
+def test_release_failure_does_not_skip_remaining_batch_claims() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        claims = batch_claims()
+        outbox = ReleaseFailingBatchOutbox(trace, claims)
+        relay = OutboxRelay(
+            outbox=outbox,
+            queue=FakeQueue(trace),
+            owner_id="relay_1",
+            batch_size=10,
+            claim_ttl=timedelta(seconds=30),
+        )
+
+        with pytest.raises(RuntimeError, match="mark interrupted") as raised:
+            await relay.relay_once()
+
+        assert isinstance(raised.value.__cause__, RuntimeError)
+        assert str(raised.value.__cause__) == "release interrupted"
+        assert outbox.release_attempts == list(claims)
+        assert outbox.released == list(claims[1:])
 
     asyncio.run(scenario())
 

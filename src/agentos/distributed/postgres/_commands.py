@@ -5,19 +5,20 @@ from datetime import datetime
 from typing import cast
 
 from agentos._json_values import thaw_json_value
-from agentos.artifacts import ArtifactNotFoundError
-from agentos.capabilities.result_refs import ArtifactToolResultRef
 from agentos.distributed.errors import (
     CheckpointConflictError,
     CommandConflictError,
     CommandStateError,
-    RunNotFoundError,
     ClaimConflictError,
 )
 from agentos.distributed.models import RequestScope
 from agentos.distributed.postgres._command_cancellation import commit_cancel
 from agentos.distributed.postgres._command_records import update_run
 from agentos.distributed.postgres._database import AsyncConnection, PostgresPool, fetchone
+from agentos.distributed.postgres._artifact_references import (
+    require_active_artifact_result,
+)
+from agentos.distributed.postgres._guards import lock_run_with_session
 from agentos.distributed.postgres._outbox_records import EXECUTION_TOPIC, insert_outbox
 from agentos.distributed.postgres._records import run_state_from_row
 from agentos.distributed.postgres._reconciliation_sources import (
@@ -57,21 +58,12 @@ async def submit_command(
         )
         if duplicate is not None:
             return _duplicate_receipt(duplicate, session_id, command, payload_json)
-        row = await fetchone(
+        row = await lock_run_with_session(
             connection,
-            """
-            SELECT r.*, s.fencing_token, s.active_claim_id,
-                   clock_timestamp() AS database_now
-            FROM agentos_distributed_runs AS r
-            JOIN agentos_distributed_sessions AS s
-              ON s.tenant_id = r.tenant_id AND s.session_id = r.session_id
-            WHERE r.tenant_id = %s AND r.session_id = %s AND r.run_id = %s
-            FOR UPDATE OF r, s
-            """,
-            (scope.tenant_id, session_id, command.run_id),
+            tenant_id=scope.tenant_id,
+            session_id=session_id,
+            run_id=command.run_id,
         )
-        if row is None:
-            raise RunNotFoundError()
         current = run_state_from_row(row)
         if command.kind == "cancel":
             return await commit_cancel(
@@ -226,22 +218,12 @@ async def _validate_resolution(
         )
     except ClaimConflictError:
         raise CommandStateError() from None
-    if type(resolution.result_ref) is ArtifactToolResultRef:
-        artifact = await fetchone(
-            connection,
-            """
-            SELECT artifact_id FROM agentos_distributed_artifacts
-            WHERE tenant_id = %s AND session_id = %s AND artifact_id = %s
-              AND lifecycle = 'active'
-            """,
-            (
-                scope.tenant_id,
-                state.session_id,
-                resolution.result_ref.artifact.artifact_id,
-            ),
-        )
-        if artifact is None:
-            raise ArtifactNotFoundError()
+    await require_active_artifact_result(
+        connection,
+        tenant_id=scope.tenant_id,
+        session_id=state.session_id,
+        reference=resolution.result_ref,
+    )
 
 
 async def _allocate_turn(

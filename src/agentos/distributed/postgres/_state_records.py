@@ -109,6 +109,7 @@ async def require_artifacts(
         SELECT artifact_id FROM agentos_distributed_artifacts
         WHERE tenant_id = %s AND session_id = %s AND lifecycle = 'active'
           AND artifact_id = ANY(%s)
+        FOR SHARE
         """,
         (scope.tenant_id, session_id, list(handles)),
     )

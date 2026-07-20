@@ -24,6 +24,9 @@ from agentos.runtime.side_effect_integrity import (
 from agentos.runtime.tool_identity import compensation_operation_id
 
 
+_SIDE_EFFECT_RESOLUTION_INLINE_MAX_CHARS = 4_096
+
+
 class SideEffectContractError(RuntimeError):
     """Side Effect canonical contract 错误基类。"""
 
@@ -193,6 +196,15 @@ class SideEffectResolution:
             raise TypeError("kind must be SideEffectResolutionKind")
         if self.kind is SideEffectResolutionKind.ACCEPT_RESULT:
             _require_result_pair(self.result_ref, self.result_digest)
+            if (
+                type(self.result_ref) is InlineToolResultRef
+                and len(self.result_ref.content)
+                > _SIDE_EFFECT_RESOLUTION_INLINE_MAX_CHARS
+            ):
+                raise ValueError(
+                    "inline side effect resolution must not exceed "
+                    "4096 Unicode characters",
+                )
             _require_absent_attestation(self)
             return
         if self.kind is SideEffectResolutionKind.RETRY_PROVEN_SAFE:

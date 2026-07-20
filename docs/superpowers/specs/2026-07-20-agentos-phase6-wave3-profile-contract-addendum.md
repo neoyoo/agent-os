@@ -85,7 +85,55 @@ session-scoped ArtifactStore 形状：
 上传和删除只能经 tenant-scoped `ArtifactService` 执行。Worker A 上传后，Worker B 的新 claim
 必须能通过共享 metadata/blob backend 重新 list、load 和投影同一 Artifact。
 
-## 6. Optional Dependencies
+删除必须与引用写入共享 `Session -> Artifact` 锁序。未提交的 AcceptedInput、任一可恢复
+Checkpoint 中 StoredMessage 的 `artifact_refs`，以及 Side Effect Ledger 的
+`ArtifactToolResultRef` 均构成 durable pin；存在任一 pin 时删除 fail closed。Submission 在校验
+Artifact 时持有共享行锁，Ledger 在写入 Artifact result ref 前必须在同一 fenced 事务中重新确认
+Artifact 仍为 active，禁止形成指向已删除 bytes 的持久引用。
+
+Checkpoint 写入必须在 INSERT 前收集全部 StoredMessage 的 `artifact_refs`，按唯一 `artifact_id`
+锁定 active metadata。`resolve_side_effect` 命令若携带 `ArtifactToolResultRef`，校验阶段同样必须持有
+共享行锁；该命令处于 AcceptedInput 的 `accepted` 或 `claimed` 状态时，其 result ref 也是 durable
+pin。命令恢复完成并提交 checkpoint 后，引用是否继续存活只由 checkpoint/ledger 的持久状态决定。
+
+## 6. Oversized Tool Result
+
+Tool handler 的原始结果必须先由 claim-scoped result-ref projector 处理，再应用 Provider message
+预算。预算内结果保存 `InlineToolResultRef`；超限结果以确定性 `upload_id` 写入当前 tenant/session
+的共享 ArtifactStore，Ledger 保存 `ArtifactToolResultRef` 和有界 preview。StoredMessage 与 Provider
+只接收 preview，不写入原始大结果。恢复时直接从 Ledger 重建相同 preview，不重新执行已完成的
+外部效果。Local Profile 不配置该 projector，继续使用 inline ledger 与既有 message budget。
+
+`ArtifactToolResultRef` 是 preview 上限的 canonical owner：preview 最多包含 4,096 个 Unicode 字符。
+该固定反序列化边界不得由 Tool 配置或环境变量放宽；构造、外部 resolution payload、Ledger codec
+和 replay 必须共享同一值对象校验。可配置的 `ToolResultBudget` 只决定正常 Tool 执行何时转存以及
+生成何种 preview，不替代这一持久化安全上限。
+
+外部 `SideEffectResolution(ACCEPT_RESULT)` 的 inline evidence 同样最多包含 4,096 个 Unicode 字符，
+更大的 reconciliation 结果必须先写入 ArtifactStore 并提交有界 preview。该限制仅属于外部
+reconciliation 输入，不取代正常 Tool handler 路径的 `ToolResultBudget`。
+
+## 7. Recovery and Process Liveness
+
+Session 恢复必须按数据库生成的单调 `checkpoint_sequence DESC` 选择最新快照，不得使用墙钟时间
+或随机 ID 推断顺序。
+
+同一 Run 的写路径统一采用 `Session -> Run` 锁序；Claim 在无锁定位候选 identity 后必须先锁
+Session，再带锁重读 Run/Outbox。命令提交不得使用联合 `FOR UPDATE OF run, session` 依赖数据库
+自行决定顺序。Side Effect 路径在完成 fence 校验后才允许锁 Ledger 行。
+
+首次 schema 初始化必须由固定 PostgreSQL transaction advisory lock 串行化，锁必须先于版本读取、
+版本写入和其他 DDL。checkpoint latest 查询必须由
+`(tenant_id, session_id, checkpoint_sequence DESC) WHERE snapshot_json IS NOT NULL` partial index 支撑。
+
+Relay 批量 claim 后，只有成功 `mark_published()` 的前缀视为完成。publish、mark 或任务取消中断
+批次时，必须逐一尝试释放当前 claim 和未处理后缀；单个 release 失败不得跳过其余 claim，并且
+对外仍传播原始批次异常。进程硬退出或 PostgreSQL 不可用时继续由 claim TTL 回收。
+
+Worker 被长任务占满并发槽时，receive loop 仍必须按既有 claim heartbeat interval 刷新 readiness
+heartbeat；容量恢复后必须重新检查 drain/failure 状态，禁止在失去 readiness 后领取新 delivery。
+
+## 8. Optional Dependencies
 
 - `agentos[distributed]`：`psycopg[binary]`、`psycopg-pool`、`redis`；
 - `agentos[distributed-artifacts]`：`aioboto3`；
@@ -93,9 +141,21 @@ session-scoped ArtifactStore 形状：
 
 旧 `postgres`/`redis` extras 的 breaking removal 留到 Phase 6 Task 9，不在 Wave 3 顺手清理。
 
-## 7. Wave 3 Verification
+## 9. Wave 3 Verification
 
 至少覆盖 constructor 零 I/O、open failure rollback、close 幂等、Worker 显式 start、两 Queue 独立、
-每 claim 新 Agent、tenant-aware payload context、checkpoint restore、Artifact scope/只读/cache、真实
-PostgreSQL/Redis submit-to-ACK、跨 Worker Artifact 和 full restart recovery。Spec Compliance 与
+每 claim 新 Agent、tenant-aware payload context、checkpoint 单调恢复、Artifact scope/只读/cache、
+checkpoint/resolve command Artifact durable pin、首次并发 schema 初始化、Relay 批次中断释放、
+满载 Worker readiness heartbeat、真实 PostgreSQL/Redis submit-to-ACK、跨 Worker Artifact 和 full
+restart recovery。Spec Compliance 与
 Code Quality Review 的 P0/P1 清零后，Wave 3 才可关闭。
+
+## 10. 后续非阻塞债务
+
+- 大型 Tool Result 已上传但 Ledger completion 因 fence/后端失败而未提交时，可能留下无 durable pin 的
+  active Artifact。不得在失败路径直接删除，因为同一确定性 upload 可能已被并发成功提交者引用；后续
+  应以明确的 orphan 判定和回收协议处理。
+- Worker 执行异常与 Lease release 异常同时发生时，当前 release 异常可能覆盖原始执行异常。后续应冻结
+  primary/cleanup failure 的传播与观测合同，再调整 Runner。
+
+以上为 P2，不改变 Wave 3 以 P0/P1 清零为关闭条件。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +30,7 @@ from agentos.planning import (
     SubAgentTemplate,
 )
 from agentos.runtime import Agent, ProviderRequestBuilder
+from agentos.sync import SyncAgent
 from tests._context_protocol_fixtures import default_context_renderer
 from tests.planning._async import async_test
 
@@ -167,6 +169,8 @@ async def test_live_distributed_planner_dispatches_expert_worker_to_completion()
             "task": "task_live",
         }.get(str(prefix), f"{prefix}_live"),
     )
+    parent_agent = SyncAgent(_build_agent_with_response("parent unused"))
+    expert_agent = SyncAgent(_build_agent_with_response("expert completed live work"))
 
     try:
         coordinator.attach_agent(
@@ -176,7 +180,7 @@ async def test_live_distributed_planner_dispatches_expert_worker_to_completion()
                 description="Planner owner.",
                 capabilities=("coordinate",),
             ),
-            _build_agent_with_response("parent unused"),
+            parent_agent,
         )
         coordinator.attach_agent(
             AgentCard(
@@ -185,7 +189,7 @@ async def test_live_distributed_planner_dispatches_expert_worker_to_completion()
                 description="Live state-plane expert.",
                 capabilities=("review",),
             ),
-            _build_agent_with_response("expert completed live work"),
+            expert_agent,
         )
         plan = await planner.create_plan(
             objective="Prove distributed planner worker state plane.",
@@ -205,7 +209,7 @@ async def test_live_distributed_planner_dispatches_expert_worker_to_completion()
             plan.steps[0].step_id,
         ]
         assert dispatch_report.skipped == ()
-        assert runner.run_once(timeout=1.0) is True
+        assert await asyncio.to_thread(runner.run_once, 1.0) is True
 
         results = coordinator.collect_results("parent")
         stored_task = task_store.get(dispatch_report.assigned[0].task_id)
@@ -216,6 +220,8 @@ async def test_live_distributed_planner_dispatches_expert_worker_to_completion()
         assert stored_task.status == "completed"
         assert stored_task.result == results[0]
     finally:
+        expert_agent.close()
+        parent_agent.close()
         _cleanup_redis_agent_streams(redis_client, key_prefix)
         task_store.close()
         spawn_executor.shutdown()
@@ -293,6 +299,10 @@ async def test_live_distributed_planner_recovers_pending_dispatch_assignment() -
         ),
         clock=lambda: 20.0,
     )
+    parent_agent = SyncAgent(_build_agent_with_response("parent unused"))
+    expert_agent = SyncAgent(
+        _build_agent_with_response("expert recovered pending dispatch"),
+    )
 
     try:
         coordinator.attach_agent(
@@ -302,7 +312,7 @@ async def test_live_distributed_planner_recovers_pending_dispatch_assignment() -
                 description="Planner owner.",
                 capabilities=("coordinate",),
             ),
-            _build_agent_with_response("parent unused"),
+            parent_agent,
         )
         coordinator.attach_agent(
             AgentCard(
@@ -311,7 +321,7 @@ async def test_live_distributed_planner_recovers_pending_dispatch_assignment() -
                 description="Live state-plane expert.",
                 capabilities=("review",),
             ),
-            _build_agent_with_response("expert recovered pending dispatch"),
+            expert_agent,
         )
 
         report = await planner.recover_pending_dispatches("plan_pending_dispatch")
@@ -324,7 +334,7 @@ async def test_live_distributed_planner_recovers_pending_dispatch_assignment() -
         assert report.skipped == ()
         assert recovered_plan.assignments[0].dispatch_status == "submitted"
         assert recovered_plan.assignments[0].submitted_at == 20.0
-        assert runner.run_once(timeout=1.0) is True
+        assert await asyncio.to_thread(runner.run_once, 1.0) is True
 
         results = coordinator.collect_results("parent")
         stored_task = task_store.get("task_pending_dispatch")
@@ -335,6 +345,8 @@ async def test_live_distributed_planner_recovers_pending_dispatch_assignment() -
         assert stored_task.status == "completed"
         assert stored_task.result == results[0]
     finally:
+        expert_agent.close()
+        parent_agent.close()
         _cleanup_redis_agent_streams(redis_client, key_prefix)
         task_store.close()
         spawn_executor.shutdown()
@@ -390,6 +402,8 @@ async def test_live_distributed_worker_reclaims_pending_task_request_after_crash
             "task": "task_reclaim",
         }.get(str(prefix), f"{prefix}_reclaim"),
     )
+    parent_agent = SyncAgent(_build_agent_with_response("parent unused"))
+    expert_agent = SyncAgent(_build_agent_with_response("expert recovered live work"))
 
     try:
         coordinator.attach_agent(
@@ -399,7 +413,7 @@ async def test_live_distributed_worker_reclaims_pending_task_request_after_crash
                 description="Planner owner.",
                 capabilities=("coordinate",),
             ),
-            _build_agent_with_response("parent unused"),
+            parent_agent,
         )
         coordinator.attach_agent(
             AgentCard(
@@ -408,7 +422,7 @@ async def test_live_distributed_worker_reclaims_pending_task_request_after_crash
                 description="Live state-plane expert.",
                 capabilities=("review",),
             ),
-            _build_agent_with_response("expert recovered live work"),
+            expert_agent,
         )
         plan = await planner.create_plan(
             objective="Recover a pending Redis task delivery after worker crash.",
@@ -443,7 +457,7 @@ async def test_live_distributed_worker_reclaims_pending_task_request_after_crash
         recovered_queue.requeue("expert", reclaimed[0])
 
         runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
-        assert runner.run_once(timeout=1.0) is True
+        assert await asyncio.to_thread(runner.run_once, 1.0) is True
 
         results = coordinator.collect_results("parent")
         stored_task = task_store.get(dispatch_report.assigned[0].task_id)
@@ -454,6 +468,8 @@ async def test_live_distributed_worker_reclaims_pending_task_request_after_crash
         assert stored_task.status == "completed"
         assert stored_task.result == results[0]
     finally:
+        expert_agent.close()
+        parent_agent.close()
         _cleanup_redis_agent_streams(redis_client, key_prefix)
         task_store.close()
         spawn_executor.shutdown()

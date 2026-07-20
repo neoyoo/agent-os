@@ -11,6 +11,7 @@ from agentos.distributed.postgres._records import (
     session_checkpoint_from_json,
     session_checkpoint_to_json,
 )
+from agentos.distributed.postgres._state_records import require_artifacts
 from agentos.durable.serialization import execution_cursor_to_json
 from agentos.runtime.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
@@ -39,6 +40,19 @@ async def write_checkpoint(
         scope.tenant_id,
         checkpoint.session_id,
         checkpoint,
+    )
+    artifact_ids = tuple(
+        dict.fromkeys(
+            reference.artifact_id
+            for message in checkpoint.messages
+            for reference in message.artifact_refs
+        ),
+    )
+    await require_artifacts(
+        connection,
+        scope,
+        checkpoint.session_id,
+        artifact_ids,
     )
     checkpoint_id = f"checkpoint_{uuid4().hex}"
     row = await fetchone(

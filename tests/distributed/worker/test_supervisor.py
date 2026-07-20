@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -35,6 +36,8 @@ def build_worker(
     queue: FakeQueue,
     stream: ScriptedStream,
     heartbeat_wait=asyncio.sleep,
+    heartbeat_interval: timedelta = timedelta(seconds=10),
+    clock: Callable[[], datetime] = lambda: NOW,
 ) -> tuple[DistributedWorker, FakeClaims, FakeLeases]:
     claimed = claimed_execution()
     claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
@@ -49,7 +52,7 @@ def build_worker(
         topic="runs",
         claim_ttl=timedelta(minutes=1),
         lease_ttl=timedelta(seconds=30),
-        heartbeat_interval=timedelta(seconds=10),
+        heartbeat_interval=heartbeat_interval,
         heartbeat_wait=heartbeat_wait,
     )
     return (
@@ -59,7 +62,7 @@ def build_worker(
             worker_id="worker_1",
             topic="runs",
             max_concurrency=1,
-            clock=lambda: NOW,
+            clock=clock,
         ),
         claims,
         leases,
@@ -141,6 +144,45 @@ def test_drain_keeps_active_heartbeat_until_execution_finishes() -> None:
 
         assert trace.index("postgres.heartbeat") < trace.index("queue.ack")
         assert worker.state.status == "draining"
+        await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_full_capacity_keeps_readiness_heartbeat_fresh() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace, (DELIVERY,))
+        terminal_gate = asyncio.Event()
+        stream = ScriptedStream(
+            trace,
+            (TurnStreamCompleted("done"),),
+            terminal_gate=terminal_gate,
+        )
+        current = [NOW]
+        worker, _, _ = build_worker(
+            trace=trace,
+            queue=queue,
+            stream=stream,
+            heartbeat_interval=timedelta(milliseconds=10),
+            clock=lambda: current[0],
+        )
+
+        await worker.start()
+        await stream.started.wait()
+        assert worker.state.active_claim_count == 1
+        current[0] = NOW + timedelta(seconds=1)
+
+        await asyncio.wait_for(
+            _wait_until_heartbeat(worker, current[0]),
+            timeout=1,
+        )
+
+        assert worker.state.accepting_claims
+        assert worker.state.active_claim_count == 1
+        terminal_gate.set()
+        await queue.acknowledged.wait()
+        await worker.drain(timeout=1)
         await worker.close()
 
     asyncio.run(scenario())
@@ -306,4 +348,12 @@ def test_delivery_failure_does_not_start_delivery_returned_by_racing_receive() -
 
 async def _wait_until_not_accepting(worker: DistributedWorker) -> None:
     while worker.state.accepting_claims:
+        await asyncio.sleep(0)
+
+
+async def _wait_until_heartbeat(
+    worker: DistributedWorker,
+    expected: datetime,
+) -> None:
+    while worker.state.last_heartbeat_at != expected:
         await asyncio.sleep(0)

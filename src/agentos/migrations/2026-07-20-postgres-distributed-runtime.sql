@@ -199,6 +199,12 @@ CREATE TABLE IF NOT EXISTS agentos_distributed_checkpoints (
         REFERENCES agentos_distributed_runs(tenant_id, session_id, run_id)
 );
 
+CREATE INDEX IF NOT EXISTS agentos_distributed_checkpoint_latest
+ON agentos_distributed_checkpoints (
+    tenant_id, session_id, checkpoint_sequence DESC
+)
+WHERE snapshot_json IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS agentos_distributed_execution_cursors (
     tenant_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -305,6 +311,7 @@ DROP INDEX IF EXISTS agentos_distributed_outbox_pending;
 DROP TABLE IF EXISTS agentos_distributed_outbox;
 DROP TABLE IF EXISTS agentos_distributed_reconciliation_sources;
 DROP TABLE IF EXISTS agentos_distributed_execution_cursors;
+DROP INDEX IF EXISTS agentos_distributed_checkpoint_latest;
 DROP TABLE IF EXISTS agentos_distributed_checkpoints;
 DROP INDEX IF EXISTS agentos_distributed_one_pending_input;
 DROP TABLE IF EXISTS agentos_distributed_accepted_inputs;

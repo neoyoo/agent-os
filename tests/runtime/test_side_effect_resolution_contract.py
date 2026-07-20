@@ -159,6 +159,33 @@ def test_artifact_resolution_payload_has_closed_reference_shape() -> None:
     }
 
 
+def test_artifact_result_preview_has_fixed_character_limit() -> None:
+    artifact = _ARTIFACT_RESULT.artifact
+
+    assert ArtifactToolResultRef(artifact, "界" * 4_096).preview == "界" * 4_096
+    with pytest.raises(ValueError, match="4096 Unicode characters"):
+        ArtifactToolResultRef(artifact, "界" * 4_097)
+
+
+def test_inline_resolution_evidence_has_fixed_character_limit() -> None:
+    accepted = InlineToolResultRef("界" * 4_096)
+
+    assert SideEffectResolution(
+        _OPERATION_ID,
+        SideEffectResolutionKind.ACCEPT_RESULT,
+        result_ref=accepted,
+        result_digest=result_ref_digest(accepted),
+    ).result_ref == accepted
+    oversized = InlineToolResultRef("界" * 4_097)
+    with pytest.raises(ValueError, match="4096 Unicode characters"):
+        SideEffectResolution(
+            _OPERATION_ID,
+            SideEffectResolutionKind.ACCEPT_RESULT,
+            result_ref=oversized,
+            result_digest=result_ref_digest(oversized),
+        )
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -214,6 +241,30 @@ def test_artifact_resolution_payload_has_closed_reference_shape() -> None:
             "operation_id": _OPERATION_ID,
             "kind": "accept_result",
             "result_ref": {"kind": "inline", "content": 1},
+            "result_digest": _DIGEST,
+            "attestation_ref": None,
+            "attestation_digest": None,
+        },
+        {
+            "version": 1,
+            "operation_id": _OPERATION_ID,
+            "kind": "accept_result",
+            "result_ref": {"kind": "inline", "content": "x" * 4_097},
+            "result_digest": _DIGEST,
+            "attestation_ref": None,
+            "attestation_digest": None,
+        },
+        {
+            "version": 1,
+            "operation_id": _OPERATION_ID,
+            "kind": "accept_result",
+            "result_ref": {
+                "kind": "artifact",
+                "artifact_id": "art_123e4567-e89b-42d3-a456-426614174000",
+                "filename": "result.json",
+                "media_type": "application/json",
+                "preview": "x" * 4_097,
+            },
             "result_digest": _DIGEST,
             "attestation_ref": None,
             "attestation_digest": None,

@@ -6,6 +6,9 @@ from typing import TypeAlias
 from agentos.artifacts.types import ArtifactRef
 
 
+_ARTIFACT_TOOL_RESULT_PREVIEW_MAX_CHARS = 4_096
+
+
 @dataclass(frozen=True, slots=True)
 class InlineToolResultRef:
     """保存预算内、可直接恢复的 Provider Tool Result。"""
@@ -29,6 +32,11 @@ class ArtifactToolResultRef:
             raise TypeError("artifact tool result requires ArtifactRef")
         if type(self.preview) is not str:
             raise TypeError("artifact tool result preview must be str")
+        if len(self.preview) > _ARTIFACT_TOOL_RESULT_PREVIEW_MAX_CHARS:
+            raise ValueError(
+                "artifact tool result preview must not exceed "
+                "4096 Unicode characters",
+            )
 
 
 ToolResultRef: TypeAlias = InlineToolResultRef | ArtifactToolResultRef

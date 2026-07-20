@@ -14,7 +14,7 @@ from agentos.distributed.errors import (
     StaleFenceError,
 )
 from agentos.distributed.models import RequestScope
-from agentos.distributed.postgres._checkpoints import commit_terminal
+from agentos.distributed.postgres._checkpoints import commit_terminal, load_checkpoint
 from agentos.distributed.postgres._checkpoint_records import _validate_message_history
 from agentos.distributed.postgres._guards import lock_fenced_run
 from agentos.distributed.postgres._records import session_checkpoint_to_json
@@ -104,7 +104,9 @@ class TerminalConnection:
         del params
         normalized = " ".join(query.split())
         self.staged.append(normalized)
-        if "SELECT r.*, s.fencing_token" in normalized:
+        if "FROM agentos_distributed_sessions" in normalized:
+            return Cursor(row=_running_row())
+        if normalized.startswith("SELECT *, clock_timestamp() AS database_now"):
             return Cursor(row=_running_row())
         if normalized.startswith("SELECT snapshot_json"):
             return Cursor()
@@ -137,6 +139,93 @@ class TransactionDatabase:
         else:
             self.committed.extend(self.connection.staged)
             self.connection.staged.clear()
+
+
+class LoadCheckpointConnection:
+    def __init__(self, checkpoint: SessionCheckpoint) -> None:
+        self.checkpoint = checkpoint
+        self.query: str | None = None
+
+    async def execute(
+        self,
+        query: str,
+        params: tuple[object, ...] = (),
+    ) -> Cursor:
+        del params
+        self.query = " ".join(query.split())
+        return Cursor(row={"snapshot_json": session_checkpoint_to_json(self.checkpoint)})
+
+
+class LoadCheckpointDatabase:
+    def __init__(self, checkpoint: SessionCheckpoint) -> None:
+        self.borrowed = LoadCheckpointConnection(checkpoint)
+
+    @asynccontextmanager
+    async def connection(self):  # type: ignore[no-untyped-def]
+        yield self.borrowed
+
+
+class ExplicitFenceLockConnection:
+    def __init__(self) -> None:
+        self.locks: list[str] = []
+
+    async def execute(
+        self,
+        query: str,
+        params: tuple[object, ...] = (),
+    ) -> Cursor:
+        del params
+        normalized = " ".join(query.split())
+        if "FROM agentos_distributed_runs" in normalized:
+            self.locks.append("run")
+            return Cursor(row=_running_row())
+        if "FROM agentos_distributed_sessions" in normalized:
+            self.locks.append("session")
+            row = _running_row()
+            return Cursor(
+                row={
+                    "fencing_token": row["session_fencing_token"],
+                    "session_fencing_token": row["session_fencing_token"],
+                    "active_claim_id": row["active_claim_id"],
+                    "active_claim_run_id": row["active_claim_run_id"],
+                    "active_claim_expires_at": row["active_claim_expires_at"],
+                    "database_now": row["database_now"],
+                },
+            )
+        raise AssertionError(f"unexpected query: {normalized}")
+
+
+@async_test
+async def test_load_checkpoint_uses_monotonic_session_sequence() -> None:
+    checkpoint = _checkpoint(
+        CheckpointStoredMessage("message_1", "user", "question"),
+    )
+    database = LoadCheckpointDatabase(checkpoint)
+
+    restored = await load_checkpoint(  # type: ignore[arg-type]
+        database,
+        SCOPE,
+        checkpoint.session_id,
+    )
+
+    assert restored == checkpoint
+    assert database.borrowed.query is not None
+    assert "ORDER BY checkpoint_sequence DESC" in database.borrowed.query
+
+
+@async_test
+async def test_fenced_run_locks_session_before_run() -> None:
+    connection = ExplicitFenceLockConnection()
+
+    await lock_fenced_run(  # type: ignore[arg-type]
+        connection,
+        tenant_id="tenant_1",
+        session_id="session_1",
+        run_id="run_1",
+        guard=RunWriteGuard(1, "claim_1", 7),
+    )
+
+    assert connection.locks == ["session", "run"]
 
 
 @async_test
@@ -227,7 +316,7 @@ async def test_new_worker_fence_rejects_stale_worker_write() -> None:
         run_id="run_1",
         guard=RunWriteGuard(1, "claim_new", 8),
     )
-    assert current is row
+    assert current == row
 
 
 @async_test

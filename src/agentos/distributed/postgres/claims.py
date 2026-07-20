@@ -21,10 +21,37 @@ from agentos.distributed.postgres._claim_lifecycle import (
     release,
     ttl_seconds,
 )
-from agentos.distributed.postgres._database import PostgresPool, fetchone
+from agentos.distributed.postgres._database import (
+    AsyncConnection,
+    PostgresPool,
+    Row,
+    fetchone,
+)
 from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunStatus
+
+
+async def _delivery_target_row(
+    connection: AsyncConnection,
+    outbox_id: str,
+    *,
+    for_update: bool,
+) -> Row | None:
+    query = """
+        SELECT o.outbox_id, o.tenant_id, o.principal_id, o.session_id,
+               r.run_id, r.status, r.wait_kind, r.wait_handle,
+               r.wait_detail, r.wait_not_before, r.aggregate_version
+        FROM agentos_distributed_outbox AS o
+        JOIN agentos_distributed_runs AS r
+          ON r.tenant_id = o.tenant_id
+         AND r.session_id = o.session_id
+         AND r.run_id = o.run_id
+        WHERE o.outbox_id = %s
+    """
+    if for_update:
+        query += " FOR UPDATE OF o, r"
+    return await fetchone(connection, query, (outbox_id,))
 
 
 class PostgresClaimStore:
@@ -62,28 +89,17 @@ class PostgresClaimStore:
     ) -> ClaimedExecution | None:
         seconds = ttl_seconds(ttl)
         async with self._database.transaction() as connection:
-            target_row = await fetchone(
+            candidate_row = await _delivery_target_row(
                 connection,
-                """
-                SELECT o.outbox_id, o.tenant_id, o.principal_id, o.session_id,
-                       r.run_id, r.status, r.wait_kind, r.wait_handle,
-                       r.wait_detail, r.wait_not_before, r.aggregate_version
-                FROM agentos_distributed_outbox AS o
-                JOIN agentos_distributed_runs AS r
-                  ON r.tenant_id = o.tenant_id
-                 AND r.session_id = o.session_id
-                 AND r.run_id = o.run_id
-                WHERE o.outbox_id = %s
-                FOR UPDATE OF o, r
-                """,
-                (outbox_id,),
+                outbox_id,
+                for_update=False,
             )
-            if target_row is None:
+            if candidate_row is None:
                 return None
-            target = target_from_row(target_row)
-            if target.scope != scope:
+            candidate = target_from_row(candidate_row)
+            if candidate.scope != scope:
                 return None
-            if target.run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
+            if candidate.run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 return None
             session = await fetchone(
                 connection,
@@ -93,10 +109,22 @@ class PostgresClaimStore:
                 WHERE tenant_id = %s AND session_id = %s
                 FOR UPDATE
                 """,
-                (scope.tenant_id, target.session_id),
+                (scope.tenant_id, candidate.session_id),
             )
             if session is None:
                 raise ClaimConflictError()
+            target_row = await _delivery_target_row(
+                connection,
+                outbox_id,
+                for_update=True,
+            )
+            if target_row is None:
+                return None
+            target = target_from_row(target_row)
+            if target.scope != scope or target.session_id != candidate.session_id:
+                return None
+            if target.run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
+                return None
             if session["active_claim_id"] is not None:
                 return None
             input_row = await fetchone(

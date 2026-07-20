@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import json
 
+import pytest
+
+from agentos.artifacts import ArtifactRef
+from agentos.capabilities.result_refs import ArtifactToolResultRef
 from agentos._json_values import freeze_json_mapping
 from agentos.capabilities.tools import SideEffectPolicy
 from agentos.context import WorkingStateField
@@ -30,9 +35,13 @@ from agentos.runtime.checkpoint import (
 from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.side_effect_types import (
     SideEffectAttemptId,
+    SideEffectOutcomeKind,
     SideEffectRecord,
     SideEffectStatus,
+    SideEffectTransitionError,
 )
+from agentos.runtime.side_effect_integrity import result_ref_digest
+from agentos.runtime.tool_identity import canonical_digest
 from agentos.runtime.tool_identity import compensation_operation_id
 
 
@@ -92,6 +101,62 @@ def test_postgres_side_effect_codec_preserves_compensation_identity() -> None:
 
     assert decoded == record
     assert decoded.compensation_attempt == 2
+
+
+def test_postgres_side_effect_codec_rejects_oversized_artifact_preview() -> None:
+    reference = ArtifactToolResultRef(
+        ArtifactRef(
+            "art_123e4567-e89b-42d3-a456-426614174000",
+            "result.json",
+            "application/json",
+        ),
+        "preview",
+    )
+    record = SideEffectRecord(
+        attempt_id=SideEffectAttemptId(
+            "tenant_1",
+            "session_1",
+            "operation_0123456789abcdef0123456789abcdef",
+            1,
+        ),
+        run_id="run_1",
+        turn_id="turn_1",
+        invocation_id="invocation_0123456789abcdef0123456789abcdef",
+        tool_name="lookup",
+        policy=SideEffectPolicy.PURE,
+        status=SideEffectStatus.COMPLETED,
+        invocation_digest="sha256:" + "a" * 64,
+        invocation_ref=ProtectedPayloadRef("sealed", "payload-digest"),
+        result_ref=reference,
+        result_digest=result_ref_digest(reference),
+        outcome_kind=SideEffectOutcomeKind.PROVIDER_RESULT,
+        claim_id="claim_1",
+        fencing_token=7,
+    )
+    payload = json.loads(side_effect_record_to_json(record))
+    oversized_preview = "x" * 4_097
+    payload["result_ref"]["preview"] = oversized_preview
+    payload["result_digest"] = canonical_digest(
+        {
+            "artifact": {
+                "artifact_id": reference.artifact.artifact_id,
+                "filename": reference.artifact.filename,
+                "mime_type": reference.artifact.media_type,
+            },
+            "kind": "artifact",
+            "preview": oversized_preview,
+            "version": 1,
+        },
+    )
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    with pytest.raises(SideEffectTransitionError):
+        side_effect_record_from_json(encoded)
 
 
 def test_session_checkpoint_codec_is_canonical_and_round_trips() -> None:

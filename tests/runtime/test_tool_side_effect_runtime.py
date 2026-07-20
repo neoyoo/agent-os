@@ -9,6 +9,8 @@ from agentos.capabilities.executor import (
     ToolExecutionError,
     ToolExecutionResult,
 )
+from agentos.artifacts import ArtifactRef
+from agentos.capabilities.result_refs import ArtifactToolResultRef
 from agentos.capabilities.tools import ToolExecutionContract
 from agentos.providers import ProviderToolCall
 from agentos.runtime.run_runtime import RunWriteGuard
@@ -65,6 +67,22 @@ class _FailingCompletionStore(InMemorySideEffectStore):
         raise SideEffectTransitionError
 
 
+class _ArtifactResultProjector:
+    def __init__(self) -> None:
+        self.contents: list[str] = []
+
+    async def project(self, invocation, content):  # type: ignore[no-untyped-def]
+        self.contents.append(content)
+        return ArtifactToolResultRef(
+            ArtifactRef(
+                "art_00000000-0000-4000-8000-000000000001",
+                "tool-result.txt",
+                "text/plain",
+            ),
+            "provider preview",
+        )
+
+
 @async_test
 async def test_completed_result_is_reused_without_running_producer() -> None:
     store = InMemorySideEffectStore()
@@ -92,6 +110,79 @@ async def test_completed_result_is_reused_without_running_producer() -> None:
 
     assert first == second == ToolExecutionResult("call_1", "found")
     assert calls == 1
+
+
+@async_test
+async def test_raw_result_is_projected_before_provider_visible_mapping() -> None:
+    store = InMemorySideEffectStore()
+    projector = _ArtifactResultProjector()
+    runtime = ToolSideEffectRuntime(
+        store,
+        result_ref_projector=projector,
+    )
+    guard = RunWriteGuard(0)
+
+    async def produce(_invocation):  # type: ignore[no-untyped-def]
+        return ToolExecutionResult("call_1", "x" * 100)
+
+    result = await runtime.execute(
+        _entry(),
+        _contract(SideEffectPolicy.PURE),
+        guard=guard,
+        produce=produce,
+        map_result=lambda produced: ToolExecutionResult(
+            produced.tool_call_id,
+            "provider preview",
+        ),
+    )
+    record = await store.get(
+        tenant_id=None,
+        session_id="session_1",
+        operation_id=_entry().invocation.context.operation_id,
+        attempt=None,
+        guard=guard,
+    )
+
+    assert projector.contents == ["x" * 100]
+    assert result == ToolExecutionResult("call_1", "provider preview")
+    assert record is not None
+    assert isinstance(record.result_ref, ArtifactToolResultRef)
+    assert record.result_ref.preview == "provider preview"
+
+
+@async_test
+async def test_artifact_result_replay_preserves_stored_preview() -> None:
+    runtime = ToolSideEffectRuntime(
+        InMemorySideEffectStore(),
+        result_ref_projector=_ArtifactResultProjector(),
+    )
+    guard = RunWriteGuard(0)
+
+    async def produce(_invocation):  # type: ignore[no-untyped-def]
+        return ToolExecutionResult("call_1", "x" * 100)
+
+    await runtime.execute(
+        _entry(),
+        _contract(SideEffectPolicy.PURE),
+        guard=guard,
+        produce=produce,
+        map_result=lambda result: ToolExecutionResult(
+            result.tool_call_id,
+            "provider preview",
+        ),
+    )
+    replayed = await runtime.execute(
+        _entry(),
+        _contract(SideEffectPolicy.PURE),
+        guard=guard,
+        produce=produce,
+        map_result=lambda result: ToolExecutionResult(
+            result.tool_call_id,
+            "recapped preview",
+        ),
+    )
+
+    assert replayed == ToolExecutionResult("call_1", "provider preview")
 
 
 @async_test

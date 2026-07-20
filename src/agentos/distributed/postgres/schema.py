@@ -220,6 +220,13 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE INDEX IF NOT EXISTS agentos_distributed_checkpoint_latest
+    ON agentos_distributed_checkpoints (
+        tenant_id, session_id, checkpoint_sequence DESC
+    )
+    WHERE snapshot_json IS NOT NULL
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agentos_distributed_execution_cursors (
         tenant_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
@@ -325,6 +332,10 @@ SCHEMA_STATEMENTS = (
 async def initialize_postgres_schema(connection: AsyncConnection) -> None:
     """Create the Phase 6 schema and validate its single version row."""
 
+    await connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        ("agentos.distributed.postgres.schema",),
+    )
     for statement in SCHEMA_STATEMENTS:
         await connection.execute(statement)
     cursor = await connection.execute(

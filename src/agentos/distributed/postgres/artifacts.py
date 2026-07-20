@@ -22,6 +22,9 @@ from agentos.distributed.errors import DistributedBackendUnavailableError
 from agentos.distributed.models import ArtifactContent, RequestScope
 from agentos.distributed._model_validation import require_identifier
 from agentos.distributed.postgres._artifact_blobs import put_upload_candidate
+from agentos.distributed.postgres._artifact_references import (
+    require_artifact_unreferenced,
+)
 from agentos.distributed.postgres._artifact_records import (
     advisory_lock,
     decode_cursor,
@@ -277,6 +280,14 @@ class PostgresArtifactStore:
                 raise ArtifactValidationError(
                     "artifact deletion conflicts with existing request",
                 )
+            await connection.execute(
+                """
+                SELECT session_id FROM agentos_distributed_sessions
+                WHERE tenant_id = %s AND session_id = %s
+                FOR UPDATE
+                """,
+                (scope.tenant_id, session_id),
+            )
             row = await fetchone(
                 connection,
                 """
@@ -291,6 +302,12 @@ class PostgresArtifactStore:
             if deletion is None:
                 if row["lifecycle"] != "active":
                     raise ArtifactNotFoundError()
+                await require_artifact_unreferenced(
+                    connection,
+                    tenant_id=scope.tenant_id,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                )
                 await connection.execute(
                     """
                     INSERT INTO agentos_distributed_artifact_deletions

@@ -29,6 +29,13 @@ class ActiveRunConflictError(DistributedError):
     message = "session already has an active run"
 
 
+class ArtifactInUseError(DistributedError):
+    """Artifact is pinned by state required for deterministic recovery."""
+
+    code = "artifact_in_use"
+    message = "artifact is referenced by durable session state"
+
+
 class CommandConflictError(DistributedError):
     """同一 command_id 对应不同的不可变命令。"""
 
@@ -108,6 +115,7 @@ class DistributedBackendUnavailableError(DistributedError):
 
 __all__ = [
     "ActiveRunConflictError",
+    "ArtifactInUseError",
     "CheckpointConflictError",
     "ClaimConflictError",
     "ClaimExpiredError",

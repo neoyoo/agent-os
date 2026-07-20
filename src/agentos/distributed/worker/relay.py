@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from agentos.distributed.models import OutboxClaim
 from agentos.distributed.protocols import OutboxPort, QueuePort
 
 
@@ -60,7 +61,7 @@ class OutboxRelay:
             lifecycle.closed = True
 
     async def _relay_batch(self) -> int:
-        """发布一个有界批次；mark 失败保留可重复发布窗口。"""
+        """发布一个有界批次；失败时释放尚未完成的 claim 尾段。"""
 
         claims = await self.outbox.claim_batch(
             owner_id=self.owner_id,
@@ -68,18 +69,32 @@ class OutboxRelay:
             ttl=self.claim_ttl,
         )
         published = 0
-        for claim in claims:
+        for index, claim in enumerate(claims):
             try:
                 queue_entry_id = await self.queue.publish(record=claim.record)
-            except BaseException:
-                await self.outbox.release_claim(claim=claim)
+                await self.outbox.mark_published(
+                    claim=claim,
+                    queue_entry_id=queue_entry_id,
+                )
+            except BaseException as error:
+                try:
+                    await self._release_claims(claims[index:])
+                except BaseException as release_error:
+                    raise error from release_error
                 raise
-            await self.outbox.mark_published(
-                claim=claim,
-                queue_entry_id=queue_entry_id,
-            )
             published += 1
         return published
+
+    async def _release_claims(self, claims: tuple[OutboxClaim, ...]) -> None:
+        first_error: BaseException | None = None
+        for claim in claims:
+            try:
+                await self.outbox.release_claim(claim=claim)
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+        if first_error is not None:
+            raise first_error
 
 
 __all__ = ["OutboxRelay"]

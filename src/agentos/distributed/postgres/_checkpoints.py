@@ -278,7 +278,7 @@ async def load_checkpoint(
             """
             SELECT snapshot_json FROM agentos_distributed_checkpoints
             WHERE tenant_id = %s AND session_id = %s AND snapshot_json IS NOT NULL
-            ORDER BY created_at DESC, checkpoint_id DESC LIMIT 1
+            ORDER BY checkpoint_sequence DESC LIMIT 1
             """,
             (scope.tenant_id, session_id),
         )

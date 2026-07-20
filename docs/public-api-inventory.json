@@ -148,7 +148,7 @@
           "stability": "stable"
         },
         "SideEffectPolicy": {
-          "signature": "(*values)",
+          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
           "stability": "experimental"
         },
         "SkillContentSource": {
@@ -192,7 +192,7 @@
           "stability": "experimental"
         },
         "ToolConcurrencyPolicy": {
-          "signature": "(*values)",
+          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
           "stability": "experimental"
         },
         "ToolExecutionError": {
@@ -2712,7 +2712,7 @@
           "stability": "experimental"
         },
         "QueryLoop": {
-          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, checkpoint_source: 'RuntimeCheckpointSource | None' = None, checkpoint_store: 'CheckpointCommitStore | None' = None, recovery_cursor: 'RunExecutionCursor | None' = None, tool_payload_runtime: 'ToolPayloadRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, side_effect_store: 'SideEffectStore | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
+          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, checkpoint_source: 'RuntimeCheckpointSource | None' = None, checkpoint_store: 'CheckpointCommitStore | None' = None, tool_payload_runtime: 'ToolPayloadRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, side_effect_store: 'SideEffectStore | None' = None, side_effect_resume_validator: 'SideEffectResumeValidator | None' = None, tool_result_ref_projector: 'ToolResultRefProjector | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
           "stability": "stable"
         },
         "RecallContextFailedEvent": {
@@ -2774,7 +2774,7 @@
           "stability": "experimental"
         },
         "SideEffectResolutionKind": {
-          "signature": "(*values)",
+          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
           "stability": "experimental"
         },
         "SideEffectResume": {

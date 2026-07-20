@@ -118,13 +118,21 @@ async def get_record(
         1 if attempt is None else attempt,
     )
     async with database.transaction() as connection:
+        candidate = (
+            await load_current(connection, attempt_id, lock=False)
+            if attempt is None
+            else await load_attempt(connection, attempt_id, lock=False)
+        )
+        if candidate is None:
+            return None
+        await require_guard(connection, candidate.run_id, attempt_id, guard)
         record = (
             await load_current(connection, attempt_id, lock=True)
             if attempt is None
             else await load_attempt(connection, attempt_id, lock=True)
         )
-        if record is not None:
-            await require_guard(connection, record.run_id, attempt_id, guard)
+        if record is None or record.run_id != candidate.run_id:
+            raise SideEffectTransitionError()
         return record
 
 

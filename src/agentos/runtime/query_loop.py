@@ -92,6 +92,7 @@ from agentos.runtime.side_effect_resume_validator import (
 )
 from agentos.runtime.completed_result_projection import CompletedResultProjector
 from agentos.runtime.tool_side_effect_runtime import ToolSideEffectRuntime
+from agentos.runtime.tool_result_refs import ToolResultRefProjector
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
 from agentos.runtime.waiting import LocalWaitingRuntime, WaitingRuntime
@@ -119,6 +120,7 @@ class QueryLoop:
     artifact_runtime: ArtifactRuntimeBoundary | None = None
     side_effect_store: SideEffectStore | None = None
     side_effect_resume_validator: SideEffectResumeValidator | None = None
+    tool_result_ref_projector: ToolResultRefProjector | None = None
     continuation_runtime: ContinuationRuntime = field(
         default_factory=ContinuationRuntime,
     )
@@ -169,11 +171,12 @@ class QueryLoop:
                 self.side_effect_store,
             )
         self._side_effects = ToolSideEffectRuntime(
-            self.side_effect_store,
-            CompletedResultProjector(
+            store=self.side_effect_store,
+            completed_result_projector=CompletedResultProjector(
                 context_runtime=self.context_runtime,  # type: ignore[arg-type]
                 artifact_runtime=self.artifact_runtime,
             ),
+            result_ref_projector=self.tool_result_ref_projector,
         )
         if all(
             provider is not self.continuation_runtime

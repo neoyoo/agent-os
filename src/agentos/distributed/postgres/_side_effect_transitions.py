@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 from agentos.capabilities.tools import SideEffectPolicy
+from agentos.distributed.postgres._artifact_references import (
+    require_active_artifact_result,
+)
 from agentos.distributed.postgres._database import AsyncConnection, PostgresPool
 from agentos.distributed.postgres._side_effect_records import (
     insert_record,
@@ -69,6 +72,13 @@ async def complete(
             result_ref_digest(completion.result_ref) != completion.result_digest
         ):
             raise SideEffectResultIntegrityError()
+        assert attempt_id.tenant_id is not None
+        await require_active_artifact_result(
+            connection,
+            tenant_id=attempt_id.tenant_id,
+            session_id=attempt_id.session_id,
+            reference=completion.result_ref,
+        )
         updated = with_fence(
             replace(
                 current,
@@ -190,6 +200,13 @@ async def resolve_current(
     ):
         raise SideEffectTransitionError()
     if resolution.kind is SideEffectResolutionKind.ACCEPT_RESULT:
+        assert attempt_id.tenant_id is not None
+        await require_active_artifact_result(
+            connection,
+            tenant_id=attempt_id.tenant_id,
+            session_id=attempt_id.session_id,
+            reference=resolution.result_ref,
+        )
         updated = resolved_record(
             current,
             SideEffectResolutionOutcome.ACCEPTED,

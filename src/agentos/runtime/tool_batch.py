@@ -133,7 +133,9 @@ class ToolBatchRunner:
                             result = await self.router.execute(invocation)
                         if isinstance(result, WaitRequest):
                             return result
-                        result = self.hooks.after_tool_call(call, result)
+                        return self.hooks.after_tool_call(call, result)
+
+                    def map_result(result: ToolExecutionResult) -> ToolExecutionResult:
                         capped = cap_result(call, result)
                         if capped.event is not None:
                             cap_events[call.id] = capped.event
@@ -144,6 +146,7 @@ class ToolBatchRunner:
                         contract_by_call_id[call.id],
                         guard=guard,
                         produce=produce,
+                        map_result=map_result,
                     )
                     if isinstance(outcome, WaitingToolHandoff):
                         waiting_outcomes[call.id] = outcome

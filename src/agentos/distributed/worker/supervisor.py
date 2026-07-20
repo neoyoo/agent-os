@@ -122,7 +122,15 @@ class DistributedWorker:
             available = self._max_concurrency - len(self._active)
             if available <= 0:
                 self._capacity.clear()
-                await self._capacity.wait()
+                try:
+                    await asyncio.wait_for(
+                        self._capacity.wait(),
+                        timeout=self._runner.heartbeat_interval.total_seconds(),
+                    )
+                except TimeoutError:
+                    self._last_heartbeat_at = self._clock()
+                if not self._can_accept_claims():
+                    return
                 continue
             deliveries = await self._queue.reclaim(
                 topic=self._topic,

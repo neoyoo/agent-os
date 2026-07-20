@@ -24,23 +24,12 @@ async def lock_fenced_run(
         raise TypeError("guard must be RunWriteGuard")
     if guard.claim_id is None or guard.fencing_token is None:
         raise StaleFenceError()
-    row = await fetchone(
+    row = await lock_run_with_session(
         connection,
-        """
-        SELECT r.*, s.fencing_token AS session_fencing_token,
-               s.active_claim_id, s.active_claim_run_id,
-               s.active_claim_expires_at,
-               clock_timestamp() AS database_now
-        FROM agentos_distributed_runs AS r
-        JOIN agentos_distributed_sessions AS s
-          ON s.tenant_id = r.tenant_id AND s.session_id = r.session_id
-        WHERE r.tenant_id = %s AND r.session_id = %s AND r.run_id = %s
-        FOR UPDATE OF r, s
-        """,
-        (tenant_id, session_id, run_id),
+        tenant_id=tenant_id,
+        session_id=session_id,
+        run_id=run_id,
     )
-    if row is None:
-        raise RunNotFoundError()
     if (
         row["session_fencing_token"] != guard.fencing_token
         or row["active_claim_id"] != guard.claim_id
@@ -58,6 +47,41 @@ async def lock_fenced_run(
     if row["aggregate_version"] != guard.expected_version:
         raise CheckpointConflictError()
     return row
+
+
+async def lock_run_with_session(
+    connection: AsyncConnection,
+    *,
+    tenant_id: str,
+    session_id: str,
+    run_id: str,
+) -> Row:
+    session = await fetchone(
+        connection,
+        """
+        SELECT fencing_token, fencing_token AS session_fencing_token,
+               active_claim_id, active_claim_run_id, active_claim_expires_at
+        FROM agentos_distributed_sessions
+        WHERE tenant_id = %s AND session_id = %s
+        FOR UPDATE
+        """,
+        (tenant_id, session_id),
+    )
+    if session is None:
+        raise RunNotFoundError()
+    run = await fetchone(
+        connection,
+        """
+        SELECT *, clock_timestamp() AS database_now
+        FROM agentos_distributed_runs
+        WHERE tenant_id = %s AND session_id = %s AND run_id = %s
+        FOR UPDATE
+        """,
+        (tenant_id, session_id, run_id),
+    )
+    if run is None:
+        raise RunNotFoundError()
+    return {**run, **session}
 
 
 async def clear_claim(
@@ -79,4 +103,4 @@ async def clear_claim(
     )
 
 
-__all__ = ["clear_claim", "lock_fenced_run"]
+__all__ = ["clear_claim", "lock_fenced_run", "lock_run_with_session"]
