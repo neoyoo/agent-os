@@ -76,13 +76,15 @@ class RedisLeaseAdapter:
         self._redis.ensure_open()
         if lease.scope != scope:
             raise ClaimConflictError()
+        ttl_ms = _ttl_milliseconds(ttl)
+        requested_at = datetime.now(UTC)
         renewed = await self._redis.call(
             "eval",
             _RENEW_SCRIPT,
             1,
             self._key(scope, lease.session_id),
             _lease_payload(lease.owner_id, lease.lease_id),
-            _ttl_milliseconds(ttl),
+            ttl_ms,
         )
         if renewed != 1:
             raise ClaimConflictError()
@@ -91,7 +93,7 @@ class RedisLeaseAdapter:
             lease.session_id,
             lease.owner_id,
             lease.lease_id,
-            datetime.now(UTC) + ttl,
+            requested_at + ttl,
         )
 
     async def ensure_owned(

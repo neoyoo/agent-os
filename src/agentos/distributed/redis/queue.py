@@ -13,10 +13,13 @@ from agentos.distributed.redis._client import (
     AsyncRedisClient,
     decode_text,
     field_text,
-    integer_field,
     pending_delivery_counts,
-    stream_id_key,
     stream_rows,
+)
+from agentos.distributed.redis._queue_scripts import (
+    commit_delivery,
+    reserve_delivery,
+    trim_safely,
 )
 
 
@@ -46,9 +49,9 @@ class RedisQueueAdapter:
         self._max_entries = max_entries
         self._dedup_ttl_seconds = dedup_ttl_seconds
         self._closed = False
+        self._closing = False
+        self._close_lock = asyncio.Lock()
         self._blocked_reads: set[asyncio.Task[Any]] = set()
-        self._inflight: dict[tuple[str, str], set[str]] = {}
-        self._delivery_outbox: dict[tuple[str, str], str] = {}
 
     async def publish(self, *, record: OutboxRecord) -> str:
         self._ensure_open()
@@ -122,8 +125,6 @@ class RedisQueueAdapter:
                 list(counts),
             ),
         )
-        for delivery_id, _ in rows:
-            self._forget_delivery(topic, delivery_id)
         return await self._track_deliveries(topic, rows, counts)
 
     async def ack(self, *, topic: str, delivery: QueueDelivery) -> None:
@@ -131,35 +132,31 @@ class RedisQueueAdapter:
         require_identifier(topic, "topic")
         if type(delivery) is not QueueDelivery:
             raise TypeError("delivery must be QueueDelivery")
-        outbox_key = (topic, delivery.outbox_id)
-        delivery_ids = self._inflight.get(outbox_key, {delivery.delivery_id})
-        await self._redis.call(
-            "set",
-            self._dedup_key(topic, delivery.outbox_id),
-            "1",
-            ex=self._dedup_ttl_seconds,
+        await commit_delivery(
+            self._redis,
+            stream=self._stream_key(topic),
+            group=self._group_name,
+            outbox_id=delivery.outbox_id,
+            delivery_id=delivery.delivery_id,
+            ttl_seconds=self._dedup_ttl_seconds,
         )
-        await self._redis.call(
-            "xack",
-            self._stream_key(topic),
-            self._group_name,
-            *sorted(delivery_ids, key=stream_id_key),
-        )
-        for delivery_id in tuple(delivery_ids):
-            self._delivery_outbox.pop((topic, delivery_id), None)
-        self._inflight.pop(outbox_key, None)
         await self._trim_safely(topic)
 
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        blocked = tuple(self._blocked_reads)
-        for task in blocked:
-            task.cancel()
-        if blocked:
-            await asyncio.gather(*blocked, return_exceptions=True)
-        await self._redis.close()
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closing = True
+            try:
+                blocked = tuple(self._blocked_reads)
+                for task in blocked:
+                    task.cancel()
+                if blocked:
+                    await asyncio.gather(*blocked, return_exceptions=True)
+                await self._redis.close()
+                self._closed = True
+            finally:
+                self._closing = False
 
     async def _track_deliveries(
         self,
@@ -173,15 +170,17 @@ class RedisQueueAdapter:
             outbox_id = field_text(fields, "outbox_id")
             if outbox_id is None:
                 raise DeliveryUnavailableError()
-            if await self._redis.call("get", self._dedup_key(topic, outbox_id)):
+            state = await reserve_delivery(
+                self._redis,
+                stream=self._stream_key(topic),
+                group=self._group_name,
+                outbox_id=outbox_id,
+                delivery_id=delivery_id,
+            )
+            if state == "committed":
                 committed_duplicates.append(delivery_id)
                 continue
-            outbox_key = (topic, outbox_id)
-            inflight = self._inflight.setdefault(outbox_key, set())
-            is_first = not inflight
-            inflight.add(delivery_id)
-            self._delivery_outbox[(topic, delivery_id)] = outbox_id
-            if is_first:
+            if state == "reserved":
                 deliveries.append(
                     QueueDelivery(delivery_id, outbox_id, counts.get(delivery_id, 1)),
                 )
@@ -196,34 +195,11 @@ class RedisQueueAdapter:
         return tuple(deliveries)
 
     async def _trim_safely(self, topic: str) -> None:
-        stream = self._stream_key(topic)
-        if await self._redis.call("xlen", stream) <= self._max_entries:
-            return
-        groups = await self._redis.call("xinfo_groups", stream)
-        if not isinstance(groups, (list, tuple)):
-            raise DeliveryUnavailableError()
-        boundaries: list[str] = []
-        for group in groups:
-            group_name = field_text(group, "name")
-            last_delivered = field_text(group, "last-delivered-id")
-            if group_name is None or last_delivered is None:
-                raise DeliveryUnavailableError()
-            summary = await self._redis.call("xpending", stream, group_name)
-            boundary = (
-                field_text(summary, "min")
-                if integer_field(summary, "pending")
-                else last_delivered
-            )
-            if boundary is None or boundary == "0-0":
-                return
-            boundaries.append(boundary)
-        if boundaries:
-            await self._redis.call(
-                "xtrim",
-                stream,
-                minid=min(boundaries, key=stream_id_key),
-                approximate=False,
-            )
+        await trim_safely(
+            self._redis,
+            stream=self._stream_key(topic),
+            max_entries=self._max_entries,
+        )
 
     async def _blocking_call(
         self,
@@ -237,7 +213,7 @@ class RedisQueueAdapter:
         try:
             return await task
         except asyncio.CancelledError:
-            if self._closed:
+            if self._closed or self._closing:
                 raise DistributedStoreClosedError() from None
             raise
         finally:
@@ -255,26 +231,11 @@ class RedisQueueAdapter:
         require_identifier(consumer_id, "consumer_id")
         require_positive(limit, "limit")
 
-    def _forget_delivery(self, topic: str, delivery_id: str) -> None:
-        outbox_id = self._delivery_outbox.pop((topic, delivery_id), None)
-        if outbox_id is None:
-            return
-        key = (topic, outbox_id)
-        delivery_ids = self._inflight.get(key)
-        if delivery_ids is None:
-            return
-        delivery_ids.discard(delivery_id)
-        if not delivery_ids:
-            self._inflight.pop(key, None)
-
     def _stream_key(self, topic: str) -> str:
         return f"{self._key_prefix}:queue:{quote(topic, safe='')}"
 
-    def _dedup_key(self, topic: str, outbox_id: str) -> str:
-        return f"{self._stream_key(topic)}:acked:{quote(outbox_id, safe='')}"
-
     def _ensure_open(self) -> None:
-        if self._closed:
+        if self._closed or self._closing:
             raise DistributedStoreClosedError()
 
 

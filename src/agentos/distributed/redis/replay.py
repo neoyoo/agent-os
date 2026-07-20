@@ -19,13 +19,12 @@ from agentos.distributed._model_validation import require_identifier, require_po
 from agentos.distributed.redis._client import (
     AsyncRedisClient,
     decode_text,
-    stream_id_key,
-    stream_rows,
 )
 from agentos.distributed.redis._event_codec import (
     decode_scoped_envelope,
     encode_envelope,
 )
+from agentos.distributed.redis._replay_snapshot import read_replay_snapshot
 
 
 class RedisEventReplayAdapter:
@@ -52,6 +51,8 @@ class RedisEventReplayAdapter:
         self._follow_batch_size = follow_batch_size
         self._subscriptions: set[_RedisEventSubscription] = set()
         self._closed = False
+        self._closing = False
+        self._close_lock = asyncio.Lock()
 
     async def append(
         self,
@@ -89,39 +90,29 @@ class RedisEventReplayAdapter:
     ) -> ReplayBatch | StreamGap:
         self._validate_query(session_id, run_id, after, limit)
         key = self._stream_key(scope, session_id, run_id)
-        oldest_rows = stream_rows(
-            await self._redis.call("xrange", key, min="-", max="+", count=1),
+        snapshot = await read_replay_snapshot(
+            self._redis,
+            stream=key,
+            after=after,
+            limit=limit,
         )
-        if after is not None and not oldest_rows:
+        if snapshot.gap_reason is not None:
+            if after is None:
+                raise DeliveryUnavailableError()
             return StreamGap(
                 scope.tenant_id,
                 session_id,
                 run_id,
                 after,
-                None,
-                "unavailable",
+                snapshot.oldest,
+                snapshot.gap_reason,
             )
-        if after is not None and after != "0-0":
-            oldest = oldest_rows[0][0]
-            if stream_id_key(after) < stream_id_key(oldest):
-                return StreamGap(
-                    scope.tenant_id,
-                    session_id,
-                    run_id,
-                    after,
-                    oldest,
-                    "trimmed",
-                )
-        minimum = "-" if after is None else f"({after}"
-        rows = stream_rows(
-            await self._redis.call("xrange", key, min=minimum, max="+", count=limit),
-        )
         items = tuple(
             ReplayItem(
                 cursor,
                 decode_scoped_envelope(fields, scope, session_id, run_id),
             )
-            for cursor, fields in rows
+            for cursor, fields in snapshot.rows
         )
         return ReplayBatch(items, items[-1].cursor if items else after)
 
@@ -145,28 +136,32 @@ class RedisEventReplayAdapter:
         return subscription
 
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        subscriptions = tuple(self._subscriptions)
-        if subscriptions:
-            await asyncio.gather(*(item.aclose() for item in subscriptions))
-        await self._redis.close()
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closing = True
+            try:
+                subscriptions = tuple(self._subscriptions)
+                if subscriptions:
+                    await asyncio.gather(*(item.aclose() for item in subscriptions))
+                await self._redis.close()
+                self._closed = True
+            finally:
+                self._closing = False
 
-    async def _tail(
+    async def _wait_for_tail(
         self,
         scope: RequestScope,
         session_id: str,
         run_id: str,
         after: str,
-    ) -> list[tuple[str, object]]:
-        response = await self._redis.call(
+    ) -> None:
+        await self._redis.call(
             "xread",
             {self._stream_key(scope, session_id, run_id): after},
             count=self._follow_batch_size,
             block=self._block_ms,
         )
-        return stream_rows(response)
 
     def _validate_query(
         self,
@@ -198,7 +193,7 @@ class RedisEventReplayAdapter:
         self._subscriptions.discard(subscription)
 
     def _ensure_open(self) -> None:
-        if self._closed:
+        if self._closed or self._closing:
             raise DistributedStoreClosedError()
 
 
@@ -217,9 +212,8 @@ class _RedisEventSubscription:
         self._run_id = run_id
         self._cursor = after
         self._buffer: deque[ReplayItem] = deque()
-        self._replay_complete = False
         self._gap_delivered = False
-        self._read_task: asyncio.Task[list[tuple[str, object]]] | None = None
+        self._read_task: asyncio.Task[None] | None = None
         self._closed = False
 
     def __aiter__(self) -> _RedisEventSubscription:
@@ -231,55 +225,40 @@ class _RedisEventSubscription:
                 raise StopAsyncIteration
             if self._buffer:
                 return self._buffer.popleft()
-            if not self._replay_complete:
-                replayed = await self._adapter.replay(
-                    scope=self._scope,
-                    session_id=self._session_id,
-                    run_id=self._run_id,
-                    after=self._cursor,
-                    limit=self._adapter._follow_batch_size,
-                )
-                if type(replayed) is StreamGap:
-                    self._gap_delivered = True
-                    return replayed
-                if replayed.items:
-                    self._buffer.extend(replayed.items)
-                    self._cursor = replayed.next_cursor
-                    return self._buffer.popleft()
-                self._replay_complete = True
-            rows = await self._read_tail()
-            if rows:
-                items = [
-                    ReplayItem(
-                        cursor,
-                        decode_scoped_envelope(
-                            fields,
-                            self._scope,
-                            self._session_id,
-                            self._run_id,
-                        ),
-                    )
-                    for cursor, fields in rows
-                ]
-                self._cursor = items[-1].cursor
-                self._buffer.extend(items[1:])
-                return items[0]
+            replayed = await self._adapter.replay(
+                scope=self._scope,
+                session_id=self._session_id,
+                run_id=self._run_id,
+                after=self._cursor,
+                limit=self._adapter._follow_batch_size,
+            )
+            if type(replayed) is StreamGap:
+                self._gap_delivered = True
+                return replayed
+            if replayed.items:
+                self._buffer.extend(replayed.items)
+                self._cursor = replayed.next_cursor
+                return self._buffer.popleft()
+            await self._read_tail()
 
     async def aclose(self) -> None:
         if self._closed:
+            self._adapter._remove(self)
             return
         self._closed = True
-        task = self._read_task
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        self._adapter._remove(self)
+        try:
+            task = self._read_task
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        finally:
+            self._adapter._remove(self)
 
-    async def _read_tail(self) -> list[tuple[str, object]]:
+    async def _read_tail(self) -> None:
         if self._closed:
             raise StopAsyncIteration
         task = asyncio.create_task(
-            self._adapter._tail(
+            self._adapter._wait_for_tail(
                 self._scope,
                 self._session_id,
                 self._run_id,

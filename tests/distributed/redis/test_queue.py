@@ -26,6 +26,26 @@ def _record(outbox_id: str, topic: str = "run_wakeup") -> OutboxRecord:
     )
 
 
+class CreateGroupAfterSnapshotRedis(FakeAsyncRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_group_during_trim = False
+
+    async def xinfo_groups(self, name: str) -> object:
+        groups = await super().xinfo_groups(name)
+        if self.create_group_during_trim:
+            self.create_group_during_trim = False
+            self.groups[(name, "group_b")] = "0-0"
+            self.pending[(name, "group_b")] = {}
+        return groups
+
+    async def before_atomic_trim(self, name: str) -> None:
+        if self.create_group_during_trim:
+            self.create_group_during_trim = False
+            self.groups[(name, "group_b")] = "0-0"
+            self.pending[(name, "group_b")] = {}
+
+
 def test_queue_uses_redis_ids_and_deduplicates_stable_outbox_ids() -> None:
     async def scenario() -> None:
         redis = FakeAsyncRedis()
@@ -60,12 +80,98 @@ def test_queue_uses_redis_ids_and_deduplicates_stable_outbox_ids() -> None:
 
         for delivery in deliveries:
             await queue.ack(topic="run_wakeup", delivery=delivery)
+        redis.advance_pending(5_000)
+        assert await queue.reclaim(
+            topic="run_wakeup",
+            consumer_id="worker_1",
+            min_idle=timedelta(seconds=1),
+            limit=10,
+        ) == ()
         assert await redis.xpending("test:queue:run_wakeup", "workers") == {
             "pending": 0,
             "min": None,
             "max": None,
             "consumers": [],
         }
+        command_shapes = {
+            (script.splitlines()[1], numkeys, len(args))
+            for script, numkeys, args in redis.eval_calls
+            if "agentos:queue:" in script
+        }
+        assert command_shapes == {
+            ("-- agentos:queue:reserve:v1", 2, 3),
+            ("-- agentos:queue:ack:v1", 3, 6),
+            ("-- agentos:queue:trim:v1", 1, 2),
+        }
+
+    asyncio.run(scenario())
+
+
+def test_queue_deduplicates_same_group_across_adapter_instances() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        first_queue = RedisQueueAdapter(client=redis, group_name="workers")
+        second_queue = RedisQueueAdapter(client=redis, group_name="workers")
+        await first_queue.publish(record=_record("outbox_1"))
+        await first_queue.publish(record=_record("outbox_1"))
+
+        canonical = await first_queue.receive(
+            topic="run_wakeup",
+            consumer_id="worker_1",
+            limit=1,
+        )
+        duplicate = await second_queue.receive(
+            topic="run_wakeup",
+            consumer_id="worker_2",
+            limit=1,
+        )
+
+        assert len(canonical) == 1
+        assert duplicate == ()
+        pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
+        assert pending["pending"] == 2
+
+        await first_queue.ack(topic="run_wakeup", delivery=canonical[0])
+        pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
+        assert pending["pending"] == 1
+        redis.advance_pending(5_000)
+        assert await second_queue.reclaim(
+            topic="run_wakeup",
+            consumer_id="worker_2",
+            min_idle=timedelta(seconds=1),
+            limit=10,
+        ) == ()
+        pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
+        assert pending["pending"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_queue_deduplication_is_scoped_to_consumer_group() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        first_group = RedisQueueAdapter(client=redis, group_name="group_a")
+        second_group = RedisQueueAdapter(client=redis, group_name="group_b")
+        await first_group.publish(record=_record("outbox_1"))
+        await redis.xgroup_create(
+            "agentos:queue:run_wakeup",
+            "group_b",
+            id="0-0",
+        )
+
+        first = await first_group.receive(
+            topic="run_wakeup",
+            consumer_id="worker_a",
+            limit=1,
+        )
+        await first_group.ack(topic="run_wakeup", delivery=first[0])
+        second = await second_group.receive(
+            topic="run_wakeup",
+            consumer_id="worker_b",
+            limit=1,
+        )
+
+        assert [delivery.outbox_id for delivery in second] == ["outbox_1"]
 
     asyncio.run(scenario())
 
@@ -150,6 +256,50 @@ def test_queue_trimming_never_removes_pending_entries() -> None:
             for message_id, _ in redis.streams["test:queue:run_wakeup"]
         ]
         assert oldest_pending in stream_ids
+
+    asyncio.run(scenario())
+
+
+def test_queue_trim_includes_group_created_during_boundary_calculation() -> None:
+    async def scenario() -> None:
+        redis = CreateGroupAfterSnapshotRedis()
+        seed_queue = RedisQueueAdapter(
+            client=redis,
+            group_name="group_a",
+            max_entries=100,
+        )
+        for index in range(5):
+            await seed_queue.publish(record=_record(f"outbox_{index}"))
+        consumed = await seed_queue.receive(
+            topic="run_wakeup",
+            consumer_id="worker_a",
+            limit=5,
+        )
+        for delivery in consumed:
+            await seed_queue.ack(topic="run_wakeup", delivery=delivery)
+
+        redis.create_group_during_trim = True
+        trimming_queue = RedisQueueAdapter(
+            client=redis,
+            group_name="group_a",
+            max_entries=2,
+        )
+        await trimming_queue.publish(record=_record("outbox_5"))
+        second_group = RedisQueueAdapter(client=redis, group_name="group_b")
+        deliveries = await second_group.receive(
+            topic="run_wakeup",
+            consumer_id="worker_b",
+            limit=10,
+        )
+
+        assert [delivery.outbox_id for delivery in deliveries] == [
+            "outbox_0",
+            "outbox_1",
+            "outbox_2",
+            "outbox_3",
+            "outbox_4",
+            "outbox_5",
+        ]
 
     asyncio.run(scenario())
 

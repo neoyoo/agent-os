@@ -3,6 +3,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 
+from _fake_redis_scripts import (
+    UNHANDLED,
+    evaluate_agentos_script,
+    stream_id_gt,
+    stream_id_key,
+    xinfo_groups as script_xinfo_groups,
+    xrange as script_xrange,
+    xtrim as script_xtrim,
+)
+
 
 class FakeRedisError(RuntimeError):
     pass
@@ -15,6 +25,7 @@ class FakeAsyncRedis:
         self.groups: dict[tuple[str, str], str] = {}
         self.pending: dict[tuple[str, str], dict[str, dict[str, object]]] = {}
         self.xadd_ids: list[str] = []
+        self.eval_calls: list[tuple[str, int, tuple[object, ...]]] = []
         self.read_started = asyncio.Event()
         self.fail = False
         self.closed = False
@@ -40,8 +51,12 @@ class FakeAsyncRedis:
         self._raise_if_failed()
         return self.values.get(name)
 
-    async def eval(self, script: str, numkeys: int, *args: object) -> int:
+    async def eval(self, script: str, numkeys: int, *args: object) -> object:
         self._raise_if_failed()
+        self.eval_calls.append((script, numkeys, args))
+        result = await evaluate_agentos_script(self, script, numkeys, args)
+        if result is not UNHANDLED:
+            return result
         assert numkeys == 1
         key = str(args[0])
         expected = args[1]
@@ -51,6 +66,12 @@ class FakeAsyncRedis:
             return 1
         del self.values[key]
         return 1
+
+    async def before_atomic_trim(self, name: str) -> None:
+        pass
+
+    async def before_atomic_replay(self, name: str) -> None:
+        pass
 
     async def xgroup_create(
         self,
@@ -111,7 +132,7 @@ class FakeAsyncRedis:
             messages = [
                 entry
                 for entry in self.streams.get(name, [])
-                if _id_gt(entry[0], last_id)
+                if stream_id_gt(entry[0], last_id)
             ][:count]
             if messages:
                 self.groups[(name, groupname)] = messages[-1][0]
@@ -145,7 +166,7 @@ class FakeAsyncRedis:
         rows: list[dict[str, object]] = []
         for message_id, item in sorted(
             self.pending[(name, groupname)].items(),
-            key=lambda pair: _id_key(pair[0]),
+            key=lambda pair: stream_id_key(pair[0]),
         ):
             if consumername is not None and item["consumer"] != consumername:
                 continue
@@ -187,7 +208,7 @@ class FakeAsyncRedis:
 
     async def xpending(self, name: str, groupname: str) -> dict[str, object]:
         self._raise_if_failed()
-        ids = sorted(self.pending[(name, groupname)], key=_id_key)
+        ids = sorted(self.pending[(name, groupname)], key=stream_id_key)
         return {
             "pending": len(ids),
             "min": ids[0] if ids else None,
@@ -200,16 +221,7 @@ class FakeAsyncRedis:
         return len(self.streams.get(name, []))
 
     async def xinfo_groups(self, name: str) -> list[dict[str, object]]:
-        self._raise_if_failed()
-        return [
-            {
-                "name": group,
-                "last-delivered-id": last_id,
-                "pending": len(self.pending[(stream, group)]),
-            }
-            for (stream, group), last_id in self.groups.items()
-            if stream == name
-        ]
+        return await script_xinfo_groups(self, name)
 
     async def xtrim(
         self,
@@ -218,12 +230,7 @@ class FakeAsyncRedis:
         minid: str,
         approximate: bool = False,
     ) -> int:
-        self._raise_if_failed()
-        stream = self.streams.get(name, [])
-        kept = [entry for entry in stream if not _id_gt(minid, entry[0])]
-        removed = len(stream) - len(kept)
-        self.streams[name] = kept
-        return removed
+        return await script_xtrim(self, name, minid)
 
     async def xrange(
         self,
@@ -233,17 +240,7 @@ class FakeAsyncRedis:
         *,
         count: int | None = None,
     ) -> list[tuple[str, dict[str, object]]]:
-        self._raise_if_failed()
-        exclusive = min.startswith("(")
-        lower = min[1:] if exclusive else min
-        rows = [
-            entry
-            for entry in self.streams.get(name, [])
-            if lower == "-"
-            or _id_gt(entry[0], lower)
-            or (not exclusive and entry[0] == lower)
-        ]
-        return rows[:count]
+        return await script_xrange(self, name, min, count)
 
     async def xread(
         self,
@@ -258,7 +255,7 @@ class FakeAsyncRedis:
             rows = [
                 entry
                 for entry in self.streams.get(name, [])
-                if _id_gt(entry[0], after)
+                if stream_id_gt(entry[0], after)
             ][:count]
             if rows:
                 return [(name, rows)]
@@ -295,12 +292,3 @@ class FakeAsyncRedis:
     def _raise_if_failed(self) -> None:
         if self.fail:
             raise FakeRedisError("redis://user:secret@example.invalid")
-
-
-def _id_gt(left: str, right: str) -> bool:
-    return _id_key(left) > _id_key(right)
-
-
-def _id_key(value: str) -> tuple[int, int]:
-    milliseconds, sequence = value.split("-", 1)
-    return int(milliseconds), int(sequence)

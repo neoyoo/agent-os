@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -17,9 +18,11 @@ class AsyncRedisClient:
         self._client = client if client is not None else _create_client(url)
         self._owns_client = client is None
         self._closed = False
+        self._closing = False
+        self._close_lock = asyncio.Lock()
 
     def ensure_open(self) -> None:
-        if self._closed:
+        if self._closed or self._closing:
             raise DistributedStoreClosedError()
 
     async def call(
@@ -46,15 +49,19 @@ class AsyncRedisClient:
             raise DeliveryUnavailableError() from None
 
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        if not self._owns_client:
-            return
-        try:
-            await getattr(self._client, "aclose")()
-        except Exception:
-            raise DeliveryUnavailableError() from None
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closing = True
+            try:
+                if self._owns_client:
+                    try:
+                        await getattr(self._client, "aclose")()
+                    except Exception:
+                        raise DeliveryUnavailableError() from None
+                self._closed = True
+            finally:
+                self._closing = False
 
 
 def decode_text(value: object) -> str | None:

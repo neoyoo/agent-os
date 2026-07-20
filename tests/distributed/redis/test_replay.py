@@ -47,6 +47,31 @@ class RepeatedTimeoutRedis(FakeAsyncRedis):
         return await super().xread(*args, **kwargs)
 
 
+class TrimAfterOldestReadRedis(FakeAsyncRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self._trimmed = False
+
+    async def xrange(
+        self,
+        name: str,
+        min: str = "-",
+        max: str = "+",
+        *,
+        count: int | None = None,
+    ) -> object:
+        rows = await super().xrange(name, min=min, max=max, count=count)
+        if not self._trimmed and min == "-" and count == 1:
+            self._trimmed = True
+            self.streams[name] = self.streams[name][2:]
+        return rows
+
+    async def before_atomic_replay(self, name: str) -> None:
+        if not self._trimmed:
+            self._trimmed = True
+            self.streams[name] = self.streams[name][2:]
+
+
 def _event(sequence: int, text: str) -> RunEventEnvelope:
     return RunEventEnvelope(
         tenant_id=SCOPE.tenant_id,
@@ -100,6 +125,34 @@ def test_event_replay_round_trips_history_and_detects_trimmed_cursor_gap() -> No
     asyncio.run(scenario())
 
 
+def test_event_replay_detects_trim_between_oldest_check_and_range() -> None:
+    async def scenario() -> None:
+        redis = TrimAfterOldestReadRedis()
+        replay = RedisEventReplayAdapter(client=redis, max_events=10)
+        first = await replay.append(scope=SCOPE, event=_event(0, "first"))
+        await replay.append(scope=SCOPE, event=_event(1, "second"))
+        third = await replay.append(scope=SCOPE, event=_event(2, "third"))
+
+        result = await replay.replay(
+            scope=SCOPE,
+            session_id="session_1",
+            run_id="run_1",
+            after=first.cursor,
+            limit=10,
+        )
+
+        assert result == StreamGap(
+            tenant_id="tenant_1",
+            session_id="session_1",
+            run_id="run_1",
+            requested_cursor=first.cursor,
+            oldest_available_cursor=third.cursor,
+            reason="trimmed",
+        )
+
+    asyncio.run(scenario())
+
+
 def test_event_follow_replays_then_tails_new_events() -> None:
     async def scenario() -> None:
         redis = FakeAsyncRedis()
@@ -117,6 +170,47 @@ def test_event_follow_replays_then_tails_new_events() -> None:
         await redis.read_started.wait()
         second = await replay.append(scope=SCOPE, event=_event(1, "second"))
         assert await waiting == second
+        await subscription.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_event_follow_reports_gap_when_trim_happens_during_blocking_read() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(
+            client=redis,
+            max_events=2,
+            block_ms=30_000,
+        )
+        first = await replay.append(scope=SCOPE, event=_event(0, "first"))
+        subscription = replay.follow(
+            scope=SCOPE,
+            session_id="session_1",
+            run_id="run_1",
+            after=first.cursor,
+        )
+
+        waiting = asyncio.create_task(anext(subscription))
+        await redis.read_started.wait()
+        second = await replay.append(scope=SCOPE, event=_event(1, "second"))
+        oldest = await replay.append(scope=SCOPE, event=_event(2, "third"))
+        await replay.append(scope=SCOPE, event=_event(3, "fourth"))
+
+        assert await waiting == StreamGap(
+            tenant_id="tenant_1",
+            session_id="session_1",
+            run_id="run_1",
+            requested_cursor=first.cursor,
+            oldest_available_cursor=oldest.cursor,
+            reason="trimmed",
+        )
+        assert second.cursor not in {
+            cursor
+            for cursor, _ in redis.streams[
+                "agentos:events:tenant_1:session_1:run_1"
+            ]
+        }
         await subscription.aclose()
 
     asyncio.run(scenario())
@@ -169,6 +263,9 @@ def test_event_replay_round_trips_every_allowlisted_live_event() -> None:
 
         assert isinstance(batch, ReplayBatch)
         assert tuple(item.event for item in batch.items) == envelopes
+        script, numkeys, args = redis.eval_calls[-1]
+        assert script.splitlines()[1] == "-- agentos:replay:snapshot:v1"
+        assert (numkeys, len(args)) == (1, 3)
 
     asyncio.run(scenario())
 
