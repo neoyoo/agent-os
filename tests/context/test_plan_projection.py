@@ -22,6 +22,7 @@ from agentos.planning.projection import (
 )
 from agentos.workspace import WorkspaceHandle
 from tests.context._snapshot_fixtures import RecordingTokenCounter
+from tests.planning._async import async_test
 
 
 class MutablePlanStore:
@@ -29,7 +30,7 @@ class MutablePlanStore:
         self.plans = {plan.plan_id: plan for plan in plans}
         self.reads: list[str] = []
 
-    def get_plan(self, plan_id: str) -> PlanState | None:
+    async def get_plan(self, plan_id: str) -> PlanState | None:
         self.reads.append(plan_id)
         return self.plans.get(plan_id)
 
@@ -49,30 +50,34 @@ def plan(
     )
 
 
-def project(current: PlanState) -> tuple[ContextSlotProjection, ...]:
+async def project(current: PlanState) -> tuple[ContextSlotProjection, ...]:
     store = MutablePlanStore((current,))
-    return BoundPlanProjectionProvider(
+    provider = BoundPlanProjectionProvider(
         AuthorizedPlanSource(store),  # type: ignore[arg-type]
         current.plan_id,
         current.owner_agent_id,
-    ).projections()
+    )
+    await provider.prepare_projection_cache()
+    return provider.projections()
 
 
-def test_authorized_plan_source_hides_missing_and_owner_mismatch() -> None:
+@async_test
+async def test_authorized_plan_source_hides_missing_and_owner_mismatch() -> None:
     store = MutablePlanStore((plan(),))
     source = AuthorizedPlanSource(store)  # type: ignore[arg-type]
 
-    assert source.get_for_projection("plan_1", "agent_1").plan_id == "plan_1"
+    assert (await source.get_for_projection("plan_1", "agent_1")).plan_id == "plan_1"
     with pytest.raises(PlanNotFoundError) as wrong_owner:
-        source.get_for_projection("plan_1", "other_agent")
+        await source.get_for_projection("plan_1", "other_agent")
     with pytest.raises(PlanNotFoundError) as missing:
-        source.get_for_projection("missing", "other_agent")
+        await source.get_for_projection("missing", "other_agent")
 
     assert str(wrong_owner.value) == str(missing.value)
     assert store.reads == ["plan_1", "plan_1", "missing"]
 
 
-def test_bound_provider_freezes_scope_and_reads_truth_for_every_projection() -> None:
+@async_test
+async def test_bound_provider_freezes_scope_and_refreshes_prepared_projection() -> None:
     store = MutablePlanStore((plan(objective="First objective."),))
     provider = BoundPlanProjectionProvider(
         AuthorizedPlanSource(store),  # type: ignore[arg-type]
@@ -80,14 +85,18 @@ def test_bound_provider_freezes_scope_and_reads_truth_for_every_projection() -> 
         "agent_1",
     )
 
+    await provider.prepare_projection_cache()
     first = provider.projections()[0]
     store.plans["plan_1"] = replace(
         store.plans["plan_1"],
         objective="Updated objective.",
     )
+    cached = provider.projections()[0]
+    await provider.prepare_projection_cache()
     second = provider.projections()[0]
 
     assert first.variants[0].element.children[0].text == "First objective."
+    assert cached == first
     assert second.variants[0].element.children[0].text == "Updated objective."
     assert store.reads == ["plan_1", "plan_1"]
     assert tuple(signature(BoundPlanProjectionProvider.projections).parameters) == (
@@ -114,16 +123,18 @@ def test_bound_provider_freezes_scope_and_reads_truth_for_every_projection() -> 
         ),
     ],
 )
-def test_running_plan_status_mapping(
+@async_test
+async def test_running_plan_status_mapping(
     steps: tuple[PlanStep, ...],
     expected: str,
 ) -> None:
-    projection = project(plan(steps=steps))[0]
+    projection = (await project(plan(steps=steps)))[0]
 
     assert dict(projection.variants[0].element.attributes) == {"status": expected}
 
 
-def test_draft_plan_and_every_step_status_use_context_protocol_values() -> None:
+@async_test
+async def test_draft_plan_and_every_step_status_use_context_protocol_values() -> None:
     step_statuses: tuple[PlanStepStatus, ...] = (
         "pending",
         "assigned",
@@ -138,7 +149,7 @@ def test_draft_plan_and_every_step_status_use_context_protocol_values() -> None:
         for step_status in step_statuses
     )
 
-    full = project(plan(status="draft", steps=steps))[0].variants[0].element
+    full = (await project(plan(status="draft", steps=steps)))[0].variants[0].element
 
     assert dict(full.attributes) == {"status": "pending"}
     assert [dict(step.attributes)["status"] for step in full.children[1:]] == [
@@ -153,8 +164,9 @@ def test_draft_plan_and_every_step_status_use_context_protocol_values() -> None:
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
-def test_terminal_plan_is_not_projected(status: PlanStatus) -> None:
-    assert project(plan(status=status)) == ()
+@async_test
+async def test_terminal_plan_is_not_projected(status: PlanStatus) -> None:
+    assert await project(plan(status=status)) == ()
 
 
 @pytest.mark.parametrize(
@@ -169,17 +181,19 @@ def test_terminal_plan_is_not_projected(status: PlanStatus) -> None:
         ),
     ],
 )
-def test_inconsistent_running_plan_fails_without_partial_projection(
+@async_test
+async def test_inconsistent_running_plan_fails_without_partial_projection(
     steps: tuple[PlanStep, ...],
 ) -> None:
     with pytest.raises(
         PlanProjectionError,
         match="^invalid active plan state$",
     ):
-        project(plan(steps=steps))
+        await project(plan(steps=steps))
 
 
-def test_projection_is_safe_minimal_and_deterministically_trimmable() -> None:
+@async_test
+async def test_projection_is_safe_minimal_and_deterministically_trimmable() -> None:
     current = PlanState(
         plan_id="plan_1",
         objective='Review <SDK> & "ship".',
@@ -230,7 +244,7 @@ def test_projection_is_safe_minimal_and_deterministically_trimmable() -> None:
         workspace=WorkspaceHandle("workspace_secret", "session", "/private"),
     )
 
-    projection = project(current)[0]
+    projection = (await project(current))[0]
 
     assert projection.slot == "active-plan"
     assert projection.owner == "PlannerRuntime"
@@ -251,7 +265,7 @@ def test_projection_is_safe_minimal_and_deterministically_trimmable() -> None:
     snapshot = ContextSnapshotRenderer(RecordingTokenCounter(1)).render((projection,))
     assert 'Review &lt;SDK&gt; &amp; "ship".' in snapshot.xml
     assert 'handle="done_1&lt;&amp;&quot;"' in snapshot.xml
-    assert "Completed &lt;one&gt; &amp; \"verified\"." in snapshot.xml
+    assert 'Completed &lt;one&gt; &amp; "verified".' in snapshot.xml
     for hidden in (
         "owner_secret",
         "capability_secret",

@@ -86,7 +86,7 @@ def test_prepare_user_turn_appends_message_and_emits_start_events() -> None:
         logger=logger,
     )
 
-    turn, events = lifecycle.prepare_user_turn(UserTurnInput("hello"))
+    turn, events = asyncio.run(lifecycle.prepare_user_turn(UserTurnInput("hello")))
 
     assert turn == TurnState("turn_1", "hello")
     assert [(message.role, message.content) for message in messages.store.all()] == [
@@ -141,16 +141,19 @@ def test_query_loop_uses_session_state_assigned_before_execute() -> None:
 def test_prepare_user_turn_requires_artifact_runtime_for_handles() -> None:
     lifecycle = make_lifecycle()
 
-    with pytest.raises(
-        RuntimeError,
-        match="artifact runtime is required for artifact handles",
-    ):
-        lifecycle.prepare_user_turn(
-            UserTurnInput(
-                "inspect",
-                ("art_12345678-1234-4234-9234-123456789abc",),
+    async def scenario() -> None:
+        with pytest.raises(
+            RuntimeError,
+            match="artifact runtime is required for artifact handles",
+        ):
+            await lifecycle.prepare_user_turn(
+                UserTurnInput(
+                    "inspect",
+                    ("art_12345678-1234-4234-9234-123456789abc",),
+                )
             )
-        )
+
+    asyncio.run(scenario())
 
 
 def test_turn_lifecycle_depends_on_artifact_runtime_boundary() -> None:
@@ -260,29 +263,32 @@ def test_structured_logs_add_current_session_without_overwriting_caller() -> Non
 
 
 def test_cleanup_clears_continuation_data_and_artifact_mounts() -> None:
-    continuation = ContinuationRuntime()
-    continuation.set_notices(
-        (ContinuationNotice("task_completed", "task_1", "check_agent_tasks"),)
-    )
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    artifacts.load_attachment(artifact.id)
-    lifecycle = make_lifecycle(
-        artifacts=artifacts,
-        continuation=continuation,
-    )
+    async def scenario() -> None:
+        continuation = ContinuationRuntime()
+        continuation.set_notices(
+            (ContinuationNotice("task_completed", "task_1", "check_agent_tasks"),)
+        )
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        await artifacts.load_attachment(artifact.id)
+        lifecycle = make_lifecycle(
+            artifacts=artifacts,
+            continuation=continuation,
+        )
 
-    lifecycle.cleanup(is_continuation=True)
+        lifecycle.cleanup(is_continuation=True)
 
-    assert continuation.inputs() == ()
-    assert artifacts.active_mounts() == ()
+        assert continuation.inputs() == ()
+        assert artifacts.active_mounts() == ()
+
+    asyncio.run(scenario())
 
 
 def test_mark_waiting_transitions_turn_after_authoritative_commit() -> None:

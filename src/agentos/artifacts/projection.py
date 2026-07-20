@@ -13,7 +13,6 @@ from agentos.providers.content import (
 from agentos.providers.input import ProviderInputItem
 
 
-_CATALOG_LIMIT = 20
 _SUPPORTED_IMAGE_MEDIA_TYPES = frozenset(
     {"image/gif", "image/jpeg", "image/png", "image/webp"}
 )
@@ -36,7 +35,7 @@ def project_artifact_catalog(
 ) -> ContextSlotProjection | None:
     """从 ArtifactStore 真值生成有界 Session Catalog 投影。"""
 
-    page = runtime.list(limit=_CATALOG_LIMIT)
+    page = runtime.projection_catalog()
     if not page.items:
         return None
     mounted_ids = frozenset(mount.artifact_id for mount in runtime.active_mounts())
@@ -66,10 +65,8 @@ def project_context_mounts(
 ) -> tuple[ProviderInputItem, ...]:
     """把 Tool Result Mount 原子投影为 Provider-neutral 输入。"""
 
-    mounts = runtime.active_mounts()
     projected: list[ProviderInputItem] = []
-    for mount in mounts:
-        record, data = runtime.resolve_mount(mount)
+    for mount, record, data in runtime.projection_mounts():
         payload = ProviderBinaryPayload(
             handle=record.id,
             media_type=record.media_type,

@@ -1,8 +1,7 @@
 import base64
+import asyncio
 import json
-import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from inspect import signature
 
@@ -14,6 +13,7 @@ from agentos.artifacts.types import (
     ArtifactNotFoundError,
     ArtifactValidationError,
 )
+from tests.artifacts._async import async_test
 
 
 ArtifactStoreFactory = Callable[[], ArtifactStore]
@@ -24,8 +24,13 @@ def store_factory() -> ArtifactStoreFactory:
     return InMemoryArtifactStore
 
 
-def put(store: ArtifactStore, *, session_id: str = "session-1", data: bytes = b"a"):
-    return store.put(
+async def put(
+    store: ArtifactStore,
+    *,
+    session_id: str = "session-1",
+    data: bytes = b"a",
+):
+    return await store.put(
         session_id=session_id,
         data=data,
         filename="drawing.png",
@@ -47,20 +52,22 @@ def test_store_protocol_freezes_six_session_scoped_methods() -> None:
     ]
 
 
-def test_store_round_trip_and_duplicate_content_get_independent_ids(
+@async_test
+async def test_store_round_trip_and_duplicate_content_get_independent_ids(
     store_factory: ArtifactStoreFactory,
 ) -> None:
     store = store_factory()
-    first = put(store, data=b"same")
-    second = put(store, data=b"same")
+    first = await put(store, data=b"same")
+    second = await put(store, data=b"same")
 
     assert first.id != second.id
-    assert store.get("session-1", first.id) == first
-    assert store.read("session-1", first.id) == b"same"
+    assert await store.get("session-1", first.id) == first
+    assert await store.read("session-1", first.id) == b"same"
     assert not hasattr(first, "data")
 
 
-def test_store_list_defaults_to_latest_twenty_and_returns_stable_cursor() -> None:
+@async_test
+async def test_store_list_defaults_to_latest_twenty_and_returns_stable_cursor() -> None:
     created_at = datetime(2026, 7, 15, tzinfo=UTC)
     ids = iter(
         [
@@ -72,10 +79,12 @@ def test_store_list_defaults_to_latest_twenty_and_returns_stable_cursor() -> Non
         clock=lambda: created_at,
         id_factory=lambda: next(ids),
     )
-    records = [put(store, data=str(index).encode()) for index in range(21)]
+    records = [
+        await put(store, data=str(index).encode()) for index in range(21)
+    ]
 
-    first = store.list("session-1")
-    second = store.list("session-1", cursor=first.next_cursor)
+    first = await store.list("session-1")
+    second = await store.list("session-1", cursor=first.next_cursor)
 
     assert first.items == tuple(reversed(records[1:]))
     assert first.next_cursor is not None
@@ -86,7 +95,8 @@ def test_store_list_defaults_to_latest_twenty_and_returns_stable_cursor() -> Non
     assert payload == {"artifact_id": records[1].id, "version": 1}
 
 
-def test_store_list_orders_created_at_then_artifact_id_descending() -> None:
+@async_test
+async def test_store_list_orders_created_at_then_artifact_id_descending() -> None:
     timestamps = iter(
         [
             datetime(2026, 7, 15, 10, tzinfo=UTC),
@@ -105,56 +115,58 @@ def test_store_list_orders_created_at_then_artifact_id_descending() -> None:
         clock=lambda: next(timestamps),
         id_factory=lambda: next(ids),
     )
-    first, second, third = (put(store) for _ in range(3))
+    first, second, third = tuple([await put(store) for _ in range(3)])
 
-    page = store.list("session-1", limit=10)
+    page = await store.list("session-1", limit=10)
 
     assert page.items == (third, second, first)
 
 
 @pytest.mark.parametrize("limit", [0, 101, -1, True, 1.5, "20"])
-def test_store_list_rejects_invalid_limit(
+@async_test
+async def test_store_list_rejects_invalid_limit(
     store_factory: ArtifactStoreFactory,
     limit: object,
 ) -> None:
     with pytest.raises(ArtifactValidationError, match="artifact limit is invalid"):
-        store_factory().list("session-1", limit=limit)  # type: ignore[arg-type]
+        await store_factory().list(  # type: ignore[arg-type]
+            "session-1",
+            limit=limit,
+        )
 
 
-def test_store_delete_and_delete_session_remove_metadata_and_content(
+@async_test
+async def test_store_delete_and_delete_session_remove_metadata_and_content(
     store_factory: ArtifactStoreFactory,
 ) -> None:
     store = store_factory()
-    one = put(store, data=b"one")
-    two = put(store, data=b"two")
-    other = put(store, session_id="session-2", data=b"other")
+    one = await put(store, data=b"one")
+    two = await put(store, data=b"two")
+    other = await put(store, session_id="session-2", data=b"other")
 
-    store.delete("session-1", one.id)
+    await store.delete("session-1", one.id)
     with pytest.raises(ArtifactNotFoundError, match="^artifact not found$"):
-        store.read("session-1", one.id)
+        await store.read("session-1", one.id)
 
-    store.delete_session("session-1")
-    assert store.list("session-1").items == ()
-    assert store.read("session-2", other.id) == b"other"
+    await store.delete_session("session-1")
+    assert (await store.list("session-1")).items == ()
+    assert await store.read("session-2", other.id) == b"other"
     with pytest.raises(ArtifactNotFoundError, match="^artifact not found$"):
-        store.get("session-1", two.id)
+        await store.get("session-1", two.id)
 
 
-def test_store_concurrent_puts_are_atomic_and_distinct(
+@async_test
+async def test_store_concurrent_puts_are_atomic_and_distinct(
     store_factory: ArtifactStoreFactory,
 ) -> None:
     store = store_factory()
-    barrier = threading.Barrier(8)
-
-    def upload(index: int) -> str:
-        barrier.wait()
-        return put(store, data=str(index).encode()).id
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        ids = tuple(executor.map(upload, range(8)))
+    records = await asyncio.gather(
+        *(put(store, data=str(index).encode()) for index in range(8))
+    )
+    ids = tuple(record.id for record in records)
 
     assert len(set(ids)) == 8
-    assert len(store.list("session-1", limit=100).items) == 8
+    assert len((await store.list("session-1", limit=100)).items) == 8
 
 
 def _decode_cursor(cursor: str) -> object:

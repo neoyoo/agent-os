@@ -23,6 +23,7 @@ from tests.context._snapshot_fixtures import (
     extension_registry,
     extensions_element,
 )
+from tests.planning._async import async_test
 
 
 class ForbiddenTokenCounter:
@@ -160,16 +161,18 @@ def empty_element(slot: str) -> XmlElement:
     return XmlElement(slot, attributes)
 
 
-def test_artifact_catalog_projection_composes_and_xml_escapes_filename() -> None:
+@async_test
+async def test_artifact_catalog_projection_composes_and_xml_escapes_filename() -> None:
     artifacts = ArtifactRuntime(
         session_id="session-1",
         store=InMemoryArtifactStore(),
     )
-    record = artifacts.upload(
+    record = await artifacts.upload(
         data=b"image",
         filename='drawing<&".png',
         media_type="image/png",
     )
+    await artifacts.prepare_projection_cache()
     artifact_projection = project_artifact_catalog(artifacts)
 
     assert artifact_projection is not None

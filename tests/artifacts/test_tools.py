@@ -19,6 +19,7 @@ from agentos.artifacts.types import (
 )
 from agentos.context_protocol import context_protocol_tool_specs
 from agentos.providers import provider_tool_spec_to_dict
+from tests.artifacts._async import async_test
 
 
 def runtime() -> ArtifactRuntime:
@@ -35,8 +36,8 @@ def runtime() -> ArtifactRuntime:
     )
 
 
-def upload(target: ArtifactRuntime, filename: str = "drawing.png"):
-    return target.upload(
+async def upload(target: ArtifactRuntime, filename: str = "drawing.png"):
+    return await target.upload(
         data=b"private-image",
         filename=filename,
         media_type="image/png",
@@ -76,13 +77,14 @@ def test_artifact_tool_page_is_frozen_and_model_safe() -> None:
         item.state = "mounted"  # type: ignore[misc]
 
 
-def test_list_attachments_returns_canonical_json_and_mounted_state() -> None:
+@async_test
+async def test_list_attachments_returns_canonical_json_and_mounted_state() -> None:
     target = runtime()
-    first = upload(target, "first.png")
-    second = upload(target, "图纸.png")
-    target.load_attachment(second.id)
+    first = await upload(target, "first.png")
+    second = await upload(target, "图纸.png")
+    await target.load_attachment(second.id)
 
-    result = list_attachments(target, limit=1)
+    result = await list_attachments(target, limit=1)
 
     assert result.startswith(
         '{"items":[{"filename":"图纸.png",'
@@ -95,7 +97,7 @@ def test_list_attachments_returns_canonical_json_and_mounted_state() -> None:
     page = json.loads(result)
     next_cursor = page["next_cursor"]
     assert isinstance(next_cursor, str)
-    next_result = list_attachments(target, cursor=next_cursor, limit=1)
+    next_result = await list_attachments(target, cursor=next_cursor, limit=1)
     assert next_result == (
         '{"items":[{"filename":"first.png",'
         f'"handle":"{first.id}",'
@@ -115,25 +117,28 @@ def test_list_attachments_returns_canonical_json_and_mounted_state() -> None:
         assert forbidden not in result
 
 
-def test_list_attachments_empty_page_has_frozen_shape() -> None:
-    assert list_attachments(runtime()) == '{"items":[],"next_cursor":null}'
+@async_test
+async def test_list_attachments_empty_page_has_frozen_shape() -> None:
+    assert await list_attachments(runtime()) == '{"items":[],"next_cursor":null}'
 
 
-def test_list_attachments_reuses_store_limit_validation() -> None:
+@async_test
+async def test_list_attachments_reuses_store_limit_validation() -> None:
     with pytest.raises(ArtifactValidationError, match="artifact limit is invalid"):
-        list_attachments(runtime(), limit=101)
+        await list_attachments(runtime(), limit=101)
 
 
-def test_load_attachment_handler_uses_artifact_handle_and_fixed_result() -> None:
+@async_test
+async def test_load_attachment_handler_uses_artifact_handle_and_fixed_result() -> None:
     target = runtime()
-    record = upload(target)
+    record = await upload(target)
 
-    assert load_attachment(target, handle=record.id) == (
+    assert await load_attachment(target, handle=record.id) == (
         f"附件已挂载：{record.id}。"
         "附件内容将在下一次模型请求中作为当前轮次的工具结果数据提供。"
     )
     with pytest.raises(ArtifactValidationError, match="artifact id is invalid"):
-        load_attachment(target, handle="att:legacy")
+        await load_attachment(target, handle="att:legacy")
 
 
 def test_artifact_tool_specs_freeze_list_and_load_schema() -> None:

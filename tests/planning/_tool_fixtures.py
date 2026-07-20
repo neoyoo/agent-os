@@ -24,7 +24,7 @@ class FakePlanStepDispatcher:
     def __init__(self) -> None:
         self.submit_calls: list[PlanStepSubmitCall] = []
 
-    def submit(
+    async def submit(
         self,
         *,
         plan: PlanState,
@@ -48,13 +48,13 @@ class StatusRuntimeSpy(PlannerRuntime):
         self.get_plan_calls: list[tuple[str, str | None]] = []
         self.list_plan_calls: list[str | None] = []
 
-    def get_plan(self, plan_id: str, *, owner_agent_id: str | None = None):
+    async def get_plan(self, plan_id: str, *, owner_agent_id: str | None = None):
         self.get_plan_calls.append((plan_id, owner_agent_id))
-        return super().get_plan(plan_id, owner_agent_id=owner_agent_id)
+        return await super().get_plan(plan_id, owner_agent_id=owner_agent_id)
 
-    def list_plans(self, owner_agent_id: str | None = None):
+    async def list_plans(self, owner_agent_id: str | None = None):
         self.list_plan_calls.append(owner_agent_id)
-        return super().list_plans(owner_agent_id)
+        return await super().list_plans(owner_agent_id)
 
 
 class ManualClock:

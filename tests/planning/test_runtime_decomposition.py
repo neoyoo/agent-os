@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 import pytest
 
@@ -14,7 +16,8 @@ from agentos.planning import (
 )
 
 
-def test_planner_runtime_creates_plan_from_structured_decomposition() -> None:
+@async_test
+async def test_planner_runtime_creates_plan_from_structured_decomposition() -> None:
     id_counts = {"plan": 0, "step": 0}
 
     def next_id(prefix: str) -> str:
@@ -57,7 +60,7 @@ def test_planner_runtime_creates_plan_from_structured_decomposition() -> None:
         ),
     )
 
-    plan = runtime.create_plan_from_decomposition(
+    plan = await runtime.create_plan_from_decomposition(
         decomposition,
         owner_agent_id="leader",
         plan_id="plan_from_decomposition",
@@ -75,7 +78,8 @@ def test_planner_runtime_creates_plan_from_structured_decomposition() -> None:
     ]
 
 
-def test_planner_runtime_rejects_invalid_decomposition() -> None:
+@async_test
+async def test_planner_runtime_rejects_invalid_decomposition() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         templates=(
@@ -90,7 +94,7 @@ def test_planner_runtime_rejects_invalid_decomposition() -> None:
     with pytest.raises(
         ValueError, match="decomposition must include at least one step"
     ):
-        runtime.create_plan_from_decomposition(
+        await runtime.create_plan_from_decomposition(
             PlanDecomposition(
                 objective="Empty plan.",
                 steps=(),
@@ -99,7 +103,8 @@ def test_planner_runtime_rejects_invalid_decomposition() -> None:
         )
 
 
-def test_planner_runtime_validates_decomposition_without_creating_plan() -> None:
+@async_test
+async def test_planner_runtime_validates_decomposition_without_creating_plan() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         templates=(
@@ -136,10 +141,11 @@ def test_planner_runtime_validates_decomposition_without_creating_plan() -> None
     assert report.required_templates == ("researcher",)
     assert report.unknown_templates == ()
     assert report.as_dict()["ok"] is True
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_runtime_validation_reports_decomposition_errors() -> None:
+@async_test
+async def test_planner_runtime_validation_reports_decomposition_errors() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         templates=(
@@ -174,10 +180,11 @@ def test_planner_runtime_validation_reports_decomposition_errors() -> None:
     assert report.required_templates == ("missing",)
     assert report.unknown_templates == ("missing",)
     assert any("unknown template" in error for error in report.errors)
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_runtime_validation_does_not_consume_generated_step_ids() -> None:
+@async_test
+async def test_planner_runtime_validation_does_not_consume_generated_step_ids() -> None:
     id_counts = {"plan": 0, "step": 0}
 
     def next_id(prefix: str) -> str:
@@ -197,7 +204,7 @@ def test_planner_runtime_validation_does_not_consume_generated_step_ids() -> Non
     )
 
     report = runtime.validate_decomposition(decomposition)
-    plan = runtime.create_plan_from_decomposition(
+    plan = await runtime.create_plan_from_decomposition(
         decomposition,
         owner_agent_id="leader",
     )
@@ -206,7 +213,8 @@ def test_planner_runtime_validation_does_not_consume_generated_step_ids() -> Non
     assert [step.step_id for step in plan.steps] == ["step_1", "step_2"]
 
 
-def test_planner_runtime_lists_ready_steps_after_dependencies_complete() -> None:
+@async_test
+async def test_planner_runtime_lists_ready_steps_after_dependencies_complete() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         clock=lambda: 10.0,
@@ -240,21 +248,22 @@ def test_planner_runtime_lists_ready_steps_after_dependencies_complete() -> None
             ),
         ),
     )
-    runtime.store.create_plan(plan)
+    await runtime.store.create_plan(plan)
 
-    ready = runtime.ready_steps("plan_1")
+    ready = await runtime.ready_steps("plan_1")
 
     assert [step.step_id for step in ready] == ["step_2"]
 
 
-def test_planner_runtime_rejects_cyclic_decomposition_dependencies() -> None:
+@async_test
+async def test_planner_runtime_rejects_cyclic_decomposition_dependencies() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         id_factory=lambda prefix: f"{prefix}_1",
     )
 
     with pytest.raises(ValueError, match="cycle"):
-        runtime.create_plan_from_decomposition(
+        await runtime.create_plan_from_decomposition(
             PlanDecomposition(
                 objective="Cyclic plan.",
                 steps=(
@@ -273,7 +282,7 @@ def test_planner_runtime_rejects_cyclic_decomposition_dependencies() -> None:
             owner_agent_id="leader",
         )
     with pytest.raises(KeyError):
-        runtime.create_plan_from_decomposition(
+        await runtime.create_plan_from_decomposition(
             PlanDecomposition(
                 objective="Unknown template.",
                 steps=(

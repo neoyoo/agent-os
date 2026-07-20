@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+import asyncio
 import json
-import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from pathlib import Path
-from threading import RLock
-from types import TracebackType
 from typing import Any, cast
 
+import aiosqlite
+
+from agentos._sqlite_async import (
+    finish_sqlite_operation,
+    open_sqlite_connection,
+    sqlite_transaction,
+)
 from agentos.planning.errors import PlanError, PlanNotFoundError
 from agentos.planning.models import PlanState
 from agentos.planning.serializers import plan_state_from_dict, plan_state_to_dict
@@ -27,136 +32,118 @@ _SELECT_COLUMNS = "plan_id, owner_agent_id, revision, schema_version, payload_js
 
 
 class SQLitePlanStore:
-    """使用 SQLite 持久化 PlanState 和 Store revision。"""
+    """使用原生异步 SQLite 持久化 PlanState 与 Store revision。"""
 
-    def __init__(self, database_path: str | Path) -> None:
-        """打开数据库、初始化独立 Plan 表并持有显式连接生命周期。"""
+    def __init__(self, connection: aiosqlite.Connection) -> None:
+        self._lock = asyncio.Lock()
+        self._connection: aiosqlite.Connection | None = connection
 
-        path = Path(database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = RLock()
-        self._connection: sqlite3.Connection | None = None
-        connection = sqlite3.connect(
-            path,
-            timeout=5.0,
-            check_same_thread=False,
-        )
+    @classmethod
+    async def open(cls, database_path: str | Path) -> SQLitePlanStore:
+        connection = await open_sqlite_connection(database_path)
         try:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA busy_timeout = 5000")
-            initialize_plan_schema(connection)
+            connection.row_factory = aiosqlite.Row
+            await connection.execute("PRAGMA foreign_keys = ON")
+            await connection.execute("PRAGMA journal_mode = WAL")
+            await connection.execute("PRAGMA busy_timeout = 30000")
+            await initialize_plan_schema(connection)
         except BaseException:
-            connection.close()
+            await finish_sqlite_operation(connection.close)
             raise
-        self._connection = connection
+        return cls(connection)
 
-    def __enter__(self) -> SQLitePlanStore:
-        with self._lock:
-            self._require_connection()
+    async def __aenter__(self) -> SQLitePlanStore:
+        self._require_connection()
         return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
+    async def __aexit__(self, *args: object) -> None:
+        await self.close()
 
-    def close(self) -> None:
-        """关闭连接；重复调用不会产生副作用。"""
+    async def close(self) -> None:
+        """幂等关闭连接；关闭失败时保留连接以供重试。"""
 
-        with self._lock:
+        async with self._lock:
             connection = self._connection
             if connection is None:
                 return
-            self._connection = None
-            connection.close()
+            await finish_sqlite_operation(
+                connection.close,
+                on_success=lambda: setattr(self, "_connection", None),
+            )
 
-    def create_plan(self, plan: PlanState) -> None:
-        """创建 revision 为零的 Plan，拒绝重复 plan_id。"""
+    async def create_plan(self, plan: PlanState) -> None:
+        """创建 revision 为零的 Plan，并拒绝重复 plan_id。"""
 
-        with self._lock:
-            connection = self._require_connection()
-            payload = _serialize_plan(plan)
-            try:
-                with connection:
-                    connection.execute(
-                        """
-                        INSERT INTO agentos_plans (
-                            plan_id,
-                            owner_agent_id,
-                            revision,
-                            schema_version,
-                            payload_json
-                        ) VALUES (?, ?, 0, ?, ?)
-                        """,
-                        (
-                            plan.plan_id,
-                            plan.owner_agent_id,
-                            SCHEMA_VERSION,
-                            payload,
-                        ),
-                    )
-            except sqlite3.IntegrityError as error:
-                raise ValueError(f"plan already exists: {plan.plan_id}") from error
+        payload = _serialize_plan(plan)
+        try:
+            async with self._transaction() as connection:
+                await connection.execute(
+                    """
+                    INSERT INTO agentos_plans (
+                        plan_id, owner_agent_id, revision,
+                        schema_version, payload_json
+                    ) VALUES (?, ?, 0, ?, ?)
+                    """,
+                    (
+                        plan.plan_id,
+                        plan.owner_agent_id,
+                        SCHEMA_VERSION,
+                        payload,
+                    ),
+                )
+        except aiosqlite.IntegrityError:
+            raise ValueError(f"plan already exists: {plan.plan_id}") from None
 
-    def save_plan(self, plan: PlanState) -> None:
+    async def save_plan(self, plan: PlanState) -> None:
         """覆盖已有 Plan 并原子增加 revision。"""
 
-        with self._lock:
-            connection = self._require_connection()
-            payload = _serialize_plan(plan)
-            with _immediate_transaction(connection):
-                current = _get_plan_record(connection, plan.plan_id)
-                if current is None:
-                    raise PlanNotFoundError(plan.plan_id)
-                cursor = connection.execute(
-                    """
-                    UPDATE agentos_plans
-                    SET owner_agent_id = ?,
-                        revision = revision + 1,
-                        payload_json = ?
-                    WHERE plan_id = ?
-                    """,
-                    (plan.owner_agent_id, payload, plan.plan_id),
-                )
+        payload = _serialize_plan(plan)
+        async with self._transaction() as connection:
+            current = await _get_plan_record(connection, plan.plan_id)
+            if current is None:
+                raise PlanNotFoundError(plan.plan_id)
+            cursor = await connection.execute(
+                """
+                UPDATE agentos_plans
+                SET owner_agent_id = ?, revision = revision + 1, payload_json = ?
+                WHERE plan_id = ?
+                """,
+                (plan.owner_agent_id, payload, plan.plan_id),
+            )
+            try:
                 if cursor.rowcount == 0:
                     raise PlanNotFoundError(plan.plan_id)
+            finally:
+                await cursor.close()
 
-    def get_plan(self, plan_id: str) -> PlanState | None:
-        """按 plan_id 读取 Plan，不存在时返回 None。"""
-
-        record = self.get_plan_record(plan_id)
+    async def get_plan(self, plan_id: str) -> PlanState | None:
+        record = await self.get_plan_record(plan_id)
         return None if record is None else record.plan
 
-    def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None:
-        """读取 Plan 及其 Store revision。"""
+    async def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None:
+        async with self._lock:
+            return await _get_plan_record(self._require_connection(), plan_id)
 
-        with self._lock:
-            connection = self._require_connection()
-            return _get_plan_record(connection, plan_id)
-
-    def list_plans(self, owner_agent_id: str | None = None) -> list[PlanState]:
-        """按创建顺序列出 Plan，可按 owner_agent_id 过滤。"""
-
-        with self._lock:
+    async def list_plans(
+        self,
+        owner_agent_id: str | None = None,
+    ) -> list[PlanState]:
+        async with self._lock:
             connection = self._require_connection()
             if owner_agent_id is None:
-                rows = connection.execute(
-                    f"SELECT {_SELECT_COLUMNS} FROM agentos_plans ORDER BY sequence",
-                ).fetchall()
+                query = f"SELECT {_SELECT_COLUMNS} FROM agentos_plans ORDER BY sequence"
+                parameters: tuple[object, ...] = ()
             else:
-                rows = connection.execute(
+                query = (
                     f"SELECT {_SELECT_COLUMNS} FROM agentos_plans "
-                    "WHERE owner_agent_id = ? ORDER BY sequence",
-                    (owner_agent_id,),
-                ).fetchall()
+                    "WHERE owner_agent_id = ? ORDER BY sequence"
+                )
+                parameters = (owner_agent_id,)
+            async with connection.execute(query, parameters) as cursor:
+                rows = await cursor.fetchall()
         return [_record_from_row(row).plan for row in rows]
 
-    def save_plan_if_unchanged(
+    async def save_plan_if_unchanged(
         self,
         plan: PlanState,
         *,
@@ -164,35 +151,41 @@ class SQLitePlanStore:
     ) -> bool:
         """仅当 revision 未变化时保存并增加 revision。"""
 
-        with self._lock:
-            connection = self._require_connection()
-            payload = _serialize_plan(plan)
-            with _immediate_transaction(connection):
-                current = _get_plan_record(connection, plan.plan_id)
-                if current is None:
-                    raise PlanNotFoundError(plan.plan_id)
-                if current.revision != expected_revision:
-                    return False
-                cursor = connection.execute(
-                    """
-                    UPDATE agentos_plans
-                    SET owner_agent_id = ?,
-                        revision = revision + 1,
-                        payload_json = ?
-                    WHERE plan_id = ? AND revision = ?
-                    """,
-                    (
-                        plan.owner_agent_id,
-                        payload,
-                        plan.plan_id,
-                        expected_revision,
-                    ),
-                )
+        payload = _serialize_plan(plan)
+        async with self._transaction() as connection:
+            current = await _get_plan_record(connection, plan.plan_id)
+            if current is None:
+                raise PlanNotFoundError(plan.plan_id)
+            if current.revision != expected_revision:
+                return False
+            cursor = await connection.execute(
+                """
+                UPDATE agentos_plans
+                SET owner_agent_id = ?, revision = revision + 1, payload_json = ?
+                WHERE plan_id = ? AND revision = ?
+                """,
+                (
+                    plan.owner_agent_id,
+                    payload,
+                    plan.plan_id,
+                    expected_revision,
+                ),
+            )
+            try:
                 if cursor.rowcount == 1:
                     return True
-                raise PlanError(f"failed to update plan revision: {plan.plan_id}")
+            finally:
+                await cursor.close()
+            raise PlanError(f"failed to update plan revision: {plan.plan_id}")
 
-    def _require_connection(self) -> sqlite3.Connection:
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        async with self._lock:
+            connection = self._require_connection()
+            async with sqlite_transaction(connection):
+                yield connection
+
+    def _require_connection(self) -> aiosqlite.Connection:
         connection = self._connection
         if connection is None:
             raise SQLitePlanStoreClosedError("SQLitePlanStore is closed")
@@ -211,32 +204,19 @@ def _serialize_plan(plan: PlanState) -> str:
     )
 
 
-def _get_plan_record(
-    connection: sqlite3.Connection,
+async def _get_plan_record(
+    connection: aiosqlite.Connection,
     plan_id: str,
 ) -> PlanStoreRecord | None:
-    row = connection.execute(
+    async with connection.execute(
         f"SELECT {_SELECT_COLUMNS} FROM agentos_plans WHERE plan_id = ?",
         (plan_id,),
-    ).fetchone()
+    ) as cursor:
+        row = await cursor.fetchone()
     return None if row is None else _record_from_row(row)
 
 
-@contextmanager
-def _immediate_transaction(connection: sqlite3.Connection) -> Iterator[None]:
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        yield
-        connection.commit()
-    except BaseException:
-        try:
-            connection.rollback()
-        except BaseException:
-            pass
-        raise
-
-
-def _record_from_row(row: sqlite3.Row) -> PlanStoreRecord:
+def _record_from_row(row: aiosqlite.Row) -> PlanStoreRecord:
     try:
         plan_id = row["plan_id"]
         owner_agent_id = row["owner_agent_id"]

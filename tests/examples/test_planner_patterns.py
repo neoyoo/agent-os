@@ -5,10 +5,12 @@ from agentos.examples.planner_patterns import (
     build_plan_and_execute_example,
     main,
 )
+from tests.planning._async import async_test
 
 
-def test_intent_router_example_returns_canonical_context_projection() -> None:
-    context_projection = build_intent_router_example(
+@async_test
+async def test_intent_router_example_returns_canonical_context_projection() -> None:
+    context_projection = await build_intent_router_example(
         query="Please review the planner runtime boundary.",
     )
 
@@ -29,8 +31,9 @@ def test_intent_router_example_returns_canonical_context_projection() -> None:
     assert "required_capabilities" not in context_projection
 
 
-def test_plan_and_execute_example_projects_store_truth_through_context_protocol() -> None:
-    context_projection = build_plan_and_execute_example()
+@async_test
+async def test_plan_and_execute_example_projects_store_truth_through_context_protocol() -> None:
+    context_projection = await build_plan_and_execute_example()
 
     assert '<active-plan status="in-progress">' in context_projection
     assert "<goal>Review planner pattern support.</goal>" in context_projection
@@ -50,8 +53,9 @@ def test_plan_and_execute_example_projects_store_truth_through_context_protocol(
     assert "task_spawn" not in context_projection
 
 
-def test_planner_patterns_example_has_main_entrypoint(capsys) -> None:
-    exit_code = main([])
+@async_test
+async def test_planner_patterns_example_has_main_entrypoint(capsys) -> None:
+    exit_code = await main([])
 
     output = capsys.readouterr().out
     assert exit_code == 0

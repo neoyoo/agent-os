@@ -1,6 +1,5 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from threading import Event, Thread
 
 import pytest
 
@@ -55,29 +54,34 @@ def _profile(tmp_path, builder: AgentBuilder, clock: _Clock) -> DurableRuntimePr
 def test_cancel_command_persists_across_profile_restart_without_provider_reentry(
     tmp_path,
 ) -> None:
-    provider = FakeProvider(
-        [ProviderResponse(tool_calls=(ProviderToolCall("call_1", "wait_here", {}),))]
-    )
-    builder = AgentBuilder().provider(provider).tools(
-        [_wait_tool(WaitReason("human_input", "approval_1"))]
-    )
-    clock = _Clock()
+    async def scenario():  # type: ignore[no-untyped-def]
+        provider = FakeProvider(
+            [ProviderResponse(tool_calls=(ProviderToolCall("call_1", "wait_here", {}),))]
+        )
+        builder = AgentBuilder().provider(provider).tools(
+            [_wait_tool(WaitReason("human_input", "approval_1"))]
+        )
+        clock = _Clock()
 
-    with _profile(tmp_path, builder, clock) as first:
-        agent = asyncio.run(first.build_agent("session_1"))
-        waiting = asyncio.run(agent.run("start"))
-        assert isinstance(waiting, AgentWaiting)
-        command = DurableRunCommand(waiting.run_id, "cancel_1", "cancel", {})
-        receipt = asyncio.run(agent.run(command))
-        assert isinstance(receipt, DurableCommandReceipt)
-        assert receipt.duplicate is False
+        async with _profile(tmp_path, builder, clock) as first:
+            agent = await first.build_agent("session_1")
+            waiting = await agent.run("start")
+            assert isinstance(waiting, AgentWaiting)
+            command = DurableRunCommand(waiting.run_id, "cancel_1", "cancel", {})
+            receipt = await agent.run(command)
+            assert isinstance(receipt, DurableCommandReceipt)
+            assert receipt.duplicate is False
 
-    with _profile(tmp_path, builder, clock) as restarted:
-        agent = asyncio.run(restarted.build_agent("session_1"))
-        assert asyncio.run(
-            agent.query_loop.run_runtime.get_run(waiting.run_id),
-        ).status is RunStatus.CANCELLED
-        duplicate = asyncio.run(agent.run(command))
+        async with _profile(tmp_path, builder, clock) as restarted:
+            agent = await restarted.build_agent("session_1")
+            assert (
+                await agent.query_loop.run_runtime.get_run(waiting.run_id)
+            ).status is RunStatus.CANCELLED
+            duplicate = await agent.run(command)
+
+        return provider, duplicate
+
+    provider, duplicate = asyncio.run(scenario())
 
     assert isinstance(duplicate, DurableCommandReceipt)
     assert duplicate.duplicate is True
@@ -93,48 +97,53 @@ def test_scheduled_command_is_rejected_until_due_then_continues_same_run(
     wait_kind: str,
     command_kind: str,
 ) -> None:
-    due = NOW + timedelta(minutes=5)
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=(ProviderToolCall("call_1", "wait_here", {}),)
-            ),
-            "timer resumed",
-        ]
-    )
-    builder = AgentBuilder().provider(provider).tools(
-        [
-            _wait_tool(
-                WaitReason(
-                    wait_kind,  # type: ignore[arg-type]
-                    "scheduled_1",
-                    not_before=due,
-                )
-            )
-        ]
-    )
-    clock = _Clock()
-
-    with _profile(tmp_path, builder, clock) as profile:
-        agent = asyncio.run(profile.build_agent("session_1"))
-        waiting = asyncio.run(agent.run("start"))
-        assert isinstance(waiting, AgentWaiting)
-        command = DurableRunCommand(
-            waiting.run_id,
-            "scheduled_command_1",
-            command_kind,  # type: ignore[arg-type]
-            {},
+    async def scenario():  # type: ignore[no-untyped-def]
+        due = NOW + timedelta(minutes=5)
+        provider = FakeProvider(
+            [
+                ProviderResponse(
+                    tool_calls=(ProviderToolCall("call_1", "wait_here", {}),)
+                ),
+                "timer resumed",
+            ]
         )
+        builder = AgentBuilder().provider(provider).tools(
+            [
+                _wait_tool(
+                    WaitReason(
+                        wait_kind,  # type: ignore[arg-type]
+                        "scheduled_1",
+                        not_before=due,
+                    )
+                )
+            ]
+        )
+        clock = _Clock()
 
-        with pytest.raises(CommandNotDueError, match="not due"):
-            asyncio.run(agent.run(command))
-        assert asyncio.run(
-            agent.query_loop.run_runtime.get_run(waiting.run_id),
-        ).status is RunStatus.WAITING
+        async with _profile(tmp_path, builder, clock) as profile:
+            agent = await profile.build_agent("session_1")
+            waiting = await agent.run("start")
+            assert isinstance(waiting, AgentWaiting)
+            command = DurableRunCommand(
+                waiting.run_id,
+                "scheduled_command_1",
+                command_kind,  # type: ignore[arg-type]
+                {},
+            )
 
-        clock.now = due
-        result = asyncio.run(agent.run(command))
-        assert agent.query_loop.session_state.next_turn_number() == 3
+            with pytest.raises(CommandNotDueError, match="not due"):
+                await agent.run(command)
+            assert (
+                await agent.query_loop.run_runtime.get_run(waiting.run_id)
+            ).status is RunStatus.WAITING
+
+            clock.now = due
+            result = await agent.run(command)
+            assert agent.query_loop.session_state.next_turn_number() == 3
+
+        return provider, result
+
+    provider, result = asyncio.run(scenario())
 
     assert result.content == "timer resumed"
     assert len(provider.requests) == 2
@@ -144,53 +153,44 @@ def test_command_accept_reservation_blocks_profile_close(
     tmp_path,
     monkeypatch,
 ) -> None:
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=(ProviderToolCall("call_1", "wait_here", {}),)
-            ),
-            "resumed",
-        ]
-    )
-    builder = AgentBuilder().provider(provider).tools(
-        [_wait_tool(WaitReason("human_input", "approval_1"))]
-    )
-    profile = _profile(tmp_path, builder, _Clock())
-    agent = asyncio.run(profile.build_agent("session_1"))
-    waiting = asyncio.run(agent.run("start"))
-    assert isinstance(waiting, AgentWaiting)
-    command = DurableRunCommand(waiting.run_id, "resume_1", "resume", {})
-    accept_entered = Event()
-    allow_accept = Event()
-    original_accept = profile._store.accept_command
-    outcomes: list[object] = []
-    errors: list[BaseException] = []
+    async def scenario() -> None:
+        provider = FakeProvider(
+            [
+                ProviderResponse(
+                    tool_calls=(ProviderToolCall("call_1", "wait_here", {}),)
+                ),
+                "resumed",
+            ]
+        )
+        builder = AgentBuilder().provider(provider).tools(
+            [_wait_tool(WaitReason("human_input", "approval_1"))]
+        )
+        profile = _profile(tmp_path, builder, _Clock())
+        await profile.open()
+        agent = await profile.build_agent("session_1")
+        waiting = await agent.run("start")
+        assert isinstance(waiting, AgentWaiting)
+        command = DurableRunCommand(waiting.run_id, "resume_1", "resume", {})
+        accept_entered = asyncio.Event()
+        allow_accept = asyncio.Event()
+        original_accept = profile._store.accept_command
 
-    async def blocked_accept(**kwargs):  # type: ignore[no-untyped-def]
-        accept_entered.set()
-        if not allow_accept.wait(5):
-            raise TimeoutError("test did not release command accept")
-        return await original_accept(**kwargs)
+        async def blocked_accept(**kwargs):  # type: ignore[no-untyped-def]
+            accept_entered.set()
+            await allow_accept.wait()
+            return await original_accept(**kwargs)
 
-    monkeypatch.setattr(profile._store, "accept_command", blocked_accept)
-
-    def execute() -> None:
+        monkeypatch.setattr(profile._store, "accept_command", blocked_accept)
+        accepting = asyncio.create_task(agent.run(command))
+        await asyncio.wait_for(accept_entered.wait(), timeout=5)
         try:
-            outcomes.append(asyncio.run(agent.run(command)))
-        except BaseException as error:
-            errors.append(error)
+            with pytest.raises(AgentBusyError, match="active execution"):
+                await profile.close()
+        finally:
+            allow_accept.set()
 
-    thread = Thread(target=execute)
-    thread.start()
-    assert accept_entered.wait(5)
-    try:
-        with pytest.raises(AgentBusyError, match="active execution"):
-            profile.close()
-    finally:
-        allow_accept.set()
-        thread.join(5)
+        outcome = await accepting
+        assert outcome.content == "resumed"
+        await profile.close()
 
-    assert not thread.is_alive()
-    assert errors == []
-    assert [outcome.content for outcome in outcomes] == ["resumed"]
-    profile.close()
+    asyncio.run(scenario())

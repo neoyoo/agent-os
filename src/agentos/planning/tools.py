@@ -127,11 +127,11 @@ class PlannerTools:
                 ),
             )
 
-    def _plan_create(self, arguments: dict[str, object]) -> str:
+    async def _plan_create(self, arguments: dict[str, object]) -> str:
         self._authorize("plan_create", None)
         return json_result(
             plan_to_dict(
-                self.runtime.create_plan(
+                await self.runtime.create_plan(
                     objective=str(arguments["objective"]),
                     owner_agent_id=self.owner_agent_id,
                     plan_id=_optional_str(arguments.get("plan_id")),
@@ -139,12 +139,12 @@ class PlannerTools:
             ),
         )
 
-    def _plan_create_from_decomposition(
+    async def _plan_create_from_decomposition(
         self,
         arguments: dict[str, object],
     ) -> str:
         self._authorize("plan_create_from_decomposition", None)
-        plan = self.runtime.create_plan_from_decomposition(
+        plan = await self.runtime.create_plan_from_decomposition(
             PlanDecomposition(
                 objective=str(arguments["objective"]),
                 steps=_plan_step_specs(arguments["steps"]),
@@ -166,10 +166,10 @@ class PlannerTools:
         )
         return json_result(report.as_dict())
 
-    def _plan_add_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_add_step(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_add_step", plan_id)
-        updated = self.runtime.add_step(
+        await self._authorize_owned("plan_add_step", plan_id)
+        updated = await self.runtime.add_step(
             plan_id,
             instruction=str(arguments["instruction"]),
             required_capabilities=_string_tuple(
@@ -179,56 +179,56 @@ class PlannerTools:
         )
         return json_result(plan_to_dict(updated))
 
-    def _plan_status(self, arguments: dict[str, object]) -> str:
+    async def _plan_status(self, arguments: dict[str, object]) -> str:
         if arguments.get("plan_id") is not None:
             plan_id = str(arguments["plan_id"])
             self._authorize("plan_status", plan_id)
-            return json_result(plan_to_dict(self._require_owned_plan(plan_id)))
+            return json_result(plan_to_dict(await self._require_owned_plan(plan_id)))
         self._authorize("plan_status", None)
         return json_result(
             {
                 "plans": [
                     plan_to_dict(plan)
-                    for plan in self.runtime.list_plans(self.owner_agent_id)
+                    for plan in await self.runtime.list_plans(self.owner_agent_id)
                 ],
             },
         )
 
-    def _plan_assign_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_assign_step(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_assign_step", plan_id)
-        updated = self.runtime.assign_step(
+        await self._authorize_owned("plan_assign_step", plan_id)
+        updated = await self.runtime.assign_step(
             plan_id,
             str(arguments["step_id"]),
             template_id=str(arguments["template_id"]),
         )
         return json_result(plan_to_dict(updated))
 
-    def _plan_ready_steps(self, arguments: dict[str, object]) -> str:
+    async def _plan_ready_steps(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_ready_steps", plan_id)
+        await self._authorize_owned("plan_ready_steps", plan_id)
         return json_result(
             {
                 "plan_id": plan_id,
                 "ready_steps": [
-                    step_to_dict(step) for step in self.runtime.ready_steps(plan_id)
+                    step_to_dict(step) for step in await self.runtime.ready_steps(plan_id)
                 ],
             },
         )
 
-    def _plan_dispatch_ready_steps(self, arguments: dict[str, object]) -> str:
+    async def _plan_dispatch_ready_steps(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_dispatch_ready_steps", plan_id)
-        report = self.runtime.dispatch_ready_steps(
+        await self._authorize_owned("plan_dispatch_ready_steps", plan_id)
+        report = await self.runtime.dispatch_ready_steps(
             plan_id,
             default_template_id=_optional_str(arguments.get("default_template_id")),
             limit=_optional_int(arguments.get("limit")),
         )
         return json_result(dispatch_report_to_dict(report))
 
-    def _plan_schedulable_plans(self, arguments: dict[str, object]) -> str:
+    async def _plan_schedulable_plans(self, arguments: dict[str, object]) -> str:
         self._authorize("plan_schedulable_plans", None)
-        summaries = self.runtime.schedulable_plans(
+        summaries = await self.runtime.schedulable_plans(
             owner_agent_id=self.owner_agent_id,
             statuses=_plan_status_tuple(
                 arguments.get("statuses", ("draft", "running")),
@@ -237,12 +237,12 @@ class PlannerTools:
         )
         return json_result({"plans": [item.as_dict() for item in summaries]})
 
-    def _plan_claim_schedulable_plans(
+    async def _plan_claim_schedulable_plans(
         self,
         arguments: dict[str, object],
     ) -> str:
         self._authorize("plan_claim_schedulable_plans", None)
-        claims = self.runtime.claim_schedulable_plans(
+        claims = await self.runtime.claim_schedulable_plans(
             owner_agent_id=self.owner_agent_id,
             worker_id=str(arguments["worker_id"]),
             lease_seconds=float(arguments["lease_seconds"]),
@@ -253,12 +253,12 @@ class PlannerTools:
         )
         return json_result({"claims": [claim.as_dict() for claim in claims]})
 
-    def _plan_claimed_scheduler_tick(
+    async def _plan_claimed_scheduler_tick(
         self,
         arguments: dict[str, object],
     ) -> str:
         self._authorize("plan_claimed_scheduler_tick", None)
-        report = self.runtime.claimed_scheduler_tick(
+        report = await self.runtime.claimed_scheduler_tick(
             owner_agent_id=self.owner_agent_id,
             worker_id=str(arguments["worker_id"]),
             lease_seconds=float(arguments["lease_seconds"]),
@@ -273,10 +273,10 @@ class PlannerTools:
         )
         return json_result(claimed_scheduler_tick_report_to_dict(report))
 
-    def _plan_scheduler_tick(self, arguments: dict[str, object]) -> str:
+    async def _plan_scheduler_tick(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_scheduler_tick", plan_id)
-        report = self.runtime.scheduler_tick(
+        await self._authorize_owned("plan_scheduler_tick", plan_id)
+        report = await self.runtime.scheduler_tick(
             plan_id,
             default_template_id=_optional_str(arguments.get("default_template_id")),
             retry_limit=_optional_int(arguments.get("retry_limit")),
@@ -284,39 +284,39 @@ class PlannerTools:
         )
         return json_result(scheduler_tick_report_to_dict(report))
 
-    def _plan_fail_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_fail_step(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_fail_step", plan_id)
-        updated = self.runtime.fail_step(
+        await self._authorize_owned("plan_fail_step", plan_id)
+        updated = await self.runtime.fail_step(
             plan_id,
             str(arguments["step_id"]),
             error=str(arguments["error"]),
         )
         return json_result(plan_to_dict(updated))
 
-    def _plan_retryable_steps(self, arguments: dict[str, object]) -> str:
+    async def _plan_retryable_steps(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_retryable_steps", plan_id)
+        await self._authorize_owned("plan_retryable_steps", plan_id)
         return json_result(
             {
                 "plan_id": plan_id,
                 "retryable_steps": [
                     step_to_dict(step)
-                    for step in self.runtime.retryable_steps(plan_id)
+                    for step in await self.runtime.retryable_steps(plan_id)
                 ],
             },
         )
 
-    def _plan_retry_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_retry_step(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_retry_step", plan_id)
-        updated = self.runtime.retry_step(plan_id, str(arguments["step_id"]))
+        await self._authorize_owned("plan_retry_step", plan_id)
+        updated = await self.runtime.retry_step(plan_id, str(arguments["step_id"]))
         return json_result(plan_to_dict(updated))
 
-    def _plan_record_evidence(self, arguments: dict[str, object]) -> str:
+    async def _plan_record_evidence(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_record_evidence", plan_id)
-        evidence = self.runtime.record_evidence(
+        await self._authorize_owned("plan_record_evidence", plan_id)
+        evidence = await self.runtime.record_evidence(
             plan_id,
             step_ids=_string_tuple(arguments.get("step_ids", ())),
             kind=_evidence_kind(arguments["kind"]),
@@ -327,10 +327,10 @@ class PlannerTools:
         )
         return json_result(evidence_to_dict(evidence))
 
-    def _plan_complete_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_complete_step(self, arguments: dict[str, object]) -> str:
         plan_id = str(arguments["plan_id"])
-        self._authorize_owned("plan_complete_step", plan_id)
-        updated = self.runtime.complete_step(
+        await self._authorize_owned("plan_complete_step", plan_id)
+        updated = await self.runtime.complete_step(
             plan_id,
             str(arguments["step_id"]),
             evidence_ids=_string_tuple(arguments.get("evidence_ids", ())),
@@ -344,12 +344,15 @@ class PlannerTools:
             plan_id=plan_id,
         )
 
-    def _authorize_owned(self, tool_name: str, plan_id: str) -> None:
+    async def _authorize_owned(self, tool_name: str, plan_id: str) -> None:
         self._authorize(tool_name, plan_id)
-        self._require_owned_plan(plan_id)
+        await self._require_owned_plan(plan_id)
 
-    def _require_owned_plan(self, plan_id: str) -> PlanState:
-        return self.runtime.get_plan(plan_id, owner_agent_id=self.owner_agent_id)
+    async def _require_owned_plan(self, plan_id: str) -> PlanState:
+        return await self.runtime.get_plan(
+            plan_id,
+            owner_agent_id=self.owner_agent_id,
+        )
 
 
 def _optional_str(value: object) -> str | None:

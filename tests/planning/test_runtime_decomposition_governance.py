@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 import pytest
 
@@ -12,7 +14,8 @@ from agentos.planning import (
 )
 
 
-def test_planner_runtime_gates_valid_raw_decomposition_proposal() -> None:
+@async_test
+async def test_planner_runtime_gates_valid_raw_decomposition_proposal() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         templates=(
@@ -84,10 +87,13 @@ def test_planner_runtime_gates_valid_raw_decomposition_proposal() -> None:
             },
         ],
     }
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_runtime_gate_rejects_malformed_raw_proposal_without_mutation() -> None:
+@async_test
+async def test_planner_runtime_gate_rejects_malformed_raw_proposal_without_mutation() -> (
+    None
+):
     runtime = PlannerRuntime(store=InMemoryPlanStore())
 
     report = runtime.gate_decomposition_proposal(
@@ -108,10 +114,11 @@ def test_planner_runtime_gate_rejects_malformed_raw_proposal_without_mutation() 
     assert report.step_count == 0
     assert report.errors == ("step 2 must be an object",)
     assert report.as_dict()["accepted"] is False
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_runtime_gate_applies_template_policy_and_limits() -> None:
+@async_test
+async def test_planner_runtime_gate_applies_template_policy_and_limits() -> None:
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         templates=(
@@ -164,10 +171,11 @@ def test_planner_runtime_gate_applies_template_policy_and_limits() -> None:
     assert "template not allowed: reviewer" in report.errors
     assert report.validation is not None
     assert report.validation.ok is True
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_runtime_gate_blocks_until_required_approval_is_present() -> None:
+@async_test
+async def test_planner_runtime_gate_blocks_until_required_approval_is_present() -> None:
     runtime = PlannerRuntime(store=InMemoryPlanStore())
     proposal = {
         "objective": "Review AgentOS planner architecture.",
@@ -197,10 +205,11 @@ def test_planner_runtime_gate_blocks_until_required_approval_is_present() -> Non
     assert approved.accepted is True
     assert approved.requires_approval is False
     assert approved.errors == ()
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_llm_governance_evidence_gate_accepts_complete_external_evidence() -> (
+@async_test
+async def test_planner_llm_governance_evidence_gate_accepts_complete_external_evidence() -> (
     None
 ):
 
@@ -249,10 +258,11 @@ def test_planner_llm_governance_evidence_gate_accepts_complete_external_evidence
         "release": "planner-decomposition-v4",
         "tenant": "internal-platform",
     }
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_llm_governance_evidence_gate_blocks_missing_approval_evidence() -> (
+@async_test
+async def test_planner_llm_governance_evidence_gate_blocks_missing_approval_evidence() -> (
     None
 ):
 
@@ -276,10 +286,11 @@ def test_planner_llm_governance_evidence_gate_blocks_missing_approval_evidence()
     assert report.failed_evidence == ()
     assert report.errors == ("approval evidence is required",)
     assert report.as_dict()["block_plan_creation"] is True
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_llm_governance_evidence_gate_blocks_failed_evaluation() -> None:
+@async_test
+async def test_planner_llm_governance_evidence_gate_blocks_failed_evaluation() -> None:
 
     runtime = PlannerRuntime(store=InMemoryPlanStore())
     record = PlannerLlmGovernanceEvidenceRecord(
@@ -302,10 +313,11 @@ def test_planner_llm_governance_evidence_gate_blocks_failed_evaluation() -> None
     assert report.missing_evidence == ()
     assert report.failed_evidence == ("evaluation_evidence",)
     assert report.errors == ("evaluation evidence did not pass",)
-    assert runtime.list_plans() == []
+    assert await runtime.list_plans() == []
 
 
-def test_planner_llm_governance_evidence_record_rejects_invalid_refs_and_metadata() -> (
+@async_test
+async def test_planner_llm_governance_evidence_record_rejects_invalid_refs_and_metadata() -> (
     None
 ):
 
@@ -339,7 +351,10 @@ def test_planner_llm_governance_evidence_record_rejects_invalid_refs_and_metadat
         )
 
 
-def test_planner_llm_governance_evidence_payload_omits_raw_prompt_and_secrets() -> None:
+@async_test
+async def test_planner_llm_governance_evidence_payload_omits_raw_prompt_and_secrets() -> (
+    None
+):
 
     with pytest.raises(ValueError, match="metadata"):
         PlannerLlmGovernanceEvidenceRecord(

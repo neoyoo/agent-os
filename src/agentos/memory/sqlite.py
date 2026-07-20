@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from json import JSONDecodeError
 from pathlib import Path
-from threading import RLock
-from types import TracebackType
 from typing import cast
 
+import aiosqlite
+
+from agentos._sqlite_async import (
+    finish_sqlite_operation,
+    open_sqlite_connection,
+    sqlite_transaction,
+)
 from agentos.memory.records import (
     MemoryCandidate,
     MemoryCategory,
@@ -25,45 +32,43 @@ from agentos.memory.sqlite_schema import initialize_memory_schema
 
 
 class SQLiteMemoryStore:
-    """使用 SQLite 持久化 Session 范围的 Episodic/Semantic Memory。"""
+    """使用原生异步 SQLite 持久化 Session 范围 Memory。"""
 
-    def __init__(self, database_path: Path) -> None:
-        self._lock = RLock()
-        self._closed = False
-        path = Path(database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(path, check_same_thread=False)
+    def __init__(self, connection: aiosqlite.Connection) -> None:
+        self._lock = asyncio.Lock()
+        self._connection: aiosqlite.Connection | None = connection
+
+    @classmethod
+    async def open(cls, database_path: str | Path) -> SQLiteMemoryStore:
+        connection = await open_sqlite_connection(database_path)
         try:
-            connection.execute("PRAGMA busy_timeout = 5000")
-            initialize_memory_schema(connection)
+            await connection.execute("PRAGMA busy_timeout = 30000")
+            await initialize_memory_schema(connection)
         except BaseException:
-            connection.close()
+            await finish_sqlite_operation(connection.close)
             raise
-        self._connection = connection
+        return cls(connection)
 
-    def __enter__(self) -> SQLiteMemoryStore:
-        with self._lock:
-            self._require_open()
+    async def __aenter__(self) -> SQLiteMemoryStore:
+        self._require_open()
         return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
+    async def __aexit__(self, *args: object) -> None:
+        await self.close()
 
-    def close(self) -> None:
-        """幂等关闭 SQLite 连接；关闭后不允许继续访问。"""
+    async def close(self) -> None:
+        """幂等关闭连接；关闭失败时保留连接以供重试。"""
 
-        with self._lock:
-            if self._closed:
+        async with self._lock:
+            connection = self._connection
+            if connection is None:
                 return
-            self._connection.close()
-            self._closed = True
+            await finish_sqlite_operation(
+                connection.close,
+                on_success=lambda: setattr(self, "_connection", None),
+            )
 
-    def put(self, record: MemoryRecord) -> None:
+    async def put(self, record: MemoryRecord) -> None:
         """在所属 Session 内新增或更新一条 MemoryRecord。"""
 
         if not isinstance(record, MemoryRecord):
@@ -77,101 +82,84 @@ class SQLiteMemoryStore:
             None if record.expires_at is None else record.expires_at.isoformat()
         )
 
-        with self._lock:
-            connection = self._require_open()
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                existing = connection.execute(
-                    """
-                    SELECT session_id
-                    FROM agentos_memory_records
-                    WHERE handle = ?
-                    """,
-                    (record.handle,),
-                ).fetchone()
-                if existing is not None:
-                    existing_session_id = existing[0]
-                    if not isinstance(existing_session_id, str):
-                        raise SQLiteMemoryStoreCorruptedError(
-                            "stored memory record is corrupted"
-                        )
-                    if existing_session_id != record.session_id:
-                        raise ValueError(
-                            "memory handle already belongs to another session",
-                        )
-                connection.execute(
-                    """
-                    INSERT INTO agentos_memory_records (
-                        handle,
-                        session_id,
-                        kind,
-                        category,
-                        content,
-                        artifact_handles_json,
-                        expires_at
+        async with self._transaction() as connection:
+            async with connection.execute(
+                "SELECT session_id FROM agentos_memory_records WHERE handle = ?",
+                (record.handle,),
+            ) as cursor:
+                existing = await cursor.fetchone()
+            if existing is not None:
+                existing_session_id = existing[0]
+                if not isinstance(existing_session_id, str):
+                    raise SQLiteMemoryStoreCorruptedError(
+                        "stored memory record is corrupted"
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(handle) DO UPDATE SET
-                        session_id = excluded.session_id,
-                        kind = excluded.kind,
-                        category = excluded.category,
-                        content = excluded.content,
-                        artifact_handles_json = excluded.artifact_handles_json,
-                        expires_at = excluded.expires_at
-                    """,
-                    (
-                        record.handle,
-                        record.session_id,
-                        record.kind,
-                        record.category,
-                        record.content,
-                        artifact_handles,
-                        expires_at,
-                    ),
-                )
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
+                if existing_session_id != record.session_id:
+                    raise ValueError(
+                        "memory handle already belongs to another session",
+                    )
+            await connection.execute(
+                """
+                INSERT INTO agentos_memory_records (
+                    handle, session_id, kind, category, content,
+                    artifact_handles_json, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(handle) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    kind = excluded.kind,
+                    category = excluded.category,
+                    content = excluded.content,
+                    artifact_handles_json = excluded.artifact_handles_json,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    record.handle,
+                    record.session_id,
+                    record.kind,
+                    record.category,
+                    record.content,
+                    artifact_handles,
+                    expires_at,
+                ),
+            )
 
-    def get(self, handle: str) -> MemoryRecord:
+    async def get(self, handle: str) -> MemoryRecord:
         """按稳定 handle 读取 MemoryRecord；不存在时抛出 KeyError。"""
 
         if not isinstance(handle, str) or not handle.strip():
             raise ValueError("handle must be a non-empty string")
-        with self._lock:
-            connection = self._require_open()
-            row = connection.execute(
+        async with self._lock:
+            async with self._require_open().execute(
                 f"SELECT {_MEMORY_COLUMNS} "
                 "FROM agentos_memory_records WHERE handle = ?",
                 (handle,),
-            ).fetchone()
+            ) as cursor:
+                row = await cursor.fetchone()
         if row is None:
             raise KeyError(handle)
         return _record_from_row(row)
 
-    def search(
+    async def search(
         self,
         context: MemorySelectionContext,
         candidate_limit: int,
     ) -> tuple[MemoryCandidate, ...]:
-        """在查询 Session 内按确定性词法相关度返回有界候选。"""
+        """在请求 Session 内按确定性词法相关度返回有界候选。"""
 
         if not isinstance(context, MemorySelectionContext):
             raise TypeError("context must be a MemorySelectionContext")
         if type(candidate_limit) is not int or candidate_limit < 0:
             raise ValueError("candidate_limit must be a non-negative integer")
+        if candidate_limit == 0:
+            return ()
 
-        with self._lock:
-            connection = self._require_open()
-            if candidate_limit == 0:
-                return ()
-            rows = connection.execute(
-                f"SELECT {_MEMORY_COLUMNS} "
-                "FROM agentos_memory_records "
+        async with self._lock:
+            async with self._require_open().execute(
+                f"SELECT {_MEMORY_COLUMNS} FROM agentos_memory_records "
                 "WHERE session_id = ? ORDER BY handle",
                 (context.session_id,),
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
 
         query_tokens = _tokens(context.query)
         candidates: list[MemoryCandidate] = []
@@ -186,10 +174,18 @@ class SQLiteMemoryStore:
         candidates.sort(key=lambda item: (-item.score, item.record.handle))
         return tuple(candidates[:candidate_limit])
 
-    def _require_open(self) -> sqlite3.Connection:
-        if self._closed:
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        async with self._lock:
+            connection = self._require_open()
+            async with sqlite_transaction(connection):
+                yield connection
+
+    def _require_open(self) -> aiosqlite.Connection:
+        connection = self._connection
+        if connection is None:
             raise SQLiteMemoryStoreClosedError("SQLiteMemoryStore is closed")
-        return self._connection
+        return connection
 
 
 _MEMORY_COLUMNS = (
@@ -198,7 +194,7 @@ _MEMORY_COLUMNS = (
 )
 
 
-def _record_from_row(row: tuple[object, ...]) -> MemoryRecord:
+def _record_from_row(row: aiosqlite.Row | tuple[object, ...]) -> MemoryRecord:
     try:
         handle, session_id, kind, category, content, handles_json, expiry = row
         text_values = (handle, session_id, kind, category, content, handles_json)

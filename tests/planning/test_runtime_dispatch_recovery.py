@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 from agentos.planning import (
     InMemoryPlanStore,
@@ -15,9 +17,10 @@ from tests.planning._runtime_fixtures import (
 )
 
 
-def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
+@async_test
+async def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
     store = InMemoryPlanStore()
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Recover a saved but unsubmitted planner assignment.",
@@ -63,9 +66,9 @@ def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
         clock=lambda: 20.0,
     )
 
-    report = runtime.recover_pending_dispatches("plan_1")
+    report = await runtime.recover_pending_dispatches("plan_1")
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
     assert report.skipped == ()
     assert coordinator.dispatch_calls == [
@@ -85,14 +88,15 @@ def test_planner_runtime_recovers_pending_assignment_after_restart() -> None:
     assert persisted.assignments[0].dispatch_error is None
 
 
-def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
+@async_test
+async def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
     class DuplicateTaskCoordinator(FakeCoordinator):
         def dispatch(self, **kwargs: object) -> None:
             self.dispatch_calls.append(kwargs)
             raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
 
     store = InMemoryPlanStore()
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Recover a task that the coordinator already accepted.",
@@ -136,9 +140,9 @@ def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
         clock=lambda: 20.0,
     )
 
-    report = runtime.recover_pending_dispatches("plan_1")
+    report = await runtime.recover_pending_dispatches("plan_1")
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
     assert report.skipped == ()
     assert coordinator.dispatch_calls[0]["task_id"] == "task_existing"
@@ -148,14 +152,17 @@ def test_planner_runtime_treats_duplicate_task_recovery_as_submitted() -> None:
     assert persisted.assignments[0].dispatch_error is None
 
 
-def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> None:
+@async_test
+async def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> (
+    None
+):
     class DuplicateSpawnCoordinator(FakeCoordinator):
         def spawn(self, **kwargs: object) -> None:
             self.spawn_calls.append(kwargs)
             raise PlanDispatchAlreadySubmittedError(str(kwargs["task_id"]))
 
     store = InMemoryPlanStore()
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Recover a spawned task accepted before restart.",
@@ -198,9 +205,9 @@ def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> 
         clock=lambda: 20.0,
     )
 
-    report = runtime.recover_pending_dispatches("plan_1")
+    report = await runtime.recover_pending_dispatches("plan_1")
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
     assert report.skipped == ()
     assert coordinator.spawn_calls[0]["task_id"] == "task_existing"
@@ -211,9 +218,12 @@ def test_planner_runtime_treats_spawn_duplicate_task_recovery_as_submitted() -> 
     assert persisted.assignments[0].dispatch_error is None
 
 
-def test_planner_runtime_dispatch_ready_steps_recovers_before_new_assignments() -> None:
+@async_test
+async def test_planner_runtime_dispatch_ready_steps_recovers_before_new_assignments() -> (
+    None
+):
     store = InMemoryPlanStore()
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Recover existing assignment before creating more work.",
@@ -264,9 +274,9 @@ def test_planner_runtime_dispatch_ready_steps_recovers_before_new_assignments() 
         id_factory=lambda prefix: f"{prefix}_new",
     )
 
-    report = runtime.dispatch_ready_steps("plan_1")
+    report = await runtime.dispatch_ready_steps("plan_1")
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [assignment.step_id for assignment in report.assigned] == [
         "step_1",
         "step_2",

@@ -6,7 +6,6 @@ import pytest
 
 from agentos.planning import PlanClaimRecord
 from agentos.multi.postgres_plan import PostgresPlanClaimStore
-from agentos.testing.contracts.plan_claim_store import run_plan_claim_store_contract
 
 
 class FakeCursor:
@@ -155,15 +154,6 @@ class FakePool:
 
     def putconn(self, connection: FakeConnection) -> None:
         self.puts.append(connection)
-
-
-def test_postgres_plan_claim_store_satisfies_reusable_plan_claim_store_contract() -> None:
-    run_plan_claim_store_contract(
-        lambda: PostgresPlanClaimStore(
-            dsn="postgresql://unused",
-            connection=FakeConnection(),
-        ),
-    )
 
 
 def test_postgres_plan_claim_store_claims_and_reports_busy_claims() -> None:

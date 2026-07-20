@@ -61,7 +61,7 @@ class SkillRuntime:
         """加载 Skill；只有 verified trusted Skill 才激活。"""
 
         key = self._activation_key(session_id, skill_name)
-        self._deactivate(key)
+        await self._deactivate(key)
         loaded = await self._registry.load(skill_name)
         if loaded.metadata.trust == "untrusted":
             resources = await self._registry.list_resources(skill_name)
@@ -71,7 +71,7 @@ class SkillRuntime:
             raise SkillTrustError("skill source revision changed during load")
         active = _ActiveSkill(loaded=loaded, decision=decision)
         if self._activation_store is not None:
-            self._activation_store.save(
+            await self._activation_store.save(
                 SkillActivationRecord(session_id, loaded.subject, decision.policy_id),
             )
         self._active[key] = active
@@ -87,7 +87,7 @@ class SkillRuntime:
             if key[0] == session_id:
                 del self._active[key]
         restored = []
-        for record in self._activation_store.list(session_id):
+        for record in await self._activation_store.list(session_id):
             try:
                 loaded = await self._registry.load(record.skill_name)
                 decision = self._verify(loaded.metadata, loaded)
@@ -100,7 +100,7 @@ class SkillRuntime:
             except (KeyError, SkillTrustError, ValueError):
                 valid = False
             if not valid:
-                self._activation_store.delete(session_id, record.skill_name)
+                await self._activation_store.delete(session_id, record.skill_name)
                 continue
             self._active[(session_id, record.skill_name)] = _ActiveSkill(
                 loaded=loaded,
@@ -109,11 +109,11 @@ class SkillRuntime:
             restored.append(record.skill_name)
         return tuple(restored)
 
-    def disable(self, session_id: str, skill_name: str) -> bool:
+    async def disable(self, session_id: str, skill_name: str) -> bool:
         """停用当前 Session 的 Skill。"""
 
         key = self._activation_key(session_id, skill_name)
-        return self._deactivate(key)
+        return await self._deactivate(key)
 
     def items(self, session_id: str) -> tuple[TrustedSkillInstruction, ...]:
         """返回当前 Session 仍通过 Policy 复验的可信指令。"""
@@ -142,7 +142,7 @@ class SkillRuntime:
                 ),
             )
         for key in invalid:
-            self._deactivate(key)
+            self._active.pop(key, None)
         return tuple(instructions)
 
     def projections(self, session_id: str) -> tuple[ContextSlotProjection, ...]:
@@ -151,7 +151,7 @@ class SkillRuntime:
         self._validate_session_id(session_id)
         return project_available_skills(self._registry.descriptors())
 
-    def close_session(self, session_id: str) -> None:
+    async def close_session(self, session_id: str) -> None:
         """清除 Session 的全部激活状态。"""
 
         self._validate_session_id(session_id)
@@ -159,12 +159,12 @@ class SkillRuntime:
             if key[0] == session_id:
                 del self._active[key]
         if self._activation_store is not None:
-            self._activation_store.delete_session(session_id)
+            await self._activation_store.delete_session(session_id)
 
-    def _deactivate(self, key: tuple[str, str]) -> bool:
+    async def _deactivate(self, key: tuple[str, str]) -> bool:
         removed = self._active.pop(key, None) is not None
         if self._activation_store is not None:
-            removed = self._activation_store.delete(*key) or removed
+            removed = await self._activation_store.delete(*key) or removed
         return removed
 
     def _verify(

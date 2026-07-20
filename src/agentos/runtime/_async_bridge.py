@@ -18,6 +18,7 @@ async def _await_cleanup_preserving_cancellation(
     task = asyncio.current_task()
     uncancel = getattr(task, "uncancel", None)
     pending_cancels = 0
+    cancel_messages: list[object | None] = []
 
     def drain_cancellations() -> None:
         nonlocal pending_cancels
@@ -34,15 +35,19 @@ async def _await_cleanup_preserving_cancellation(
             drain_cancellations()
             try:
                 await asyncio.shield(cleanup_task)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as error:
+                cancel_messages.append(error.args[0] if error.args else None)
                 continue
         drain_cancellations()
         cleanup_task.result()
     finally:
         drain_cancellations()
         if task is not None:
-            for _ in range(pending_cancels):
-                task.cancel()
+            for index in range(pending_cancels):
+                if index < len(cancel_messages):
+                    task.cancel(cancel_messages[index])
+                else:
+                    task.cancel()
 
 
 class SyncIteratorAsyncBridge(Generic[T]):

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 
 from agentos.context.snapshot import ContextSnapshotRenderer
@@ -16,7 +17,7 @@ class StaticStore:
         self.candidates = candidates
         self.search_count = 0
 
-    def search(
+    async def search(
         self,
         context: MemorySelectionContext,
         candidate_limit: int,
@@ -84,7 +85,7 @@ def test_memory_projection_uses_fixed_safe_xml_and_complete_variants() -> None:
         min_score=0.0,
     )
 
-    projections = runtime.projections(selection_context())
+    projections = asyncio.run(runtime.projections(selection_context()))
 
     projection = projections[0]
     assert projection.slot == "memory-context"
@@ -126,7 +127,7 @@ def test_memory_projection_omits_empty_slot() -> None:
         min_score=0.0,
     )
 
-    assert runtime.projections(selection_context()) == ()
+    assert asyncio.run(runtime.projections(selection_context())) == ()
 
 
 def test_bound_memory_projection_provider_freezes_request_context() -> None:
@@ -140,5 +141,6 @@ def test_bound_memory_projection_provider_freezes_request_context() -> None:
     )
     provider = BoundMemoryProjectionProvider(runtime, selection_context())
 
+    asyncio.run(provider.prepare_projection_cache())
     assert provider.projections()
     assert store.search_count == 1

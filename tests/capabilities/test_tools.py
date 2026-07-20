@@ -26,6 +26,7 @@ from agentos.recall import (
     SegmentRecallDocument,
     SegmentRepository,
 )
+from tests.planning._async import async_test
 
 
 def test_tool_call_router_uses_stored_message_truth() -> None:
@@ -366,12 +367,13 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     )
 
 
-def test_tool_call_router_routes_load_attachment_namespace() -> None:
+@async_test
+async def test_tool_call_router_routes_load_attachment_namespace() -> None:
     artifacts = ArtifactRuntime(
         session_id="session_1",
         store=InMemoryArtifactStore(),
     )
-    artifact = artifacts.upload(
+    artifact = await artifacts.upload(
         data=b"image-bytes",
         filename="diagram.png",
         media_type="image/png",
@@ -381,7 +383,7 @@ def test_tool_call_router_routes_load_attachment_namespace() -> None:
         registry.register(tool)
     runtime = ToolCallRouter(tool_registry=registry)
 
-    result = runtime.execute_tool_call(
+    result = await runtime.async_execute_tool_call(
         ProviderToolCall(
             id="call_load_attachment",
             name="load_attachment",

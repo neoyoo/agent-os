@@ -1,3 +1,10 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import aiosqlite
+
+
 SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
@@ -170,49 +177,51 @@ _EXPECTED_FOREIGN_TARGETS = {
 }
 
 
-def validate_durable_schema(connection: object) -> bool:
+async def validate_durable_schema(connection: aiosqlite.Connection) -> bool:
     """返回 schema 是否与当前 Durable Adapter 精确匹配。"""
 
-    execute = getattr(connection, "execute")
     for table, expected in _EXPECTED_COLUMNS.items():
-        rows = execute(f"PRAGMA table_xinfo({table})").fetchall()
+        rows = await _fetchall(connection, f"PRAGMA table_xinfo({table})")
         actual = tuple((row[1], row[2].upper(), row[3], row[5]) for row in rows)
         if actual != expected:
             return False
     for table, required in _EXPECTED_UNIQUE.items():
         actual = set()
-        for index in execute(f"PRAGMA index_list({table})").fetchall():
+        for index in await _fetchall(connection, f"PRAGMA index_list({table})"):
             if index[2] != 1:
                 continue
-            rows = execute(f'PRAGMA index_info("{index[1]}")').fetchall()
+            rows = await _fetchall(
+                connection,
+                f'PRAGMA index_info("{index[1]}")',
+            )
             actual.add(tuple(row[2] for row in rows))
         if not required.issubset(actual):
             return False
     for table, expected in _EXPECTED_FOREIGN_TARGETS.items():
         targets = {
-            row[2] for row in execute(f"PRAGMA foreign_key_list({table})").fetchall()
+            row[2]
+            for row in await _fetchall(
+                connection,
+                f"PRAGMA foreign_key_list({table})",
+            )
         }
         if targets != expected:
             return False
     return True
 
 
-def initialize_durable_schema(connection: object) -> None:
+async def initialize_durable_schema(connection: aiosqlite.Connection) -> None:
     """初始化 Durable schema，并把底层 SQLite 失败映射为稳定错误。"""
-
-    import sqlite3
 
     from agentos.runtime.errors import CheckpointCorruptedError
 
     try:
-        connection.executescript(SCHEMA_SQL)  # type: ignore[attr-defined]
-        if not validate_durable_schema(connection):
+        await connection.executescript(SCHEMA_SQL)
+        if not await validate_durable_schema(connection):
             raise CheckpointCorruptedError("durable schema is corrupted")
-        versions = connection.execute(  # type: ignore[attr-defined]
-            "SELECT version FROM durable_schema"
-        ).fetchall()
+        versions = await _fetchall(connection, "SELECT version FROM durable_schema")
         if not versions:
-            connection.execute(  # type: ignore[attr-defined]
+            await connection.execute(
                 "INSERT INTO durable_schema (version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
@@ -220,8 +229,17 @@ def initialize_durable_schema(connection: object) -> None:
             raise CheckpointCorruptedError("durable schema version is unsupported")
     except CheckpointCorruptedError:
         raise
-    except sqlite3.DatabaseError:
+    except aiosqlite.DatabaseError:
         raise CheckpointCorruptedError("durable schema is corrupted") from None
+
+
+async def _fetchall(
+    connection: aiosqlite.Connection,
+    sql: str,
+    parameters: Sequence[object] = (),
+) -> list[aiosqlite.Row]:
+    async with connection.execute(sql, parameters) as cursor:
+        return await cursor.fetchall()
 
 
 __all__ = ["initialize_durable_schema"]

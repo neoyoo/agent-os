@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from threading import Barrier, Lock, Thread
 
@@ -40,29 +41,35 @@ def record(
 
 
 def test_in_memory_store_put_get_and_replace_by_handle() -> None:
-    store = InMemoryMemoryStore()
-    store.put(record("mem_1", content="First value"))
-    replacement = record("mem_1", content="Current value")
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
+        await store.put(record("mem_1", content="First value"))
+        replacement = record("mem_1", content="Current value")
 
-    store.put(replacement)
+        await store.put(replacement)
 
-    assert store.get("mem_1") is replacement
-    with pytest.raises(KeyError, match="missing"):
-        store.get("missing")
+        assert await store.get("mem_1") is replacement
+        with pytest.raises(KeyError, match="missing"):
+            await store.get("missing")
+
+    asyncio.run(scenario())
 
 
 def test_in_memory_store_rejects_cross_session_handle_replacement() -> None:
-    store = InMemoryMemoryStore()
-    original = record("mem_1")
-    store.put(original)
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
+        original = record("mem_1")
+        await store.put(original)
 
-    with pytest.raises(
-        ValueError,
-        match="memory handle already belongs to another session",
-    ):
-        store.put(record("mem_1", session_id="session_2"))
+        with pytest.raises(
+            ValueError,
+            match="memory handle already belongs to another session",
+        ):
+            await store.put(record("mem_1", session_id="session_2"))
 
-    assert store.get("mem_1") is original
+        assert await store.get("mem_1") is original
+
+    asyncio.run(scenario())
 
 
 def test_in_memory_store_does_not_accept_preloaded_internal_records() -> None:
@@ -81,7 +88,7 @@ def test_in_memory_store_cross_session_handle_claim_is_atomic() -> None:
     def claim(memory_record: MemoryRecord) -> None:
         barrier.wait()
         try:
-            store.put(memory_record)
+            asyncio.run(store.put(memory_record))
         except ValueError:
             result = "rejected"
         else:
@@ -101,75 +108,95 @@ def test_in_memory_store_cross_session_handle_claim_is_atomic() -> None:
 
     assert all(not thread.is_alive() for thread in threads)
     assert sorted(results) == ["rejected", "stored"]
-    assert store.get("mem_1").session_id in {"session_1", "session_2"}
+    assert asyncio.run(store.get("mem_1")).session_id in {"session_1", "session_2"}
 
 
 @pytest.mark.parametrize("handle", [None, "", "  "])
 def test_in_memory_store_get_rejects_invalid_handle(handle: object) -> None:
-    store = InMemoryMemoryStore()
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
 
-    with pytest.raises(ValueError, match="handle must be a non-empty string"):
-        store.get(handle)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="handle must be a non-empty string"):
+            await store.get(handle)  # type: ignore[arg-type]
+
+    asyncio.run(scenario())
 
 
 def test_in_memory_store_search_isolates_session_candidates() -> None:
-    store = InMemoryMemoryStore()
-    store.put(record("mem_local"))
-    store.put(record("mem_other", session_id="session_2"))
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
+        await store.put(record("mem_local"))
+        await store.put(record("mem_other", session_id="session_2"))
 
-    candidates = store.search(selection_context(), candidate_limit=10)
+        candidates = await store.search(selection_context(), candidate_limit=10)
 
-    assert [candidate.record.handle for candidate in candidates] == ["mem_local"]
-    assert all(candidate.record.session_id == "session_1" for candidate in candidates)
+        assert [candidate.record.handle for candidate in candidates] == ["mem_local"]
+        assert all(
+            candidate.record.session_id == "session_1" for candidate in candidates
+        )
+
+    asyncio.run(scenario())
 
 
 def test_in_memory_store_search_orders_score_then_handle() -> None:
-    store = InMemoryMemoryStore()
-    store.put(record("mem_b", content="Python project"))
-    store.put(record("mem_a", content="Python project"))
-    store.put(record("mem_low", content="Python only"))
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
+        await store.put(record("mem_b", content="Python project"))
+        await store.put(record("mem_a", content="Python project"))
+        await store.put(record("mem_low", content="Python only"))
 
-    candidates = store.search(selection_context(), candidate_limit=3)
+        candidates = await store.search(selection_context(), candidate_limit=3)
 
-    assert [candidate.record.handle for candidate in candidates] == [
-        "mem_a",
-        "mem_b",
-        "mem_low",
-    ]
-    assert candidates[0].score == candidates[1].score
-    assert candidates[1].score > candidates[2].score
+        assert [candidate.record.handle for candidate in candidates] == [
+            "mem_a",
+            "mem_b",
+            "mem_low",
+        ]
+        assert candidates[0].score == candidates[1].score
+        assert candidates[1].score > candidates[2].score
+
+    asyncio.run(scenario())
 
 
 def test_in_memory_store_search_bounds_and_empty_query_are_deterministic() -> None:
-    store = InMemoryMemoryStore()
-    store.put(record("mem_b", content="Second"))
-    store.put(record("mem_a", content="First"))
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
+        await store.put(record("mem_b", content="Second"))
+        await store.put(record("mem_a", content="First"))
 
-    assert store.search(selection_context(query=""), candidate_limit=0) == ()
-    candidates = store.search(selection_context(query=""), candidate_limit=1)
+        assert await store.search(selection_context(query=""), candidate_limit=0) == ()
+        candidates = await store.search(selection_context(query=""), candidate_limit=1)
 
-    assert [candidate.record.handle for candidate in candidates] == ["mem_a"]
-    assert candidates[0].score == 0.0
+        assert [candidate.record.handle for candidate in candidates] == ["mem_a"]
+        assert candidates[0].score == 0.0
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("candidate_limit", [-1, True, 1.5])
 def test_in_memory_store_rejects_invalid_candidate_limit(
     candidate_limit: object,
 ) -> None:
-    store = InMemoryMemoryStore()
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
 
-    with pytest.raises(
-        ValueError,
-        match="candidate_limit must be a non-negative integer",
-    ):
-        store.search(
-            selection_context(),
-            candidate_limit=candidate_limit,  # type: ignore[arg-type]
-        )
+        with pytest.raises(
+            ValueError,
+            match="candidate_limit must be a non-negative integer",
+        ):
+            await store.search(
+                selection_context(),
+                candidate_limit=candidate_limit,  # type: ignore[arg-type]
+            )
+
+    asyncio.run(scenario())
 
 
 def test_in_memory_store_validates_context_before_zero_limit_shortcut() -> None:
-    store = InMemoryMemoryStore()
+    async def scenario() -> None:
+        store = InMemoryMemoryStore()
 
-    with pytest.raises(TypeError, match="context must be a MemorySelectionContext"):
-        store.search(object(), candidate_limit=0)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="context must be a MemorySelectionContext"):
+            await store.search(object(), candidate_limit=0)  # type: ignore[arg-type]
+
+    asyncio.run(scenario())

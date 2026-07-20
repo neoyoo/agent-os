@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 from agentos.planning import (
     InMemoryPlanClaimStore,
@@ -16,7 +18,10 @@ from tests.planning._runtime_fixtures import (
 )
 
 
-def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() -> None:
+@async_test
+async def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() -> (
+    None
+):
     store = InMemoryPlanStore()
     claim_store = InMemoryPlanClaimStore()
     coordinator = FakeCoordinator()
@@ -34,7 +39,7 @@ def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() ->
         claim_store=claim_store,
         clock=lambda: 20.0,
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Recover pending assignment through claimed scheduler.",
@@ -64,14 +69,14 @@ def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() ->
         ),
     )
 
-    summaries = runtime.schedulable_plans(owner_agent_id="leader")
-    report = runtime.claimed_scheduler_tick(
+    summaries = await runtime.schedulable_plans(owner_agent_id="leader")
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=30.0,
     )
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [summary.plan_id for summary in summaries] == ["plan_1"]
     assert summaries[0].reasons == ("pending-dispatch",)
     assert summaries[0].ready_step_ids == ()
@@ -85,7 +90,8 @@ def test_planner_runtime_claimed_scheduler_tick_recovers_pending_assignment() ->
     assert persisted.assignments[0].dispatch_status == "submitted"
 
 
-def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_recovery_dispatch() -> (
+@async_test
+async def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_recovery_dispatch() -> (
     None
 ):
     class ExpiringDuringRecoveryStore(InMemoryPlanStore):
@@ -93,11 +99,11 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_recov
             super().__init__()
             self._reads = 0
 
-        def get_plan(self, plan_id: str) -> PlanState | None:
+        async def get_plan(self, plan_id: str) -> PlanState | None:
             self._reads += 1
             if self._reads == 3:
                 clock.value = 22.0
-            return super().get_plan(plan_id)
+            return await super().get_plan(plan_id)
 
     clock = ManualClock(20.0)
     store = ExpiringDuringRecoveryStore()
@@ -117,7 +123,7 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_recov
         claim_store=claim_store,
         clock=clock,
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Do not recover pending dispatch after lease expiry.",
@@ -147,13 +153,13 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_recov
         ),
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=1.0,
     )
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [claim.status for claim in report.claims] == ["claimed"]
     assert report.tick_reports == ()
     assert [skip.reason for skip in report.skipped] == ["claim-lost"]

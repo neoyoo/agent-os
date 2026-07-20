@@ -18,9 +18,10 @@ from agentos.planning import (
     SubAgentTemplate,
 )
 
-
 from agentos.planning.tools import PlannerTools as CanonicalPlannerTools
+from tests.planning._async import async_test
 from tests.planning._tool_fixtures import FakePlanStepDispatcher, StatusRuntimeSpy
+
 
 def test_planner_tools_have_one_canonical_identity() -> None:
     assert PlannerTools is CanonicalPlannerTools
@@ -32,10 +33,7 @@ def test_planner_tools_register_external_tools() -> None:
 
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
-    names = [
-        spec["function"]["name"]
-        for spec in registry.provider_tool_specs()
-    ]
+    names = [spec["function"]["name"] for spec in registry.provider_tool_specs()]
     assert names == [
         "plan_create",
         "plan_gate_decomposition_proposal",
@@ -57,41 +55,51 @@ def test_planner_tools_register_external_tools() -> None:
     ]
 
 
-def test_planner_tools_default_policy_denies_scheduler_and_dispatch_tools() -> None:
+@async_test
+async def test_planner_tools_default_policy_denies_scheduler_and_dispatch_tools() -> (
+    None
+):
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         claim_store=InMemoryPlanClaimStore(),
         dispatcher=FakePlanStepDispatcher(),
     )
-    runtime.create_plan(
+    await runtime.create_plan(
         objective="Review guarded planner tools.",
         owner_agent_id="leader",
         plan_id="plan_1",
     )
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
-    with pytest.raises(PlannerToolAuthorizationError, match="plan_claim_schedulable_plans"):
-        registry.get("plan_claim_schedulable_plans").handler(
+    with pytest.raises(
+        PlannerToolAuthorizationError, match="plan_claim_schedulable_plans"
+    ):
+        await registry.get("plan_claim_schedulable_plans").handler(
             {
                 "worker_id": "scheduler",
                 "lease_seconds": 30.0,
             },
         )
-    with pytest.raises(PlannerToolAuthorizationError, match="plan_dispatch_ready_steps"):
-        registry.get("plan_dispatch_ready_steps").handler({"plan_id": "plan_1"})
+    with pytest.raises(
+        PlannerToolAuthorizationError, match="plan_dispatch_ready_steps"
+    ):
+        await registry.get("plan_dispatch_ready_steps").handler(
+            {"plan_id": "plan_1"},
+        )
     with pytest.raises(PlannerToolAuthorizationError, match="plan_scheduler_tick"):
-        registry.get("plan_scheduler_tick").handler({"plan_id": "plan_1"})
+        await registry.get("plan_scheduler_tick").handler({"plan_id": "plan_1"})
 
 
-def test_planner_tools_allow_all_policy_allows_scheduler_tool_boundary() -> None:
+@async_test
+async def test_planner_tools_allow_all_policy_allows_scheduler_tool_boundary() -> None:
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         claim_store=InMemoryPlanClaimStore(),
         clock=lambda: 10.0,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_running",
             objective="Leader running plan.",
@@ -107,7 +115,7 @@ def test_planner_tools_allow_all_policy_allows_scheduler_tool_boundary() -> None
     ).register(registry)
 
     payload = json.loads(
-        registry.get("plan_claim_schedulable_plans").handler(
+        await registry.get("plan_claim_schedulable_plans").handler(
             {
                 "worker_id": "scheduler_a",
                 "lease_seconds": 20.0,
@@ -118,13 +126,14 @@ def test_planner_tools_allow_all_policy_allows_scheduler_tool_boundary() -> None
     assert payload["claims"][0]["status"] == "claimed"
 
 
-def test_planner_tools_status_cannot_read_another_owner_plan() -> None:
+@async_test
+async def test_planner_tools_status_cannot_read_another_owner_plan() -> None:
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         clock=lambda: 10.0,
     )
-    runtime.create_plan(
+    await runtime.create_plan(
         objective="Other owner's private plan.",
         owner_agent_id="other",
         plan_id="other_plan",
@@ -132,10 +141,11 @@ def test_planner_tools_status_cannot_read_another_owner_plan() -> None:
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_status").handler({"plan_id": "other_plan"})
+        await registry.get("plan_status").handler({"plan_id": "other_plan"})
 
 
-def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
+@async_test
+async def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -150,12 +160,12 @@ def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
         clock=lambda: 10.0,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    runtime.create_plan(
+    await runtime.create_plan(
         objective="Other owner's private plan.",
         owner_agent_id="other",
         plan_id="other_plan",
     )
-    runtime.add_step("other_plan", instruction="Keep this step private.")
+    await runtime.add_step("other_plan", instruction="Keep this step private.")
     PlannerTools(
         runtime=runtime,
         owner_agent_id="leader",
@@ -163,14 +173,14 @@ def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
     ).register(registry)
 
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_add_step").handler(
+        await registry.get("plan_add_step").handler(
             {
                 "plan_id": "other_plan",
                 "instruction": "Mutate private plan.",
             },
         )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_assign_step").handler(
+        await registry.get("plan_assign_step").handler(
             {
                 "plan_id": "other_plan",
                 "step_id": "step_1",
@@ -178,7 +188,7 @@ def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
             },
         )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_record_evidence").handler(
+        await registry.get("plan_record_evidence").handler(
             {
                 "plan_id": "other_plan",
                 "step_ids": ["step_1"],
@@ -187,14 +197,14 @@ def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
             },
         )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_complete_step").handler(
+        await registry.get("plan_complete_step").handler(
             {
                 "plan_id": "other_plan",
                 "step_id": "step_1",
             },
         )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_fail_step").handler(
+        await registry.get("plan_fail_step").handler(
             {
                 "plan_id": "other_plan",
                 "step_id": "step_1",
@@ -202,46 +212,52 @@ def test_planner_tools_cannot_mutate_another_owner_plan() -> None:
             },
         )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_retryable_steps").handler({"plan_id": "other_plan"})
+        await registry.get("plan_retryable_steps").handler(
+            {"plan_id": "other_plan"},
+        )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_retry_step").handler(
+        await registry.get("plan_retry_step").handler(
             {
                 "plan_id": "other_plan",
                 "step_id": "step_1",
             },
         )
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_dispatch_ready_steps").handler({"plan_id": "other_plan"})
+        await registry.get("plan_dispatch_ready_steps").handler(
+            {"plan_id": "other_plan"},
+        )
 
-    private_plan = runtime.get_plan("other_plan")
+    private_plan = await runtime.get_plan("other_plan")
     assert len(private_plan.steps) == 1
     assert private_plan.steps[0].status == "pending"
     assert private_plan.evidence == ()
 
 
-def test_planner_tools_status_uses_planner_runtime_query_boundary() -> None:
+@async_test
+async def test_planner_tools_status_uses_planner_runtime_query_boundary() -> None:
     registry = ToolRegistry()
     runtime = StatusRuntimeSpy()
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
-    registry.get("plan_create").handler(
+    await registry.get("plan_create").handler(
         {
             "objective": "Review planner status boundary.",
             "plan_id": "plan_1",
         },
     )
 
-    registry.get("plan_status").handler({"plan_id": "plan_1"})
-    registry.get("plan_status").handler({})
+    await registry.get("plan_status").handler({"plan_id": "plan_1"})
+    await registry.get("plan_status").handler({})
 
     assert runtime.get_plan_calls == [("plan_1", "leader")]
     assert runtime.list_plan_calls == ["leader"]
 
 
-def test_planner_tools_record_evidence_rejects_unknown_kind() -> None:
+@async_test
+async def test_planner_tools_record_evidence_rejects_unknown_kind() -> None:
     registry = ToolRegistry()
     runtime = PlannerRuntime(store=InMemoryPlanStore(), clock=lambda: 10.0)
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
-    registry.get("plan_create").handler(
+    await registry.get("plan_create").handler(
         {
             "objective": "Review evidence validation.",
             "plan_id": "plan_1",
@@ -249,7 +265,7 @@ def test_planner_tools_record_evidence_rejects_unknown_kind() -> None:
     )
 
     with pytest.raises(ValueError, match="unsupported evidence kind"):
-        registry.get("plan_record_evidence").handler(
+        await registry.get("plan_record_evidence").handler(
             {
                 "plan_id": "plan_1",
                 "kind": "unknown",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -12,16 +12,17 @@ from agentos.planning import (
     PlannerSchedulerDaemonError,
 )
 from agentos.planning.scheduling_reports import PlanSchedulerTickReport
+from tests.planning._async import async_test
 
 
 class RecordingPlannerRuntime(PlannerRuntime):
     def __init__(self) -> None:
         super().__init__(store=InMemoryPlanStore())
         self.calls: list[dict[str, object]] = []
-        self.second_call = threading.Event()
+        self.second_call = asyncio.Event()
         self.fail_plan_ids: set[str] = set()
 
-    def scheduler_tick(
+    async def scheduler_tick(
         self,
         plan_id: str,
         *,
@@ -44,7 +45,8 @@ class RecordingPlannerRuntime(PlannerRuntime):
         return PlanSchedulerTickReport(plan_id=plan_id)
 
 
-def test_planner_scheduler_daemon_run_once_records_reports_and_errors() -> None:
+@async_test
+async def test_planner_scheduler_daemon_run_once_records_reports_and_errors() -> None:
     runtime = RecordingPlannerRuntime()
     runtime.fail_plan_ids.add("plan_error")
     daemon = PlannerSchedulerDaemon(
@@ -56,7 +58,7 @@ def test_planner_scheduler_daemon_run_once_records_reports_and_errors() -> None:
         poll_interval_seconds=0.01,
     )
 
-    reports = daemon.run_once()
+    reports = await daemon.run_once()
     state = daemon.state()
 
     assert [report.plan_id for report in reports] == ["plan_ok"]
@@ -87,7 +89,8 @@ def test_planner_scheduler_daemon_run_once_records_reports_and_errors() -> None:
     assert state.last_run_at is not None
 
 
-def test_planner_scheduler_daemon_start_stop_and_join_runs_until_stopped() -> None:
+@async_test
+async def test_planner_scheduler_daemon_start_stop_and_join_runs_until_stopped() -> None:
     runtime = RecordingPlannerRuntime()
     daemon = PlannerSchedulerDaemon(
         runtime=runtime,
@@ -95,12 +98,15 @@ def test_planner_scheduler_daemon_start_stop_and_join_runs_until_stopped() -> No
         poll_interval_seconds=0.001,
     )
 
-    daemon.start()
-    assert runtime.second_call.wait(timeout=1.0)
-    assert daemon.is_running() is True
-    daemon.stop()
+    await daemon.start()
+    try:
+        await asyncio.wait_for(runtime.second_call.wait(), timeout=1.0)
+        assert daemon.is_running() is True
+    finally:
+        await daemon.stop()
+        joined = await daemon.join(timeout=1.0)
 
-    assert daemon.join(timeout=1.0) is True
+    assert joined is True
     state = daemon.state()
     assert state.status == "stopped"
     assert state.iterations >= 2

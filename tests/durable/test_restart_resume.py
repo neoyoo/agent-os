@@ -54,7 +54,7 @@ def test_profile_restarts_and_continues_same_run_with_new_turn(tmp_path) -> None
             "payload_protector": _PAYLOAD_PROTECTOR,
         }
 
-        with DurableRuntimeProfile(
+        async with DurableRuntimeProfile(
             agent_builder=(
                 AgentBuilder().provider(first_provider).tools([_wait_tool()])
             ),
@@ -75,7 +75,7 @@ def test_profile_restarts_and_continues_same_run_with_new_turn(tmp_path) -> None
         restarted_provider = FakeProvider(
             [ProviderResponse("resumed after restart")]
         )
-        with DurableRuntimeProfile(
+        async with DurableRuntimeProfile(
             agent_builder=(
                 AgentBuilder().provider(restarted_provider).tools([_wait_tool()])
             ),
@@ -137,7 +137,7 @@ def test_profile_recovers_command_accepted_before_loop_entry(tmp_path) -> None:
             "payload_protector": _PAYLOAD_PROTECTOR,
         }
 
-        with DurableRuntimeProfile(**profile_args) as profile:
+        async with DurableRuntimeProfile(**profile_args) as profile:
             agent = await profile.build_agent(session_id="session_1")
             waiting = await agent.run("start")
             assert isinstance(waiting, AgentWaiting)
@@ -151,7 +151,7 @@ def test_profile_recovers_command_accepted_before_loop_entry(tmp_path) -> None:
             assert isinstance(accepted, AcceptedTurnExecution)
             assert accepted.input.run_id == waiting.run_id
 
-        with DurableRuntimeProfile(**profile_args) as restarted_profile:
+        async with DurableRuntimeProfile(**profile_args) as restarted_profile:
             restarted = await restarted_profile.build_agent(session_id="session_1")
             result = await restarted.run(command)
 
@@ -199,7 +199,7 @@ def test_closing_unconsumed_command_stream_does_not_reaccept_command(
             "payload_protector": _PAYLOAD_PROTECTOR,
         }
 
-        with DurableRuntimeProfile(**profile_args) as profile:
+        async with DurableRuntimeProfile(**profile_args) as profile:
             agent = await profile.build_agent(session_id="session_1")
             waiting = await agent.run("start")
             assert isinstance(waiting, AgentWaiting)

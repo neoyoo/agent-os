@@ -350,6 +350,9 @@ class QueryLoop:
         options: RunOptions,
         turn: TurnState | None,
     ) -> AsyncIterator[ProviderStreamEvent | ContextLoaded | StatusUpdate]:
+        if self.artifact_runtime is not None:
+            await self.artifact_runtime.prepare_projection_cache()
+        await self.request_builder.prepare_projection_cache()
         prepared_request: ProviderRequest | None = None
 
         def prepare(request: ProviderRequest) -> ProviderRequest:

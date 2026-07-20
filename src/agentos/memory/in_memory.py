@@ -22,7 +22,7 @@ class InMemoryMemoryStore:
     )
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
-    def put(self, record: MemoryRecord) -> None:
+    async def put(self, record: MemoryRecord) -> None:
         if not isinstance(record, MemoryRecord):
             raise TypeError("record must be a MemoryRecord")
         with self._lock:
@@ -31,7 +31,7 @@ class InMemoryMemoryStore:
                 raise ValueError("memory handle already belongs to another session")
             self._records[record.handle] = record
 
-    def get(self, handle: str) -> MemoryRecord:
+    async def get(self, handle: str) -> MemoryRecord:
         if not isinstance(handle, str) or not handle.strip():
             raise ValueError("handle must be a non-empty string")
         with self._lock:
@@ -40,7 +40,7 @@ class InMemoryMemoryStore:
             except KeyError as error:
                 raise KeyError(handle) from error
 
-    def search(
+    async def search(
         self,
         context: MemorySelectionContext,
         candidate_limit: int,

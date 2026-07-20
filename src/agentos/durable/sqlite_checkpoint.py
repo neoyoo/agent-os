@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from uuid import uuid4
+
+import aiosqlite
 
 from agentos.durable.serialization import (
     context_from_json,
@@ -22,11 +23,14 @@ from agentos.runtime.checkpoint import (
 from agentos.runtime.errors import CheckpointConflictError, CheckpointCorruptedError
 
 
-ContextWriter = Callable[[sqlite3.Connection, SessionCheckpoint], None]
+ContextWriter = Callable[
+    [aiosqlite.Connection, SessionCheckpoint],
+    Awaitable[None],
+]
 
 
-def write_checkpoint_state(
-    connection: sqlite3.Connection,
+async def write_checkpoint_state(
+    connection: aiosqlite.Connection,
     snapshot: SessionCheckpoint,
     *,
     run_id: str,
@@ -35,15 +39,15 @@ def write_checkpoint_state(
     created_at: datetime,
     write_context: ContextWriter,
 ) -> RunCheckpoint:
-    connection.execute(
+    await connection.execute(
         "UPDATE durable_sessions SET status = ?, next_turn_number = ? "
         "WHERE session_id = ?",
         (snapshot.session_status, snapshot.next_turn_number, snapshot.session_id),
     )
-    _write_messages(connection, snapshot)
-    _write_active_refs(connection, snapshot)
-    write_context(connection, snapshot)
-    _write_execution_cursor(connection, snapshot, run_id=run_id)
+    await _write_messages(connection, snapshot)
+    await _write_active_refs(connection, snapshot)
+    await write_context(connection, snapshot)
+    await _write_execution_cursor(connection, snapshot, run_id=run_id)
     checkpoint = RunCheckpoint(
         checkpoint_id=f"checkpoint_{uuid4().hex}",
         session_id=snapshot.session_id,
@@ -52,7 +56,7 @@ def write_checkpoint_state(
         aggregate_version=aggregate_version,
         created_at=created_at,
     )
-    connection.execute(
+    await connection.execute(
         "INSERT INTO durable_checkpoints "
         "(checkpoint_id, session_id, run_id, turn_id, "
         "aggregate_version, created_at, schema_version) "
@@ -70,11 +74,11 @@ def write_checkpoint_state(
     return checkpoint
 
 
-def write_context_state(
-    connection: sqlite3.Connection,
+async def write_context_state(
+    connection: aiosqlite.Connection,
     snapshot: SessionCheckpoint,
 ) -> None:
-    connection.execute(
+    await connection.execute(
         "INSERT INTO durable_context_states (session_id, payload_json) "
         "VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET "
         "payload_json = excluded.payload_json",
@@ -82,49 +86,55 @@ def write_context_state(
     )
 
 
-def load_checkpoint(
-    connection: sqlite3.Connection,
+async def load_checkpoint(
+    connection: aiosqlite.Connection,
     session_id: str,
 ) -> SessionCheckpoint | None:
-    latest = connection.execute(
+    latest = await _fetchone(
+        connection,
         "SELECT * FROM durable_checkpoints WHERE session_id = ? "
         "ORDER BY rowid DESC LIMIT 1",
         (session_id,),
-    ).fetchone()
+    )
     if latest is None:
         return None
     row_to_checkpoint(latest)
-    session = connection.execute(
+    session = await _fetchone(
+        connection,
         "SELECT * FROM durable_sessions WHERE session_id = ?",
         (session_id,),
-    ).fetchone()
-    context = connection.execute(
+    )
+    context = await _fetchone(
+        connection,
         "SELECT payload_json FROM durable_context_states WHERE session_id = ?",
         (session_id,),
-    ).fetchone()
-    cursor = connection.execute(
+    )
+    cursor = await _fetchone(
+        connection,
         "SELECT payload_json FROM durable_execution_cursors "
         "WHERE session_id = ? AND run_id = ?",
         (session_id, latest["run_id"]),
-    ).fetchone()
+    )
     if session is None or context is None:
         raise CheckpointCorruptedError("checkpoint state is incomplete")
     try:
+        message_rows = await _fetchall(
+            connection,
+            "SELECT payload_json FROM durable_messages "
+            "WHERE session_id = ? ORDER BY position",
+            (session_id,),
+        )
         messages = tuple(
-            message_from_json(row["payload_json"])
-            for row in connection.execute(
-                "SELECT payload_json FROM durable_messages "
-                "WHERE session_id = ? ORDER BY position",
-                (session_id,),
-            )
+            message_from_json(row["payload_json"]) for row in message_rows
+        )
+        active_rows = await _fetchall(
+            connection,
+            "SELECT message_id FROM durable_active_refs "
+            "WHERE session_id = ? ORDER BY position",
+            (session_id,),
         )
         active_refs = tuple(
-            row["message_id"]
-            for row in connection.execute(
-                "SELECT message_id FROM durable_active_refs "
-                "WHERE session_id = ? ORDER BY position",
-                (session_id,),
-            )
+            row["message_id"] for row in active_rows
         )
         payload = context["payload_json"]
         if not isinstance(payload, str):
@@ -148,72 +158,74 @@ def load_checkpoint(
         raise CheckpointCorruptedError("checkpoint state is corrupted") from None
 
 
-def latest_checkpoint(
-    connection: sqlite3.Connection,
+async def latest_checkpoint(
+    connection: aiosqlite.Connection,
     session_id: str,
     run_id: str,
 ) -> RunCheckpoint | None:
-    row = connection.execute(
+    row = await _fetchone(
+        connection,
         "SELECT * FROM durable_checkpoints WHERE session_id = ? "
         "AND run_id = ? ORDER BY rowid DESC LIMIT 1",
         (session_id, run_id),
-    ).fetchone()
+    )
     return None if row is None else row_to_checkpoint(row)
 
 
-def _write_messages(
-    connection: sqlite3.Connection,
+async def _write_messages(
+    connection: aiosqlite.Connection,
     snapshot: SessionCheckpoint,
 ) -> None:
     for position, message in enumerate(snapshot.messages):
         payload = message_to_json(message)
-        existing = connection.execute(
+        existing = await _fetchone(
+            connection,
             "SELECT payload_json, position FROM durable_messages "
             "WHERE session_id = ? AND message_id = ?",
             (snapshot.session_id, message.id),
-        ).fetchone()
+        )
         if existing is not None and (
             existing["payload_json"] != payload or existing["position"] != position
         ):
             raise CheckpointConflictError("stored message checkpoint conflict")
-        connection.execute(
+        await connection.execute(
             "INSERT OR IGNORE INTO durable_messages "
             "(session_id, message_id, position, payload_json) VALUES (?, ?, ?, ?)",
             (snapshot.session_id, message.id, position, payload),
         )
 
 
-def _write_active_refs(
-    connection: sqlite3.Connection,
+async def _write_active_refs(
+    connection: aiosqlite.Connection,
     snapshot: SessionCheckpoint,
 ) -> None:
-    connection.execute(
+    await connection.execute(
         "DELETE FROM durable_active_refs WHERE session_id = ?",
         (snapshot.session_id,),
     )
     for position, message_id in enumerate(snapshot.active_refs):
-        connection.execute(
+        await connection.execute(
             "INSERT INTO durable_active_refs "
             "(session_id, position, message_id) VALUES (?, ?, ?)",
             (snapshot.session_id, position, message_id),
         )
 
 
-def _write_execution_cursor(
-    connection: sqlite3.Connection,
+async def _write_execution_cursor(
+    connection: aiosqlite.Connection,
     snapshot: SessionCheckpoint,
     *,
     run_id: str,
 ) -> None:
     cursor = snapshot.execution_cursor
     if cursor is None:
-        connection.execute(
+        await connection.execute(
             "DELETE FROM durable_execution_cursors "
             "WHERE session_id = ? AND run_id = ?",
             (snapshot.session_id, run_id),
         )
         return
-    connection.execute(
+    await connection.execute(
         "INSERT INTO durable_execution_cursors "
         "(session_id, run_id, payload_json) VALUES (?, ?, ?) "
         "ON CONFLICT(session_id, run_id) DO UPDATE SET "
@@ -224,3 +236,21 @@ def _write_execution_cursor(
             execution_cursor_to_json(cursor),
         ),
     )
+
+
+async def _fetchone(
+    connection: aiosqlite.Connection,
+    sql: str,
+    parameters: Sequence[object],
+) -> aiosqlite.Row | None:
+    async with connection.execute(sql, parameters) as cursor:
+        return await cursor.fetchone()
+
+
+async def _fetchall(
+    connection: aiosqlite.Connection,
+    sql: str,
+    parameters: Sequence[object],
+) -> list[aiosqlite.Row]:
+    async with connection.execute(sql, parameters) as cursor:
+        return await cursor.fetchall()

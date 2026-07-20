@@ -36,6 +36,14 @@ class ContextProjectionRegistry:
     def __init__(self, providers: Iterable[ContextProjectionProvider] = ()) -> None:
         object.__setattr__(self, "providers", tuple(providers))
 
+    async def prepare_projection_cache(self) -> None:
+        """按稳定顺序准备需要异步 I/O 的扩展投影。"""
+
+        for provider in self.providers:
+            prepare = getattr(provider, "prepare_projection_cache", None)
+            if callable(prepare):
+                await prepare()
+
     def projections(self) -> tuple[ContextSlotProjection, ...]:
         return tuple(
             projection

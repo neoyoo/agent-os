@@ -23,8 +23,8 @@ from agentos.planning.sqlite import (
     SQLitePlanStoreCorruptedError,
     SQLitePlanStoreUnsafeError,
 )
-from agentos.planning.sqlite import _immediate_transaction
 from agentos.workspace import WorkspaceHandle
+from tests.planning._async import async_test
 
 
 def _plan(
@@ -74,90 +74,93 @@ def _plan(
     )
 
 
-def test_sqlite_plan_store_persists_create_get_and_list_order(
+@async_test
+async def test_sqlite_plan_store_persists_create_get_and_list_order(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "state.db"
     first = _plan("plan_b")
     second = _plan("plan_a", owner_agent_id="agent_2")
 
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(first)
-        store.create_plan(second)
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(first)
+        await store.create_plan(second)
 
-        assert store.get_plan("plan_b") == first
-        assert store.get_plan("missing") is None
-        record = store.get_plan_record("plan_b")
+        assert await store.get_plan("plan_b") == first
+        assert await store.get_plan("missing") is None
+        record = await store.get_plan_record("plan_b")
         assert record is not None
         assert record.revision == 0
-        assert store.list_plans() == [first, second]
-        assert store.list_plans(owner_agent_id="agent_2") == [second]
+        assert await store.list_plans() == [first, second]
+        assert await store.list_plans(owner_agent_id="agent_2") == [second]
 
         with pytest.raises(ValueError, match="plan already exists: plan_b"):
-            store.create_plan(first)
+            await store.create_plan(first)
 
-    with SQLitePlanStore(database_path) as restarted:
-        assert restarted.list_plans() == [first, second]
-        record = restarted.get_plan_record("plan_b")
+    async with await SQLitePlanStore.open(database_path) as restarted:
+        assert await restarted.list_plans() == [first, second]
+        record = await restarted.get_plan_record("plan_b")
         assert record is not None
         assert record.revision == 0
 
 
-def test_sqlite_plan_store_save_and_cas_are_revision_guarded(
+@async_test
+async def test_sqlite_plan_store_save_and_cas_are_revision_guarded(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "state.db"
     original = _plan("plan_1")
-    first_store = SQLitePlanStore(database_path)
-    second_store = SQLitePlanStore(database_path)
+    first_store = await SQLitePlanStore.open(database_path)
+    second_store = await SQLitePlanStore.open(database_path)
     try:
-        first_store.create_plan(original)
-        first_record = first_store.get_plan_record("plan_1")
-        second_record = second_store.get_plan_record("plan_1")
+        await first_store.create_plan(original)
+        first_record = await first_store.get_plan_record("plan_1")
+        second_record = await second_store.get_plan_record("plan_1")
         assert first_record is not None
         assert second_record is not None
 
         completed = original.with_status("completed", now=3.0)
-        assert first_store.save_plan_if_unchanged(
+        assert await first_store.save_plan_if_unchanged(
             completed,
             expected_revision=first_record.revision,
         )
-        assert not second_store.save_plan_if_unchanged(
+        assert not await second_store.save_plan_if_unchanged(
             original.with_status("failed", now=4.0),
             expected_revision=second_record.revision,
         )
 
-        fresh = second_store.get_plan_record("plan_1")
+        fresh = await second_store.get_plan_record("plan_1")
         assert fresh is not None
         assert fresh.plan == completed
         assert fresh.revision == 1
 
         cancelled = completed.with_status("cancelled", now=5.0)
-        second_store.save_plan(cancelled)
-        saved = first_store.get_plan_record("plan_1")
+        await second_store.save_plan(cancelled)
+        saved = await first_store.get_plan_record("plan_1")
         assert saved is not None
         assert saved.plan == cancelled
         assert saved.revision == 2
 
         with pytest.raises(PlanNotFoundError):
-            first_store.save_plan(_plan("missing"))
+            await first_store.save_plan(_plan("missing"))
         with pytest.raises(PlanNotFoundError):
-            first_store.save_plan_if_unchanged(
+            await first_store.save_plan_if_unchanged(
                 _plan("missing"),
                 expected_revision=0,
             )
     finally:
-        first_store.close()
-        second_store.close()
+        await first_store.close()
+        await second_store.close()
 
 
-def test_sqlite_plan_store_writes_deterministic_canonical_json(
+@async_test
+async def test_sqlite_plan_store_writes_deterministic_canonical_json(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "state.db"
     plan = _plan("plan_1")
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(plan)
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(plan)
 
     with sqlite3.connect(database_path) as connection:
         payload = connection.execute(
@@ -191,13 +194,14 @@ def test_sqlite_plan_store_writes_deterministic_canonical_json(
         ),
     ],
 )
-def test_sqlite_plan_store_fails_closed_on_corrupted_payload(
+@async_test
+async def test_sqlite_plan_store_fails_closed_on_corrupted_payload(
     tmp_path: Path,
     payload: str,
 ) -> None:
     database_path = tmp_path / "state.db"
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(_plan("plan_1"))
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(_plan("plan_1"))
 
     with sqlite3.connect(database_path) as connection:
         connection.execute(
@@ -205,19 +209,24 @@ def test_sqlite_plan_store_fails_closed_on_corrupted_payload(
             (payload, "plan_1"),
         )
 
-    with SQLitePlanStore(database_path) as restarted:
-        with pytest.raises(SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"):
-            restarted.get_plan("plan_1")
-        with pytest.raises(SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"):
-            restarted.list_plans()
+    async with await SQLitePlanStore.open(database_path) as restarted:
+        with pytest.raises(
+            SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"
+        ):
+            await restarted.get_plan("plan_1")
+        with pytest.raises(
+            SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"
+        ):
+            await restarted.list_plans()
 
 
-def test_sqlite_plan_store_rejects_row_and_payload_identity_mismatch(
+@async_test
+async def test_sqlite_plan_store_rejects_row_and_payload_identity_mismatch(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "state.db"
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(_plan("plan_1"))
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(_plan("plan_1"))
 
     with sqlite3.connect(database_path) as connection:
         connection.execute(
@@ -225,19 +234,22 @@ def test_sqlite_plan_store_rejects_row_and_payload_identity_mismatch(
             ("other_agent", "plan_1"),
         )
 
-    with SQLitePlanStore(database_path) as restarted:
-        with pytest.raises(SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"):
-            restarted.get_plan_record("plan_1")
+    async with await SQLitePlanStore.open(database_path) as restarted:
+        with pytest.raises(
+            SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"
+        ):
+            await restarted.get_plan_record("plan_1")
 
 
 @pytest.mark.parametrize("compare_and_save", [False, True])
-def test_sqlite_plan_store_does_not_overwrite_corrupted_records(
+@async_test
+async def test_sqlite_plan_store_does_not_overwrite_corrupted_records(
     tmp_path: Path,
     compare_and_save: bool,
 ) -> None:
     database_path = tmp_path / "state.db"
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(_plan("plan_1"))
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(_plan("plan_1"))
 
     with sqlite3.connect(database_path) as connection:
         connection.execute(
@@ -245,15 +257,17 @@ def test_sqlite_plan_store_does_not_overwrite_corrupted_records(
             ("{not-json", "plan_1"),
         )
 
-    with SQLitePlanStore(database_path) as store:
-        with pytest.raises(SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"):
+    async with await SQLitePlanStore.open(database_path) as store:
+        with pytest.raises(
+            SQLitePlanStoreCorruptedError, match="^stored plan is corrupted$"
+        ):
             if compare_and_save:
-                store.save_plan_if_unchanged(
+                await store.save_plan_if_unchanged(
                     _plan("plan_1", status="completed"),
                     expected_revision=0,
                 )
             else:
-                store.save_plan(_plan("plan_1", status="completed"))
+                await store.save_plan(_plan("plan_1", status="completed"))
 
     with sqlite3.connect(database_path) as connection:
         payload = connection.execute(
@@ -263,24 +277,26 @@ def test_sqlite_plan_store_does_not_overwrite_corrupted_records(
     assert payload == "{not-json"
 
 
-def test_sqlite_plan_store_close_is_idempotent_and_blocks_further_use(
+@async_test
+async def test_sqlite_plan_store_close_is_idempotent_and_blocks_further_use(
     tmp_path: Path,
 ) -> None:
-    store = SQLitePlanStore(tmp_path / "state.db")
-    store.create_plan(_plan("plan_1"))
+    store = await SQLitePlanStore.open(tmp_path / "state.db")
+    await store.create_plan(_plan("plan_1"))
 
-    store.close()
-    store.close()
+    await store.close()
+    await store.close()
 
     with pytest.raises(SQLitePlanStoreClosedError):
-        store.get_plan("plan_1")
+        await store.get_plan("plan_1")
     with pytest.raises(SQLitePlanStoreClosedError):
-        store.create_plan(_plan("plan_2"))
+        await store.create_plan(_plan("plan_2"))
     with pytest.raises(SQLitePlanStoreClosedError):
-        store.__enter__()
+        await store.__aenter__()
 
 
-def test_sqlite_plan_store_rejects_unsafe_durable_fields_without_writing(
+@async_test
+async def test_sqlite_plan_store_rejects_unsafe_durable_fields_without_writing(
     tmp_path: Path,
 ) -> None:
     base = _plan("plan_1")
@@ -304,39 +320,43 @@ def test_sqlite_plan_store_rejects_unsafe_durable_fields_without_writing(
         ),
         replace(
             base,
-            evidence=(
-                replace(base.evidence[0], metadata={"api_key": "secret-value"}),
-            ),
+            evidence=(replace(base.evidence[0], metadata={"api_key": "secret-value"}),),
         ),
     )
 
-    with SQLitePlanStore(tmp_path / "state.db") as store:
+    async with await SQLitePlanStore.open(tmp_path / "state.db") as store:
         for plan in unsafe:
             with pytest.raises(
                 SQLitePlanStoreUnsafeError,
                 match="^plan contains unsafe durable data$",
             ):
-                store.create_plan(plan)
-        assert store.list_plans() == []
+                await store.create_plan(plan)
+        assert await store.list_plans() == []
 
 
-def test_sqlite_plan_store_unsafe_save_preserves_prior_revision(tmp_path: Path) -> None:
+@async_test
+async def test_sqlite_plan_store_unsafe_save_preserves_prior_revision(
+    tmp_path: Path,
+) -> None:
     original = _plan("plan_1")
     unsafe = replace(
         original,
         workspace=replace(original.workspace, metadata={"token": "secret"}),
     )
-    with SQLitePlanStore(tmp_path / "state.db") as store:
-        store.create_plan(original)
+    async with await SQLitePlanStore.open(tmp_path / "state.db") as store:
+        await store.create_plan(original)
         with pytest.raises(SQLitePlanStoreUnsafeError):
-            store.save_plan(unsafe)
-        record = store.get_plan_record("plan_1")
+            await store.save_plan(unsafe)
+        record = await store.get_plan_record("plan_1")
         assert record is not None
         assert record.plan == original
         assert record.revision == 0
 
 
-def test_sqlite_plan_store_rejects_malformed_schema_at_open(tmp_path: Path) -> None:
+@async_test
+async def test_sqlite_plan_store_rejects_malformed_schema_at_open(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "state.db"
     with sqlite3.connect(database_path) as connection:
         connection.execute(
@@ -347,34 +367,38 @@ def test_sqlite_plan_store_rejects_malformed_schema_at_open(tmp_path: Path) -> N
         SQLitePlanStoreCorruptedError,
         match="^plan store schema is corrupted$",
     ):
-        SQLitePlanStore(database_path)
+        await SQLitePlanStore.open(database_path)
 
 
-def test_owner_filter_is_applied_before_deserializing_other_owners(
+@async_test
+async def test_owner_filter_is_applied_before_deserializing_other_owners(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "state.db"
     owner_a = _plan("plan_a", owner_agent_id="agent_a")
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(owner_a)
-        store.create_plan(_plan("plan_b", owner_agent_id="agent_b"))
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(owner_a)
+        await store.create_plan(_plan("plan_b", owner_agent_id="agent_b"))
     with sqlite3.connect(database_path) as connection:
         connection.execute(
             "UPDATE agentos_plans SET payload_json = ? WHERE plan_id = ?",
             ("{corrupted", "plan_b"),
         )
 
-    with SQLitePlanStore(database_path) as store:
-        assert store.list_plans(owner_agent_id="agent_a") == [owner_a]
+    async with await SQLitePlanStore.open(database_path) as store:
+        assert await store.list_plans(owner_agent_id="agent_a") == [owner_a]
         with pytest.raises(SQLitePlanStoreCorruptedError):
-            store.list_plans()
+            await store.list_plans()
 
 
-def test_corruption_error_traceback_does_not_echo_stored_values(tmp_path: Path) -> None:
+@async_test
+async def test_corruption_error_traceback_does_not_echo_stored_values(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "state.db"
     secret = "secret-value-must-not-leak"
-    with SQLitePlanStore(database_path) as store:
-        store.create_plan(_plan("plan_1"))
+    async with await SQLitePlanStore.open(database_path) as store:
+        await store.create_plan(_plan("plan_1"))
     with sqlite3.connect(database_path) as connection:
         payload = plan_state_to_dict(_plan("plan_1"))
         payload["status"] = secret
@@ -383,9 +407,9 @@ def test_corruption_error_traceback_does_not_echo_stored_values(tmp_path: Path) 
             (json.dumps(payload, sort_keys=True, separators=(",", ":")), "plan_1"),
         )
 
-    with SQLitePlanStore(database_path) as store:
+    async with await SQLitePlanStore.open(database_path) as store:
         with pytest.raises(SQLitePlanStoreCorruptedError) as caught:
-            store.get_plan("plan_1")
+            await store.get_plan("plan_1")
     rendered = "".join(
         traceback.format_exception(
             type(caught.value),
@@ -396,23 +420,25 @@ def test_corruption_error_traceback_does_not_echo_stored_values(tmp_path: Path) 
     assert secret not in rendered
 
 
-def test_immediate_transaction_rolls_back_when_commit_fails() -> None:
+@async_test
+async def test_immediate_transaction_rolls_back_when_commit_fails() -> None:
     class FailingCommitConnection:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def execute(self, _sql: str) -> None:
+        async def execute(self, _sql: str) -> None:
             self.calls.append("begin")
 
-        def commit(self) -> None:
+        async def commit(self) -> None:
             self.calls.append("commit")
             raise RuntimeError("commit failed")
 
-        def rollback(self) -> None:
+        async def rollback(self) -> None:
             self.calls.append("rollback")
 
     connection = FailingCommitConnection()
+    store = SQLitePlanStore(connection)  # type: ignore[arg-type]
     with pytest.raises(RuntimeError, match="commit failed"):
-        with _immediate_transaction(connection):  # type: ignore[arg-type]
+        async with store._transaction():
             pass
     assert connection.calls == ["begin", "commit", "rollback"]

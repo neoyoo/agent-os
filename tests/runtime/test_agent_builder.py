@@ -80,21 +80,24 @@ def test_agent_builder_creates_runnable_standard_agent() -> None:
 
 
 def test_agent_builder_wires_session_scoped_artifact_runtime() -> None:
-    provider = FakeProvider(["ok"])
+    async def scenario() -> None:
+        provider = FakeProvider(["ok"])
 
-    agent = AgentBuilder().provider(provider).build(session_id="session_local")
-    artifact = agent.artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
+        agent = AgentBuilder().provider(provider).build(session_id="session_local")
+        artifact = await agent.artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
 
-    assert isinstance(agent.artifacts, ArtifactRuntime)
-    assert artifact.id.startswith("art_")
-    assert agent.artifacts.session_id == "session_local"
-    assert agent.query_loop.session_state is not None
-    assert agent.query_loop.session_state.id == "session_local"
-    assert agent.query_loop.context_runtime.session_id == "session_local"
+        assert isinstance(agent.artifacts, ArtifactRuntime)
+        assert artifact.id.startswith("art_")
+        assert agent.artifacts.session_id == "session_local"
+        assert agent.query_loop.session_state is not None
+        assert agent.query_loop.session_state.id == "session_local"
+        assert agent.query_loop.context_runtime.session_id == "session_local"
+
+    asyncio.run(scenario())
 
 
 def test_agent_artifacts_property_has_domain_return_type() -> None:
@@ -103,33 +106,34 @@ def test_agent_artifacts_property_has_domain_return_type() -> None:
 
 
 def test_agent_builder_projects_user_upload_and_clears_turn_mount() -> None:
-    provider = FakeProvider(["图纸已分析"])
-    agent = AgentBuilder().provider(provider).build(session_id="session_local")
-    artifact = agent.artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
+    async def scenario() -> None:
+        provider = FakeProvider(["图纸已分析"])
+        agent = AgentBuilder().provider(provider).build(session_id="session_local")
+        artifact = await agent.artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
 
-    result = asyncio.run(
-        agent.run(
+        result = await agent.run(
             UserTurnInput(
                 content="分析图纸",
                 artifact_handles=(artifact.id,),
             )
         )
-    )
 
-    assert result.content == "图纸已分析"
-    assert [item.kind for item in provider.requests[0].messages] == [
-        "context_snapshot",
-        "business_message",
-        "context_mount",
-    ]
-    stored_user = agent.query_loop.message_runtime.store.all()[0]
-    assert stored_user.content == "分析图纸"
-    assert stored_user.artifact_refs[0].artifact_id == artifact.id
-    assert agent.artifacts.active_mounts() == ()
+        assert result.content == "图纸已分析"
+        assert [item.kind for item in provider.requests[0].messages] == [
+            "context_snapshot",
+            "business_message",
+            "context_mount",
+        ]
+        stored_user = agent.query_loop.message_runtime.store.all()[0]
+        assert stored_user.content == "分析图纸"
+        assert stored_user.artifact_refs[0].artifact_id == artifact.id
+        assert agent.artifacts.active_mounts() == ()
+
+    asyncio.run(scenario())
 
 
 def test_agent_builder_generates_isolated_default_session_ids() -> None:
@@ -587,60 +591,63 @@ def test_agent_builder_requires_session_for_configured_segment_repository() -> N
 
 
 def test_agent_builder_accepts_tool_call_router_override() -> None:
-    context = ContextRuntime()
-    registry = ToolRegistry()
-    registry.register(
-        RegisteredTool(
-            name="router_tool",
-            description="Tool from router override.",
-            parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: "router tool result",
-        ),
-    )
-    router = ToolCallRouter(tool_registry=registry, context_runtime=context)
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=[
-                    ProviderToolCall(
-                        id="call_router",
-                        name="router_tool",
-                        arguments={},
-                    ),
-                ],
+    async def scenario() -> None:
+        context = ContextRuntime()
+        registry = ToolRegistry()
+        registry.register(
+            RegisteredTool(
+                name="router_tool",
+                description="Tool from router override.",
+                parameters={"type": "object", "properties": {}},
+                handler=lambda arguments: "router tool result",
             ),
-            "router done",
-        ],
-    )
+        )
+        router = ToolCallRouter(tool_registry=registry, context_runtime=context)
+        provider = FakeProvider(
+            [
+                ProviderResponse(
+                    tool_calls=[
+                        ProviderToolCall(
+                            id="call_router",
+                            name="router_tool",
+                            arguments={},
+                        ),
+                    ],
+                ),
+                "router done",
+            ],
+        )
 
-    agent = (
-        AgentBuilder()
-        .provider(provider)
-        .context_runtime(context)
-        .tool_call_router(router)
-        .build()
-    )
-    result = asyncio.run(agent.run("Use router_tool."))
+        agent = (
+            AgentBuilder()
+            .provider(provider)
+            .context_runtime(context)
+            .tool_call_router(router)
+            .build()
+        )
+        result = await agent.run("Use router_tool.")
 
-    assert result.content == "router done"
-    assert agent.query_loop.tool_call_router is router
-    assert "router_tool" not in provider.requests[0].system
-    assert provider.requests[1].messages[-1].content[0].text == "router tool result"  # type: ignore[union-attr]
-    record = agent.artifacts.upload(
-        data=b"image",
-        filename="drawing.png",
-        media_type="image/png",
-    )
-    artifact_result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_artifact",
-            name="load_attachment",
-            arguments={"handle": record.id},
-        ),
-    )
+        assert result.content == "router done"
+        assert agent.query_loop.tool_call_router is router
+        assert "router_tool" not in provider.requests[0].system
+        assert provider.requests[1].messages[-1].content[0].text == "router tool result"  # type: ignore[union-attr]
+        record = await agent.artifacts.upload(
+            data=b"image",
+            filename="drawing.png",
+            media_type="image/png",
+        )
+        artifact_result = await router.async_execute_tool_call(
+            ProviderToolCall(
+                id="call_artifact",
+                name="load_attachment",
+                arguments={"handle": record.id},
+            ),
+        )
 
-    assert artifact_result.content.startswith("附件已挂载：")
-    assert agent.artifacts.active_mounts()[0].artifact_id == record.id
+        assert artifact_result.content.startswith("附件已挂载：")
+        assert agent.artifacts.active_mounts()[0].artifact_id == record.id
+
+    asyncio.run(scenario())
 
 
 def test_agent_builder_rejects_missing_provider_and_duplicate_provider() -> None:

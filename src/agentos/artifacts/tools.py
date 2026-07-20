@@ -60,7 +60,7 @@ def artifact_tool_specs() -> tuple[ProviderToolSpec, ...]:
     return _ARTIFACT_TOOL_SPECS
 
 
-def list_attachments(
+async def list_attachments(
     runtime: ArtifactRuntime,
     *,
     cursor: str | None = None,
@@ -68,7 +68,7 @@ def list_attachments(
 ) -> str:
     """返回当前 Session 的 canonical 模型安全 Artifact 分页。"""
 
-    page = runtime.list(cursor=cursor, limit=limit)
+    page = await runtime.list(cursor=cursor, limit=limit)
     mounted_ids = frozenset(mount.artifact_id for mount in runtime.active_mounts())
     tool_page = ArtifactToolPage(
         items=tuple(
@@ -101,7 +101,7 @@ def list_attachments(
     )
 
 
-def load_attachment(runtime: ArtifactRuntime, *, handle: str) -> str:
+async def load_attachment(runtime: ArtifactRuntime, *, handle: str) -> str:
     """执行 ArtifactRuntime 的有界附件挂载操作。"""
 
-    return runtime.load_attachment(handle)
+    return await runtime.load_attachment(handle)

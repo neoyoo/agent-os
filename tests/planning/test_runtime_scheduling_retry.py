@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 import pytest
 
@@ -20,7 +22,8 @@ from tests.planning._runtime_fixtures import (
 )
 
 
-def test_planner_runtime_records_failed_step_and_schedules_retry() -> None:
+@async_test
+async def test_planner_runtime_records_failed_step_and_schedules_retry() -> None:
     clock = ManualClock(10.0)
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -32,11 +35,11 @@ def test_planner_runtime_records_failed_step_and_schedules_retry() -> None:
         clock=clock,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
-    runtime.add_step(plan.plan_id, instruction="Review planner recovery.")
+    plan = await runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    await runtime.add_step(plan.plan_id, instruction="Review planner recovery.")
 
     clock.value = 20.0
-    updated = runtime.fail_step(
+    updated = await runtime.fail_step(
         plan.plan_id,
         "step_1",
         error="worker crashed",
@@ -53,7 +56,8 @@ def test_planner_runtime_records_failed_step_and_schedules_retry() -> None:
     assert failed_step.retry_exhausted_at is None
 
 
-def test_planner_runtime_lists_due_retryable_steps_and_resets_for_retry() -> None:
+@async_test
+async def test_planner_runtime_lists_due_retryable_steps_and_resets_for_retry() -> None:
     clock = ManualClock(10.0)
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -61,20 +65,22 @@ def test_planner_runtime_lists_due_retryable_steps_and_resets_for_retry() -> Non
         clock=clock,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(objective="Review retry flow.", owner_agent_id="leader")
-    runtime.add_step(plan.plan_id, instruction="Run worker.")
+    plan = await runtime.create_plan(
+        objective="Review retry flow.", owner_agent_id="leader"
+    )
+    await runtime.add_step(plan.plan_id, instruction="Run worker.")
     clock.value = 20.0
-    runtime.fail_step(plan.plan_id, "step_1", error="temporary outage")
+    await runtime.fail_step(plan.plan_id, "step_1", error="temporary outage")
 
     clock.value = 24.0
-    assert runtime.retryable_steps(plan.plan_id) == ()
+    assert await runtime.retryable_steps(plan.plan_id) == ()
 
     clock.value = 25.0
-    assert [step.step_id for step in runtime.retryable_steps(plan.plan_id)] == [
+    assert [step.step_id for step in await runtime.retryable_steps(plan.plan_id)] == [
         "step_1",
     ]
 
-    retried = runtime.retry_step(plan.plan_id, "step_1")
+    retried = await runtime.retry_step(plan.plan_id, "step_1")
     retried_step = retried.steps[0]
     assert retried.status == "running"
     assert retried_step.status == "pending"
@@ -86,7 +92,8 @@ def test_planner_runtime_lists_due_retryable_steps_and_resets_for_retry() -> Non
     assert retried_step.retry_exhausted_at is None
 
 
-def test_planner_runtime_exhausts_failed_step_retries() -> None:
+@async_test
+async def test_planner_runtime_exhausts_failed_step_retries() -> None:
     clock = ManualClock(10.0)
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -94,13 +101,13 @@ def test_planner_runtime_exhausts_failed_step_retries() -> None:
         clock=clock,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(
+    plan = await runtime.create_plan(
         objective="Review exhausted retry.", owner_agent_id="leader"
     )
-    runtime.add_step(plan.plan_id, instruction="Run worker.")
+    await runtime.add_step(plan.plan_id, instruction="Run worker.")
 
     clock.value = 20.0
-    updated = runtime.fail_step(plan.plan_id, "step_1", error="permanent failure")
+    updated = await runtime.fail_step(plan.plan_id, "step_1", error="permanent failure")
 
     failed_step = updated.steps[0]
     assert updated.status == "failed"
@@ -109,12 +116,15 @@ def test_planner_runtime_exhausts_failed_step_retries() -> None:
     assert failed_step.retry_status == "exhausted"
     assert failed_step.next_retry_at is None
     assert failed_step.retry_exhausted_at == 20.0
-    assert runtime.retryable_steps(plan.plan_id) == ()
+    assert await runtime.retryable_steps(plan.plan_id) == ()
     with pytest.raises(ValueError, match="not retryable"):
-        runtime.retry_step(plan.plan_id, "step_1")
+        await runtime.retry_step(plan.plan_id, "step_1")
 
 
-def test_planner_runtime_scheduler_tick_retries_due_steps_before_dispatch() -> None:
+@async_test
+async def test_planner_runtime_scheduler_tick_retries_due_steps_before_dispatch() -> (
+    None
+):
     clock = ManualClock(10.0)
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
@@ -131,7 +141,7 @@ def test_planner_runtime_scheduler_tick_retries_due_steps_before_dispatch() -> N
         retry_policy=PlanRetryPolicy(max_attempts=3, backoff_seconds=5.0),
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Run one planner scheduler pass.",
@@ -165,9 +175,9 @@ def test_planner_runtime_scheduler_tick_retries_due_steps_before_dispatch() -> N
         ),
     )
 
-    report = runtime.scheduler_tick("plan_1", dispatch_limit=2)
+    report = await runtime.scheduler_tick("plan_1", dispatch_limit=2)
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert isinstance(report, PlanSchedulerTickReport)
     assert [reset.step_id for reset in report.retry_resets] == ["step_1"]
     assert report.retry_resets[0].attempts == 1
@@ -183,7 +193,10 @@ def test_planner_runtime_scheduler_tick_retries_due_steps_before_dispatch() -> N
     assert len(coordinator.spawn_calls) == 2
 
 
-def test_planner_runtime_scheduler_tick_respects_retry_and_dispatch_limits() -> None:
+@async_test
+async def test_planner_runtime_scheduler_tick_respects_retry_and_dispatch_limits() -> (
+    None
+):
     clock = ManualClock(10.0)
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
@@ -199,7 +212,7 @@ def test_planner_runtime_scheduler_tick_respects_retry_and_dispatch_limits() -> 
         retry_policy=PlanRetryPolicy(max_attempts=3, backoff_seconds=5.0),
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Bound scheduler work.",
@@ -233,13 +246,13 @@ def test_planner_runtime_scheduler_tick_respects_retry_and_dispatch_limits() -> 
         ),
     )
 
-    report = runtime.scheduler_tick(
+    report = await runtime.scheduler_tick(
         "plan_1",
         retry_limit=1,
         dispatch_limit=1,
     )
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [reset.step_id for reset in report.retry_resets] == ["step_1"]
     assert [assignment.step_id for assignment in report.dispatch.assigned] == [
         "step_1",
@@ -250,10 +263,11 @@ def test_planner_runtime_scheduler_tick_respects_retry_and_dispatch_limits() -> 
     assert persisted.steps[2].status == "pending"
 
 
-def test_planner_runtime_scheduler_tick_rejects_invalid_limits() -> None:
+@async_test
+async def test_planner_runtime_scheduler_tick_rejects_invalid_limits() -> None:
     runtime = PlannerRuntime(store=InMemoryPlanStore())
 
     with pytest.raises(ValueError, match="retry_limit"):
-        runtime.scheduler_tick("plan_1", retry_limit=0)
+        await runtime.scheduler_tick("plan_1", retry_limit=0)
     with pytest.raises(ValueError, match="dispatch_limit"):
-        runtime.scheduler_tick("plan_1", dispatch_limit=0)
+        await runtime.scheduler_tick("plan_1", dispatch_limit=0)

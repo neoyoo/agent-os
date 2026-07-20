@@ -8,6 +8,7 @@ from agentos.artifacts.types import (
     ArtifactNotFoundError,
     ArtifactValidationError,
 )
+from tests.artifacts._async import async_test
 
 
 def _cursor(payload: dict[str, object]) -> str:
@@ -19,8 +20,8 @@ def _cursor(payload: dict[str, object]) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def put(store: InMemoryArtifactStore, session_id: str):
-    return store.put(
+async def put(store: InMemoryArtifactStore, session_id: str):
+    return await store.put(
         session_id=session_id,
         data=b"secret",
         filename="drawing.png",
@@ -29,11 +30,12 @@ def put(store: InMemoryArtifactStore, session_id: str):
 
 
 @pytest.mark.parametrize("operation", ["get", "read", "delete"])
-def test_unknown_and_cross_session_access_have_identical_not_found(
+@async_test
+async def test_unknown_and_cross_session_access_have_identical_not_found(
     operation: str,
 ) -> None:
     store = InMemoryArtifactStore()
-    record = put(store, "session-1")
+    record = await put(store, "session-1")
     method = getattr(store, operation)
 
     messages = []
@@ -42,7 +44,7 @@ def test_unknown_and_cross_session_access_have_identical_not_found(
         "art_00000000-0000-4000-8000-000000000001",
     ):
         with pytest.raises(ArtifactNotFoundError) as error:
-            method("session-2", artifact_id)
+            await method("session-2", artifact_id)
         messages.append(str(error.value))
 
     assert messages == ["artifact not found", "artifact not found"]
@@ -69,35 +71,38 @@ def test_unknown_and_cross_session_access_have_identical_not_found(
         ),
     ],
 )
-def test_invalid_cursor_has_fixed_safe_error(cursor: str) -> None:
+@async_test
+async def test_invalid_cursor_has_fixed_safe_error(cursor: str) -> None:
     with pytest.raises(
         ArtifactValidationError,
         match="^invalid artifact cursor$",
     ):
-        InMemoryArtifactStore().list("session-1", cursor=cursor)
+        await InMemoryArtifactStore().list("session-1", cursor=cursor)
 
 
-def test_deleted_and_cross_session_cursor_anchor_have_same_error() -> None:
+@async_test
+async def test_deleted_and_cross_session_cursor_anchor_have_same_error() -> None:
     store = InMemoryArtifactStore()
-    cross = put(store, "session-2")
-    deleted = put(store, "session-1")
+    cross = await put(store, "session-2")
+    deleted = await put(store, "session-1")
     deleted_cursor = _cursor({"artifact_id": deleted.id, "version": 1})
     cross_cursor = _cursor({"artifact_id": cross.id, "version": 1})
-    store.delete("session-1", deleted.id)
+    await store.delete("session-1", deleted.id)
 
     for cursor in (deleted_cursor, cross_cursor):
         with pytest.raises(
             ArtifactValidationError,
             match="^invalid artifact cursor$",
         ):
-            store.list("session-1", cursor=cursor)
+            await store.list("session-1", cursor=cursor)
 
 
-def test_cursor_rejects_non_canonical_equivalent_encodings() -> None:
+@async_test
+async def test_cursor_rejects_non_canonical_equivalent_encodings() -> None:
     store = InMemoryArtifactStore()
-    put(store, "session-1")
-    put(store, "session-1")
-    canonical = store.list("session-1", limit=1).next_cursor
+    await put(store, "session-1")
+    await put(store, "session-1")
+    canonical = (await store.list("session-1", limit=1)).next_cursor
     assert canonical is not None
     payload = json.loads(
         base64.urlsafe_b64decode(canonical + "=" * (-len(canonical) % 4))
@@ -117,6 +122,6 @@ def test_cursor_rejects_non_canonical_equivalent_encodings() -> None:
             ArtifactValidationError,
             match="^invalid artifact cursor$",
         ):
-            store.list("session-1", cursor=cursor)
+            await store.list("session-1", cursor=cursor)
 
-    assert store.list("session-1", cursor=canonical).items
+    assert (await store.list("session-1", cursor=canonical)).items

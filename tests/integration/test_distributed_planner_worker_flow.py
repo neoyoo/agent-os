@@ -30,6 +30,7 @@ from agentos.planning import (
 )
 from agentos.runtime import Agent, ProviderRequestBuilder
 from tests._context_protocol_fixtures import default_context_renderer
+from tests.planning._async import async_test
 
 
 pytestmark = pytest.mark.integration
@@ -123,7 +124,8 @@ def _cleanup_redis_agent_streams(redis_client: object, key_prefix: str) -> None:
     )
 
 
-def test_live_distributed_planner_dispatches_expert_worker_to_completion() -> None:
+@async_test
+async def test_live_distributed_planner_dispatches_expert_worker_to_completion() -> None:
     postgres_dsn, redis_url = _require_live_backends()
     _reset_postgres_schema(postgres_dsn)
     redis_client = _connect_redis(redis_url)
@@ -185,18 +187,18 @@ def test_live_distributed_planner_dispatches_expert_worker_to_completion() -> No
             ),
             _build_agent_with_response("expert completed live work"),
         )
-        plan = planner.create_plan(
+        plan = await planner.create_plan(
             objective="Prove distributed planner worker state plane.",
             owner_agent_id="parent",
         )
-        plan = planner.add_step(
+        plan = await planner.add_step(
             plan.plan_id,
             instruction="Review the live distributed harness.",
             required_capabilities=("review",),
             template_id="expert-reviewer",
         )
 
-        dispatch_report = planner.dispatch_ready_steps(plan.plan_id)
+        dispatch_report = await planner.dispatch_ready_steps(plan.plan_id)
         runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
 
         assert [assignment.step_id for assignment in dispatch_report.assigned] == [
@@ -219,7 +221,8 @@ def test_live_distributed_planner_dispatches_expert_worker_to_completion() -> No
         spawn_executor.shutdown()
 
 
-def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None:
+@async_test
+async def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None:
     postgres_dsn, redis_url = _require_live_backends()
     _reset_postgres_schema(postgres_dsn)
     redis_client = _connect_redis(redis_url)
@@ -244,7 +247,7 @@ def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None
         subagent_factory=_StaticSubagentFactory(),
     )
     plan_store = InMemoryPlanStore()
-    plan_store.create_plan(
+    await plan_store.create_plan(
         PlanState(
             plan_id="plan_pending_dispatch",
             objective="Recover planner assignment after scheduler restart.",
@@ -311,8 +314,8 @@ def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None
             _build_agent_with_response("expert recovered pending dispatch"),
         )
 
-        report = planner.recover_pending_dispatches("plan_pending_dispatch")
-        recovered_plan = planner.get_plan("plan_pending_dispatch")
+        report = await planner.recover_pending_dispatches("plan_pending_dispatch")
+        recovered_plan = await planner.get_plan("plan_pending_dispatch")
         runner = ExpertAgentRunner(coordinator=coordinator, agent_id="expert")
 
         assert [assignment.task_id for assignment in report.assigned] == [
@@ -337,7 +340,8 @@ def test_live_distributed_planner_recovers_pending_dispatch_assignment() -> None
         spawn_executor.shutdown()
 
 
-def test_live_distributed_worker_reclaims_pending_task_request_after_crash() -> None:
+@async_test
+async def test_live_distributed_worker_reclaims_pending_task_request_after_crash() -> None:
     postgres_dsn, redis_url = _require_live_backends()
     _reset_postgres_schema(postgres_dsn)
     redis_client = _connect_redis(redis_url)
@@ -406,17 +410,17 @@ def test_live_distributed_worker_reclaims_pending_task_request_after_crash() -> 
             ),
             _build_agent_with_response("expert recovered live work"),
         )
-        plan = planner.create_plan(
+        plan = await planner.create_plan(
             objective="Recover a pending Redis task delivery after worker crash.",
             owner_agent_id="parent",
         )
-        plan = planner.add_step(
+        plan = await planner.add_step(
             plan.plan_id,
             instruction="Review after Redis pending reclaim.",
             required_capabilities=("review",),
             template_id="expert-reviewer",
         )
-        dispatch_report = planner.dispatch_ready_steps(plan.plan_id)
+        dispatch_report = await planner.dispatch_ready_steps(plan.plan_id)
 
         crashed_deliveries = crashed_queue.collect(
             "expert",

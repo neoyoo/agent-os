@@ -13,6 +13,7 @@ from agentos.artifacts.types import (
     ArtifactNotFoundError,
     ArtifactValidationError,
 )
+from tests.artifacts._async import async_test
 
 
 def runtime(
@@ -27,8 +28,8 @@ def runtime(
     )
 
 
-def upload(target: ArtifactRuntime, *, media_type: str = "image/png"):
-    return target.upload(
+async def upload(target: ArtifactRuntime, *, media_type: str = "image/png"):
+    return await target.upload(
         data=b"image",
         filename="drawing.png",
         media_type=media_type,
@@ -56,131 +57,140 @@ def test_default_artifact_policy_is_frozen_and_exact() -> None:
     "media_type",
     ["image/gif", "image/jpeg", "image/png", "image/webp", "application/pdf"],
 )
-def test_runtime_uploads_default_supported_media(media_type: str) -> None:
+@async_test
+async def test_runtime_uploads_default_supported_media(media_type: str) -> None:
     target = runtime()
 
-    record = upload(target, media_type=media_type)
+    record = await upload(target, media_type=media_type)
 
     assert record.session_id == "session-1"
     assert record.media_type == media_type
     assert record.size_bytes == len(b"image")
     assert record.created_at.tzinfo is not None
     assert record.created_at.utcoffset() == datetime.now(UTC).utcoffset()
-    assert target.read(record.id) == b"image"
+    assert await target.read(record.id) == b"image"
 
 
-def test_runtime_rejects_unsupported_media_and_oversized_content() -> None:
+@async_test
+async def test_runtime_rejects_unsupported_media_and_oversized_content() -> None:
     target = runtime(policy=ArtifactPolicy(max_size_bytes=4))
 
     with pytest.raises(
         ArtifactValidationError,
         match="^unsupported artifact media type$",
     ):
-        upload(target, media_type="text/plain")
+        await upload(target, media_type="text/plain")
     with pytest.raises(
         ArtifactValidationError,
         match="^artifact exceeds maximum size$",
     ):
-        upload(target)
-    assert target.list().items == ()
+        await upload(target)
+    assert (await target.list()).items == ()
 
 
-def test_runtime_is_bound_to_one_session_and_lists_only_that_session() -> None:
+@async_test
+async def test_runtime_is_bound_to_one_session_and_lists_only_that_session() -> None:
     store = InMemoryArtifactStore()
     first = ArtifactRuntime(session_id="session-1", store=store)
     second = ArtifactRuntime(session_id="session-2", store=store)
-    one = upload(first)
-    two = upload(second)
+    one = await upload(first)
+    two = await upload(second)
 
-    assert first.list().items == (one,)
-    assert second.list().items == (two,)
+    assert (await first.list()).items == (one,)
+    assert (await second.list()).items == (two,)
 
     with pytest.raises(AttributeError):
         first.session_id = "session-2"  # type: ignore[misc]
     with pytest.raises(AttributeError):
         first.policy = ArtifactPolicy()  # type: ignore[misc]
     assert first.session_id == "session-1"
-    assert first.list().items == (one,)
+    assert (await first.list()).items == (one,)
 
 
-def test_load_attachment_mounts_tool_result_and_returns_fixed_text() -> None:
+@async_test
+async def test_load_attachment_mounts_tool_result_and_returns_fixed_text() -> None:
     target = runtime()
-    record = upload(target)
+    record = await upload(target)
 
-    result = target.load_attachment(record.id)
+    result = await target.load_attachment(record.id)
 
     assert result == (
         f"附件已挂载：{record.id}。"
         "附件内容将在下一次模型请求中作为当前轮次的工具结果数据提供。"
     )
     assert target.active_mounts() == (
-        target.mount_user_upload(record.id),
+        await target.mount_user_upload(record.id),
     )
     assert target.active_mounts()[0].reason == "tool_result"
 
 
-def test_load_attachment_upgrades_user_mount_to_tool_result_without_duplicate() -> None:
+@async_test
+async def test_load_attachment_upgrades_user_mount_to_tool_result_without_duplicate() -> None:
     target = runtime()
-    record = upload(target)
+    record = await upload(target)
 
-    first = target.mount_user_upload(record.id)
-    second = target.mount_user_upload(record.id)
-    target.load_attachment(record.id)
+    first = await target.mount_user_upload(record.id)
+    second = await target.mount_user_upload(record.id)
+    await target.load_attachment(record.id)
 
     assert first is second
     assert len(target.active_mounts()) == 1
     assert target.active_mounts()[0].reason == "tool_result"
 
 
-def test_user_mount_does_not_downgrade_existing_tool_result_mount() -> None:
+@async_test
+async def test_user_mount_does_not_downgrade_existing_tool_result_mount() -> None:
     target = runtime()
-    record = upload(target)
-    target.load_attachment(record.id)
+    record = await upload(target)
+    await target.load_attachment(record.id)
 
     tool_mount = target.active_mounts()[0]
-    user_mount = target.mount_user_upload(record.id)
+    user_mount = await target.mount_user_upload(record.id)
 
     assert user_mount is tool_mount
     assert target.active_mounts() == (tool_mount,)
     assert tool_mount.reason == "tool_result"
 
 
-def test_mount_user_upload_does_not_create_artifact() -> None:
+@async_test
+async def test_mount_user_upload_does_not_create_artifact() -> None:
     target = runtime()
     missing = "art_00000000-0000-4000-8000-000000000001"
 
     with pytest.raises(ArtifactNotFoundError, match="^artifact not found$"):
-        target.mount_user_upload(missing)
-    assert target.list().items == ()
+        await target.mount_user_upload(missing)
+    assert (await target.list()).items == ()
     assert target.active_mounts() == ()
 
 
-def test_clear_mounts_does_not_delete_artifact() -> None:
+@async_test
+async def test_clear_mounts_does_not_delete_artifact() -> None:
     target = runtime()
-    record = upload(target)
-    mount = target.mount_user_upload(record.id)
+    record = await upload(target)
+    mount = await target.mount_user_upload(record.id)
 
     assert target.clear_mounts() == (mount,)
     assert target.clear_mounts() == ()
     assert target.active_mounts() == ()
-    assert target.read(record.id) == b"image"
+    assert await target.read(record.id) == b"image"
 
 
-def test_delete_and_delete_session_remove_content_and_active_mounts() -> None:
+@async_test
+async def test_delete_and_delete_session_remove_content_and_active_mounts() -> None:
     target = runtime()
-    first = upload(target)
-    second = upload(target)
-    target.mount_user_upload(first.id)
-    target.load_attachment(second.id)
+    first = await upload(target)
+    second = await upload(target)
+    await target.mount_user_upload(first.id)
+    await target.load_attachment(second.id)
 
-    target.delete(first.id)
+    await target.delete(first.id)
     assert tuple(mount.artifact_id for mount in target.active_mounts()) == (second.id,)
     with pytest.raises(ArtifactNotFoundError, match="^artifact not found$"):
-        target.read(first.id)
+        await target.read(first.id)
 
-    target.delete_session()
+    await target.delete_session()
     assert target.active_mounts() == ()
-    assert target.list().items == ()
+    assert (await target.list()).items == ()
 
 
 @pytest.mark.parametrize(

@@ -18,25 +18,29 @@ def _profile(tmp_path, provider: FakeProvider) -> DurableRuntimeProfile:
 
 
 def test_artifact_bytes_reload_and_project_after_profile_restart(tmp_path) -> None:
-    with _profile(tmp_path, FakeProvider([])) as first:
-        record = asyncio.run(first.build_agent("session_1")).artifacts.upload(
-            data=ARTIFACT_BYTES,
-            filename="drawing.png",
-            media_type="image/png",
-        )
+    async def scenario():  # type: ignore[no-untyped-def]
+        async with _profile(tmp_path, FakeProvider([])) as first:
+            agent = await first.build_agent("session_1")
+            record = await agent.artifacts.upload(
+                data=ARTIFACT_BYTES,
+                filename="drawing.png",
+                media_type="image/png",
+            )
 
-    provider = FakeProvider(["image restored"])
-    with _profile(tmp_path, provider) as restarted:
-        agent = asyncio.run(restarted.build_agent("session_1"))
-        result = asyncio.run(
-            agent.run(
+        provider = FakeProvider(["image restored"])
+        async with _profile(tmp_path, provider) as restarted:
+            agent = await restarted.build_agent("session_1")
+            result = await agent.run(
                 UserTurnInput(
                     "重新查看图纸",
                     artifact_handles=(record.id,),
                 )
             )
-        )
-        assert agent.artifacts.read(record.id) == ARTIFACT_BYTES
+            assert await agent.artifacts.read(record.id) == ARTIFACT_BYTES
+
+        return record, provider, result
+
+    record, provider, result = asyncio.run(scenario())
 
     assert result.content == "image restored"
     snapshot = provider.requests[0].messages[0]

@@ -122,6 +122,17 @@ class ProviderRequestBuilder:
         self._bound_context_source = source
         self._bound_token_counter = token_counter
 
+    async def prepare_projection_cache(self) -> None:
+        """在同步 build 前完成扩展 Context Projection 的异步准备。"""
+
+        if self.context_projections is None:
+            raise RuntimeError(
+                "projection preparation requires configured context projections",
+            )
+        prepare = getattr(self.context_projections, "prepare_projection_cache", None)
+        if callable(prepare):
+            await prepare()
+
     def build(self) -> ProviderRequestBuild:
         """从当前权威状态重新组装双平面请求及临时消息回执。"""
 

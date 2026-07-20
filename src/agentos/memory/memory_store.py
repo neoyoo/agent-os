@@ -10,11 +10,11 @@ from agentos.memory.records import (
 class MemoryStore(Protocol):
     """Episodic/Semantic Memory 的真值存储边界。"""
 
-    def put(self, record: MemoryRecord) -> None: ...
+    async def put(self, record: MemoryRecord) -> None: ...
 
-    def get(self, handle: str) -> MemoryRecord: ...
+    async def get(self, handle: str) -> MemoryRecord: ...
 
-    def search(
+    async def search(
         self,
         context: MemorySelectionContext,
         candidate_limit: int,

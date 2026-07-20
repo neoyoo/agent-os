@@ -34,15 +34,15 @@ class ArtifactToolAdapter:
             for spec in artifact_tool_specs()
         )
 
-    def _list_attachments(self, arguments: dict[str, object]) -> str:
-        return list_attachments(
+    async def _list_attachments(self, arguments: dict[str, object]) -> str:
+        return await list_attachments(
             self.runtime,
             cursor=cast(str | None, arguments.get("cursor")),
             limit=cast(int, arguments.get("limit", 20)),
         )
 
-    def _load_attachment(self, arguments: dict[str, object]) -> str:
-        return load_attachment(
+    async def _load_attachment(self, arguments: dict[str, object]) -> str:
+        return await load_attachment(
             self.runtime,
             handle=cast(str, arguments.get("handle")),
         )

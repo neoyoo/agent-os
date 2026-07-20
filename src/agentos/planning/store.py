@@ -66,21 +66,24 @@ class PlanClaimResult:
 class PlanStore(Protocol):
     """Plan State 的真值存储边界。"""
 
-    def create_plan(self, plan: PlanState) -> None: ...
+    async def create_plan(self, plan: PlanState) -> None: ...
 
-    def save_plan(self, plan: PlanState) -> None: ...
+    async def save_plan(self, plan: PlanState) -> None: ...
 
-    def get_plan(self, plan_id: str) -> PlanState | None: ...
+    async def get_plan(self, plan_id: str) -> PlanState | None: ...
 
-    def list_plans(self, owner_agent_id: str | None = None) -> list[PlanState]: ...
+    async def list_plans(
+        self,
+        owner_agent_id: str | None = None,
+    ) -> list[PlanState]: ...
 
 
 class CompareAndSavePlanStore(Protocol):
     """支持乐观并发控制的可选 PlanStore API。"""
 
-    def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None: ...
+    async def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None: ...
 
-    def save_plan_if_unchanged(
+    async def save_plan_if_unchanged(
         self,
         plan: PlanState,
         *,
@@ -91,7 +94,7 @@ class CompareAndSavePlanStore(Protocol):
 class ClaimGuardedPlanStore(Protocol):
     """支持 Claim 守卫原子保存的可选 PlanStore API。"""
 
-    def save_plan_if_claimed(
+    async def save_plan_if_claimed(
         self,
         plan: PlanState,
         claim: "PlanClaimRecord",
@@ -104,7 +107,7 @@ class ClaimGuardedPlanStore(Protocol):
 class PlanClaimStore(Protocol):
     """Planner Scheduler Worker 的临时 Claim/Lease 边界。"""
 
-    def claim_plan(
+    async def claim_plan(
         self,
         *,
         plan_id: str,
@@ -114,7 +117,7 @@ class PlanClaimStore(Protocol):
         now: float,
     ) -> PlanClaimResult: ...
 
-    def release_plan(
+    async def release_plan(
         self,
         *,
         plan_id: str,
@@ -122,13 +125,13 @@ class PlanClaimStore(Protocol):
         owner_agent_id: str | None = None,
     ) -> bool: ...
 
-    def get_claim(self, plan_id: str) -> PlanClaimRecord | None: ...
+    async def get_claim(self, plan_id: str) -> PlanClaimRecord | None: ...
 
 
 class PlanClaimSweepStore(Protocol):
     """列出并释放过期 Plan Claim 的可选边界。"""
 
-    def expired_claims(
+    async def expired_claims(
         self,
         *,
         now: float,
@@ -136,7 +139,7 @@ class PlanClaimSweepStore(Protocol):
         limit: int | None = None,
     ) -> tuple[PlanClaimRecord, ...]: ...
 
-    def release_expired_claim(
+    async def release_expired_claim(
         self,
         claim: PlanClaimRecord,
         *,

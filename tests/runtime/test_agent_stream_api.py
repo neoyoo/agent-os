@@ -103,7 +103,7 @@ def test_agent_run_accepts_uploaded_attachments() -> None:
     async def run() -> None:
         provider = FakeProvider([ProviderResponse(content="ok")])
         agent = build_agent_with_attachments(provider)
-        artifact = agent.artifacts.upload(
+        artifact = await agent.artifacts.upload(
             data=b"image-bytes",
             filename="diagram.png",
             media_type="image/png",

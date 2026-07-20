@@ -21,7 +21,7 @@ from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
 def _checkpoint(tmp_path):
     path = database_path(tmp_path)
-    store = SQLiteDurableStore(path, clock=lambda: NOW)
+    store = run(SQLiteDurableStore.open(path, clock=lambda: NOW))
     source = checkpoint_source()
     run(store.initialize_session(source.session))
     runs = RunRuntime(session_id="session_1", store=store)
@@ -77,7 +77,7 @@ def test_tool_call_arguments_are_redacted_from_sqlite_checkpoint(tmp_path) -> No
         context=PayloadProtectionContext(None, "session_1"),
     ).restore_messages(restored.messages)
     assert hydrated[1].tool_calls[0].arguments == calls[0].arguments
-    store.close()
+    run(store.close())
     assert marker.encode() not in path.read_bytes()
 
 
@@ -96,7 +96,7 @@ def test_memory_projection_is_not_checkpointed_as_recovery_truth(tmp_path) -> No
 
     restored = run(store.load_checkpoint("session_1"))
     assert restored is not None
-    store.close()
+    run(store.close())
     assert marker.encode() not in path.read_bytes()
 
 
@@ -132,7 +132,7 @@ def test_checkpoint_rejects_forbidden_durable_representations(
     assert stored_run is not None
     assert stored_run.status.value == "running"
     assert run(store.latest_checkpoint("session_1", "run_1")) is None
-    store.close()
+    run(store.close())
     assert marker.encode() not in path.read_bytes()
 
 
@@ -189,4 +189,4 @@ def test_corrupted_durable_rows_fail_with_stable_domain_error(
             run(store.load_checkpoint("session_1"))
         else:
             run(store.get(session_id="session_1", run_id="run_1"))
-    store.close()
+    run(store.close())

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-import sqlite3
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
-from threading import RLock
-from types import TracebackType
 
+import aiosqlite
+
+from agentos._sqlite_async import (
+    finish_sqlite_operation,
+    open_sqlite_connection,
+    sqlite_transaction,
+)
 from agentos.capabilities.skill_activation_errors import (
     SkillActivationCorruptedError,
     SkillActivationStoreClosedError,
@@ -20,84 +27,81 @@ from agentos.capabilities.skill_trust import SkillVerificationSubject
 
 
 class SQLiteSkillActivationStore:
-    """使用 SQLite 保存 Skill 验证主体摘要，不保存正文。"""
+    """使用原生异步 SQLite 保存 Skill 验证主体摘要。"""
 
-    def __init__(self, database_path: str | Path) -> None:
-        path = Path(database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = RLock()
-        self._connection: sqlite3.Connection | None = sqlite3.connect(
-            path,
-            timeout=5.0,
-            check_same_thread=False,
-        )
+    def __init__(self, connection: aiosqlite.Connection) -> None:
+        self._lock = asyncio.Lock()
+        self._connection: aiosqlite.Connection | None = connection
+
+    @classmethod
+    async def open(
+        cls,
+        database_path: str | Path,
+    ) -> SQLiteSkillActivationStore:
+        connection = await open_sqlite_connection(database_path)
         try:
-            self._connection.row_factory = sqlite3.Row
-            self._connection.execute("PRAGMA busy_timeout = 5000")
-            initialize_skill_activation_schema(self._connection)
+            connection.row_factory = aiosqlite.Row
+            await connection.execute("PRAGMA busy_timeout = 30000")
+            await initialize_skill_activation_schema(connection)
         except BaseException:
-            self._connection.close()
-            self._connection = None
+            await finish_sqlite_operation(connection.close)
             raise
+        return cls(connection)
 
-    def __enter__(self) -> SQLiteSkillActivationStore:
-        with self._lock:
-            self._require_open()
+    async def __aenter__(self) -> SQLiteSkillActivationStore:
+        self._require_open()
         return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
+    async def __aexit__(self, *args: object) -> None:
+        await self.close()
 
-    def close(self) -> None:
-        """幂等关闭 SQLite 连接。"""
+    async def close(self) -> None:
+        """幂等关闭连接；关闭失败时保留连接以供重试。"""
 
-        with self._lock:
-            connection, self._connection = self._connection, None
-            if connection is not None:
-                connection.close()
+        async with self._lock:
+            connection = self._connection
+            if connection is None:
+                return
+            await finish_sqlite_operation(
+                connection.close,
+                on_success=lambda: setattr(self, "_connection", None),
+            )
 
-    def save(self, record: SkillActivationRecord) -> None:
+    async def save(self, record: SkillActivationRecord) -> None:
         """原子保存或替换一个 Session Skill 激活引用。"""
 
         if not isinstance(record, SkillActivationRecord):
             raise TypeError("record must be SkillActivationRecord")
         subject = record.subject
-        with self._lock:
-            connection = self._require_open()
-            with connection:
-                connection.execute(
-                    """
-                    INSERT INTO agentos_skill_activations (
-                        session_id, skill_name, source_id, source_revision,
-                        content_digest, policy_id
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(session_id, skill_name) DO UPDATE SET
-                        source_id = excluded.source_id,
-                        source_revision = excluded.source_revision,
-                        content_digest = excluded.content_digest,
-                        policy_id = excluded.policy_id
-                    """,
-                    (
-                        record.session_id,
-                        record.skill_name,
-                        subject.source_id,
-                        subject.source_revision,
-                        subject.content_digest,
-                        record.policy_id,
-                    ),
-                )
+        async with self._transaction() as connection:
+            await connection.execute(
+                """
+                INSERT INTO agentos_skill_activations (
+                    session_id, skill_name, source_id, source_revision,
+                    content_digest, policy_id
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, skill_name) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    source_revision = excluded.source_revision,
+                    content_digest = excluded.content_digest,
+                    policy_id = excluded.policy_id
+                """,
+                (
+                    record.session_id,
+                    record.skill_name,
+                    subject.source_id,
+                    subject.source_revision,
+                    subject.content_digest,
+                    record.policy_id,
+                ),
+            )
 
-    def list(self, session_id: str) -> tuple[SkillActivationRecord, ...]:
+    async def list(self, session_id: str) -> tuple[SkillActivationRecord, ...]:
         """按 Skill 名称返回一个 Session 的激活引用。"""
 
         _require_identifier(session_id, "session_id")
-        with self._lock:
-            rows = self._require_open().execute(
+        async with self._lock:
+            async with self._require_open().execute(
                 """
                 SELECT session_id, skill_name, source_id, source_revision,
                        content_digest, policy_id
@@ -106,45 +110,53 @@ class SQLiteSkillActivationStore:
                 ORDER BY skill_name
                 """,
                 (session_id,),
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
         return tuple(_record_from_row(row) for row in rows)
 
-    def delete(self, session_id: str, skill_name: str) -> bool:
+    async def delete(self, session_id: str, skill_name: str) -> bool:
         """删除一个 Session Skill 激活引用。"""
 
         _require_identifier(session_id, "session_id")
         _require_identifier(skill_name, "skill_name")
-        with self._lock:
-            connection = self._require_open()
-            with connection:
-                cursor = connection.execute(
-                    "DELETE FROM agentos_skill_activations "
-                    "WHERE session_id = ? AND skill_name = ?",
-                    (session_id, skill_name),
-                )
-        return cursor.rowcount == 1
+        async with self._transaction() as connection:
+            cursor = await connection.execute(
+                "DELETE FROM agentos_skill_activations "
+                "WHERE session_id = ? AND skill_name = ?",
+                (session_id, skill_name),
+            )
+            try:
+                return cursor.rowcount == 1
+            finally:
+                await cursor.close()
 
-    def delete_session(self, session_id: str) -> None:
+    async def delete_session(self, session_id: str) -> None:
         """删除一个 Session 的全部 Skill 激活引用。"""
 
         _require_identifier(session_id, "session_id")
-        with self._lock:
-            connection = self._require_open()
-            with connection:
-                connection.execute(
-                    "DELETE FROM agentos_skill_activations WHERE session_id = ?",
-                    (session_id,),
-                )
+        async with self._transaction() as connection:
+            await connection.execute(
+                "DELETE FROM agentos_skill_activations WHERE session_id = ?",
+                (session_id,),
+            )
 
-    def _require_open(self) -> sqlite3.Connection:
-        if self._connection is None:
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        async with self._lock:
+            connection = self._require_open()
+            async with sqlite_transaction(connection):
+                yield connection
+
+    def _require_open(self) -> aiosqlite.Connection:
+        connection = self._connection
+        if connection is None:
             raise SkillActivationStoreClosedError(
                 "SQLiteSkillActivationStore is closed",
             )
-        return self._connection
+        return connection
 
 
-def _record_from_row(row: sqlite3.Row) -> SkillActivationRecord:
+def _record_from_row(row: aiosqlite.Row) -> SkillActivationRecord:
     try:
         values = tuple(row[key] for key in row.keys())
         if any(not isinstance(value, str) for value in values):

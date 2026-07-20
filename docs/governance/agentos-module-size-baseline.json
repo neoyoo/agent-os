@@ -53,13 +53,8 @@
       "gate": "no_new_responsibility"
     },
     {
-      "path": "src/agentos/observability/instrumented.py",
-      "lines": 754,
-      "gate": "split_or_exception"
-    },
-    {
       "path": "src/agentos/multi/postgres_plan.py",
-      "lines": 734,
+      "lines": 732,
       "gate": "split_or_exception"
     },
     {
@@ -74,7 +69,12 @@
     },
     {
       "path": "src/agentos/examples/production_reference_web_agent.py",
-      "lines": 713,
+      "lines": 712,
+      "gate": "split_or_exception"
+    },
+    {
+      "path": "src/agentos/observability/instrumented.py",
+      "lines": 669,
       "gate": "split_or_exception"
     },
     {
@@ -109,12 +109,17 @@
     },
     {
       "path": "src/agentos/planning/runtime.py",
-      "lines": 499,
+      "lines": 498,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/multi/tasks.py",
       "lines": 495,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/artifacts/sqlite_filesystem.py",
+      "lines": 488,
       "gate": "responsibility_review"
     },
     {
@@ -134,7 +139,12 @@
     },
     {
       "path": "src/agentos/planning/dispatch.py",
-      "lines": 463,
+      "lines": 467,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/daemons.py",
+      "lines": 458,
       "gate": "responsibility_review"
     },
     {
@@ -143,23 +153,18 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/planning/daemons.py",
-      "lines": 451,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/runtime/query_loop.py",
-      "lines": 447,
+      "lines": 450,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/planning/tools.py",
-      "lines": 439,
+      "lines": 442,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/planning/scheduling.py",
-      "lines": 424,
+      "lines": 428,
       "gate": "responsibility_review"
     },
     {
@@ -178,17 +183,17 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/durable/sqlite_store.py",
+      "lines": 397,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/capabilities/skill_sources.py",
       "lines": 387,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/artifacts/sqlite_filesystem.py",
-      "lines": 383,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/durable/sqlite_store.py",
+      "path": "src/agentos/artifacts/runtime.py",
       "lines": 383,
       "gate": "responsibility_review"
     },
@@ -213,13 +218,18 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/testing/contracts/plan_claim_store.py",
+      "lines": 350,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/channels/sse_turn_control.py",
       "lines": 348,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/testing/contracts/plan_claim_store.py",
-      "lines": 337,
+      "path": "src/agentos/testing/contracts/plan_store.py",
+      "lines": 343,
       "gate": "responsibility_review"
     },
     {
@@ -230,11 +240,6 @@
     {
       "path": "src/agentos/runtime/profile_web.py",
       "lines": 329,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/testing/contracts/plan_store.py",
-      "lines": 324,
       "gate": "responsibility_review"
     },
     {
@@ -260,11 +265,6 @@
     {
       "path": "src/agentos/runtime/tool_payloads.py",
       "lines": 303,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/artifacts/runtime.py",
-      "lines": 300,
       "gate": "responsibility_review"
     }
   ]

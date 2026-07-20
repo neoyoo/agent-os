@@ -26,13 +26,14 @@ from agentos.runtime import (
 from tests._context_protocol_fixtures import default_context_renderer
 
 
-def _run(loop: QueryLoop, input: str | UserTurnInput) -> str:
-    async def run() -> str:
-        outcome = await Agent(loop).run(input)
-        assert isinstance(outcome, AgentResult)
-        return outcome.content
+async def _run_async(loop: QueryLoop, input: str | UserTurnInput) -> str:
+    outcome = await Agent(loop).run(input)
+    assert isinstance(outcome, AgentResult)
+    return outcome.content
 
-    return asyncio.run(run())
+
+def _run(loop: QueryLoop, input: str | UserTurnInput) -> str:
+    return asyncio.run(_run_async(loop, input))
 
 
 def test_query_loop_runs_one_user_to_assistant_turn() -> None:
@@ -81,99 +82,113 @@ def test_query_loop_runs_one_user_to_assistant_turn() -> None:
 
 
 def test_query_loop_mounts_user_artifact_for_only_its_turn() -> None:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    provider = FakeProvider(["first", "second"])
-    loop = QueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
+    async def scenario() -> None:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        provider = FakeProvider(["first", "second"])
+        loop = QueryLoop(
+            context_runtime=context,
             message_runtime=messages,
-            input_projections=(ArtifactMountProjectionProvider(artifacts),),
-        ),
-        provider=provider,
-        artifact_runtime=artifacts,
-    )
+            request_builder=ProviderRequestBuilder(
+                context_renderer=default_context_renderer(),
+                message_runtime=messages,
+                input_projections=(ArtifactMountProjectionProvider(artifacts),),
+            ),
+            provider=provider,
+            artifact_runtime=artifacts,
+        )
 
-    _run(loop, UserTurnInput("分析图片", artifact_handles=(artifact.id,)))
-    _run(loop, "继续")
+        await _run_async(
+            loop,
+            UserTurnInput("分析图片", artifact_handles=(artifact.id,)),
+        )
+        await _run_async(loop, "继续")
 
-    assert [item.kind for item in provider.requests[0].messages][-1] == "context_mount"
-    first_mount = provider.requests[0].messages[-1]
-    assert isinstance(first_mount.content[1], ImagePart)
-    assert first_mount.content[1].payload.handle == artifact.id
-    assert all(
-        item.kind != "context_mount" for item in provider.requests[1].messages
-    )
+        assert [item.kind for item in provider.requests[0].messages][
+            -1
+        ] == "context_mount"
+        first_mount = provider.requests[0].messages[-1]
+        assert isinstance(first_mount.content[1], ImagePart)
+        assert first_mount.content[1].payload.handle == artifact.id
+        assert all(
+            item.kind != "context_mount" for item in provider.requests[1].messages
+        )
+
+    asyncio.run(scenario())
 
 
 def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> None:
-    context = ContextRuntime()
-    messages = MessageRuntime()
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    registry = ToolRegistry()
-    registry.register(
-        RegisteredTool(
-            name="noop",
-            description="No-op.",
-            parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: "ok",
-        ),
-    )
-    router = ToolCallRouter(
-        tool_registry=registry,
-        context_runtime=context,
-    )
-    provider = FakeProvider(
-        [
-            ProviderResponse(
-                tool_calls=[
-                    ProviderToolCall(id="call_noop", name="noop", arguments={}),
-                ],
+    async def scenario() -> None:
+        context = ContextRuntime()
+        messages = MessageRuntime()
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        registry = ToolRegistry()
+        registry.register(
+            RegisteredTool(
+                name="noop",
+                description="No-op.",
+                parameters={"type": "object", "properties": {}},
+                handler=lambda arguments: "ok",
             ),
-            ProviderResponse(content="inspected"),
-        ],
-    )
-    loop = QueryLoop(
-        context_runtime=context,
-        message_runtime=messages,
-        request_builder=ProviderRequestBuilder(
-            context_renderer=default_context_renderer(),
+        )
+        router = ToolCallRouter(
+            tool_registry=registry,
+            context_runtime=context,
+        )
+        provider = FakeProvider(
+            [
+                ProviderResponse(
+                    tool_calls=[
+                        ProviderToolCall(id="call_noop", name="noop", arguments={}),
+                    ],
+                ),
+                ProviderResponse(content="inspected"),
+            ],
+        )
+        loop = QueryLoop(
+            context_runtime=context,
             message_runtime=messages,
-            tools=router.tool_specs(),
-            input_projections=(ArtifactMountProjectionProvider(artifacts),),
-        ),
-        provider=provider,
-        tool_call_router=router,
-        artifact_runtime=artifacts,
-    )
+            request_builder=ProviderRequestBuilder(
+                context_renderer=default_context_renderer(),
+                message_runtime=messages,
+                tools=router.tool_specs(),
+                input_projections=(ArtifactMountProjectionProvider(artifacts),),
+            ),
+            provider=provider,
+            tool_call_router=router,
+            artifact_runtime=artifacts,
+        )
 
-    result = _run(loop, UserTurnInput("分析图片", artifact_handles=(artifact.id,)))
+        result = await _run_async(
+            loop,
+            UserTurnInput("分析图片", artifact_handles=(artifact.id,)),
+        )
 
-    assert result == "inspected"
-    for request in provider.requests:
-        mount = request.messages[-1]
-        assert mount.kind == "context_mount"
-        assert isinstance(mount.content[1], ImagePart)
-        assert mount.content[1].payload.handle == artifact.id
+        assert result == "inspected"
+        for request in provider.requests:
+            mount = request.messages[-1]
+            assert mount.kind == "context_mount"
+            assert isinstance(mount.content[1], ImagePart)
+            assert mount.content[1].payload.handle == artifact.id
+
+    asyncio.run(scenario())
 
 
 def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:

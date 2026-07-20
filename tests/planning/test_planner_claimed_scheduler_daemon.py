@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -12,16 +12,17 @@ from agentos.planning import (
     PlannerRuntime,
 )
 from agentos.planning.scheduling_reports import PlanClaimedSchedulerTickReport
+from tests.planning._async import async_test
 
 
 class RecordingClaimedPlannerRuntime(PlannerRuntime):
     def __init__(self) -> None:
         super().__init__(store=InMemoryPlanStore())
         self.calls: list[dict[str, object]] = []
-        self.second_call = threading.Event()
+        self.second_call = asyncio.Event()
         self.raise_on_call: Exception | None = None
 
-    def claimed_scheduler_tick(
+    async def claimed_scheduler_tick(
         self,
         *,
         worker_id: str,
@@ -54,7 +55,8 @@ class RecordingClaimedPlannerRuntime(PlannerRuntime):
         return PlanClaimedSchedulerTickReport(worker_id=worker_id)
 
 
-def test_planner_claimed_scheduler_daemon_run_once_records_report() -> None:
+@async_test
+async def test_planner_claimed_scheduler_daemon_run_once_records_report() -> None:
     runtime = RecordingClaimedPlannerRuntime()
     daemon = PlannerClaimedSchedulerDaemon(
         runtime=runtime,
@@ -70,7 +72,7 @@ def test_planner_claimed_scheduler_daemon_run_once_records_report() -> None:
         poll_interval_seconds=0.01,
     )
 
-    report = daemon.run_once()
+    report = await daemon.run_once()
     state = daemon.state()
 
     assert report.worker_id == "worker-1"
@@ -97,7 +99,8 @@ def test_planner_claimed_scheduler_daemon_run_once_records_report() -> None:
     assert state.last_run_at is not None
 
 
-def test_planner_claimed_scheduler_daemon_start_stop_and_join_polls() -> None:
+@async_test
+async def test_planner_claimed_scheduler_daemon_start_stop_and_join_polls() -> None:
     runtime = RecordingClaimedPlannerRuntime()
     daemon = PlannerClaimedSchedulerDaemon(
         runtime=runtime,
@@ -106,12 +109,15 @@ def test_planner_claimed_scheduler_daemon_start_stop_and_join_polls() -> None:
         poll_interval_seconds=0.001,
     )
 
-    daemon.start()
-    assert runtime.second_call.wait(timeout=1.0)
-    assert daemon.is_running() is True
-    daemon.stop()
+    await daemon.start()
+    try:
+        await asyncio.wait_for(runtime.second_call.wait(), timeout=1.0)
+        assert daemon.is_running() is True
+    finally:
+        await daemon.stop()
+        joined = await daemon.join(timeout=1.0)
 
-    assert daemon.join(timeout=1.0) is True
+    assert joined is True
     state = daemon.state()
     assert state.status == "stopped"
     assert state.iterations >= 2
@@ -122,7 +128,8 @@ def test_planner_claimed_scheduler_daemon_start_stop_and_join_polls() -> None:
     assert daemon.is_running() is False
 
 
-def test_planner_claimed_scheduler_daemon_records_runtime_errors() -> None:
+@async_test
+async def test_planner_claimed_scheduler_daemon_records_runtime_errors() -> None:
     runtime = RecordingClaimedPlannerRuntime()
     runtime.raise_on_call = RuntimeError("claim tick failed")
     daemon = PlannerClaimedSchedulerDaemon(
@@ -132,7 +139,7 @@ def test_planner_claimed_scheduler_daemon_records_runtime_errors() -> None:
     )
 
     with pytest.raises(RuntimeError, match="claim tick failed"):
-        daemon.run_once()
+        await daemon.run_once()
 
     state = daemon.state()
     assert state.iterations == 1

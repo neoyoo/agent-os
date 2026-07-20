@@ -9,6 +9,7 @@ from agentos.planning import (
     PlanStep,
     SubAgentTemplate,
 )
+from tests.planning._async import async_test
 
 
 class RecordingCoordinator:
@@ -51,7 +52,8 @@ def _plan_and_assignment() -> tuple[PlanState, PlanStep, PlanAssignment]:
     return plan, step, assignment
 
 
-def test_planning_dispatch_adapter_maps_spawn_without_leaking_handle() -> None:
+@async_test
+async def test_planning_dispatch_adapter_maps_spawn_without_leaking_handle() -> None:
     coordinator = RecordingCoordinator()
     dispatcher = AgentCoordinatorPlanStepDispatcher(coordinator)  # type: ignore[arg-type]
     plan, step, assignment = _plan_and_assignment()
@@ -64,7 +66,7 @@ def test_planning_dispatch_adapter_maps_spawn_without_leaking_handle() -> None:
         timeout_seconds=45,
     )
 
-    result = dispatcher.submit(
+    result = await dispatcher.submit(
         plan=plan,
         step=step,
         assignment=assignment,
@@ -85,7 +87,8 @@ def test_planning_dispatch_adapter_maps_spawn_without_leaking_handle() -> None:
     assert coordinator.dispatch_calls == []
 
 
-def test_planning_dispatch_adapter_maps_persistent_dispatch_with_fallback() -> None:
+@async_test
+async def test_planning_dispatch_adapter_maps_persistent_dispatch_with_fallback() -> None:
     coordinator = RecordingCoordinator()
     dispatcher = AgentCoordinatorPlanStepDispatcher(coordinator)  # type: ignore[arg-type]
     plan, step, assignment = _plan_and_assignment()
@@ -99,7 +102,7 @@ def test_planning_dispatch_adapter_maps_persistent_dispatch_with_fallback() -> N
         timeout_seconds=90,
     )
 
-    result = dispatcher.submit(
+    result = await dispatcher.submit(
         plan=plan,
         step=step,
         assignment=assignment,
@@ -121,7 +124,8 @@ def test_planning_dispatch_adapter_maps_persistent_dispatch_with_fallback() -> N
     ]
 
 
-def test_planning_dispatch_adapter_translates_duplicate_task_error() -> None:
+@async_test
+async def test_planning_dispatch_adapter_translates_duplicate_task_error() -> None:
     coordinator = RecordingCoordinator()
     coordinator.spawn_error = TaskAlreadySubmittedError("task_1")
     dispatcher = AgentCoordinatorPlanStepDispatcher(coordinator)  # type: ignore[arg-type]
@@ -133,7 +137,7 @@ def test_planning_dispatch_adapter_translates_duplicate_task_error() -> None:
     )
 
     with pytest.raises(PlanDispatchAlreadySubmittedError, match="task_1") as caught:
-        dispatcher.submit(
+        await dispatcher.submit(
             plan=plan,
             step=step,
             assignment=assignment,

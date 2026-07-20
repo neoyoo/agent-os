@@ -22,9 +22,9 @@ class BoundSkillTools:
             except KeyError:
                 return self._not_found(skill_name)
 
-        def disable_skill(arguments: dict[str, object]) -> str:
+        async def disable_skill(arguments: dict[str, object]) -> str:
             skill_name = str(arguments.get("skill_name", ""))
-            self.runtime.disable(self.session_id, skill_name)
+            await self.runtime.disable(self.session_id, skill_name)
             return f"Skill 已停用：{skill_name}。"
 
         async def load_skill_resource(arguments: dict[str, object]) -> str:

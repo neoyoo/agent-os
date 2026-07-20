@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from typing import cast
+
+import aiosqlite
 
 from agentos._json_values import thaw_json_value
 from agentos.durable.serialization import dump_json, load_json_object
@@ -24,18 +25,19 @@ from agentos.runtime.run_state import RunState, RunStatus
 from agentos.runtime.run_runtime import RunWriteGuard
 
 
-def accept_command(
-    connection: sqlite3.Connection,
+async def accept_command(
+    connection: aiosqlite.Connection,
     *,
     session_id: str,
     command: DurableRunCommand,
     now: datetime,
 ) -> AcceptedTurnExecution | DurableCommandReceipt:
     payload_json = dump_json(thaw_json_value(command.payload))
-    duplicate = connection.execute(
+    async with connection.execute(
         "SELECT * FROM durable_commands WHERE command_id = ?",
         (command.command_id,),
-    ).fetchone()
+    ) as cursor:
+        duplicate = await cursor.fetchone()
     if duplicate is not None:
         return _duplicate_receipt(
             duplicate,
@@ -43,7 +45,7 @@ def accept_command(
             command=command,
             payload_json=payload_json,
         )
-    current = require_run(connection, session_id, command.run_id)
+    current = await require_run(connection, session_id, command.run_id)
     if command.kind == "cancel":
         _require_non_terminal(current)
         updated = current.transition(RunStatus.CANCELLED)
@@ -51,8 +53,8 @@ def accept_command(
     else:
         _validate_continuation(command, current, now)
         updated = current.transition(RunStatus.QUEUED)
-        turn_id = _allocate_turn_id(connection, session_id)
-    connection.execute(
+        turn_id = await _allocate_turn_id(connection, session_id)
+    await connection.execute(
         "INSERT INTO durable_commands "
         "(command_id, session_id, run_id, kind, payload_json, turn_id, "
         "aggregate_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -66,7 +68,7 @@ def accept_command(
             updated.aggregate_version,
         ),
     )
-    update_run(connection, updated)
+    await update_run(connection, updated)
     if command.kind == "cancel":
         return DurableCommandReceipt(
             command.run_id,
@@ -89,15 +91,15 @@ def accept_command(
     )
 
 
-def load_pending_continuation(
-    connection: sqlite3.Connection,
+async def load_pending_continuation(
+    connection: aiosqlite.Connection,
     *,
     session_id: str,
     run_id: str,
 ) -> AcceptedTurnExecution | None:
     """读取已接受但尚未开始执行的 QUEUED continuation。"""
 
-    row = connection.execute(
+    async with connection.execute(
         """
         SELECT command_id, run_id, kind, payload_json, turn_id, aggregate_version
         FROM durable_commands
@@ -109,7 +111,8 @@ def load_pending_continuation(
         ORDER BY rowid DESC LIMIT 1
         """,
         (session_id, run_id, session_id, run_id),
-    ).fetchone()
+    ) as cursor:
+        row = await cursor.fetchone()
     if row is None:
         return None
     try:
@@ -153,20 +156,21 @@ def _validate_continuation(
         raise CommandNotDueError("durable command is not due")
 
 
-def _allocate_turn_id(
-    connection: sqlite3.Connection,
+async def _allocate_turn_id(
+    connection: aiosqlite.Connection,
     session_id: str,
 ) -> str:
-    row = connection.execute(
+    async with connection.execute(
         "SELECT next_turn_number FROM durable_sessions WHERE session_id = ?",
         (session_id,),
-    ).fetchone()
+    ) as cursor:
+        row = await cursor.fetchone()
     if row is None:
         raise CheckpointCorruptedError("durable session record is missing")
     next_turn_number = row["next_turn_number"]
     if type(next_turn_number) is not int or next_turn_number < 1:
         raise CheckpointCorruptedError("durable session record is corrupted")
-    connection.execute(
+    await connection.execute(
         "UPDATE durable_sessions SET next_turn_number = ? WHERE session_id = ?",
         (next_turn_number + 1, session_id),
     )
@@ -174,7 +178,7 @@ def _allocate_turn_id(
 
 
 def _duplicate_receipt(
-    row: sqlite3.Row,
+    row: aiosqlite.Row,
     *,
     session_id: str,
     command: DurableRunCommand,

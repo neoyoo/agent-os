@@ -25,7 +25,7 @@ class FakeCoordinator:
         self.spawn_calls: list[dict[str, object]] = []
         self.dispatch_calls: list[dict[str, object]] = []
 
-    def submit(
+    async def submit(
         self,
         *,
         plan: PlanState,
@@ -38,7 +38,7 @@ class FakeCoordinator:
             context = "\n".join(template.context_seed)
             instruction = f"{context}\n\nTask: {instruction}"
         if template.target_agent_id is None:
-            self.spawn(
+            await self.spawn(
                 instruction=instruction,
                 allowed_tool_names=template.allowed_tool_names,
                 parent_agent_id=plan.owner_agent_id,
@@ -47,7 +47,7 @@ class FakeCoordinator:
                 child_agent_id=assignment.target_agent_id,
             )
             return
-        self.dispatch(
+        await self.dispatch(
             instruction=instruction,
             required_capabilities=(step.required_capabilities or template.capabilities),
             parent_agent_id=plan.owner_agent_id,
@@ -57,15 +57,15 @@ class FakeCoordinator:
             task_id=assignment.task_id,
         )
 
-    def spawn(self, **kwargs: object) -> None:
+    async def spawn(self, **kwargs: object) -> None:
         self.spawn_calls.append(kwargs)
 
-    def dispatch(self, **kwargs: object) -> None:
+    async def dispatch(self, **kwargs: object) -> None:
         self.dispatch_calls.append(kwargs)
 
 
 class RejectingPlanStore(InMemoryPlanStore):
-    def save_plan_if_unchanged(
+    async def save_plan_if_unchanged(
         self,
         plan: PlanState,
         *,
@@ -73,7 +73,7 @@ class RejectingPlanStore(InMemoryPlanStore):
     ) -> bool:
         return False
 
-    def save_plan_if_claimed(
+    async def save_plan_if_claimed(
         self,
         plan: PlanState,
         claim: PlanClaimRecord,
@@ -89,7 +89,7 @@ class ConflictOncePlanStore(InMemoryPlanStore):
         super().__init__()
         self.conflict_next_submitted_save = True
 
-    def save_plan_if_unchanged(
+    async def save_plan_if_unchanged(
         self,
         plan: PlanState,
         *,
@@ -99,11 +99,11 @@ class ConflictOncePlanStore(InMemoryPlanStore):
             assignment.dispatch_status == "submitted" for assignment in plan.assignments
         ):
             self.conflict_next_submitted_save = False
-            current = self.get_plan(plan.plan_id)
+            current = await self.get_plan(plan.plan_id)
             assert current is not None
-            super().save_plan(replace(current, updated_at=10.5))
+            await super().save_plan(replace(current, updated_at=10.5))
             return False
-        return super().save_plan_if_unchanged(
+        return await super().save_plan_if_unchanged(
             plan,
             expected_revision=expected_revision,
         )

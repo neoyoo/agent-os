@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 import pytest
 
@@ -19,7 +21,8 @@ from tests.planning._runtime_fixtures import (
 )
 
 
-def test_planner_runtime_assigns_step_to_spawn_template() -> None:
+@async_test
+async def test_planner_runtime_assigns_step_to_spawn_template() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -37,14 +40,14 @@ def test_planner_runtime_assigns_step_to_spawn_template() -> None:
         clock=lambda: 10.0,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
-    plan = runtime.add_step(
+    plan = await runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    plan = await runtime.add_step(
         plan.plan_id,
         instruction="Review planner module.",
         template_id="reviewer",
     )
 
-    assigned = runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
+    assigned = await runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
 
     assert assigned.steps[0].status == "assigned"
     assert assigned.steps[0].task_id == "task_1"
@@ -58,7 +61,10 @@ def test_planner_runtime_assigns_step_to_spawn_template() -> None:
     assert coordinator.spawn_calls[0]["timeout_seconds"] == 30
 
 
-def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> None:
+@async_test
+async def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> (
+    None
+):
     store = ConflictOncePlanStore()
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
@@ -75,16 +81,16 @@ def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> N
         clock=lambda: 20.0,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
-    runtime.add_step(
+    plan = await runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    await runtime.add_step(
         plan.plan_id,
         instruction="Review planner module.",
         template_id="reviewer",
     )
 
-    assigned = runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
+    assigned = await runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
 
-    persisted = runtime.get_plan(plan.plan_id)
+    persisted = await runtime.get_plan(plan.plan_id)
     assert len(coordinator.spawn_calls) == 1
     assert assigned.assignments[0].dispatch_status == "submitted"
     assert persisted.assignments[0].dispatch_status == "submitted"
@@ -92,7 +98,10 @@ def test_planner_runtime_retries_submitted_marker_after_revision_conflict() -> N
     assert store.conflict_next_submitted_save is False
 
 
-def test_planner_runtime_fresh_assignment_duplicate_task_is_not_submitted() -> None:
+@async_test
+async def test_planner_runtime_fresh_assignment_duplicate_task_is_not_submitted() -> (
+    None
+):
     class DuplicateTaskCoordinator(FakeCoordinator):
         def spawn(self, **kwargs: object) -> None:
             self.spawn_calls.append(kwargs)
@@ -114,23 +123,24 @@ def test_planner_runtime_fresh_assignment_duplicate_task_is_not_submitted() -> N
         clock=lambda: 20.0,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
-    runtime.add_step(
+    plan = await runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    await runtime.add_step(
         plan.plan_id,
         instruction="Review planner module.",
         template_id="reviewer",
     )
 
     with pytest.raises(PlanDispatchAlreadySubmittedError, match="task_1"):
-        runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
+        await runtime.assign_step(plan.plan_id, "step_1", template_id="reviewer")
 
-    persisted = runtime.get_plan(plan.plan_id)
+    persisted = await runtime.get_plan(plan.plan_id)
     assert persisted.steps[0].status == "failed"
     assert persisted.assignments[0].dispatch_status == "failed"
     assert persisted.assignments[0].dispatch_error == "task_1"
 
 
-def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
+@async_test
+async def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
     coordinator = FakeCoordinator()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -147,15 +157,15 @@ def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
         clock=lambda: 10.0,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    plan = runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
-    runtime.add_step(
+    plan = await runtime.create_plan(objective="Review SDK.", owner_agent_id="leader")
+    await runtime.add_step(
         plan.plan_id,
         instruction="Review architecture.",
         required_capabilities=("architecture-review",),
         template_id="expert-reviewer",
     )
 
-    assigned = runtime.assign_step(
+    assigned = await runtime.assign_step(
         plan.plan_id,
         "step_1",
         template_id="expert-reviewer",
@@ -170,7 +180,8 @@ def test_planner_runtime_assigns_step_to_dispatch_template() -> None:
     )
 
 
-def test_planner_runtime_does_not_dispatch_when_assignment_save_fails() -> None:
+@async_test
+async def test_planner_runtime_does_not_dispatch_when_assignment_save_fails() -> None:
     coordinator = FakeCoordinator()
     store = RejectingPlanStore()
     runtime = PlannerRuntime(
@@ -186,7 +197,7 @@ def test_planner_runtime_does_not_dispatch_when_assignment_save_fails() -> None:
         clock=lambda: 10.0,
         id_factory=lambda prefix: f"{prefix}_1",
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Guard planner dispatch side effects.",
@@ -204,8 +215,10 @@ def test_planner_runtime_does_not_dispatch_when_assignment_save_fails() -> None:
     )
 
     with pytest.raises(PlanConflictError, match="plan changed before saving"):
-        runtime.assign_step("plan_1", "step_1", template_id="reviewer")
+        await runtime.assign_step("plan_1", "step_1", template_id="reviewer")
 
     assert coordinator.spawn_calls == []
     assert coordinator.dispatch_calls == []
-    assert store.get_plan("plan_1").steps[0].status == "pending"  # type: ignore[union-attr]
+    persisted = await store.get_plan("plan_1")
+    assert persisted is not None
+    assert persisted.steps[0].status == "pending"

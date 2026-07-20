@@ -14,17 +14,17 @@ from agentos.providers import (
     ProviderToolCall,
 )
 from agentos.runtime import AgentResult
-from agentos.sync import SyncAgent
+from tests.planning._async import async_test
 
 
-def run_agent(agent, user_message: str) -> AgentResult:
-    with SyncAgent(agent) as sync_agent:
-        outcome = sync_agent.run(user_message)
+async def run_agent(agent, user_message: str) -> AgentResult:
+    outcome = await agent.run(user_message)
     assert isinstance(outcome, AgentResult)
     return outcome
 
 
-def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
+@async_test
+async def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
     provider = FakeProvider(
         [
             ProviderResponse(
@@ -41,7 +41,7 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
     )
     agent = build_agent(provider=provider, project_root=Path.cwd())
 
-    answer = run_agent(agent, "读取 pyproject.toml 里的项目名").content
+    answer = (await run_agent(agent, "读取 pyproject.toml 里的项目名")).content
 
     assert answer == "项目名是 agent-os。"
     tool_names = [tool.function.name for tool in provider.requests[0].tools]
@@ -58,11 +58,12 @@ def test_build_agent_wires_read_file_tool_for_small_agent() -> None:
     assert 'name = "agent-os"' in tool_result.content[0].text  # type: ignore[union-attr]
 
 
-def test_build_agent_exposes_registered_tools_only_through_request_tools() -> None:
+@async_test
+async def test_build_agent_exposes_registered_tools_only_through_request_tools() -> None:
     provider = FakeProvider([ProviderResponse(content="ok")])
     agent = build_agent(provider=provider, project_root=Path.cwd())
 
-    run_agent(agent, "hello")
+    await run_agent(agent, "hello")
 
     request = provider.requests[0]
     tool_names = [tool["function"]["name"] for tool in request.tools]
@@ -73,7 +74,8 @@ def test_build_agent_exposes_registered_tools_only_through_request_tools() -> No
 
 
 
-def test_build_agent_can_enable_observability(tmp_path) -> None:
+@async_test
+async def test_build_agent_can_enable_observability(tmp_path) -> None:
     tracer = InMemoryTracer()
     provider = FakeProvider([ProviderResponse(content="ok")])
 
@@ -87,7 +89,7 @@ def test_build_agent_can_enable_observability(tmp_path) -> None:
     )
 
     assert isinstance(agent.query_loop, InstrumentedQueryLoop)
-    assert run_agent(agent, "hello").content == "ok"
+    assert (await run_agent(agent, "hello")).content == "ok"
     assert [record.name for record in tracer.records] == [
         "agent.turn",
         "provider.request.build",

@@ -36,13 +36,13 @@ class _SchedulingRuntime(Protocol):
 
     def _clock(self) -> float: ...
 
-    def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
+    async def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
 
-    def retryable_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
+    async def retryable_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
 
-    def retry_step(self, plan_id: str, step_id: str) -> PlanState: ...
+    async def retry_step(self, plan_id: str, step_id: str) -> PlanState: ...
 
-    def dispatch_ready_steps(
+    async def dispatch_ready_steps(
         self,
         plan_id: str,
         *,
@@ -57,7 +57,7 @@ class _SchedulingRuntime(Protocol):
         statuses: tuple[PlanStatus, ...],
     ) -> tuple[PlanStatus, ...]: ...
 
-    def _run_scheduler_tick_with_claim(
+    async def _run_scheduler_tick_with_claim(
         self,
         claim: PlanClaimRecord | None,
         *,
@@ -67,7 +67,7 @@ class _SchedulingRuntime(Protocol):
     ) -> PlanSchedulerTickReport: ...
 
 
-def schedulable_plans(
+async def schedulable_plans(
     runtime: _SchedulingRuntime,
     *,
     owner_agent_id: str | None = None,
@@ -81,7 +81,7 @@ def schedulable_plans(
     allowed_statuses = runtime._validate_plan_statuses(statuses)
     selection_now = float(runtime._clock())
     summaries: list[PlannerSchedulablePlan] = []
-    for plan in runtime.store.list_plans(owner_agent_id):
+    for plan in await runtime.store.list_plans(owner_agent_id):
         if plan.status not in allowed_statuses:
             continue
         ready_step_ids = tuple(
@@ -121,7 +121,7 @@ def schedulable_plans(
     return tuple(summaries)
 
 
-def claim_schedulable_plans(
+async def claim_schedulable_plans(
     runtime: _SchedulingRuntime,
     *,
     worker_id: str,
@@ -138,25 +138,27 @@ def claim_schedulable_plans(
     lease_seconds = float(lease_seconds)
     if lease_seconds <= 0:
         raise ValueError("lease_seconds must be > 0")
-    summaries = schedulable_plans(
+    summaries = await schedulable_plans(
         runtime,
         owner_agent_id=owner_agent_id,
         statuses=statuses,
         limit=limit,
     )
-    return tuple(
-        claim_store.claim_plan(
+    claims = []
+    for summary in summaries:
+        claims.append(
+            await claim_store.claim_plan(
             plan_id=summary.plan_id,
             owner_agent_id=summary.owner_agent_id,
             worker_id=worker_id,
             lease_seconds=lease_seconds,
             now=float(runtime._clock()),
+            )
         )
-        for summary in summaries
-    )
+    return tuple(claims)
 
 
-def sweep_expired_claims(
+async def sweep_expired_claims(
     runtime: _SchedulingRuntime,
     *,
     owner_agent_id: str | None = None,
@@ -178,7 +180,7 @@ def sweep_expired_claims(
         raise ValueError("limit must be >= 1")
     now_value = float(runtime._clock() if now is None else now)
     sweep_store = cast(PlanClaimSweepStore, claim_store)
-    checked = sweep_store.expired_claims(
+    checked = await sweep_store.expired_claims(
         now=now_value,
         owner_agent_id=owner_agent_id,
         limit=limit,
@@ -187,7 +189,7 @@ def sweep_expired_claims(
     skipped: list[PlanClaimSweepSkip] = []
     if not dry_run:
         for claim in checked:
-            if sweep_store.release_expired_claim(claim, now=now_value):
+            if await sweep_store.release_expired_claim(claim, now=now_value):
                 released.append(claim)
             else:
                 skipped.append(
@@ -207,7 +209,7 @@ def sweep_expired_claims(
     )
 
 
-def scheduler_tick(
+async def scheduler_tick(
     runtime: _SchedulingRuntime,
     plan_id: str,
     *,
@@ -222,10 +224,10 @@ def scheduler_tick(
     if dispatch_limit is not None and dispatch_limit < 1:
         raise ValueError("dispatch_limit must be >= 1")
     retry_resets: list[PlanSchedulerRetryReset] = []
-    for step in runtime.retryable_steps(plan_id):
+    for step in await runtime.retryable_steps(plan_id):
         if retry_limit is not None and len(retry_resets) >= retry_limit:
             break
-        runtime.retry_step(plan_id, step.step_id)
+        await runtime.retry_step(plan_id, step.step_id)
         retry_resets.append(
             PlanSchedulerRetryReset(
                 plan_id=plan_id,
@@ -233,7 +235,7 @@ def scheduler_tick(
                 attempts=step.attempts,
             ),
         )
-    dispatch = runtime.dispatch_ready_steps(
+    dispatch = await runtime.dispatch_ready_steps(
         plan_id,
         default_template_id=default_template_id,
         limit=dispatch_limit,
@@ -245,7 +247,7 @@ def scheduler_tick(
     )
 
 
-def claimed_scheduler_tick(
+async def claimed_scheduler_tick(
     runtime: _SchedulingRuntime,
     *,
     worker_id: str,
@@ -278,13 +280,13 @@ def claimed_scheduler_tick(
     tick_reports: list[PlanSchedulerTickReport] = []
     skipped: list[PlanClaimedSchedulerTickSkip] = []
     released_plan_ids: list[str] = []
-    for summary in schedulable_plans(
+    for summary in await schedulable_plans(
         runtime,
         owner_agent_id=owner_agent_id,
         statuses=statuses,
         limit=limit,
     ):
-        claim_result = claim_store.claim_plan(
+        claim_result = await claim_store.claim_plan(
             plan_id=summary.plan_id,
             owner_agent_id=summary.owner_agent_id,
             worker_id=worker_id,
@@ -304,7 +306,7 @@ def claimed_scheduler_tick(
             continue
         try:
             tick_reports.append(
-                runtime._run_scheduler_tick_with_claim(
+                await runtime._run_scheduler_tick_with_claim(
                     claim_result.claim,
                     default_template_id=default_template_id,
                     retry_limit=retry_limit,
@@ -330,12 +332,14 @@ def claimed_scheduler_tick(
                 ),
             )
         finally:
-            if release_after_tick and claim_store.release_plan(
-                plan_id=summary.plan_id,
-                worker_id=worker_id,
-                owner_agent_id=summary.owner_agent_id,
-            ):
-                released_plan_ids.append(summary.plan_id)
+            if release_after_tick:
+                released = await claim_store.release_plan(
+                    plan_id=summary.plan_id,
+                    worker_id=worker_id,
+                    owner_agent_id=summary.owner_agent_id,
+                )
+                if released:
+                    released_plan_ids.append(summary.plan_id)
 
     return PlanClaimedSchedulerTickReport(
         worker_id=worker_id,

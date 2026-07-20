@@ -52,7 +52,7 @@ class TurnLifecycle:
     event_bus: EventBus | None = None
     structured_logger: StructuredLoggerBoundary | None = None
 
-    def prepare_user_turn(
+    async def prepare_user_turn(
         self,
         input: UserTurnInput,
         *,
@@ -63,7 +63,7 @@ class TurnLifecycle:
 
         turn = self._start_turn(input.content, turn_id=turn_id)
         self._log("turn_start", user_message_length=len(input.content))
-        artifact_refs = self._prepare_user_artifacts(input)
+        artifact_refs = await self._prepare_user_artifacts(input)
         user = self.message_runtime.append_user(
             input.content,
             artifact_refs=artifact_refs,
@@ -183,7 +183,7 @@ class TurnLifecycle:
             "turn_id": turn.id if turn else None,
         }
 
-    def _prepare_user_artifacts(
+    async def _prepare_user_artifacts(
         self,
         input: UserTurnInput,
     ) -> tuple[ArtifactRef, ...]:
@@ -191,7 +191,7 @@ class TurnLifecycle:
             return ()
         if self.artifact_runtime is None:
             raise RuntimeError("artifact runtime is required for artifact handles")
-        return self.artifact_runtime.prepare_user_uploads(input.artifact_handles)
+        return await self.artifact_runtime.prepare_user_uploads(input.artifact_handles)
 
     def _consume_turn_notices(self) -> tuple[ContinuationNotice, ...]:
         if self.turn_notice_provider is None:

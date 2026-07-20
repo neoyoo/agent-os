@@ -17,7 +17,7 @@ class AgentCoordinatorPlanStepDispatcher:
     def __init__(self, coordinator: AgentCoordinator) -> None:
         self._coordinator = coordinator
 
-    def submit(
+    async def submit(
         self,
         *,
         plan: PlanState,

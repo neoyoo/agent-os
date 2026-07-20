@@ -14,6 +14,7 @@ from agentos.events.artifacts import (
     ArtifactUploadedEvent,
 )
 from agentos.events.bus import EventBus
+from tests.artifacts._async import async_test
 
 
 def runtime() -> tuple[ArtifactRuntime, EventBus]:
@@ -28,8 +29,8 @@ def runtime() -> tuple[ArtifactRuntime, EventBus]:
     )
 
 
-def upload(target: ArtifactRuntime, data: bytes = b"private-image"):
-    return target.upload(
+async def upload(target: ArtifactRuntime, data: bytes = b"private-image"):
+    return await target.upload(
         data=data,
         filename="drawing.png",
         media_type="image/png",
@@ -63,10 +64,11 @@ def test_artifact_events_stay_internal_and_never_define_content_fields() -> None
         })
 
 
-def test_upload_emits_safe_metadata_after_store_write() -> None:
+@async_test
+async def test_upload_emits_safe_metadata_after_store_write() -> None:
     target, event_bus = runtime()
 
-    record = upload(target)
+    record = await upload(target)
 
     assert event_bus.events == [
         ArtifactUploadedEvent(
@@ -81,13 +83,14 @@ def test_upload_emits_safe_metadata_after_store_write() -> None:
     assert "data" not in asdict(event_bus.events[0])
 
 
-def test_load_emits_requested_then_mounted_and_duplicate_is_idempotent() -> None:
+@async_test
+async def test_load_emits_requested_then_mounted_and_duplicate_is_idempotent() -> None:
     target, event_bus = runtime()
-    record = upload(target)
+    record = await upload(target)
     event_bus.events.clear()
 
-    target.load_attachment(record.id)
-    target.load_attachment(record.id)
+    await target.load_attachment(record.id)
+    await target.load_attachment(record.id)
 
     assert event_bus.events == [
         ArtifactLoadRequestedEvent(session_id="session-1", handle=record.id),
@@ -102,13 +105,14 @@ def test_load_emits_requested_then_mounted_and_duplicate_is_idempotent() -> None
     ]
 
 
-def test_load_upgrades_user_mount_with_observable_unmount_and_mount() -> None:
+@async_test
+async def test_load_upgrades_user_mount_with_observable_unmount_and_mount() -> None:
     target, event_bus = runtime()
-    record = upload(target)
-    target.mount_user_upload(record.id)
+    record = await upload(target)
+    await target.mount_user_upload(record.id)
     event_bus.events.clear()
 
-    target.load_attachment(record.id)
+    await target.load_attachment(record.id)
 
     assert event_bus.events == [
         ArtifactLoadRequestedEvent(session_id="session-1", handle=record.id),
@@ -127,12 +131,13 @@ def test_load_upgrades_user_mount_with_observable_unmount_and_mount() -> None:
     ]
 
 
-def test_valid_unknown_load_emits_only_requested() -> None:
+@async_test
+async def test_valid_unknown_load_emits_only_requested() -> None:
     target, event_bus = runtime()
     missing = "art_00000000-0000-4000-8000-000000000001"
 
     with pytest.raises(ArtifactNotFoundError, match="^artifact not found$"):
-        target.load_attachment(missing)
+        await target.load_attachment(missing)
 
     assert event_bus.events == [
         ArtifactLoadRequestedEvent(session_id="session-1", handle=missing)
@@ -140,29 +145,31 @@ def test_valid_unknown_load_emits_only_requested() -> None:
 
 
 @pytest.mark.parametrize("invalid", ["", "../../secret.png", "art_bad", "a" * 500])
-def test_invalid_load_is_rejected_before_event_without_recording_input(
+@async_test
+async def test_invalid_load_is_rejected_before_event_without_recording_input(
     invalid: str,
 ) -> None:
     target, event_bus = runtime()
 
     with pytest.raises(ArtifactValidationError, match="artifact id is invalid"):
-        target.load_attachment(invalid)
+        await target.load_attachment(invalid)
 
     assert event_bus.events == []
     if invalid:
         assert invalid not in repr(event_bus.events)
 
 
-def test_user_mount_clear_and_delete_emit_state_facts_in_order() -> None:
+@async_test
+async def test_user_mount_clear_and_delete_emit_state_facts_in_order() -> None:
     target, event_bus = runtime()
-    first = upload(target)
-    second = upload(target)
+    first = await upload(target)
+    second = await upload(target)
     event_bus.events.clear()
 
-    target.mount_user_upload(first.id)
-    target.load_attachment(second.id)
+    await target.mount_user_upload(first.id)
+    await target.load_attachment(second.id)
     target.clear_mounts()
-    target.delete(first.id)
+    await target.delete(first.id)
 
     assert [type(event) for event in event_bus.events] == [
         ArtifactMountedEvent,
@@ -183,14 +190,15 @@ def test_user_mount_clear_and_delete_emit_state_facts_in_order() -> None:
     )
 
 
-def test_delete_session_emits_unmounted_and_deleted_for_each_artifact() -> None:
+@async_test
+async def test_delete_session_emits_unmounted_and_deleted_for_each_artifact() -> None:
     target, event_bus = runtime()
-    first = upload(target)
-    second = upload(target)
-    target.mount_user_upload(first.id)
+    first = await upload(target)
+    second = await upload(target)
+    await target.mount_user_upload(first.id)
     event_bus.events.clear()
 
-    target.delete_session()
+    await target.delete_session()
 
     assert event_bus.events[0] == ArtifactUnmountedEvent(
         session_id="session-1",

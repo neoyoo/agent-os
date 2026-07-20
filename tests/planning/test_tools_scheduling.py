@@ -17,10 +17,14 @@ from agentos.planning import (
     SubAgentTemplate,
 )
 
-
+from tests.planning._async import async_test
 from tests.planning._tool_fixtures import FakePlanStepDispatcher, ManualClock
 
-def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries() -> None:
+
+@async_test
+async def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries() -> (
+    None
+):
     registry = ToolRegistry()
     clock = ManualClock(10.0)
     runtime = PlannerRuntime(
@@ -28,7 +32,7 @@ def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries(
         retry_policy=PlanRetryPolicy(max_attempts=3, backoff_seconds=5.0),
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_running",
             objective="Leader running plan.",
@@ -44,7 +48,7 @@ def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries(
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_draft",
             objective="Leader draft plan.",
@@ -60,7 +64,7 @@ def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries(
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="other_running",
             objective="Other owner running plan.",
@@ -83,7 +87,7 @@ def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries(
     ).register(registry)
 
     payload = json.loads(
-        registry.get("plan_schedulable_plans").handler(
+        await registry.get("plan_schedulable_plans").handler(
             {
                 "statuses": ["running"],
                 "limit": 5,
@@ -106,7 +110,8 @@ def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summaries(
     }
 
 
-def test_planner_tools_schedulable_plans_handler_reports_due_retries() -> None:
+@async_test
+async def test_planner_tools_schedulable_plans_handler_reports_due_retries() -> None:
     registry = ToolRegistry()
     clock = ManualClock(10.0)
     runtime = PlannerRuntime(
@@ -114,7 +119,7 @@ def test_planner_tools_schedulable_plans_handler_reports_due_retries() -> None:
         retry_policy=PlanRetryPolicy(max_attempts=3, backoff_seconds=5.0),
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="retry_plan",
             objective="Retry due plan.",
@@ -139,21 +144,24 @@ def test_planner_tools_schedulable_plans_handler_reports_due_retries() -> None:
         authorization_policy=AllowAllPlannerToolAuthorizationPolicy(),
     ).register(registry)
 
-    payload = json.loads(registry.get("plan_schedulable_plans").handler({}))
+    payload = json.loads(await registry.get("plan_schedulable_plans").handler({}))
 
     assert payload["plans"][0]["plan_id"] == "retry_plan"
     assert payload["plans"][0]["retryable_step_ids"] == ["retry_step"]
     assert payload["plans"][0]["reasons"] == ["due-retries"]
 
 
-def test_planner_tools_claim_schedulable_plans_handler_returns_owner_scoped_claims() -> None:
+@async_test
+async def test_planner_tools_claim_schedulable_plans_handler_returns_owner_scoped_claims() -> (
+    None
+):
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         claim_store=InMemoryPlanClaimStore(),
         clock=lambda: 10.0,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_running",
             objective="Leader running plan.",
@@ -168,7 +176,7 @@ def test_planner_tools_claim_schedulable_plans_handler_returns_owner_scoped_clai
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="other_running",
             objective="Other owner running plan.",
@@ -190,7 +198,7 @@ def test_planner_tools_claim_schedulable_plans_handler_returns_owner_scoped_clai
     ).register(registry)
 
     payload = json.loads(
-        registry.get("plan_claim_schedulable_plans").handler(
+        await registry.get("plan_claim_schedulable_plans").handler(
             {
                 "worker_id": "scheduler_a",
                 "lease_seconds": 20.0,
@@ -217,17 +225,20 @@ def test_planner_tools_claim_schedulable_plans_handler_returns_owner_scoped_clai
         ],
     }
     assert runtime.claim_store is not None
-    assert runtime.claim_store.get_claim("other_running") is None
+    assert await runtime.claim_store.get_claim("other_running") is None
 
 
-def test_planner_tools_claim_schedulable_plans_handler_reports_busy_claims() -> None:
+@async_test
+async def test_planner_tools_claim_schedulable_plans_handler_reports_busy_claims() -> (
+    None
+):
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         claim_store=InMemoryPlanClaimStore(),
         clock=lambda: 10.0,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_running",
             objective="Leader running plan.",
@@ -242,7 +253,7 @@ def test_planner_tools_claim_schedulable_plans_handler_reports_busy_claims() -> 
             ),
         ),
     )
-    runtime.claim_store.claim_plan(
+    await runtime.claim_store.claim_plan(
         plan_id="leader_running",
         owner_agent_id="leader",
         worker_id="scheduler_a",
@@ -256,7 +267,7 @@ def test_planner_tools_claim_schedulable_plans_handler_reports_busy_claims() -> 
     ).register(registry)
 
     payload = json.loads(
-        registry.get("plan_claim_schedulable_plans").handler(
+        await registry.get("plan_claim_schedulable_plans").handler(
             {
                 "worker_id": "scheduler_b",
                 "lease_seconds": 20.0,
@@ -290,7 +301,8 @@ def test_planner_tools_claim_schedulable_plans_handler_reports_busy_claims() -> 
         ),
     ],
 )
-def test_planner_tools_claim_schedulable_plans_handler_rejects_invalid_arguments(
+@async_test
+async def test_planner_tools_claim_schedulable_plans_handler_rejects_invalid_arguments(
     arguments: dict[str, object],
     match: str,
 ) -> None:
@@ -306,10 +318,13 @@ def test_planner_tools_claim_schedulable_plans_handler_rejects_invalid_arguments
     ).register(registry)
 
     with pytest.raises(ValueError, match=match):
-        registry.get("plan_claim_schedulable_plans").handler(arguments)
+        await registry.get("plan_claim_schedulable_plans").handler(arguments)
 
 
-def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans() -> None:
+@async_test
+async def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans() -> (
+    None
+):
     registry = ToolRegistry()
     claim_store = InMemoryPlanClaimStore()
     dispatcher = FakePlanStepDispatcher()
@@ -326,7 +341,7 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
         claim_store=claim_store,
         clock=lambda: 10.0,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_busy",
             objective="Busy leader plan.",
@@ -342,7 +357,7 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="leader_free",
             objective="Free leader plan.",
@@ -358,7 +373,7 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="other_free",
             objective="Other owner plan.",
@@ -374,7 +389,7 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
             ),
         ),
     )
-    claim_store.claim_plan(
+    await claim_store.claim_plan(
         plan_id="leader_busy",
         owner_agent_id="leader",
         worker_id="scheduler_a",
@@ -388,7 +403,7 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
     ).register(registry)
 
     payload = json.loads(
-        registry.get("plan_claimed_scheduler_tick").handler(
+        await registry.get("plan_claimed_scheduler_tick").handler(
             {
                 "worker_id": "scheduler_b",
                 "lease_seconds": 30.0,
@@ -407,14 +422,17 @@ def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_plans()
     assert payload["skipped"][0]["reason"] == "busy"
     assert payload["tick_reports"][0]["plan_id"] == "leader_free"
     assert payload["released_plan_ids"] == ["leader_free"]
-    assert runtime.get_plan("leader_busy").steps[0].status == "pending"
-    assert runtime.get_plan("leader_free").steps[0].status == "assigned"
-    assert runtime.get_plan("other_free").steps[0].status == "pending"
-    assert claim_store.get_claim("leader_free") is None
+    assert (await runtime.get_plan("leader_busy")).steps[0].status == "pending"
+    assert (await runtime.get_plan("leader_free")).steps[0].status == "assigned"
+    assert (await runtime.get_plan("other_free")).steps[0].status == "pending"
+    assert await claim_store.get_claim("leader_free") is None
     assert len(dispatcher.submit_calls) == 1
 
 
-def test_planner_tools_claimed_scheduler_tick_handler_rejects_invalid_arguments() -> None:
+@async_test
+async def test_planner_tools_claimed_scheduler_tick_handler_rejects_invalid_arguments() -> (
+    None
+):
     registry = ToolRegistry()
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
@@ -427,14 +445,14 @@ def test_planner_tools_claimed_scheduler_tick_handler_rejects_invalid_arguments(
     ).register(registry)
 
     with pytest.raises(ValueError, match="worker_id"):
-        registry.get("plan_claimed_scheduler_tick").handler(
+        await registry.get("plan_claimed_scheduler_tick").handler(
             {
                 "worker_id": "",
                 "lease_seconds": 30.0,
             },
         )
     with pytest.raises(ValueError, match="lease_seconds"):
-        registry.get("plan_claimed_scheduler_tick").handler(
+        await registry.get("plan_claimed_scheduler_tick").handler(
             {
                 "worker_id": "scheduler",
                 "lease_seconds": 0.0,

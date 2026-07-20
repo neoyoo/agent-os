@@ -47,51 +47,61 @@ class _EmptyProjections:
 
 
 def test_turn_projection_order_and_temporary_receipt_are_rebuilt() -> None:
-    messages = MessageRuntime()
-    recalled = StoredMessage("msg_recalled", "user", "old evidence")
-    messages.hydrate_messages([recalled])
-    messages.active_window.prepend_temporary((recalled.id,))
-    messages.append_assistant(
-        "",
-        [
-            ToolCall(
-                "call_1",
-                "load_attachment",
-                {"handle": "art_12345678-1234-4234-9234-123456789abc"},
-            )
-        ],
-    )
-    messages.append_tool_result("call_1", "attachment loaded")
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="drawing.png",
-        media_type="image/png",
-    )
-    artifacts.load_attachment(artifact.id)
-    builder = ProviderRequestBuilder(
-        context_renderer=default_context_renderer(),
-        message_runtime=messages,
-        snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
-        context_projections=_EmptyProjections(),
-        input_projections=(ArtifactMountProjectionProvider(artifacts),),
-    )
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        recalled = StoredMessage("msg_recalled", "user", "old evidence")
+        messages.hydrate_messages([recalled])
+        messages.active_window.prepend_temporary((recalled.id,))
+        messages.append_assistant(
+            "",
+            [
+                ToolCall(
+                    "call_1",
+                    "load_attachment",
+                    {"handle": "art_12345678-1234-4234-9234-123456789abc"},
+                )
+            ],
+        )
+        messages.append_tool_result("call_1", "attachment loaded")
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="drawing.png",
+            media_type="image/png",
+        )
+        await artifacts.load_attachment(artifact.id)
+        await artifacts.prepare_projection_cache()
+        builder = ProviderRequestBuilder(
+            context_renderer=default_context_renderer(),
+            message_runtime=messages,
+            snapshot_renderer=ContextSnapshotRenderer(HeuristicTokenCounter()),
+            context_projections=_EmptyProjections(),
+            input_projections=(ArtifactMountProjectionProvider(artifacts),),
+        )
 
-    first = builder.build()
-    second = builder.build()
+        first = builder.build()
+        second = builder.build()
 
-    expected_kinds = ["context_snapshot", "recalled_message", "business_message", "tool_result", "context_mount"]
-    assert [item.kind for item in first.request.messages] == expected_kinds
-    assert first.request.messages[2].tool_calls[0].id == "call_1"
-    assert first.request.messages[3].tool_call_id == "call_1"
-    assert first.receipt.temporary_message_ids == (recalled.id,)
-    assert second.receipt.temporary_message_ids == (recalled.id,)
-    assert first.request is not second.request
-    assert all(item.kind != "model_task" for item in second.request.messages)
-    assert messages.has_temporary_recalled()
+        expected_kinds = [
+            "context_snapshot",
+            "recalled_message",
+            "business_message",
+            "tool_result",
+            "context_mount",
+        ]
+        assert [item.kind for item in first.request.messages] == expected_kinds
+        assert first.request.messages[2].tool_calls[0].id == "call_1"
+        assert first.request.messages[3].tool_call_id == "call_1"
+        assert first.receipt.temporary_message_ids == (recalled.id,)
+        assert second.receipt.temporary_message_ids == (recalled.id,)
+        assert first.request is not second.request
+        assert all(item.kind != "model_task" for item in second.request.messages)
+        assert messages.has_temporary_recalled()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(

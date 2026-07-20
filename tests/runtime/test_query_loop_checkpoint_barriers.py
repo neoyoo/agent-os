@@ -88,7 +88,10 @@ def _recovery_loop(
 
 def test_running_checkpoints_are_execution_barriers(tmp_path, monkeypatch) -> None:
     async def scenario() -> None:
-        store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
+        store = await SQLiteDurableStore.open(
+            database_path(tmp_path),
+            clock=lambda: NOW,
+        )
         session = SessionState("session_1")
         messages = MessageRuntime()
         context = ContextRuntime(session_id=session.id)
@@ -168,7 +171,7 @@ def test_running_checkpoints_are_execution_barriers(tmp_path, monkeypatch) -> No
 
         await consumer
         assert provider.calls == 2
-        store.close()
+        await store.close()
 
     asyncio.run(scenario())
 

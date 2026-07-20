@@ -18,6 +18,7 @@ from agentos.readiness import ProductionReadinessEvidenceBundle
 from agentos.runtime import DistributedWebRuntimeProfile
 from agentos.service import AgentServiceReference
 from agentos.state_plane import ReferenceStatePlaneStack
+from tests.planning._async import async_test
 
 
 async def call_asgi(
@@ -193,13 +194,14 @@ def readiness_check_evidence(
     raise AssertionError(f"missing readiness check: {check_name}")
 
 
-def test_production_reference_web_agent_builds_reference_composition_without_faking_backend_readiness() -> None:
+@async_test
+async def test_production_reference_web_agent_builds_reference_composition_without_faking_backend_readiness() -> None:
     from agentos.examples.production_reference_web_agent import (
         ProductionReferenceWebAgentExample,
         build_production_reference_web_agent,
     )
 
-    example = build_production_reference_web_agent()
+    example = await build_production_reference_web_agent()
     evidence = example.as_dict()
     encoded = json.dumps(evidence, sort_keys=True)
 
@@ -267,12 +269,13 @@ def test_production_reference_web_agent_builds_reference_composition_without_fak
     assert "raw-token" not in encoded
 
 
-def test_production_reference_web_agent_separates_imported_backend_evidence_from_served_demo_runtime() -> None:
+@async_test
+async def test_production_reference_web_agent_separates_imported_backend_evidence_from_served_demo_runtime() -> None:
     from agentos.examples.production_reference_web_agent import (
         build_production_reference_web_agent,
     )
 
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(),
     )
     evidence = example.as_dict()
@@ -292,12 +295,13 @@ def test_production_reference_web_agent_separates_imported_backend_evidence_from
     )["block_production_readiness"] is True
 
 
-def test_production_reference_web_agent_marks_demo_runtime_explicitly_without_production_readiness() -> None:
+@async_test
+async def test_production_reference_web_agent_marks_demo_runtime_explicitly_without_production_readiness() -> None:
     from agentos.examples.production_reference_web_agent import (
         build_production_reference_web_agent,
     )
 
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(),
         allow_demo_runtime_readiness=True,
     )
@@ -316,7 +320,8 @@ def test_production_reference_web_agent_marks_demo_runtime_explicitly_without_pr
     ] is True
 
 
-def test_production_reference_web_agent_blocks_reference_fixture_clients_wrapped_in_production_adapters() -> None:
+@async_test
+async def test_production_reference_web_agent_blocks_reference_fixture_clients_wrapped_in_production_adapters() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         ReferencePostgresConnection,
@@ -325,7 +330,7 @@ def test_production_reference_web_agent_blocks_reference_fixture_clients_wrapped
     )
     from agentos.persistence import PostgresSessionSnapshotPersistence
 
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(),
         lease_store=RedisSessionLeaseStore(
             "redis://reference.invalid/0",
@@ -358,14 +363,15 @@ def test_production_reference_web_agent_blocks_reference_fixture_clients_wrapped
     )
 
 
-def test_production_reference_web_agent_requires_state_plane_target_bindings_for_production_readiness() -> None:
+@async_test
+async def test_production_reference_web_agent_requires_state_plane_target_bindings_for_production_readiness() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         build_production_reference_web_agent,
     )
     from agentos.persistence import PostgresSessionSnapshotPersistence
 
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(),
         lease_store=RedisSessionLeaseStore(
             "redis://deployment.example/0",
@@ -400,7 +406,8 @@ def test_production_reference_web_agent_requires_state_plane_target_bindings_for
     ]
 
 
-def test_production_reference_web_agent_accepts_complete_state_plane_target_bindings() -> None:
+@async_test
+async def test_production_reference_web_agent_accepts_complete_state_plane_target_bindings() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         build_production_reference_web_agent,
@@ -408,7 +415,7 @@ def test_production_reference_web_agent_accepts_complete_state_plane_target_bind
     from agentos.persistence import PostgresSessionSnapshotPersistence
 
     targets = deployment_state_plane_backend_targets()
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(targets),
         lease_store=RedisSessionLeaseStore(
             "redis://deployment.example/0",
@@ -437,7 +444,8 @@ def test_production_reference_web_agent_accepts_complete_state_plane_target_bind
     assert binding["served_targets"] == targets
 
 
-def test_production_reference_web_agent_blocks_backend_evidence_for_different_served_runtime_targets() -> None:
+@async_test
+async def test_production_reference_web_agent_blocks_backend_evidence_for_different_served_runtime_targets() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         build_production_reference_web_agent,
@@ -445,7 +453,7 @@ def test_production_reference_web_agent_blocks_backend_evidence_for_different_se
     from agentos.persistence import PostgresSessionSnapshotPersistence
 
     targets = deployment_state_plane_backend_targets()
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(
             {
                 **targets,
@@ -483,7 +491,8 @@ def test_production_reference_web_agent_blocks_backend_evidence_for_different_se
     ]
 
 
-def test_production_reference_web_agent_redacts_secret_backend_targets() -> None:
+@async_test
+async def test_production_reference_web_agent_redacts_secret_backend_targets() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         build_production_reference_web_agent,
@@ -498,7 +507,7 @@ def test_production_reference_web_agent_redacts_secret_backend_targets() -> None
             ),
         },
     )
-    example = build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records(targets),
         lease_store=RedisSessionLeaseStore(
             "redis://agentos:raw-redis-secret@deployment.example/0",
@@ -569,20 +578,19 @@ def test_reference_snapshot_agent_factory_restores_full_dynamic_session_state() 
     assert restored.next_segment_number == 3
 
 
-def test_production_reference_web_agent_readiness_endpoint_blocks_without_live_backend_evidence() -> None:
+@async_test
+async def test_production_reference_web_agent_readiness_endpoint_blocks_without_live_backend_evidence() -> None:
     from agentos.examples.production_reference_web_agent import (
         build_reference_app,
     )
 
-    app = build_reference_app(auth_policy=HeaderTokenAuth("reference-token"))
+    app = await build_reference_app(auth_policy=HeaderTokenAuth("reference-token"))
 
-    sent = asyncio.run(
-        call_asgi(
-            app,
-            method="GET",
-            path="/ready",
-            headers=auth_headers(),
-        ),
+    sent = await call_asgi(
+        app,
+        method="GET",
+        path="/ready",
+        headers=auth_headers(),
     )
 
     assert response_status(sent) == 503
@@ -601,14 +609,15 @@ def test_production_reference_web_agent_readiness_endpoint_blocks_without_live_b
     }
 
 
-def test_production_reference_web_agent_readiness_endpoint_blocks_local_workspace_backend_with_imported_live_backend_evidence() -> None:
+@async_test
+async def test_production_reference_web_agent_readiness_endpoint_blocks_local_workspace_backend_with_imported_live_backend_evidence() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         build_reference_app,
     )
     from agentos.persistence import PostgresSessionSnapshotPersistence
 
-    app = build_reference_app(
+    app = await build_reference_app(
         backend_verification_records=backend_verification_records(),
         auth_policy=HeaderTokenAuth("reference-token"),
         lease_store=RedisSessionLeaseStore(
@@ -621,13 +630,11 @@ def test_production_reference_web_agent_readiness_endpoint_blocks_local_workspac
         ),
     )
 
-    sent = asyncio.run(
-        call_asgi(
-            app,
-            method="GET",
-            path="/ready",
-            headers=auth_headers(),
-        ),
+    sent = await call_asgi(
+        app,
+        method="GET",
+        path="/ready",
+        headers=auth_headers(),
     )
 
     assert response_status(sent) == 503
@@ -646,7 +653,8 @@ def test_production_reference_web_agent_readiness_endpoint_blocks_local_workspac
     }
 
 
-def test_production_reference_web_agent_readiness_endpoint_is_ready_with_deployment_workspace_isolation() -> None:
+@async_test
+async def test_production_reference_web_agent_readiness_endpoint_is_ready_with_deployment_workspace_isolation() -> None:
     from agentos.channels import RedisSessionLeaseStore
     from agentos.examples.production_reference_web_agent import (
         build_reference_app,
@@ -654,7 +662,7 @@ def test_production_reference_web_agent_readiness_endpoint_is_ready_with_deploym
     from agentos.persistence import PostgresSessionSnapshotPersistence
 
     targets = deployment_state_plane_backend_targets()
-    app = build_reference_app(
+    app = await build_reference_app(
         backend_verification_records=backend_verification_records(targets),
         auth_policy=HeaderTokenAuth("reference-token"),
         lease_store=RedisSessionLeaseStore(
@@ -669,13 +677,11 @@ def test_production_reference_web_agent_readiness_endpoint_is_ready_with_deploym
         state_plane_backend_targets=targets,
     )
 
-    sent = asyncio.run(
-        call_asgi(
-            app,
-            method="GET",
-            path="/ready",
-            headers=auth_headers(),
-        ),
+    sent = await call_asgi(
+        app,
+        method="GET",
+        path="/ready",
+        headers=auth_headers(),
     )
 
     assert response_status(sent) == 200
@@ -694,23 +700,22 @@ def test_production_reference_web_agent_readiness_endpoint_is_ready_with_deploym
     }
 
 
-def test_production_reference_web_agent_readiness_blocks_demo_runtime_even_with_imported_live_backend_evidence() -> None:
+@async_test
+async def test_production_reference_web_agent_readiness_blocks_demo_runtime_even_with_imported_live_backend_evidence() -> None:
     from agentos.examples.production_reference_web_agent import (
         build_reference_app,
     )
 
-    app = build_reference_app(
+    app = await build_reference_app(
         backend_verification_records=backend_verification_records(),
         auth_policy=HeaderTokenAuth("reference-token"),
     )
 
-    sent = asyncio.run(
-        call_asgi(
-            app,
-            method="GET",
-            path="/ready",
-            headers=auth_headers(),
-        ),
+    sent = await call_asgi(
+        app,
+        method="GET",
+        path="/ready",
+        headers=auth_headers(),
     )
 
     assert response_status(sent) == 503
@@ -719,14 +724,15 @@ def test_production_reference_web_agent_readiness_blocks_demo_runtime_even_with_
     assert checks["production_reference_web_agent"] == "failed"
 
 
-def test_production_reference_web_agent_readiness_endpoint_requires_auth_policy() -> None:
+@async_test
+async def test_production_reference_web_agent_readiness_endpoint_requires_auth_policy() -> None:
     from agentos.examples.production_reference_web_agent import (
         build_reference_app,
     )
 
-    app = build_reference_app()
+    app = await build_reference_app()
 
-    sent = asyncio.run(call_asgi(app, method="GET", path="/ready"))
+    sent = await call_asgi(app, method="GET", path="/ready")
 
     assert response_status(sent) == 401
     assert json.loads(response_body(sent)) == {

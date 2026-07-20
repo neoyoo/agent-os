@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -44,7 +45,7 @@ class RecordingStore:
         self.candidates = candidates
         self.searches: list[tuple[MemorySelectionContext, int]] = []
 
-    def search(
+    async def search(
         self,
         selection_context: MemorySelectionContext,
         candidate_limit: int,
@@ -88,16 +89,19 @@ def test_runtime_filters_and_deterministically_selects_top_k() -> None:
         min_score=0.5,
     )
 
-    projections = runtime.projections(context())
+    async def scenario() -> None:
+        projections = await runtime.projections(context())
 
-    full = projections[0].variants[0].element
-    assert [dict(child.attributes)["handle"] for child in full.children] == [
-        "mem_a",
-        "mem_b",
-        "mem_duplicate",
-    ]
-    assert store.searches == [(context(), 10)]
-    assert all(check_context == context() for _, check_context in policy.checks)
+        full = projections[0].variants[0].element
+        assert [dict(child.attributes)["handle"] for child in full.children] == [
+            "mem_a",
+            "mem_b",
+            "mem_duplicate",
+        ]
+        assert store.searches == [(context(), 10)]
+        assert all(check_context == context() for _, check_context in policy.checks)
+
+    asyncio.run(scenario())
 
 
 def test_runtime_searches_on_every_projection_request() -> None:
@@ -111,13 +115,16 @@ def test_runtime_searches_on_every_projection_request() -> None:
     )
     selection_context = context()
 
-    first = runtime.projections(selection_context)
-    store.candidates = (MemoryCandidate(record("mem_2"), 1.0),)
-    second = runtime.projections(selection_context)
+    async def scenario() -> None:
+        first = await runtime.projections(selection_context)
+        store.candidates = (MemoryCandidate(record("mem_2"), 1.0),)
+        second = await runtime.projections(selection_context)
 
-    assert len(store.searches) == 2
-    assert first[0].variants[0].element.children[0].text == "Memory mem_1"
-    assert second[0].variants[0].element.children[0].text == "Memory mem_2"
+        assert len(store.searches) == 2
+        assert first[0].variants[0].element.children[0].text == "Memory mem_1"
+        assert second[0].variants[0].element.children[0].text == "Memory mem_2"
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
@@ -159,8 +166,11 @@ def test_runtime_rechecks_store_candidate_score() -> None:
         min_score=0.0,
     )
 
-    with pytest.raises(ValueError, match="memory candidate score is invalid"):
-        runtime.projections(context())
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="memory candidate score is invalid"):
+            await runtime.projections(context())
+
+    asyncio.run(scenario())
 
 
 def test_runtime_rejects_non_boolean_access_policy_result() -> None:
@@ -180,11 +190,14 @@ def test_runtime_rejects_non_boolean_access_policy_result() -> None:
         min_score=0.0,
     )
 
-    with pytest.raises(
-        TypeError,
-        match="memory access policy must return a boolean",
-    ):
-        runtime.projections(context())
+    async def scenario() -> None:
+        with pytest.raises(
+            TypeError,
+            match="memory access policy must return a boolean",
+        ):
+            await runtime.projections(context())
+
+    asyncio.run(scenario())
 
 
 def test_expiry_after_explicit_request_time_remains_available() -> None:
@@ -197,4 +210,4 @@ def test_expiry_after_explicit_request_time_remains_available() -> None:
         min_score=0.0,
     )
 
-    assert runtime.projections(context())
+    assert asyncio.run(runtime.projections(context()))

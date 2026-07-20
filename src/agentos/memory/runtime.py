@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agentos.context.models import ContextSlotProjection
 from agentos.memory.access import MemoryAccessPolicy
@@ -44,7 +44,7 @@ class MemoryRuntime:
         self._candidate_limit = candidate_limit
         self._min_score = float(min_score)
 
-    def projections(
+    async def projections(
         self,
         context: MemorySelectionContext,
     ) -> tuple[ContextSlotProjection, ...]:
@@ -52,7 +52,7 @@ class MemoryRuntime:
 
         if not isinstance(context, MemorySelectionContext):
             raise TypeError("context must be a MemorySelectionContext")
-        candidates = self._store.search(context, self._candidate_limit)
+        candidates = await self._store.search(context, self._candidate_limit)
         selected = self._select(candidates, context)
         return project_memory_context(selected)
 
@@ -111,8 +111,22 @@ class BoundMemoryProjectionProvider:
 
     runtime: MemoryRuntime
     context: MemorySelectionContext
+    _cache: tuple[ContextSlotProjection, ...] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    async def prepare_projection_cache(self) -> None:
+        """异步选择当前请求的 Memory，并原子发布不可变投影。"""
+
+        projection = await self.runtime.projections(self.context)
+        object.__setattr__(self, "_cache", projection)
 
     def projections(self) -> tuple[ContextSlotProjection, ...]:
         """使用构造时冻结的选择上下文生成投影。"""
 
-        return self.runtime.projections(self.context)
+        if self._cache is None:
+            raise RuntimeError("memory projection cache is not prepared")
+        return self._cache

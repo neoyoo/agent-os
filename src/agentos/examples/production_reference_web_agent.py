@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -94,9 +95,7 @@ class ProductionReferenceWebAgentExample:
                 ),
                 "state_plane_stack": self.state_plane_stack.__class__.__name__,
                 "probe_pack": self.probe_pack.__class__.__name__,
-                "backend_verification": (
-                    self.backend_verification.__class__.__name__
-                ),
+                "backend_verification": (self.backend_verification.__class__.__name__),
                 "readiness_bundle": self.readiness_bundle.__class__.__name__,
                 "app": self.app.__class__.__name__,
             },
@@ -144,7 +143,7 @@ class ProductionReferenceWebAgentExample:
         )
 
 
-def build_production_reference_web_agent(
+async def build_production_reference_web_agent(
     *,
     backend_verification_records: Sequence[BackendVerificationRecord] | None = None,
     auth_policy: object | None = None,
@@ -278,7 +277,7 @@ def build_production_reference_web_agent(
         },
     }
     probe_pack = ReferenceLiveBackendProbePack(environment="reference")
-    planner_context_projection = build_plan_and_execute_example()
+    planner_context_projection = await build_plan_and_execute_example()
     example = ProductionReferenceWebAgentExample(
         service_reference=service_reference,
         runtime_profile=runtime_profile,
@@ -304,7 +303,7 @@ def build_production_reference_web_agent(
     return example
 
 
-def build_reference_app(
+async def build_reference_app(
     *,
     backend_verification_records: Sequence[BackendVerificationRecord] | None = None,
     auth_policy: object | None = None,
@@ -316,18 +315,19 @@ def build_reference_app(
 ) -> AsgiAgentApp:
     """Build the ASGI app for the production reference web agent."""
 
-    return build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records,
-        auth_policy=auth_policy,
-        allow_demo_runtime_readiness=allow_demo_runtime_readiness,
-        lease_store=lease_store,
-        snapshot_persistence=snapshot_persistence,
+            auth_policy=auth_policy,
+            allow_demo_runtime_readiness=allow_demo_runtime_readiness,
+            lease_store=lease_store,
+            snapshot_persistence=snapshot_persistence,
         workspace_isolation_profile=workspace_isolation_profile,
         state_plane_backend_targets=state_plane_backend_targets,
-    ).app
+    )
+    return example.app
 
 
-def build_reference_readiness_evidence(
+async def build_reference_readiness_evidence(
     *,
     backend_verification_records: Sequence[BackendVerificationRecord] | None = None,
     auth_policy: object | None = None,
@@ -339,15 +339,16 @@ def build_reference_readiness_evidence(
 ) -> dict[str, object]:
     """Return JSON-safe readiness evidence for release gate consumption."""
 
-    return build_production_reference_web_agent(
+    example = await build_production_reference_web_agent(
         backend_verification_records=backend_verification_records,
-        auth_policy=auth_policy,
-        allow_demo_runtime_readiness=allow_demo_runtime_readiness,
-        lease_store=lease_store,
-        snapshot_persistence=snapshot_persistence,
+            auth_policy=auth_policy,
+            allow_demo_runtime_readiness=allow_demo_runtime_readiness,
+            lease_store=lease_store,
+            snapshot_persistence=snapshot_persistence,
         workspace_isolation_profile=workspace_isolation_profile,
         state_plane_backend_targets=state_plane_backend_targets,
-    ).as_dict()
+    )
+    return example.as_dict()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -357,7 +358,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.parse_args(argv)
     print(
         json.dumps(
-            build_reference_readiness_evidence(),
+            asyncio.run(build_reference_readiness_evidence()),
             ensure_ascii=False,
             sort_keys=True,
         ),
@@ -432,7 +433,9 @@ def _reference_readiness_bundle(
     return ProductionReadinessEvidenceBundle.from_sources(
         {
             "reference_state_plane_stack": {
-                "status": "ok" if backend_verification.gate_report().accepted else "failed",
+                "status": "ok"
+                if backend_verification.gate_report().accepted
+                else "failed",
                 "ok": backend_verification.gate_report().accepted,
                 "profile": "ReferenceStatePlaneStack",
                 "component identity evidence": True,
@@ -535,9 +538,7 @@ def _reference_served_backend_binding_check(
         state_plane_backend_targets=state_plane_backend_targets,
     )
     required_target_backends = (
-        ()
-        if not served_targets
-        else LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+        () if not served_targets else LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     )
     if not served_targets:
         return {
@@ -554,8 +555,7 @@ def _reference_served_backend_binding_check(
             "blocking_reason": "",
         }
     records_by_name = {
-        record.backend_name: record
-        for record in backend_verification.records
+        record.backend_name: record for record in backend_verification.records
     }
     evidence_targets = {
         name: redact_secret_patterns(record.target_ref)
@@ -565,8 +565,7 @@ def _reference_served_backend_binding_check(
     missing = tuple(
         name
         for name in required_target_backends
-        if name not in served_targets
-        or not evidence_targets.get(name)
+        if name not in served_targets or not evidence_targets.get(name)
     )
     mismatched = tuple(
         name

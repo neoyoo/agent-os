@@ -26,7 +26,7 @@ from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
 
 def waiting_run(tmp_path, reason: WaitReason):
-    store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
+    store = run(SQLiteDurableStore.open(database_path(tmp_path), clock=lambda: NOW))
     source = checkpoint_source()
     run(store.initialize_session(source.session))
     runs = RunRuntime(session_id="session_1", store=store)
@@ -62,7 +62,7 @@ def test_exact_duplicate_command_is_not_applied_twice(tmp_path) -> None:
     assert duplicate.duplicate is True
     assert duplicate.aggregate_version == accepted.guard.expected_version
     assert run(runs.get_run("run_1")).status is RunStatus.QUEUED
-    store.close()
+    run(store.close())
 
 
 def test_accepted_queued_continuation_can_be_recovered_after_crash(tmp_path) -> None:
@@ -77,9 +77,9 @@ def test_accepted_queued_continuation_can_be_recovered_after_crash(tmp_path) -> 
     assert isinstance(accepted, AcceptedTurnExecution)
     assert isinstance(accepted.input, AcceptedContinuationInput)
     accepted_turn_id = accepted.input.turn_id
-    store.close()
+    run(store.close())
 
-    reopened = SQLiteDurableStore(path, clock=lambda: NOW)
+    reopened = run(SQLiteDurableStore.open(path, clock=lambda: NOW))
     recovered = run(reopened.load_pending_continuation(
         session_id="session_1",
         run_id="run_1",
@@ -96,7 +96,7 @@ def test_accepted_queued_continuation_can_be_recovered_after_crash(tmp_path) -> 
         session_id="session_1",
         run_id="run_1",
     )) is None
-    reopened.close()
+    run(reopened.close())
 
 
 def test_conflicting_duplicate_command_is_rejected(tmp_path) -> None:
@@ -109,7 +109,7 @@ def test_conflicting_duplicate_command_is_rejected(tmp_path) -> None:
             DurableRunCommand("run_1", "cmd_1", "resume", {"x": 1}),
         ))
 
-    store.close()
+    run(store.close())
 
 
 @pytest.mark.parametrize(
@@ -149,7 +149,7 @@ def test_corrupted_duplicate_command_record_uses_stable_error(
     ):
         run(runtime.accept(command))
 
-    store.close()
+    run(store.close())
 
 
 def test_cancel_command_persists_and_deduplicates(tmp_path) -> None:
@@ -160,8 +160,8 @@ def test_cancel_command_persists_and_deduplicates(tmp_path) -> None:
 
     first = run(runtime.accept(command))
     duplicate = run(runtime.accept(command))
-    store.close()
-    reopened = SQLiteDurableStore(path, clock=lambda: NOW)
+    run(store.close())
+    reopened = run(SQLiteDurableStore.open(path, clock=lambda: NOW))
     state = run(reopened.get(session_id="session_1", run_id="run_1"))
 
     assert isinstance(first, DurableCommandReceipt)
@@ -174,7 +174,7 @@ def test_cancel_command_persists_and_deduplicates(tmp_path) -> None:
         True,
     )
     assert state is not None and state.status is RunStatus.CANCELLED
-    reopened.close()
+    run(reopened.close())
 
 
 def test_timer_command_is_rejected_until_due_without_being_recorded(tmp_path) -> None:
@@ -195,11 +195,11 @@ def test_timer_command_is_rejected_until_due_without_being_recorded(tmp_path) ->
     assert isinstance(accepted, AcceptedTurnExecution)
     assert isinstance(accepted.input, AcceptedContinuationInput)
     assert run(runs.get_run("run_1")).status is RunStatus.QUEUED
-    store.close()
+    run(store.close())
 
 
 def test_terminal_and_nonwaiting_resume_are_rejected(tmp_path) -> None:
-    store = SQLiteDurableStore(database_path(tmp_path), clock=lambda: NOW)
+    store = run(SQLiteDurableStore.open(database_path(tmp_path), clock=lambda: NOW))
     source = checkpoint_source()
     run(store.initialize_session(source.session))
     runs = RunRuntime(session_id="session_1", store=store)
@@ -218,7 +218,7 @@ def test_terminal_and_nonwaiting_resume_are_rejected(tmp_path) -> None:
             DurableRunCommand("run_1", "cmd_terminal", "resume", {}),
         ))
 
-    store.close()
+    run(store.close())
 
 
 def test_unsafe_command_payload_is_rejected_without_state_change(tmp_path) -> None:
@@ -241,4 +241,4 @@ def test_unsafe_command_payload_is_rejected_without_state_change(tmp_path) -> No
         ).accept(command))
 
     assert run(runs.get_run("run_1")).status is RunStatus.WAITING
-    store.close()
+    run(store.close())

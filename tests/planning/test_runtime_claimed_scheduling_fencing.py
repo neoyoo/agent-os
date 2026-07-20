@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from threading import Event, Thread, current_thread
-
+import asyncio
 
 from agentos.planning import (
     InMemoryPlanClaimStore,
@@ -20,13 +19,15 @@ from tests.planning._runtime_fixtures import (
     FakeCoordinator,
     ManualClock,
 )
+from tests.planning._async import async_test
 
 
-def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_save() -> (
+@async_test
+async def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_save() -> (
     None
 ):
     class RacingPlanStore(InMemoryPlanStore):
-        def save_plan_if_claimed(
+        async def save_plan_if_claimed(
             self,
             plan: PlanState,
             claim: PlanClaimRecord,
@@ -35,14 +36,14 @@ def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_
             now: float,
         ) -> bool:
             clock.value = 11.0
-            claim_store.claim_plan(
+            await claim_store.claim_plan(
                 plan_id=plan.plan_id,
                 owner_agent_id=plan.owner_agent_id,
                 worker_id="scheduler_b",
                 lease_seconds=30.0,
                 now=11.0,
             )
-            return super().save_plan_if_claimed(
+            return await super().save_plan_if_claimed(
                 plan,
                 claim,
                 expected_revision=expected_revision,
@@ -66,7 +67,7 @@ def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_
         claim_store=claim_store,
         clock=clock,
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Claim-guard local scheduler mutation.",
@@ -83,23 +84,26 @@ def test_planner_runtime_claimed_scheduler_tick_stops_when_claim_changes_before_
         ),
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=1.0,
         default_template_id="reviewer",
     )
 
-    plan = runtime.get_plan("plan_1")
+    plan = await runtime.get_plan("plan_1")
     assert plan.steps[0].status == "pending"
     assert coordinator.spawn_calls == []
     assert [skip.reason for skip in report.skipped] == ["claim-lost"]
-    current_claim = claim_store.get_claim("plan_1")
+    current_claim = await claim_store.get_claim("plan_1")
     assert current_claim is not None
     assert current_claim.worker_id == "scheduler_b"
 
 
-def test_planner_runtime_claimed_scheduler_requires_atomic_claim_guarded_save() -> None:
+@async_test
+async def test_planner_runtime_claimed_scheduler_requires_atomic_claim_guarded_save() -> (
+    None
+):
     class CompareOnlyPlanStore(InMemoryPlanStore):
         save_plan_if_claimed = None  # type: ignore[assignment]
 
@@ -119,7 +123,7 @@ def test_planner_runtime_claimed_scheduler_requires_atomic_claim_guarded_save() 
         claim_store=claim_store,
         clock=lambda: 10.0,
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Require atomic claim-guarded scheduler saves.",
@@ -136,24 +140,25 @@ def test_planner_runtime_claimed_scheduler_requires_atomic_claim_guarded_save() 
         ),
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=20.0,
         default_template_id="reviewer",
     )
 
-    plan = runtime.get_plan("plan_1")
+    plan = await runtime.get_plan("plan_1")
     assert plan.steps[0].status == "pending"
     assert coordinator.spawn_calls == []
     assert [skip.reason for skip in report.skipped] == ["claim-lost"]
 
 
-def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispatch() -> (
+@async_test
+async def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispatch() -> (
     None
 ):
     class ExpiringAfterSavePlanStore(InMemoryPlanStore):
-        def save_plan_if_claimed(
+        async def save_plan_if_claimed(
             self,
             plan: PlanState,
             claim: PlanClaimRecord,
@@ -161,7 +166,7 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispa
             expected_revision: int,
             now: float,
         ) -> bool:
-            saved = super().save_plan_if_claimed(
+            saved = await super().save_plan_if_claimed(
                 plan,
                 claim,
                 expected_revision=expected_revision,
@@ -188,7 +193,7 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispa
         claim_store=claim_store,
         clock=clock,
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Do not dispatch after claim expiry.",
@@ -205,14 +210,14 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispa
         ),
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=1.0,
         default_template_id="reviewer",
     )
 
-    plan = runtime.get_plan("plan_1")
+    plan = await runtime.get_plan("plan_1")
     assert [claim.status for claim in report.claims] == ["claimed"]
     assert report.tick_reports == ()
     assert [skip.reason for skip in report.skipped] == ["claim-lost"]
@@ -221,13 +226,14 @@ def test_planner_runtime_claimed_scheduler_stops_when_claim_expires_before_dispa
     assert coordinator.spawn_calls == []
 
 
-def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
+@async_test
+async def test_planner_runtime_claim_context_is_isolated_between_tasks() -> None:
     class RecordingPlanStore(InMemoryPlanStore):
         def __init__(self) -> None:
             super().__init__()
-            self.claims_by_thread: dict[str, PlanClaimRecord] = {}
+            self.claims_by_task: dict[str, PlanClaimRecord] = {}
 
-        def save_plan_if_claimed(
+        async def save_plan_if_claimed(
             self,
             plan: PlanState,
             claim: PlanClaimRecord,
@@ -235,10 +241,12 @@ def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
             expected_revision: int,
             now: float,
         ) -> bool:
-            self.claims_by_thread[current_thread().name] = claim
+            task = asyncio.current_task()
+            assert task is not None
+            self.claims_by_task[task.get_name()] = claim
             return True
 
-        def save_plan_if_unchanged(
+        async def save_plan_if_unchanged(
             self,
             plan: PlanState,
             *,
@@ -247,7 +255,7 @@ def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
             raise AssertionError("claimed scheduler save fell back to CAS")
 
     class CoordinatedPlannerRuntime(PlannerRuntime):
-        def scheduler_tick(
+        async def scheduler_tick(
             self,
             plan_id: str,
             *,
@@ -255,21 +263,23 @@ def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
             retry_limit: int | None = None,
             dispatch_limit: int | None = None,
         ) -> PlanSchedulerTickReport:
-            if current_thread().name == "scheduler-a":
-                thread_a_context_ready.set()
-                assert thread_b_saved.wait(timeout=5)
+            task = asyncio.current_task()
+            assert task is not None
+            if task.get_name() == "scheduler-a":
+                task_a_context_ready.set()
+                await task_b_saved.wait()
             else:
-                assert thread_a_context_ready.wait(timeout=5)
-            record = self._require_plan_record(plan_id)
-            self._save_plan(
+                await task_a_context_ready.wait()
+            record = await self._require_plan_record(plan_id)
+            await self._save_plan(
                 record.plan.with_status("running", now=10.0),
                 expected_revision=record.revision,
             )
-            if current_thread().name == "scheduler-b":
-                thread_b_saved.set()
-                assert thread_a_saved.wait(timeout=5)
+            if task.get_name() == "scheduler-b":
+                task_b_saved.set()
+                await task_a_saved.wait()
             else:
-                thread_a_saved.set()
+                task_a_saved.set()
             return PlanSchedulerTickReport(
                 plan_id=plan_id,
                 retry_resets=(),
@@ -278,7 +288,7 @@ def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
 
     store = RecordingPlanStore()
     runtime = CoordinatedPlannerRuntime(store=store, clock=lambda: 10.0)
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Keep overlapping scheduler claims isolated.",
@@ -302,32 +312,29 @@ def test_planner_runtime_claim_context_is_isolated_between_threads() -> None:
         lease_expires_at=32.0,
         generation=2,
     )
-    thread_a_context_ready = Event()
-    thread_b_saved = Event()
-    thread_a_saved = Event()
-    errors: list[BaseException] = []
+    task_a_context_ready = asyncio.Event()
+    task_b_saved = asyncio.Event()
+    task_a_saved = asyncio.Event()
+    task_a = asyncio.create_task(
+        runtime._run_scheduler_tick_with_claim(
+            claim_a,
+            default_template_id=None,
+            retry_limit=None,
+            dispatch_limit=None,
+        ),
+        name="scheduler-a",
+    )
+    task_b = asyncio.create_task(
+        runtime._run_scheduler_tick_with_claim(
+            claim_b,
+            default_template_id=None,
+            retry_limit=None,
+            dispatch_limit=None,
+        ),
+        name="scheduler-b",
+    )
 
-    def run_claim(claim: PlanClaimRecord) -> None:
-        try:
-            runtime._run_scheduler_tick_with_claim(
-                claim,
-                default_template_id=None,
-                retry_limit=None,
-                dispatch_limit=None,
-            )
-        except BaseException as error:
-            errors.append(error)
+    await asyncio.wait_for(asyncio.gather(task_a, task_b), timeout=1.0)
 
-    thread_a = Thread(target=run_claim, args=(claim_a,), name="scheduler-a")
-    thread_b = Thread(target=run_claim, args=(claim_b,), name="scheduler-b")
-
-    thread_a.start()
-    thread_b.start()
-    thread_a.join(timeout=5)
-    thread_b.join(timeout=5)
-
-    assert not thread_a.is_alive()
-    assert not thread_b.is_alive()
-    assert errors == []
-    assert store.claims_by_thread["scheduler-a"] == claim_a
-    assert store.claims_by_thread["scheduler-b"] == claim_b
+    assert store.claims_by_task["scheduler-a"] == claim_a
+    assert store.claims_by_task["scheduler-b"] == claim_b

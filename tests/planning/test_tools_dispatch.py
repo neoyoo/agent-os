@@ -16,10 +16,12 @@ from agentos.planning import (
     SubAgentTemplate,
 )
 
-
+from tests.planning._async import async_test
 from tests.planning._tool_fixtures import FakePlanStepDispatcher, ManualClock
 
-def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> None:
+
+@async_test
+async def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> None:
     registry = ToolRegistry()
     dispatcher = FakePlanStepDispatcher()
     runtime = PlannerRuntime(
@@ -42,8 +44,10 @@ def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> None:
         owner_agent_id="leader",
         authorization_policy=AllowAllPlannerToolAuthorizationPolicy(),
     ).register(registry)
-    registry.get("plan_create").handler({"objective": "Review planner dispatch."})
-    registry.get("plan_add_step").handler(
+    await registry.get("plan_create").handler(
+        {"objective": "Review planner dispatch."},
+    )
+    await registry.get("plan_add_step").handler(
         {
             "plan_id": "plan_1",
             "instruction": "Review ready dispatch.",
@@ -52,7 +56,7 @@ def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> None:
     )
 
     report = json.loads(
-        registry.get("plan_dispatch_ready_steps").handler(
+        await registry.get("plan_dispatch_ready_steps").handler(
             {
                 "plan_id": "plan_1",
                 "default_template_id": "reviewer",
@@ -78,13 +82,16 @@ def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> None:
         ],
         "skipped": [],
     }
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert persisted.steps[0].status == "assigned"
     assert dispatcher.submit_calls[0].assignment.task_id == "task_1"
     assert dispatcher.submit_calls[0].template.allowed_tool_names == ("read_file",)
 
 
-def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_report() -> None:
+@async_test
+async def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_report() -> (
+    None
+):
     registry = ToolRegistry()
     clock = ManualClock(10.0)
     dispatcher = FakePlanStepDispatcher()
@@ -102,12 +109,12 @@ def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_report(
         retry_policy=PlanRetryPolicy(max_attempts=3, backoff_seconds=5.0),
         clock=clock,
     )
-    plan = runtime.create_plan(
+    plan = await runtime.create_plan(
         objective="Run scheduler tick.",
         owner_agent_id="leader",
         plan_id="plan_1",
     )
-    runtime.store.save_plan(
+    await runtime.store.save_plan(
         plan.__class__(
             plan_id="plan_1",
             objective="Run scheduler tick.",
@@ -140,7 +147,7 @@ def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_report(
     ).register(registry)
 
     report = json.loads(
-        registry.get("plan_scheduler_tick").handler(
+        await registry.get("plan_scheduler_tick").handler(
             {
                 "plan_id": "plan_1",
                 "default_template_id": "reviewer",
@@ -171,15 +178,15 @@ def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_report(
         assert assignment["target_agent_id"].startswith("subagent_")
         assert assignment["created_at"] == 10.0
     assert [call.assignment.task_id for call in dispatcher.submit_calls] == [
-        assignment["task_id"]
-        for assignment in report["dispatch"]["assigned"]
+        assignment["task_id"] for assignment in report["dispatch"]["assigned"]
     ]
 
 
-def test_planner_tools_scheduler_tick_cannot_mutate_another_owner_plan() -> None:
+@async_test
+async def test_planner_tools_scheduler_tick_cannot_mutate_another_owner_plan() -> None:
     registry = ToolRegistry()
     runtime = PlannerRuntime(store=InMemoryPlanStore(), clock=lambda: 10.0)
-    runtime.create_plan(
+    await runtime.create_plan(
         objective="Other owner's private plan.",
         owner_agent_id="other",
         plan_id="other_plan",
@@ -191,4 +198,4 @@ def test_planner_tools_scheduler_tick_cannot_mutate_another_owner_plan() -> None
     ).register(registry)
 
     with pytest.raises(PlanNotFoundError):
-        registry.get("plan_scheduler_tick").handler({"plan_id": "other_plan"})
+        await registry.get("plan_scheduler_tick").handler({"plan_id": "other_plan"})

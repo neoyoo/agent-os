@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from typing import get_type_hints
 
@@ -175,35 +176,39 @@ def test_provider_request_builder_provides_tool_schema_only_through_tools() -> N
 
 
 def test_provider_request_builder_reprojects_artifact_mount_for_each_build() -> None:
-    messages = MessageRuntime()
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    refs = artifacts.prepare_user_uploads((artifact.id,))
-    messages.append_user("Analyze the image", artifact_refs=refs)
-    builder = _configured_builder(
-        renderer=_default_renderer(),
-        messages=messages,
-        artifacts=artifacts,
-    )
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        refs = await artifacts.prepare_user_uploads((artifact.id,))
+        messages.append_user("Analyze the image", artifact_refs=refs)
+        await artifacts.prepare_projection_cache()
+        builder = _configured_builder(
+            renderer=_default_renderer(),
+            messages=messages,
+            artifacts=artifacts,
+        )
 
-    first_request = builder.build().request
-    second_request = builder.build().request
+        first_request = builder.build().request
+        second_request = builder.build().request
 
-    assert [item.kind for item in first_request.messages] == [
-        "context_snapshot",
-        "business_message",
-        "context_mount",
-    ]
-    assert first_request.messages[1].content[0].text == "Analyze the image"  # type: ignore[union-attr]
-    first_mount = first_request.messages[2]
-    second_mount = second_request.messages[2]
-    assert isinstance(first_mount.content[1], ImagePart)
-    assert first_mount.content[1].payload.handle == artifact.id
-    assert first_mount == second_mount
+        assert [item.kind for item in first_request.messages] == [
+            "context_snapshot",
+            "business_message",
+            "context_mount",
+        ]
+        assert first_request.messages[1].content[0].text == "Analyze the image"  # type: ignore[union-attr]
+        first_mount = first_request.messages[2]
+        second_mount = second_request.messages[2]
+        assert isinstance(first_mount.content[1], ImagePart)
+        assert first_mount.content[1].payload.handle == artifact.id
+        assert first_mount == second_mount
+
+    asyncio.run(scenario())

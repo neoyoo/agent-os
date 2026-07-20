@@ -32,7 +32,7 @@ class InMemoryArtifactStore:
         self._contents: dict[str, bytes] = {}
         self._lock = RLock()
 
-    def put(
+    async def put(
         self,
         *,
         session_id: str,
@@ -60,7 +60,7 @@ class InMemoryArtifactStore:
             self._contents[record.id] = data
             return record
 
-    def get(self, session_id: str, artifact_id: str) -> ArtifactRecord:
+    async def get(self, session_id: str, artifact_id: str) -> ArtifactRecord:
         """返回 Session 内元数据，未知与跨 Session 使用同一错误。"""
 
         validate_artifact_session_id(session_id)
@@ -68,7 +68,7 @@ class InMemoryArtifactStore:
         with self._lock:
             return self._record_for_session(session_id, artifact_id)
 
-    def read(self, session_id: str, artifact_id: str) -> bytes:
+    async def read(self, session_id: str, artifact_id: str) -> bytes:
         """返回 Session 内原始内容，且不暴露存储实现。"""
 
         validate_artifact_session_id(session_id)
@@ -77,7 +77,7 @@ class InMemoryArtifactStore:
             record = self._record_for_session(session_id, artifact_id)
             return self._contents[record.id]
 
-    def list(
+    async def list(
         self,
         session_id: str,
         cursor: str | None = None,
@@ -112,7 +112,7 @@ class InMemoryArtifactStore:
                 next_cursor = _encode_cursor(page_items[-1].id)
             return ArtifactPage(items=page_items, next_cursor=next_cursor)
 
-    def delete(self, session_id: str, artifact_id: str) -> None:
+    async def delete(self, session_id: str, artifact_id: str) -> None:
         """原子删除 Session 内 metadata 与 bytes。"""
 
         validate_artifact_session_id(session_id)
@@ -122,7 +122,7 @@ class InMemoryArtifactStore:
             del self._contents[record.id]
             del self._records[record.id]
 
-    def delete_session(self, session_id: str) -> None:
+    async def delete_session(self, session_id: str) -> None:
         """幂等删除一个 Session 的全部 Artifact。"""
 
         validate_artifact_session_id(session_id)

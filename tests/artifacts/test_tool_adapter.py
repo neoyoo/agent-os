@@ -6,6 +6,7 @@ from agentos.artifacts.runtime import ArtifactRuntime
 from agentos.artifacts.tool_adapter import ArtifactToolAdapter
 from agentos.artifacts.tools import artifact_tool_specs
 from agentos.capabilities import ToolConcurrencyPolicy
+from tests.artifacts._async import async_test
 
 
 def runtime() -> ArtifactRuntime:
@@ -33,9 +34,10 @@ def test_adapter_reuses_artifact_schemas_and_freezes_exclusive_policy() -> None:
     assert all(tool.kind == "external" for tool in registered)
 
 
-def test_adapter_handlers_are_bound_to_one_artifact_runtime() -> None:
+@async_test
+async def test_adapter_handlers_are_bound_to_one_artifact_runtime() -> None:
     target = runtime()
-    record = target.upload(
+    record = await target.upload(
         data=b"private-image",
         filename="drawing.png",
         media_type="image/png",
@@ -44,7 +46,7 @@ def test_adapter_handlers_are_bound_to_one_artifact_runtime() -> None:
         tool.name: tool for tool in ArtifactToolAdapter(target).registered_tools()
     }
 
-    listed = tools["list_attachments"].handler({})
+    listed = await tools["list_attachments"].handler({})
     assert isinstance(listed, str)
     assert json.loads(listed) == {
         "items": [
@@ -60,7 +62,7 @@ def test_adapter_handlers_are_bound_to_one_artifact_runtime() -> None:
     assert "private-image" not in listed
     assert "session-secret" not in listed
 
-    loaded = tools["load_attachment"].handler({"handle": record.id})
+    loaded = await tools["load_attachment"].handler({"handle": record.id})
     assert loaded == (
         f"附件已挂载：{record.id}。"
         "附件内容将在下一次模型请求中作为当前轮次的工具结果数据提供。"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sqlite3
+import aiosqlite
 
 from agentos.capabilities.skill_activation_errors import (
     SkillActivationCorruptedError,
@@ -31,23 +31,24 @@ _EXPECTED_ACTIVATION_COLUMNS = (
 _EXPECTED_UNIQUE_INDEXES = {("session_id", "skill_name")}
 
 
-def initialize_skill_activation_schema(connection: sqlite3.Connection) -> None:
+async def initialize_skill_activation_schema(connection: aiosqlite.Connection) -> None:
     """初始化并严格验证 Skill Activation Adapter 自己的 schema。"""
 
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
+        await connection.execute("BEGIN IMMEDIATE")
+        await connection.execute(
             "CREATE TABLE IF NOT EXISTS agentos_skill_activation_schema ("
             "version INTEGER PRIMARY KEY)"
         )
-        connection.execute(_CREATE_ACTIVATIONS_TABLE)
-        _validate_columns(connection)
-        _validate_unique_indexes(connection)
-        versions = connection.execute(
+        await connection.execute(_CREATE_ACTIVATIONS_TABLE)
+        await _validate_columns(connection)
+        await _validate_unique_indexes(connection)
+        async with connection.execute(
             "SELECT version FROM agentos_skill_activation_schema"
-        ).fetchall()
+        ) as cursor:
+            versions = await cursor.fetchall()
         if not versions:
-            connection.execute(
+            await connection.execute(
                 "INSERT INTO agentos_skill_activation_schema (version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
@@ -55,24 +56,26 @@ def initialize_skill_activation_schema(connection: sqlite3.Connection) -> None:
             raise SkillActivationCorruptedError(
                 "skill activation store schema is unsupported"
             )
-        connection.commit()
+        await connection.commit()
     except SkillActivationCorruptedError:
-        connection.rollback()
+        await connection.rollback()
         raise
-    except (sqlite3.DatabaseError, TypeError, ValueError):
-        connection.rollback()
+    except (aiosqlite.DatabaseError, TypeError, ValueError):
+        await connection.rollback()
         raise SkillActivationCorruptedError(
             "skill activation store schema is corrupted"
         ) from None
 
 
-def _validate_columns(connection: sqlite3.Connection) -> None:
-    schema_rows = connection.execute(
+async def _validate_columns(connection: aiosqlite.Connection) -> None:
+    async with connection.execute(
         "PRAGMA table_xinfo(agentos_skill_activation_schema)"
-    ).fetchall()
-    activation_rows = connection.execute(
+    ) as cursor:
+        schema_rows = await cursor.fetchall()
+    async with connection.execute(
         "PRAGMA table_xinfo(agentos_skill_activations)"
-    ).fetchall()
+    ) as cursor:
+        activation_rows = await cursor.fetchall()
     schema_columns = tuple(
         (row[1], row[2].upper(), row[3], row[5]) for row in schema_rows
     )
@@ -88,18 +91,20 @@ def _validate_columns(connection: sqlite3.Connection) -> None:
         )
 
 
-def _validate_unique_indexes(connection: sqlite3.Connection) -> None:
+async def _validate_unique_indexes(connection: aiosqlite.Connection) -> None:
     unique_indexes = set()
-    indexes = connection.execute(
+    async with connection.execute(
         "PRAGMA index_list(agentos_skill_activations)"
-    ).fetchall()
+    ) as cursor:
+        indexes = await cursor.fetchall()
     for index in indexes:
         if index[2] != 1:
             continue
         escaped_name = str(index[1]).replace('"', '""')
-        columns = connection.execute(
+        async with connection.execute(
             f'PRAGMA index_info("{escaped_name}")'
-        ).fetchall()
+        ) as cursor:
+            columns = await cursor.fetchall()
         unique_indexes.add(tuple(row[2] for row in columns))
     if unique_indexes != _EXPECTED_UNIQUE_INDEXES:
         raise SkillActivationCorruptedError(

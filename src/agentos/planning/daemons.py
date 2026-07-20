@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, replace
-from threading import Event, RLock, Thread
 from typing import Literal
 
 from agentos.planning.models import PLAN_STATUSES, PlanStatus
@@ -105,9 +105,8 @@ class PlannerSchedulerDaemon:
         self.dispatch_limit = dispatch_limit
         self.poll_interval_seconds = poll_interval_seconds
         self._clock = clock if callable(clock) else time.time
-        self._lock = RLock()
-        self._stop_event = Event()
-        self._thread: Thread | None = None
+        self._stop_event = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
         self._state = PlannerSchedulerDaemonState(
             status="idle",
             plan_ids=self.plan_ids,
@@ -117,7 +116,7 @@ class PlannerSchedulerDaemon:
             dispatch_limit=dispatch_limit,
         )
 
-    def run_once(self) -> tuple[PlanSchedulerTickReport, ...]:
+    async def run_once(self) -> tuple[PlanSchedulerTickReport, ...]:
         """Run one daemon iteration without starting a background thread."""
 
         reports: list[PlanSchedulerTickReport] = []
@@ -125,7 +124,7 @@ class PlannerSchedulerDaemon:
         for plan_id in self.plan_ids:
             try:
                 reports.append(
-                    self.runtime.scheduler_tick(
+                    await self.runtime.scheduler_tick(
                         plan_id,
                         default_template_id=self.default_template_id,
                         retry_limit=self.retry_limit,
@@ -142,81 +141,80 @@ class PlannerSchedulerDaemon:
         self._record_run(tuple(reports), tuple(errors))
         return tuple(reports)
 
-    def start(self) -> None:
+    async def start(self) -> None:
         """Start the background polling loop if it is not already running."""
 
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._stop_event.clear()
-            self._state = replace(
-                self._state,
-                status="running",
-                started_at=float(self._clock()),
-                stopped_at=None,
-            )
-            self._thread = Thread(
-                target=self._run_loop,
-                name="agentos-planner-scheduler-daemon",
-                daemon=True,
-            )
-            self._thread.start()
+        if self._task is not None and not self._task.done():
+            return
+        self._stop_event.clear()
+        self._state = replace(
+            self._state,
+            status="running",
+            started_at=float(self._clock()),
+            stopped_at=None,
+        )
+        self._task = asyncio.create_task(
+            self._run_loop(),
+            name="agentos-planner-scheduler-daemon",
+        )
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """Request the background polling loop to stop."""
 
         self._stop_event.set()
-        with self._lock:
-            if self._state.status == "running":
-                self._state = replace(self._state, status="stopping")
+        if self._state.status == "running":
+            self._state = replace(self._state, status="stopping")
 
-    def join(self, timeout: float | None = None) -> bool:
+    async def join(self, timeout: float | None = None) -> bool:
         """Wait for the background loop to exit."""
 
-        thread = self._thread
-        if thread is None:
+        task = self._task
+        if task is None:
             return True
-        thread.join(timeout=timeout)
-        return not thread.is_alive()
+        done, _ = await asyncio.wait((task,), timeout=timeout)
+        if task not in done:
+            return False
+        task.result()
+        return True
 
     def is_running(self) -> bool:
-        """Return whether the daemon thread is currently alive."""
+        """Return whether the daemon task is currently alive."""
 
-        thread = self._thread
-        return thread is not None and thread.is_alive()
+        task = self._task
+        return task is not None and not task.done()
 
     def state(self) -> PlannerSchedulerDaemonState:
         """Return an immutable daemon state snapshot."""
 
-        with self._lock:
-            return self._state
+        return self._state
 
-    def _run_loop(self) -> None:
+    async def _run_loop(self) -> None:
         try:
             while not self._stop_event.is_set():
-                self.run_once()
-                self._stop_event.wait(self.poll_interval_seconds)
-        finally:
-            with self._lock:
-                self._state = replace(
-                    self._state,
-                    status="stopped",
-                    stopped_at=float(self._clock()),
+                await self.run_once()
+                await _wait_for_stop(
+                    self._stop_event,
+                    self.poll_interval_seconds,
                 )
+        finally:
+            self._state = replace(
+                self._state,
+                status="stopped",
+                stopped_at=float(self._clock()),
+            )
 
     def _record_run(
         self,
         reports: tuple[PlanSchedulerTickReport, ...],
         errors: tuple[PlannerSchedulerDaemonError, ...],
     ) -> None:
-        with self._lock:
-            self._state = replace(
-                self._state,
-                iterations=self._state.iterations + 1,
-                last_run_at=float(self._clock()),
-                last_reports=reports,
-                errors=errors,
-            )
+        self._state = replace(
+            self._state,
+            iterations=self._state.iterations + 1,
+            last_run_at=float(self._clock()),
+            last_reports=reports,
+            errors=errors,
+        )
 
     def _validate_configuration(
         self,
@@ -278,9 +276,8 @@ class PlannerClaimedSchedulerDaemon:
         self.release_after_tick = release_after_tick
         self.poll_interval_seconds = poll_interval_seconds
         self._clock = clock if callable(clock) else time.time
-        self._lock = RLock()
-        self._stop_event = Event()
-        self._thread: Thread | None = None
+        self._stop_event = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
         self._state = PlannerClaimedSchedulerDaemonState(
             status="idle",
             worker_id=worker_id,
@@ -295,11 +292,11 @@ class PlannerClaimedSchedulerDaemon:
             poll_interval_seconds=poll_interval_seconds,
         )
 
-    def run_once(self) -> PlanClaimedSchedulerTickReport:
+    async def run_once(self) -> PlanClaimedSchedulerTickReport:
         """Run one claim-before-tick daemon iteration."""
 
         try:
-            report = self.runtime.claimed_scheduler_tick(
+            report = await self.runtime.claimed_scheduler_tick(
                 worker_id=self.worker_id,
                 lease_seconds=self.lease_seconds,
                 owner_agent_id=self.owner_agent_id,
@@ -320,87 +317,85 @@ class PlannerClaimedSchedulerDaemon:
         self._record_success(report)
         return report
 
-    def start(self) -> None:
+    async def start(self) -> None:
         """Start the background claim-before-tick polling loop."""
 
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._stop_event.clear()
-            self._state = replace(
-                self._state,
-                status="running",
-                started_at=float(self._clock()),
-                stopped_at=None,
-            )
-            self._thread = Thread(
-                target=self._run_loop,
-                name="agentos-planner-claimed-scheduler-daemon",
-                daemon=True,
-            )
-            self._thread.start()
+        if self._task is not None and not self._task.done():
+            return
+        self._stop_event.clear()
+        self._state = replace(
+            self._state,
+            status="running",
+            started_at=float(self._clock()),
+            stopped_at=None,
+        )
+        self._task = asyncio.create_task(
+            self._run_loop(),
+            name="agentos-planner-claimed-scheduler-daemon",
+        )
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """Request the background polling loop to stop."""
 
         self._stop_event.set()
-        with self._lock:
-            if self._state.status == "running":
-                self._state = replace(self._state, status="stopping")
+        if self._state.status == "running":
+            self._state = replace(self._state, status="stopping")
 
-    def join(self, timeout: float | None = None) -> bool:
+    async def join(self, timeout: float | None = None) -> bool:
         """Wait for the background loop to exit."""
 
-        thread = self._thread
-        if thread is None:
+        task = self._task
+        if task is None:
             return True
-        thread.join(timeout=timeout)
-        return not thread.is_alive()
+        done, _ = await asyncio.wait((task,), timeout=timeout)
+        if task not in done:
+            return False
+        task.result()
+        return True
 
     def is_running(self) -> bool:
-        """Return whether the daemon thread is currently alive."""
+        """Return whether the daemon task is currently alive."""
 
-        thread = self._thread
-        return thread is not None and thread.is_alive()
+        task = self._task
+        return task is not None and not task.done()
 
     def state(self) -> PlannerClaimedSchedulerDaemonState:
         """Return an immutable daemon state snapshot."""
 
-        with self._lock:
-            return self._state
+        return self._state
 
-    def _run_loop(self) -> None:
+    async def _run_loop(self) -> None:
         try:
             while not self._stop_event.is_set():
-                self.run_once()
-                self._stop_event.wait(self.poll_interval_seconds)
-        finally:
-            with self._lock:
-                self._state = replace(
-                    self._state,
-                    status="stopped",
-                    stopped_at=float(self._clock()),
+                await self.run_once()
+                await _wait_for_stop(
+                    self._stop_event,
+                    self.poll_interval_seconds,
                 )
+        finally:
+            self._state = replace(
+                self._state,
+                status="stopped",
+                stopped_at=float(self._clock()),
+            )
 
     def _record_success(self, report: PlanClaimedSchedulerTickReport) -> None:
-        with self._lock:
-            self._state = replace(
-                self._state,
-                iterations=self._state.iterations + 1,
-                last_run_at=float(self._clock()),
-                last_report=report,
-                errors=(),
-            )
+        self._state = replace(
+            self._state,
+            iterations=self._state.iterations + 1,
+            last_run_at=float(self._clock()),
+            last_report=report,
+            errors=(),
+        )
 
     def _record_error(self, error: PlannerClaimedSchedulerDaemonError) -> None:
-        with self._lock:
-            self._state = replace(
-                self._state,
-                iterations=self._state.iterations + 1,
-                last_run_at=float(self._clock()),
-                last_report=None,
-                errors=(error,),
-            )
+        self._state = replace(
+            self._state,
+            iterations=self._state.iterations + 1,
+            last_run_at=float(self._clock()),
+            last_report=None,
+            errors=(error,),
+        )
 
     def _validate_configuration(
         self,
@@ -437,6 +432,18 @@ def _validate_plan_status_tuple(
         if status not in PLAN_STATUSES:
             raise ValueError(f"unsupported plan status in statuses: {status}")
     return tuple(statuses)
+
+
+async def _wait_for_stop(event: asyncio.Event, timeout: float) -> None:
+    if event.is_set():
+        return
+    if timeout == 0:
+        await asyncio.sleep(0)
+        return
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except TimeoutError:
+        pass
 
 
 __all__ = [

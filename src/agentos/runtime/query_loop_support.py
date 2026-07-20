@@ -51,11 +51,14 @@ class ContextRuntimeBoundary(Protocol):
 class ArtifactRuntimeBoundary(Protocol):
     """TurnLifecycle 依赖的 Session Artifact 边界。"""
 
-    def prepare_user_uploads(
+    async def prepare_user_uploads(
         self,
         handles: tuple[str, ...],
     ) -> tuple[ArtifactRef, ...]:
         """解析用户 Artifact handle 并建立当前 Turn mount。"""
+
+    async def prepare_projection_cache(self) -> None:
+        """加载当前 Provider attempt 使用的 Artifact 投影。"""
 
     def clear_mounts(self) -> object:
         """清理当前 Turn 的 Artifact mounts。"""

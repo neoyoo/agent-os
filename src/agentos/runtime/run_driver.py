@@ -153,13 +153,13 @@ class RunDriver:
                 raise RunProtocolError("run execution mode is missing")
             self._execution_guards[run_id] = execution_guard
             if type(turn_input) is AcceptedStartInput:
-                turn, pending = self.turns.prepare_user_turn(
+                turn, pending = await self.turns.prepare_user_turn(
                     turn_input.input,
                     turn_id=turn_input.turn_id,
                     user_message_id=turn_input.user_message_id,
                 )
             elif isinstance(turn_input, UserTurnInput):
-                turn, pending = self.turns.prepare_user_turn(turn_input)
+                turn, pending = await self.turns.prepare_user_turn(turn_input)
             else:
                 turn, pending = self.turns.prepare_continuation_turn(turn_input)
             if turn is not None:

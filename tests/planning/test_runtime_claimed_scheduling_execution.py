@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 from agentos.planning import (
     InMemoryPlanClaimStore,
@@ -19,7 +21,8 @@ from tests.planning._runtime_fixtures import (
 )
 
 
-def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
+@async_test
+async def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
     coordinator = FakeCoordinator()
     claim_store = InMemoryPlanClaimStore()
     runtime = PlannerRuntime(
@@ -35,7 +38,7 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
         claim_store=claim_store,
         clock=lambda: 10.0,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="busy_plan",
             objective="Already leased work.",
@@ -51,7 +54,7 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="free_plan",
             objective="Claimable work.",
@@ -67,7 +70,7 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
             ),
         ),
     )
-    claim_store.claim_plan(
+    await claim_store.claim_plan(
         plan_id="busy_plan",
         owner_agent_id="leader",
         worker_id="scheduler_a",
@@ -75,15 +78,15 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
         now=10.0,
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_b",
         lease_seconds=30.0,
         default_template_id="reviewer",
     )
 
-    busy_plan = runtime.get_plan("busy_plan")
-    free_plan = runtime.get_plan("free_plan")
+    busy_plan = await runtime.get_plan("busy_plan")
+    free_plan = await runtime.get_plan("free_plan")
     assert isinstance(report, PlanClaimedSchedulerTickReport)
     assert report.worker_id == "scheduler_b"
     assert [claim.status for claim in report.claims] == ["busy", "claimed"]
@@ -98,7 +101,8 @@ def test_planner_runtime_claimed_scheduler_tick_skips_busy_plans() -> None:
     assert len(coordinator.spawn_calls) == 1
 
 
-def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guarded_save() -> (
+@async_test
+async def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guarded_save() -> (
     None
 ):
     class RacingClaimStore(InMemoryPlanClaimStore):
@@ -106,18 +110,18 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
             super().__init__()
             self._raced = False
 
-        def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
+        async def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
             if plan_id == "plan_1" and not self._raced:
                 self._raced = True
                 clock.value = 11.0
-                self.claim_plan(
+                await self.claim_plan(
                     plan_id="plan_1",
                     owner_agent_id="leader",
                     worker_id="scheduler_b",
                     lease_seconds=30.0,
                     now=11.0,
                 )
-            return super().get_claim(plan_id)
+            return await super().get_claim(plan_id)
 
     clock = ManualClock(10.0)
     claim_store = RacingClaimStore()
@@ -135,7 +139,7 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
         claim_store=claim_store,
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Race-safe scheduler work.",
@@ -152,14 +156,14 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
         ),
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=1.0,
         default_template_id="reviewer",
     )
 
-    plan = runtime.get_plan("plan_1")
+    plan = await runtime.get_plan("plan_1")
     assert [claim.status for claim in report.claims] == ["claimed"]
     assert report.tick_reports == ()
     assert [skip.reason for skip in report.skipped] == ["claim-lost"]
@@ -167,20 +171,21 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_claim_guar
     assert plan.steps[0].task_id is not None
     assert plan.assignments[0].dispatch_status == "pending"
     assert coordinator.spawn_calls == []
-    current_claim = claim_store.get_claim("plan_1")
+    current_claim = await claim_store.get_claim("plan_1")
     assert current_claim is not None
     assert current_claim.worker_id == "scheduler_b"
 
 
-def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_revision_guarded_save() -> (
+@async_test
+async def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_revision_guarded_save() -> (
     None
 ):
     class RacingCoordinator(FakeCoordinator):
-        def spawn(self, **kwargs: object) -> None:
-            current = store.get_plan("plan_1")
+        async def spawn(self, **kwargs: object) -> None:
+            current = await store.get_plan("plan_1")
             assert current is not None
-            store.save_plan(current.with_status("failed", now=11.0))
-            return super().spawn(**kwargs)
+            await store.save_plan(current.with_status("failed", now=11.0))
+            return await super().spawn(**kwargs)
 
     store = InMemoryPlanStore()
     claim_store = InMemoryPlanClaimStore()
@@ -198,7 +203,7 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_revision_g
         claim_store=claim_store,
         clock=lambda: 10.0,
     )
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Race-safe scheduler work.",
@@ -215,26 +220,29 @@ def test_planner_runtime_claimed_scheduler_tick_dispatches_only_after_revision_g
         ),
     )
 
-    report = runtime.claimed_scheduler_tick(
+    report = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=30.0,
         default_template_id="reviewer",
     )
 
-    plan = runtime.get_plan("plan_1")
+    plan = await runtime.get_plan("plan_1")
     assert len(report.tick_reports) == 1
     assert report.skipped == ()
     assert plan.status == "failed"
     assert plan.steps[0].status == "assigned"
     assert plan.steps[0].task_id is not None
     assert coordinator.spawn_calls[0]["task_id"] == plan.steps[0].task_id
-    current_claim = claim_store.get_claim("plan_1")
+    current_claim = await claim_store.get_claim("plan_1")
     assert current_claim is not None
     assert current_claim.worker_id == "scheduler_a"
 
 
-def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() -> None:
+@async_test
+async def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() -> (
+    None
+):
     clock = ManualClock(10.0)
     claim_store = InMemoryPlanClaimStore()
     coordinator = FakeCoordinator()
@@ -251,7 +259,7 @@ def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() 
         claim_store=claim_store,
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Claim, tick, and release.",
@@ -268,14 +276,14 @@ def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() 
         ),
     )
 
-    first = runtime.claimed_scheduler_tick(
+    first = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_a",
         lease_seconds=30.0,
         default_template_id="reviewer",
         release_after_tick=True,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="plan_2",
             objective="Later work.",
@@ -292,7 +300,7 @@ def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() 
         ),
     )
     clock.value = 11.0
-    second = runtime.claimed_scheduler_tick(
+    second = await runtime.claimed_scheduler_tick(
         owner_agent_id="leader",
         worker_id="scheduler_b",
         lease_seconds=30.0,
@@ -301,9 +309,9 @@ def test_planner_runtime_claimed_scheduler_tick_can_release_claims_after_tick() 
     )
 
     assert first.released_plan_ids == ("plan_1",)
-    assert claim_store.get_claim("plan_1") is None
+    assert await claim_store.get_claim("plan_1") is None
     assert [tick.plan_id for tick in second.tick_reports] == ["plan_2"]
     assert second.claims[0].claim is not None
     assert second.claims[0].claim.worker_id == "scheduler_b"
     assert second.released_plan_ids == ("plan_2",)
-    assert claim_store.get_claim("plan_2") is None
+    assert await claim_store.get_claim("plan_2") is None

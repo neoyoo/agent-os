@@ -30,7 +30,7 @@ PlanDispatchSkipReason = Literal[
 class PlanStepDispatcher(Protocol):
     """Plan Step 到外部执行系统的提交边界。"""
 
-    def submit(
+    async def submit(
         self,
         *,
         plan: PlanState,
@@ -65,11 +65,11 @@ class _DispatchRuntime(Protocol):
     _clock: Callable[[], float]
     _id_factory: Callable[[str], str]
 
-    def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
+    async def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
 
-    def _require_plan(self, plan_id: str) -> PlanState: ...
+    async def _require_plan(self, plan_id: str) -> PlanState: ...
 
-    def _require_plan_record(self, plan_id: str) -> PlanStoreRecord: ...
+    async def _require_plan_record(self, plan_id: str) -> PlanStoreRecord: ...
 
     def _require_template(self, template_id: str) -> SubAgentTemplate: ...
 
@@ -83,17 +83,17 @@ class _DispatchRuntime(Protocol):
         assignments: tuple[PlanAssignment, ...] | None = None,
     ) -> PlanState: ...
 
-    def _save_plan(
+    async def _save_plan(
         self,
         plan: PlanState,
         *,
         expected_revision: int | None = None,
     ) -> None: ...
 
-    def _ensure_active_plan_claim(self, plan_id: str) -> None: ...
+    async def _ensure_active_plan_claim(self, plan_id: str) -> None: ...
 
 
-def _assign_step(
+async def _assign_step(
     runtime: _DispatchRuntime,
     plan_id: str,
     step_id: str,
@@ -102,7 +102,7 @@ def _assign_step(
 ) -> PlanState:
     if runtime.dispatcher is None:
         raise RuntimeError("dispatcher is required to assign plan steps")
-    record = runtime._require_plan_record(plan_id)
+    record = await runtime._require_plan_record(plan_id)
     plan = record.plan
     template = runtime._require_template(template_id)
     step = runtime._require_step(plan, step_id)
@@ -132,10 +132,10 @@ def _assign_step(
         updated_step,
         assignments=plan.assignments + (assignment,),
     )
-    runtime._save_plan(updated, expected_revision=record.revision)
-    runtime._ensure_active_plan_claim(plan_id)
+    await runtime._save_plan(updated, expected_revision=record.revision)
+    await runtime._ensure_active_plan_claim(plan_id)
     try:
-        _submit_assignment(
+        await _submit_assignment(
             runtime,
             plan=updated,
             step=updated_step,
@@ -143,7 +143,7 @@ def _assign_step(
             template=template,
         )
     except PlanDispatchAlreadySubmittedError as error:
-        _mark_assignment_dispatch_failed(
+        await _mark_assignment_dispatch_failed(
             runtime,
             updated,
             updated_step,
@@ -152,7 +152,7 @@ def _assign_step(
         )
         raise
     except Exception as error:
-        _mark_assignment_dispatch_failed(
+        await _mark_assignment_dispatch_failed(
             runtime,
             updated,
             updated_step,
@@ -160,10 +160,10 @@ def _assign_step(
             error=str(error) or error.__class__.__name__,
         )
         raise
-    return _mark_assignment_dispatch_submitted(runtime, plan_id, assignment)
+    return await _mark_assignment_dispatch_submitted(runtime, plan_id, assignment)
 
 
-def _dispatch_ready_steps(
+async def _dispatch_ready_steps(
     runtime: _DispatchRuntime,
     plan_id: str,
     *,
@@ -172,10 +172,10 @@ def _dispatch_ready_steps(
 ) -> PlanDispatchReport:
     if limit is not None and limit < 1:
         raise ValueError("limit must be >= 1")
-    recovered = _recover_pending_dispatches(runtime, plan_id, limit=limit)
+    recovered = await _recover_pending_dispatches(runtime, plan_id, limit=limit)
     assigned = list(recovered.assigned)
     skipped = list(recovered.skipped)
-    for step in runtime.ready_steps(plan_id):
+    for step in await runtime.ready_steps(plan_id):
         if limit is not None and len(assigned) >= limit:
             break
         template_id = step.template_id or default_template_id
@@ -203,7 +203,7 @@ def _dispatch_ready_steps(
             )
             continue
         try:
-            updated = _assign_step(
+            updated = await _assign_step(
                 runtime,
                 plan_id,
                 step.step_id,
@@ -229,7 +229,7 @@ def _dispatch_ready_steps(
     )
 
 
-def _recover_pending_dispatches(
+async def _recover_pending_dispatches(
     runtime: _DispatchRuntime,
     plan_id: str,
     *,
@@ -237,7 +237,7 @@ def _recover_pending_dispatches(
 ) -> PlanDispatchReport:
     if limit is not None and limit < 1:
         raise ValueError("limit must be >= 1")
-    plan = runtime._require_plan(plan_id)
+    plan = await runtime._require_plan(plan_id)
     assigned: list[PlanAssignment] = []
     skipped: list[PlanDispatchSkip] = []
     for assignment in plan.assignments:
@@ -259,7 +259,7 @@ def _recover_pending_dispatches(
                 ),
             )
             continue
-        current_plan = runtime._require_plan(plan_id)
+        current_plan = await runtime._require_plan(plan_id)
         step = runtime._require_step(current_plan, assignment.step_id)
         if (
             step.status != "assigned"
@@ -276,8 +276,8 @@ def _recover_pending_dispatches(
             )
             continue
         try:
-            runtime._ensure_active_plan_claim(plan_id)
-            _submit_assignment(
+            await runtime._ensure_active_plan_claim(plan_id)
+            await _submit_assignment(
                 runtime,
                 plan=current_plan,
                 step=step,
@@ -289,7 +289,7 @@ def _recover_pending_dispatches(
         except PlanDispatchAlreadySubmittedError:
             pass
         except Exception as error:
-            _mark_assignment_dispatch_failed(
+            await _mark_assignment_dispatch_failed(
                 runtime,
                 current_plan,
                 step,
@@ -305,7 +305,11 @@ def _recover_pending_dispatches(
                 ),
             )
             continue
-        updated = _mark_assignment_dispatch_submitted(runtime, plan_id, assignment)
+        updated = await _mark_assignment_dispatch_submitted(
+            runtime,
+            plan_id,
+            assignment,
+        )
         assigned.append(_latest_assignment(updated, assignment.step_id))
     return PlanDispatchReport(
         plan_id=plan_id,
@@ -314,7 +318,7 @@ def _recover_pending_dispatches(
     )
 
 
-def _submit_assignment(
+async def _submit_assignment(
     runtime: _DispatchRuntime,
     *,
     plan: PlanState,
@@ -324,7 +328,7 @@ def _submit_assignment(
 ) -> None:
     if runtime.dispatcher is None:
         raise RuntimeError("dispatcher is required to assign plan steps")
-    runtime.dispatcher.submit(
+    await runtime.dispatcher.submit(
         plan=plan,
         step=step,
         assignment=assignment,
@@ -355,14 +359,14 @@ def _replace_assignment(
     )
 
 
-def _mark_assignment_dispatch_submitted(
+async def _mark_assignment_dispatch_submitted(
     runtime: _DispatchRuntime,
     plan_id: str,
     assignment: PlanAssignment,
 ) -> PlanState:
     last_plan: PlanState | None = None
     for _ in range(3):
-        record = runtime._require_plan_record(plan_id)
+        record = await runtime._require_plan_record(plan_id)
         last_plan = record.plan
         try:
             current_step = runtime._require_step(record.plan, assignment.step_id)
@@ -407,7 +411,7 @@ def _mark_assignment_dispatch_submitted(
             submitted,
         )
         try:
-            runtime._save_plan(updated, expected_revision=record.revision)
+            await runtime._save_plan(updated, expected_revision=record.revision)
         except PlanConflictError:
             continue
         return updated
@@ -418,7 +422,7 @@ def _mark_assignment_dispatch_submitted(
     )
 
 
-def _mark_assignment_dispatch_failed(
+async def _mark_assignment_dispatch_failed(
     runtime: _DispatchRuntime,
     plan: PlanState,
     step: PlanStep,
@@ -426,7 +430,7 @@ def _mark_assignment_dispatch_failed(
     *,
     error: str,
 ) -> None:
-    record = runtime._require_plan_record(plan.plan_id)
+    record = await runtime._require_plan_record(plan.plan_id)
     current_step = runtime._require_step(record.plan, step.step_id)
     if (
         current_step.status != step.status
@@ -460,4 +464,4 @@ def _mark_assignment_dispatch_failed(
             for current in record.plan.assignments
         ),
     )
-    runtime._save_plan(failed_plan, expected_revision=record.revision)
+    await runtime._save_plan(failed_plan, expected_revision=record.revision)

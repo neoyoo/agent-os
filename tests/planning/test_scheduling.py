@@ -6,6 +6,7 @@ from agentos.planning.scheduling import (
     schedulable_plans,
 )
 from agentos.planning.store import PlanClaimResult
+from tests.planning._async import async_test
 
 
 class _Clock:
@@ -20,7 +21,7 @@ class _BusyClaimStore:
     def __init__(self) -> None:
         self.claimed_at: list[float] = []
 
-    def claim_plan(self, **kwargs: object) -> PlanClaimResult:
+    async def claim_plan(self, **kwargs: object) -> PlanClaimResult:
         self.claimed_at.append(float(kwargs["now"]))
         return PlanClaimResult(status="busy")
 
@@ -38,10 +39,10 @@ class _SelectionRuntime:
         self.retry_policy = PlanRetryPolicy(max_attempts=3)
         self._clock = clock
 
-    def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]:
+    async def ready_steps(self, plan_id: str) -> tuple[PlanStep, ...]:
         raise AssertionError(f"selection re-read plan {plan_id}")
 
-    def retryable_steps(self, plan_id: str) -> tuple[PlanStep, ...]:
+    async def retryable_steps(self, plan_id: str) -> tuple[PlanStep, ...]:
         raise AssertionError(f"selection re-read plan {plan_id}")
 
     def _pending_dispatch_step_ids(self, plan: PlanState) -> tuple[str, ...]:
@@ -64,20 +65,22 @@ def _pending_plan(plan_id: str) -> PlanState:
     )
 
 
-def test_schedulable_selection_uses_each_listed_plan_snapshot() -> None:
+@async_test
+async def test_schedulable_selection_uses_each_listed_plan_snapshot() -> None:
     store = InMemoryPlanStore()
-    store.create_plan(_pending_plan("plan_1"))
+    await store.create_plan(_pending_plan("plan_1"))
     runtime = _SelectionRuntime(store=store, clock=lambda: 10.0)
 
-    summaries = schedulable_plans(runtime)  # type: ignore[arg-type]
+    summaries = await schedulable_plans(runtime)  # type: ignore[arg-type]
 
     assert summaries[0].ready_step_ids == ("plan_1_step",)
 
 
-def test_claimed_tick_reads_clock_for_each_plan_claim() -> None:
+@async_test
+async def test_claimed_tick_reads_clock_for_each_plan_claim() -> None:
     store = InMemoryPlanStore()
-    store.create_plan(_pending_plan("plan_1"))
-    store.create_plan(_pending_plan("plan_2"))
+    await store.create_plan(_pending_plan("plan_1"))
+    await store.create_plan(_pending_plan("plan_2"))
     claim_store = _BusyClaimStore()
     runtime = _SelectionRuntime(
         store=store,
@@ -85,7 +88,7 @@ def test_claimed_tick_reads_clock_for_each_plan_claim() -> None:
         clock=_Clock(10.0, 11.0, 12.0),
     )
 
-    report = claimed_scheduler_tick(  # type: ignore[arg-type]
+    report = await claimed_scheduler_tick(  # type: ignore[arg-type]
         runtime,
         worker_id="worker_1",
         lease_seconds=30.0,
@@ -95,10 +98,11 @@ def test_claimed_tick_reads_clock_for_each_plan_claim() -> None:
     assert claim_store.claimed_at == [11.0, 12.0]
 
 
-def test_claim_schedulable_plans_reads_clock_for_each_lease() -> None:
+@async_test
+async def test_claim_schedulable_plans_reads_clock_for_each_lease() -> None:
     store = InMemoryPlanStore()
-    store.create_plan(_pending_plan("plan_1"))
-    store.create_plan(_pending_plan("plan_2"))
+    await store.create_plan(_pending_plan("plan_1"))
+    await store.create_plan(_pending_plan("plan_2"))
     claim_store = _BusyClaimStore()
     runtime = _SelectionRuntime(
         store=store,
@@ -106,7 +110,7 @@ def test_claim_schedulable_plans_reads_clock_for_each_lease() -> None:
         clock=_Clock(10.0, 11.0, 12.0),
     )
 
-    claims = claim_schedulable_plans(  # type: ignore[arg-type]
+    claims = await claim_schedulable_plans(  # type: ignore[arg-type]
         runtime,
         worker_id="worker_1",
         lease_seconds=30.0,

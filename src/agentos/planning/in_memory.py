@@ -20,28 +20,28 @@ class InMemoryPlanStore:
         self._claim_store: object | None = None
         self._lock = RLock()
 
-    def create_plan(self, plan: PlanState) -> None:
+    async def create_plan(self, plan: PlanState) -> None:
         with self._lock:
             if plan.plan_id in self._plans:
                 raise ValueError(f"plan already exists: {plan.plan_id}")
             self._plans[plan.plan_id] = plan
             self._revisions[plan.plan_id] = 0
 
-    def save_plan(self, plan: PlanState) -> None:
+    async def save_plan(self, plan: PlanState) -> None:
         with self._lock:
             if plan.plan_id not in self._plans:
                 raise PlanNotFoundError(plan.plan_id)
             self._plans[plan.plan_id] = plan
             self._revisions[plan.plan_id] += 1
 
-    def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None:
+    async def get_plan_record(self, plan_id: str) -> PlanStoreRecord | None:
         with self._lock:
             plan = self._plans.get(plan_id)
             if plan is None:
                 return None
             return PlanStoreRecord(plan=plan, revision=self._revisions[plan_id])
 
-    def save_plan_if_unchanged(
+    async def save_plan_if_unchanged(
         self,
         plan: PlanState,
         *,
@@ -56,7 +56,7 @@ class InMemoryPlanStore:
             self._revisions[plan.plan_id] += 1
             return True
 
-    def save_plan_if_claimed(
+    async def save_plan_if_claimed(
         self,
         plan: PlanState,
         claim: PlanClaimRecord,
@@ -85,11 +85,11 @@ class InMemoryPlanStore:
 
         self._claim_store = claim_store
 
-    def get_plan(self, plan_id: str) -> PlanState | None:
+    async def get_plan(self, plan_id: str) -> PlanState | None:
         with self._lock:
             return self._plans.get(plan_id)
 
-    def list_plans(self, owner_agent_id: str | None = None) -> list[PlanState]:
+    async def list_plans(self, owner_agent_id: str | None = None) -> list[PlanState]:
         with self._lock:
             plans = list(self._plans.values())
         if owner_agent_id is None:
@@ -104,7 +104,7 @@ class InMemoryPlanClaimStore:
         self._claims: dict[str, PlanClaimRecord] = {}
         self._lock = RLock()
 
-    def claim_plan(
+    async def claim_plan(
         self,
         *,
         plan_id: str,
@@ -144,7 +144,7 @@ class InMemoryPlanClaimStore:
             self._claims[plan_id] = claim
             return PlanClaimResult(status="claimed", claim=claim)
 
-    def release_plan(
+    async def release_plan(
         self,
         *,
         plan_id: str,
@@ -169,12 +169,12 @@ class InMemoryPlanClaimStore:
             del self._claims[plan_id]
             return True
 
-    def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
+    async def get_claim(self, plan_id: str) -> PlanClaimRecord | None:
         self._validate_non_empty(plan_id, field_name="plan_id")
         with self._lock:
             return self._claims.get(plan_id)
 
-    def expired_claims(
+    async def expired_claims(
         self,
         *,
         now: float,
@@ -198,7 +198,7 @@ class InMemoryPlanClaimStore:
             claims = claims[:limit]
         return tuple(claims)
 
-    def release_expired_claim(
+    async def release_expired_claim(
         self,
         claim: PlanClaimRecord,
         *,

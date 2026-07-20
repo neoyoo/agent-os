@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agentos.context.models import ContextSlotProjection, ProjectionVariant
 from agentos.context.xml import XmlElement
@@ -29,10 +29,14 @@ class AuthorizedPlanSource:
 
     store: PlanStore
 
-    def get_for_projection(self, plan_id: str, owner_agent_id: str) -> PlanState:
+    async def get_for_projection(
+        self,
+        plan_id: str,
+        owner_agent_id: str,
+    ) -> PlanState:
         """返回授权 Plan；不存在与 Owner 不匹配使用同一 not-found。"""
 
-        plan = self.store.get_plan(plan_id)
+        plan = await self.store.get_plan(plan_id)
         if plan is None or plan.owner_agent_id != owner_agent_id:
             raise PlanNotFoundError("plan not found")
         return plan
@@ -45,12 +49,28 @@ class BoundPlanProjectionProvider:
     source: AuthorizedPlanSource
     plan_id: str
     owner_agent_id: str
+    _cache: tuple[ContextSlotProjection, ...] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    async def prepare_projection_cache(self) -> None:
+        """异步读取授权 Plan，并原子发布当前投影。"""
+
+        plan = await self.source.get_for_projection(
+            self.plan_id,
+            self.owner_agent_id,
+        )
+        object.__setattr__(self, "_cache", _project_active_plan(plan))
 
     def projections(self) -> tuple[ContextSlotProjection, ...]:
         """重新读取权威 Plan 并生成当前 active-plan 投影。"""
 
-        plan = self.source.get_for_projection(self.plan_id, self.owner_agent_id)
-        return _project_active_plan(plan)
+        if self._cache is None:
+            raise RuntimeError("plan projection cache is not prepared")
+        return self._cache
 
 
 def _project_active_plan(plan: PlanState) -> tuple[ContextSlotProjection, ...]:

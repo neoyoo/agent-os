@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from typing import Sequence
 
@@ -45,7 +46,7 @@ class StaticPlannerCoordinator:
         )
 
 
-def build_intent_router_example(
+async def build_intent_router_example(
     *,
     query: str,
 ) -> str:
@@ -66,26 +67,26 @@ def build_intent_router_example(
         clock=lambda: 10.0,
         id_factory=_sequential_id_factory(),
     )
-    plan = runtime.create_plan(
+    plan = await runtime.create_plan(
         objective=f"Route request: {query}",
         owner_agent_id="router",
         plan_id="intent_plan",
     )
     routed_intent = _classify_intent(query)
-    plan = runtime.add_step(
+    plan = await runtime.add_step(
         plan.plan_id,
         instruction=f"Handle request as {routed_intent}.",
         required_capabilities=(routed_intent,),
         template_id="architecture-reviewer",
     )
-    return _render_active_plan(
+    return await _render_active_plan(
         store=store,
         plan_id=plan.plan_id,
         owner_agent_id=plan.owner_agent_id,
     )
 
 
-def build_plan_and_execute_example() -> str:
+async def build_plan_and_execute_example() -> str:
     """Create a two-step plan, assign one step, and project the current state."""
 
     coordinator = StaticPlannerCoordinator()
@@ -105,47 +106,47 @@ def build_plan_and_execute_example() -> str:
         clock=lambda: 10.0,
         id_factory=_sequential_id_factory(),
     )
-    plan = runtime.create_plan(
+    plan = await runtime.create_plan(
         objective="Review planner pattern support.",
         owner_agent_id="planner",
         plan_id="execute_plan",
     )
-    plan = runtime.add_step(
+    plan = await runtime.add_step(
         plan.plan_id,
         instruction="Review the planner runtime boundary.",
         required_capabilities=("architecture-review",),
         template_id="architecture-reviewer",
     )
-    runtime.add_step(
+    await runtime.add_step(
         plan.plan_id,
         instruction="Summarize the remaining production gaps.",
         required_capabilities=("docs",),
     )
-    runtime.assign_step(
+    await runtime.assign_step(
         plan.plan_id,
         "step_1",
         template_id="architecture-reviewer",
     )
-    evidence = runtime.record_evidence(
+    evidence = await runtime.record_evidence(
         plan.plan_id,
         step_ids=("step_1",),
         kind="task_result",
         summary="Architecture reviewer confirmed the boundary.",
         producer_agent_id="architecture_expert",
     )
-    plan = runtime.complete_step(
+    plan = await runtime.complete_step(
         plan.plan_id,
         "step_1",
         evidence_ids=(evidence.evidence_id,),
     )
-    return _render_active_plan(
+    return await _render_active_plan(
         store=store,
         plan_id=plan.plan_id,
         owner_agent_id=plan.owner_agent_id,
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+async def main(argv: Sequence[str] | None = None) -> int:
     """Print deterministic planner context projections."""
 
     parser = argparse.ArgumentParser()
@@ -159,8 +160,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         json.dumps(
             {
-                "intent_router": build_intent_router_example(query=args.query),
-                "plan_and_execute": build_plan_and_execute_example(),
+                "intent_router": await build_intent_router_example(query=args.query),
+                "plan_and_execute": await build_plan_and_execute_example(),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -186,7 +187,7 @@ def _sequential_id_factory():
     return next_id
 
 
-def _render_active_plan(
+async def _render_active_plan(
     *,
     store: InMemoryPlanStore,
     plan_id: str,
@@ -197,10 +198,11 @@ def _render_active_plan(
         plan_id=plan_id,
         owner_agent_id=owner_agent_id,
     )
+    await provider.prepare_projection_cache()
     return ContextSnapshotRenderer(HeuristicTokenCounter()).render(
         provider.projections(),
     ).xml
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sqlite3
+import aiosqlite
 
 from agentos.planning.sqlite_errors import SQLitePlanStoreCorruptedError
 
@@ -26,52 +26,56 @@ _EXPECTED_COLUMNS = (
 )
 
 
-def initialize_plan_schema(connection: sqlite3.Connection) -> None:
+async def initialize_plan_schema(connection: aiosqlite.Connection) -> None:
     """初始化并严格验证 Plan Adapter 自己的 schema。"""
 
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
+        await connection.execute("BEGIN IMMEDIATE")
+        await connection.execute(
             "CREATE TABLE IF NOT EXISTS agentos_plan_schema ("
             "version INTEGER PRIMARY KEY)"
         )
-        connection.execute(CREATE_PLANS_TABLE)
-        _validate_columns(connection)
-        _validate_unique_plan_id(connection)
-        versions = connection.execute(
+        await connection.execute(CREATE_PLANS_TABLE)
+        await _validate_columns(connection)
+        await _validate_unique_plan_id(connection)
+        async with connection.execute(
             "SELECT version FROM agentos_plan_schema"
-        ).fetchall()
+        ) as cursor:
+            versions = await cursor.fetchall()
         if not versions:
-            connection.execute(
+            await connection.execute(
                 "INSERT INTO agentos_plan_schema (version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
         elif len(versions) != 1 or versions[0][0] != SCHEMA_VERSION:
             raise SQLitePlanStoreCorruptedError("plan store schema is unsupported")
-        connection.commit()
+        await connection.commit()
     except SQLitePlanStoreCorruptedError:
-        connection.rollback()
+        await connection.rollback()
         raise
-    except (sqlite3.DatabaseError, TypeError, ValueError):
-        connection.rollback()
+    except (aiosqlite.DatabaseError, TypeError, ValueError):
+        await connection.rollback()
         raise SQLitePlanStoreCorruptedError("plan store schema is corrupted") from None
 
 
-def _validate_columns(connection: sqlite3.Connection) -> None:
-    rows = connection.execute("PRAGMA table_xinfo(agentos_plans)").fetchall()
+async def _validate_columns(connection: aiosqlite.Connection) -> None:
+    async with connection.execute("PRAGMA table_xinfo(agentos_plans)") as cursor:
+        rows = await cursor.fetchall()
     actual = tuple((row[1], row[2].upper(), row[3], row[5]) for row in rows)
     if actual != _EXPECTED_COLUMNS:
         raise SQLitePlanStoreCorruptedError("plan store schema is corrupted")
 
 
-def _validate_unique_plan_id(connection: sqlite3.Connection) -> None:
-    indexes = connection.execute("PRAGMA index_list(agentos_plans)").fetchall()
+async def _validate_unique_plan_id(connection: aiosqlite.Connection) -> None:
+    async with connection.execute("PRAGMA index_list(agentos_plans)") as cursor:
+        indexes = await cursor.fetchall()
     for index in indexes:
         if index[2] != 1:
             continue
-        columns = connection.execute(
+        async with connection.execute(
             f'PRAGMA index_info("{str(index[1]).replace(chr(34), chr(34) * 2)}")'
-        ).fetchall()
+        ) as cursor:
+            columns = await cursor.fetchall()
         if tuple(row[2] for row in columns) == ("plan_id",):
             return
     raise SQLitePlanStoreCorruptedError("plan store schema is corrupted")

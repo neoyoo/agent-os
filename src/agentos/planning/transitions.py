@@ -21,15 +21,15 @@ class _TransitionRuntime(Protocol):
     _clock: Callable[[], float]
     _id_factory: Callable[[str], str]
 
-    def retryable_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
+    async def retryable_steps(self, plan_id: str) -> tuple[PlanStep, ...]: ...
 
-    def _require_plan_record(self, plan_id: str) -> PlanStoreRecord: ...
+    async def _require_plan_record(self, plan_id: str) -> PlanStoreRecord: ...
 
     def _require_step(self, plan: PlanState, step_id: str) -> PlanStep: ...
 
     def _replace_step(self, plan: PlanState, step: PlanStep) -> PlanState: ...
 
-    def _save_plan(
+    async def _save_plan(
         self,
         plan: PlanState,
         *,
@@ -37,7 +37,7 @@ class _TransitionRuntime(Protocol):
     ) -> None: ...
 
 
-def record_evidence(
+async def record_evidence(
     runtime: _TransitionRuntime,
     plan_id: str,
     *,
@@ -48,7 +48,7 @@ def record_evidence(
     producer_agent_id: str | None = None,
     metadata: Mapping[str, str] | None = None,
 ) -> EvidenceHandle:
-    record = runtime._require_plan_record(plan_id)
+    record = await runtime._require_plan_record(plan_id)
     evidence = EvidenceHandle(
         evidence_id=str(runtime._id_factory("evidence")),
         kind=_validate_evidence_kind(kind),
@@ -71,18 +71,18 @@ def record_evidence(
         evidence=record.plan.evidence + (evidence,),
         updated_at=float(runtime._clock()),
     )
-    runtime._save_plan(updated, expected_revision=record.revision)
+    await runtime._save_plan(updated, expected_revision=record.revision)
     return evidence
 
 
-def complete_step(
+async def complete_step(
     runtime: _TransitionRuntime,
     plan_id: str,
     step_id: str,
     *,
     evidence_ids: tuple[str, ...] = (),
 ) -> PlanState:
-    record = runtime._require_plan_record(plan_id)
+    record = await runtime._require_plan_record(plan_id)
     step = runtime._require_step(record.plan, step_id)
     merged = step.evidence_ids + tuple(
         item for item in evidence_ids if item not in step.evidence_ids
@@ -103,7 +103,7 @@ def complete_step(
             status="completed",
             updated_at=float(runtime._clock()),
         )
-    runtime._save_plan(updated, expected_revision=record.revision)
+    await runtime._save_plan(updated, expected_revision=record.revision)
     return updated
 
 
@@ -113,14 +113,14 @@ def _validate_evidence_kind(kind: str) -> EvidenceKind:
     return cast(EvidenceKind, kind)
 
 
-def fail_step(
+async def fail_step(
     runtime: _TransitionRuntime,
     plan_id: str,
     step_id: str,
     *,
     error: str,
 ) -> PlanState:
-    record = runtime._require_plan_record(plan_id)
+    record = await runtime._require_plan_record(plan_id)
     step = runtime._require_step(record.plan, step_id)
     if step.status == "completed":
         raise ValueError(f"completed step cannot be failed: {step_id}")
@@ -148,18 +148,18 @@ def fail_step(
     updated = runtime._replace_step(record.plan, updated_step)
     if retry_status == "exhausted":
         updated = replace(updated, status="failed", updated_at=now)
-    runtime._save_plan(updated, expected_revision=record.revision)
+    await runtime._save_plan(updated, expected_revision=record.revision)
     return updated
 
 
-def retry_step(
+async def retry_step(
     runtime: _TransitionRuntime,
     plan_id: str,
     step_id: str,
 ) -> PlanState:
-    record = runtime._require_plan_record(plan_id)
+    record = await runtime._require_plan_record(plan_id)
     step = runtime._require_step(record.plan, step_id)
-    if step not in runtime.retryable_steps(plan_id):
+    if step not in await runtime.retryable_steps(plan_id):
         raise ValueError(f"step is not retryable: {step_id}")
     updated = runtime._replace_step(
         record.plan,
@@ -174,5 +174,5 @@ def retry_step(
             retry_exhausted_at=None,
         ),
     )
-    runtime._save_plan(updated, expected_revision=record.revision)
+    await runtime._save_plan(updated, expected_revision=record.revision)
     return updated

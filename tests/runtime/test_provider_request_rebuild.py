@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
@@ -218,90 +220,102 @@ def test_message_projection_rejects_invalid_role_fields(
 
 
 def test_initial_uploaded_image_is_independent_context_mount() -> None:
-    messages = MessageRuntime()
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    refs = artifacts.prepare_user_uploads((artifact.id,))
-    messages.append_user("Analyze the image", artifact_refs=refs)
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        refs = await artifacts.prepare_user_uploads((artifact.id,))
+        messages.append_user("Analyze the image", artifact_refs=refs)
+        await artifacts.prepare_projection_cache()
 
-    build = configured_builder(
-        messages,
-        MutableProjectionProvider(goal="image"),
-        artifacts,
-    ).build()
+        build = configured_builder(
+            messages,
+            MutableProjectionProvider(goal="image"),
+            artifacts,
+        ).build()
 
-    user_item = build.request.messages[1]
-    assert user_item.kind == "business_message"
-    assert user_item.content == (TextPart("Analyze the image"),)
-    mount = build.request.messages[2]
-    assert mount.kind == "context_mount"
-    assert isinstance(mount.content[1], ImagePart)
-    assert mount.content[1].payload.handle == artifact.id
+        user_item = build.request.messages[1]
+        assert user_item.kind == "business_message"
+        assert user_item.content == (TextPart("Analyze the image"),)
+        mount = build.request.messages[2]
+        assert mount.kind == "context_mount"
+        assert isinstance(mount.content[1], ImagePart)
+        assert mount.content[1].payload.handle == artifact.id
+
+    asyncio.run(scenario())
 
 
 def test_uploaded_image_remains_mounted_on_later_builds_in_the_turn() -> None:
-    messages = MessageRuntime()
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    refs = artifacts.prepare_user_uploads((artifact.id,))
-    messages.append_user("Analyze the image", artifact_refs=refs)
-    builder = configured_builder(
-        messages,
-        MutableProjectionProvider(goal="image"),
-        artifacts,
-    )
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        refs = await artifacts.prepare_user_uploads((artifact.id,))
+        messages.append_user("Analyze the image", artifact_refs=refs)
+        await artifacts.prepare_projection_cache()
+        builder = configured_builder(
+            messages,
+            MutableProjectionProvider(goal="image"),
+            artifacts,
+        )
 
-    builder.build()
-    second = builder.build()
+        builder.build()
+        second = builder.build()
 
-    assert [item.kind for item in second.request.messages] == [
-        "context_snapshot",
-        "business_message",
-        "context_mount",
-    ]
-    mount = second.request.messages[-1]
-    assert "【用户上传附件】" in mount.content[0].text  # type: ignore[union-attr]
-    assert isinstance(mount.content[1], ImagePart)
-    assert mount.content[1].payload.handle == artifact.id
+        assert [item.kind for item in second.request.messages] == [
+            "context_snapshot",
+            "business_message",
+            "context_mount",
+        ]
+        mount = second.request.messages[-1]
+        assert "【用户上传附件】" in mount.content[0].text  # type: ignore[union-attr]
+        assert isinstance(mount.content[1], ImagePart)
+        assert mount.content[1].payload.handle == artifact.id
+
+    asyncio.run(scenario())
 
 
 def test_loaded_image_is_appended_as_context_mount() -> None:
-    messages = MessageRuntime()
-    messages.append_user("Inspect the loaded image")
-    artifacts = ArtifactRuntime(
-        session_id="session_1",
-        store=InMemoryArtifactStore(),
-    )
-    artifact = artifacts.upload(
-        data=b"image-bytes",
-        filename="diagram.png",
-        media_type="image/png",
-    )
-    artifacts.load_attachment(artifact.id)
+    async def scenario() -> None:
+        messages = MessageRuntime()
+        messages.append_user("Inspect the loaded image")
+        artifacts = ArtifactRuntime(
+            session_id="session_1",
+            store=InMemoryArtifactStore(),
+        )
+        artifact = await artifacts.upload(
+            data=b"image-bytes",
+            filename="diagram.png",
+            media_type="image/png",
+        )
+        await artifacts.load_attachment(artifact.id)
+        await artifacts.prepare_projection_cache()
 
-    build = configured_builder(
-        messages,
-        MutableProjectionProvider(goal="mount"),
-        artifacts,
-    ).build()
+        build = configured_builder(
+            messages,
+            MutableProjectionProvider(goal="mount"),
+            artifacts,
+        ).build()
 
-    mount = build.request.messages[-1]
-    assert mount.kind == "context_mount"
-    assert "【工具结果附件】" in mount.content[0].text  # type: ignore[union-attr]
-    image = mount.content[1]
-    assert isinstance(image, ImagePart)
-    assert image.payload.data == b"image-bytes"
+        mount = build.request.messages[-1]
+        assert mount.kind == "context_mount"
+        assert "【工具结果附件】" in mount.content[0].text  # type: ignore[union-attr]
+        image = mount.content[1]
+        assert isinstance(image, ImagePart)
+        assert image.payload.data == b"image-bytes"
+
+    asyncio.run(scenario())

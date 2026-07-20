@@ -72,7 +72,7 @@
           "stability": "experimental"
         },
         "SqliteFilesystemArtifactStore": {
-          "signature": "(*, database_path: 'str | Path', artifact_root: 'str | Path', clock: 'Callable[[], datetime] | None' = None, id_factory: 'Callable[[], str] | None' = None) -> 'None'",
+          "signature": "(*, connection: 'aiosqlite.Connection', blobs: 'FilesystemArtifactBlobs', clock: 'Callable[[], datetime] | None' = None, id_factory: 'Callable[[], str] | None' = None) -> 'None'",
           "stability": "stable"
         }
       }
@@ -140,7 +140,7 @@
           "stability": "experimental"
         },
         "SQLiteSkillActivationStore": {
-          "signature": "(database_path: 'str | Path') -> 'None'",
+          "signature": "(connection: 'aiosqlite.Connection') -> 'None'",
           "stability": "stable"
         },
         "SkillContentSource": {
@@ -172,7 +172,7 @@
           "stability": "experimental"
         },
         "ToolConcurrencyPolicy": {
-          "signature": "(*values)",
+          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
           "stability": "experimental"
         },
         "ToolExecutionError": {
@@ -1225,7 +1225,7 @@
           "stability": "stable"
         },
         "SQLiteDurableStore": {
-          "signature": "(database_path: 'str | Path', *, clock: 'Callable[[], datetime] | None' = None) -> 'None'",
+          "signature": "(connection: 'aiosqlite.Connection', *, clock: 'Callable[[], datetime] | None' = None) -> 'None'",
           "stability": "stable"
         }
       }
@@ -1285,7 +1285,7 @@
           "stability": "experimental"
         },
         "SQLiteMemoryStore": {
-          "signature": "(database_path: 'Path') -> 'None'",
+          "signature": "(connection: 'aiosqlite.Connection') -> 'None'",
           "stability": "stable"
         },
         "SemanticCategory": {
@@ -2230,7 +2230,7 @@
           "stability": "experimental"
         },
         "SQLitePlanStore": {
-          "signature": "(database_path: 'str | Path') -> 'None'",
+          "signature": "(connection: 'aiosqlite.Connection') -> 'None'",
           "stability": "stable"
         },
         "SubAgentTemplate": {
@@ -2957,7 +2957,7 @@
           "stability": "stable"
         },
         "run_plan_store_contract": {
-          "signature": "(factory: 'Callable[[], PlanStore]', *, seed_claim: 'Callable[[PlanStore, PlanClaimRecord], None] | None' = None) -> 'None'",
+          "signature": "(factory: 'Callable[[], PlanStore]', *, seed_claim: 'Callable[[PlanStore, PlanClaimRecord], Awaitable[None]] | None' = None) -> 'None'",
           "stability": "stable"
         },
         "run_task_store_contract": {
@@ -2993,7 +2993,7 @@
           "stability": "stable"
         },
         "run_plan_store_contract": {
-          "signature": "(factory: 'Callable[[], PlanStore]', *, seed_claim: 'Callable[[PlanStore, PlanClaimRecord], None] | None' = None) -> 'None'",
+          "signature": "(factory: 'Callable[[], PlanStore]', *, seed_claim: 'Callable[[PlanStore, PlanClaimRecord], Awaitable[None]] | None' = None) -> 'None'",
           "stability": "stable"
         },
         "run_task_store_contract": {

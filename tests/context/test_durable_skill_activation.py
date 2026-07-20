@@ -96,16 +96,16 @@ def test_trusted_activation_is_reloaded_and_reverified_after_restart(tmp_path) -
     policy = MutableTrustPolicy()
 
     async def scenario() -> None:
-        first_store = SQLiteSkillActivationStore(path)
+        first_store = await SQLiteSkillActivationStore.open(path)
         first = await _runtime(source, policy, first_store)
         await first.load("session-a", "review")
-        first_store.close()
+        await first_store.close()
 
-        second_store = SQLiteSkillActivationStore(path)
+        second_store = await SQLiteSkillActivationStore.open(path)
         second = await _runtime(source, policy, second_store)
         assert await second.restore("session-a") == ("review",)
         assert second.items("session-a")[0].text.startswith("# Review")
-        second_store.close()
+        await second_store.close()
 
     asyncio.run(scenario())
 
@@ -126,18 +126,18 @@ def test_restore_removes_activation_when_source_revision_changes(tmp_path) -> No
     policy = MutableTrustPolicy()
 
     async def scenario() -> None:
-        store = SQLiteSkillActivationStore(path)
+        store = await SQLiteSkillActivationStore.open(path)
         runtime = await _runtime(source, policy, store)
         await runtime.load("session-a", "review")
-        store.close()
+        await store.close()
 
         source.revision = "2"
-        reopened = SQLiteSkillActivationStore(path)
+        reopened = await SQLiteSkillActivationStore.open(path)
         restored = await _runtime(source, policy, reopened)
         assert await restored.restore("session-a") == ()
         assert restored.items("session-a") == ()
-        assert reopened.list("session-a") == ()
-        reopened.close()
+        assert await reopened.list("session-a") == ()
+        await reopened.close()
 
     asyncio.run(scenario())
 
@@ -148,17 +148,17 @@ def test_restore_removes_activation_when_content_digest_changes(tmp_path) -> Non
     policy = MutableTrustPolicy()
 
     async def scenario() -> None:
-        store = SQLiteSkillActivationStore(path)
+        store = await SQLiteSkillActivationStore.open(path)
         runtime = await _runtime(source, policy, store)
         await runtime.load("session-a", "review")
-        store.close()
+        await store.close()
 
         source.content_suffix = "\nchanged"
-        reopened = SQLiteSkillActivationStore(path)
+        reopened = await SQLiteSkillActivationStore.open(path)
         restored = await _runtime(source, policy, reopened)
         assert await restored.restore("session-a") == ()
-        assert reopened.list("session-a") == ()
-        reopened.close()
+        assert await reopened.list("session-a") == ()
+        await reopened.close()
 
     asyncio.run(scenario())
 
@@ -169,17 +169,17 @@ def test_restore_removes_activation_when_policy_decision_changes(tmp_path) -> No
     policy = MutableTrustPolicy()
 
     async def scenario() -> None:
-        store = SQLiteSkillActivationStore(path)
+        store = await SQLiteSkillActivationStore.open(path)
         runtime = await _runtime(source, policy, store)
         await runtime.load("session-a", "review")
-        store.close()
+        await store.close()
 
         policy.policy_id = "policy-v2"
-        reopened = SQLiteSkillActivationStore(path)
+        reopened = await SQLiteSkillActivationStore.open(path)
         restored = await _runtime(source, policy, reopened)
         assert await restored.restore("session-a") == ()
-        assert reopened.list("session-a") == ()
-        reopened.close()
+        assert await reopened.list("session-a") == ()
+        await reopened.close()
 
     asyncio.run(scenario())
 
@@ -189,16 +189,16 @@ def test_disable_and_close_session_delete_durable_activations(tmp_path) -> None:
     policy = MutableTrustPolicy()
 
     async def scenario() -> None:
-        store = SQLiteSkillActivationStore(tmp_path / "state.db")
+        store = await SQLiteSkillActivationStore.open(tmp_path / "state.db")
         runtime = await _runtime(source, policy, store)
         await runtime.load("session-a", "review")
-        assert runtime.disable("session-a", "review") is True
-        assert store.list("session-a") == ()
+        assert await runtime.disable("session-a", "review") is True
+        assert await store.list("session-a") == ()
 
         await runtime.load("session-a", "review")
-        runtime.close_session("session-a")
-        assert store.list("session-a") == ()
-        store.close()
+        await runtime.close_session("session-a")
+        assert await store.list("session-a") == ()
+        await store.close()
 
     asyncio.run(scenario())
 
@@ -210,26 +210,37 @@ def test_store_rejects_malformed_schema_at_open(tmp_path) -> None:
             "CREATE TABLE agentos_skill_activations (session_id TEXT PRIMARY KEY)"
         )
 
-    with pytest.raises(
-        SkillActivationCorruptedError,
-        match="^skill activation store schema is corrupted$",
-    ):
-        SQLiteSkillActivationStore(path)
+    async def scenario() -> None:
+        with pytest.raises(
+            SkillActivationCorruptedError,
+            match="^skill activation store schema is corrupted$",
+        ):
+            await SQLiteSkillActivationStore.open(path)
+
+    asyncio.run(scenario())
 
 
 def test_store_rejects_unsupported_component_version(tmp_path) -> None:
     path = tmp_path / "state.db"
-    SQLiteSkillActivationStore(path).close()
+
+    async def initialize() -> None:
+        store = await SQLiteSkillActivationStore.open(path)
+        await store.close()
+
+    asyncio.run(initialize())
     with sqlite3.connect(path) as connection:
         connection.execute(
             "UPDATE agentos_skill_activation_schema SET version = 2"
         )
 
-    with pytest.raises(
-        SkillActivationCorruptedError,
-        match="^skill activation store schema is unsupported$",
-    ):
-        SQLiteSkillActivationStore(path)
+    async def scenario() -> None:
+        with pytest.raises(
+            SkillActivationCorruptedError,
+            match="^skill activation store schema is unsupported$",
+        ):
+            await SQLiteSkillActivationStore.open(path)
+
+    asyncio.run(scenario())
 
 
 def test_store_rejects_schema_without_required_composite_uniqueness(
@@ -261,11 +272,14 @@ def test_store_rejects_schema_without_required_composite_uniqueness(
             "ON agentos_skill_activations (skill_name, session_id)"
         )
 
-    with pytest.raises(
-        SkillActivationCorruptedError,
-        match="^skill activation store schema is corrupted$",
-    ):
-        SQLiteSkillActivationStore(path)
+    async def scenario() -> None:
+        with pytest.raises(
+            SkillActivationCorruptedError,
+            match="^skill activation store schema is corrupted$",
+        ):
+            await SQLiteSkillActivationStore.open(path)
+
+    asyncio.run(scenario())
 
 
 def test_corrupted_activation_error_does_not_echo_stored_values(tmp_path) -> None:
@@ -274,10 +288,10 @@ def test_corrupted_activation_error_does_not_echo_stored_values(tmp_path) -> Non
     policy = MutableTrustPolicy()
 
     async def activate() -> None:
-        store = SQLiteSkillActivationStore(path)
+        store = await SQLiteSkillActivationStore.open(path)
         runtime = await _runtime(source, policy, store)
         await runtime.load("session-a", "review")
-        store.close()
+        await store.close()
 
     asyncio.run(activate())
     secret = "C:\\private\\api_key=secret-value-must-not-leak"
@@ -287,18 +301,22 @@ def test_corrupted_activation_error_does_not_echo_stored_values(tmp_path) -> Non
             (secret,),
         )
 
-    with SQLiteSkillActivationStore(path) as store:
-        with pytest.raises(
-            SkillActivationCorruptedError,
-            match="^stored skill activation is corrupted$",
-        ) as caught:
-            store.list("session-a")
+    async def read_corrupted() -> SkillActivationCorruptedError:
+        async with await SQLiteSkillActivationStore.open(path) as store:
+            with pytest.raises(
+                SkillActivationCorruptedError,
+                match="^stored skill activation is corrupted$",
+            ) as caught:
+                await store.list("session-a")
+        return caught.value
+
+    caught_error = asyncio.run(read_corrupted())
 
     rendered = "".join(
         traceback.format_exception(
-            type(caught.value),
-            caught.value,
-            caught.value.__traceback__,
+            type(caught_error),
+            caught_error,
+            caught_error.__traceback__,
         )
     )
     assert secret not in rendered
@@ -310,17 +328,21 @@ def test_sqlite_corruption_is_mapped_without_underlying_error_chain(tmp_path) ->
     path.parent.mkdir()
     path.write_bytes(b"secret-value-must-not-leak")
 
-    with pytest.raises(
-        SkillActivationCorruptedError,
-        match="^skill activation store schema is corrupted$",
-    ) as caught:
-        SQLiteSkillActivationStore(path)
+    async def scenario() -> SkillActivationCorruptedError:
+        with pytest.raises(
+            SkillActivationCorruptedError,
+            match="^skill activation store schema is corrupted$",
+        ) as caught:
+            await SQLiteSkillActivationStore.open(path)
+        return caught.value
+
+    caught_error = asyncio.run(scenario())
 
     rendered = "".join(
         traceback.format_exception(
-            type(caught.value),
-            caught.value,
-            caught.value.__traceback__,
+            type(caught_error),
+            caught_error,
+            caught_error.__traceback__,
         )
     )
     assert "file is not a database" not in rendered
@@ -329,25 +351,29 @@ def test_sqlite_corruption_is_mapped_without_underlying_error_chain(tmp_path) ->
 
 
 def test_store_close_is_idempotent_and_final(tmp_path) -> None:
-    store = SQLiteSkillActivationStore(tmp_path / "state.db")
     record = SkillActivationRecord(
         session_id="session-a",
         subject=MutableSkillSource()._subject(),
         policy_id="policy-v1",
     )
-    store.close()
-    store.close()
 
-    operations = (
-        lambda: store.save(record),
-        lambda: store.list("session-a"),
-        lambda: store.delete("session-a", "review"),
-        lambda: store.delete_session("session-a"),
-        store.__enter__,
-    )
-    for operation in operations:
-        with pytest.raises(
-            SkillActivationStoreClosedError,
-            match="^SQLiteSkillActivationStore is closed$",
-        ):
-            operation()
+    async def scenario() -> None:
+        store = await SQLiteSkillActivationStore.open(tmp_path / "state.db")
+        await store.close()
+        await store.close()
+
+        operations = (
+            lambda: store.save(record),
+            lambda: store.list("session-a"),
+            lambda: store.delete("session-a", "review"),
+            lambda: store.delete_session("session-a"),
+            store.__aenter__,
+        )
+        for operation in operations:
+            with pytest.raises(
+                SkillActivationStoreClosedError,
+                match="^SQLiteSkillActivationStore is closed$",
+            ):
+                await operation()
+
+    asyncio.run(scenario())

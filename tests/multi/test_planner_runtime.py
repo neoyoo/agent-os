@@ -18,9 +18,11 @@ from agentos.planning import (
 from tests.multi.helpers import build_sync_agent_with_response
 from tests.multi.test_coordinator_spawn import StaticSubagentFactory
 from tests.multi.test_postgres_task_store import FakeConnection
+from tests.planning._async import async_test
 
 
-def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() -> None:
+@async_test
+async def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() -> None:
     connection = FakeConnection()
     task_store = PostgresTaskStore(dsn="postgresql://unused", connection=connection)
     coordinator = AgentCoordinator(
@@ -58,7 +60,7 @@ def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() ->
     )
     assert accepted.task_id == "task_existing"
     store = InMemoryPlanStore()
-    store.create_plan(
+    await store.create_plan(
         PlanState(
             plan_id="plan_1",
             objective="Recover duplicate task from durable store.",
@@ -104,11 +106,11 @@ def test_planner_recovery_accepts_postgres_duplicate_from_agent_coordinator() ->
     )
 
     try:
-        report = runtime.recover_pending_dispatches("plan_1")
+        report = await runtime.recover_pending_dispatches("plan_1")
     finally:
         coordinator.spawn_executor.shutdown()
 
-    persisted = runtime.get_plan("plan_1")
+    persisted = await runtime.get_plan("plan_1")
     assert [assignment.step_id for assignment in report.assigned] == ["step_1"]
     assert report.skipped == ()
     assert persisted.steps[0].status == "assigned"

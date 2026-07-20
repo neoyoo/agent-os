@@ -10,10 +10,8 @@ from typing import cast
 from agentos.planning import (
     PlanClaimRecord,
     PlanClaimResult,
-    PlanClaimStore,
     PlanNotFoundError,
     PlanState,
-    PlanStore,
     PlanStoreRecord,
 )
 from agentos.persistence.postgres import BackendUnavailableError
@@ -191,8 +189,8 @@ class _PostgresConnectionLeaseMixin:
         self._thread_state.transaction_closed = True
 
 
-class PostgresPlanStore(_PostgresConnectionLeaseMixin, PlanStore):
-    """Postgres-backed PlanStore; schema is created by migration."""
+class PostgresPlanStore(_PostgresConnectionLeaseMixin):
+    """Legacy synchronous PostgreSQL plan adapter, deferred to Phase 6 Wave 3."""
 
     def __init__(
         self,
@@ -453,8 +451,8 @@ class PostgresPlanStore(_PostgresConnectionLeaseMixin, PlanStore):
         return loaded
 
 
-class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin, PlanClaimStore):
-    """Postgres-backed claim/lease store for planner scheduler workers."""
+class PostgresPlanClaimStore(_PostgresConnectionLeaseMixin):
+    """Legacy synchronous PostgreSQL claim adapter, deferred to Phase 6 Wave 3."""
 
     def __init__(
         self,

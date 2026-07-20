@@ -5,9 +5,11 @@ from agentos.planning import (
     PlanStore,
 )
 from agentos.testing.contracts.plan_store import run_plan_store_contract
+from tests.planning._async import async_test
 
 
-def test_in_memory_plan_store_satisfies_reusable_plan_store_contract() -> None:
+@async_test
+async def test_in_memory_plan_store_satisfies_reusable_plan_store_contract() -> None:
     claim_stores: dict[int, InMemoryPlanClaimStore] = {}
 
     def factory() -> InMemoryPlanStore:
@@ -17,9 +19,9 @@ def test_in_memory_plan_store_satisfies_reusable_plan_store_contract() -> None:
         claim_stores[id(store)] = claim_store
         return store
 
-    def seed_claim(store: PlanStore, claim: PlanClaimRecord) -> None:
+    async def seed_claim(store: PlanStore, claim: PlanClaimRecord) -> None:
         claim_store = claim_stores[id(store)]
-        result = claim_store.claim_plan(
+        result = await claim_store.claim_plan(
             plan_id=claim.plan_id,
             owner_agent_id=claim.owner_agent_id,
             worker_id=claim.worker_id,
@@ -28,4 +30,4 @@ def test_in_memory_plan_store_satisfies_reusable_plan_store_contract() -> None:
         )
         assert result.claim == claim
 
-    run_plan_store_contract(factory, seed_claim=seed_claim)
+    await run_plan_store_contract(factory, seed_claim=seed_claim)

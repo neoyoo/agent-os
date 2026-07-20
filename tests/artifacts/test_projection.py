@@ -6,6 +6,7 @@ import agentos.artifacts.projection as projection_module
 from agentos.artifacts.in_memory import InMemoryArtifactStore
 from agentos.artifacts.projection import project_artifact_catalog
 from agentos.artifacts.runtime import ArtifactRuntime
+from tests.artifacts._async import async_test
 
 
 def runtime_with_stable_ids() -> ArtifactRuntime:
@@ -20,8 +21,8 @@ def runtime_with_stable_ids() -> ArtifactRuntime:
     return ArtifactRuntime(session_id="session-1", store=store)
 
 
-def upload(target: ArtifactRuntime, filename: str | None = "drawing.png"):
-    return target.upload(
+async def upload(target: ArtifactRuntime, filename: str | None = "drawing.png"):
+    return await target.upload(
         data=b"image",
         filename=filename,
         media_type="image/png",
@@ -40,14 +41,22 @@ def test_artifact_projection_imports_provider_values_without_facade() -> None:
     assert {"agentos.providers.content", "agentos.providers.input"} <= imports
 
 
-def test_empty_artifact_catalog_does_not_emit_empty_slot() -> None:
-    assert project_artifact_catalog(runtime_with_stable_ids()) is None
-
-
-def test_catalog_projects_latest_twenty_in_stable_order_and_marks_more() -> None:
+@async_test
+async def test_empty_artifact_catalog_does_not_emit_empty_slot() -> None:
     target = runtime_with_stable_ids()
-    records = [upload(target, f"drawing-{index}.png") for index in range(25)]
-    target.mount_user_upload(records[-1].id)
+    await target.prepare_projection_cache()
+
+    assert project_artifact_catalog(target) is None
+
+
+@async_test
+async def test_catalog_projects_latest_twenty_in_stable_order_and_marks_more() -> None:
+    target = runtime_with_stable_ids()
+    records = [
+        await upload(target, f"drawing-{index}.png") for index in range(25)
+    ]
+    await target.mount_user_upload(records[-1].id)
+    await target.prepare_projection_cache()
 
     projection = project_artifact_catalog(target)
 
@@ -66,9 +75,11 @@ def test_catalog_projects_latest_twenty_in_stable_order_and_marks_more() -> None
     )
 
 
-def test_catalog_contains_only_context_protocol_metadata() -> None:
+@async_test
+async def test_catalog_contains_only_context_protocol_metadata() -> None:
     target = runtime_with_stable_ids()
-    record = upload(target, None)
+    record = await upload(target, None)
+    await target.prepare_projection_cache()
 
     projection = project_artifact_catalog(target)
 
@@ -85,10 +96,12 @@ def test_catalog_contains_only_context_protocol_metadata() -> None:
         assert forbidden not in serialized
 
 
-def test_catalog_budget_variants_remove_whole_artifacts_only() -> None:
+@async_test
+async def test_catalog_budget_variants_remove_whole_artifacts_only() -> None:
     target = runtime_with_stable_ids()
     for index in range(4):
-        upload(target, f"drawing-{index}.png")
+        await upload(target, f"drawing-{index}.png")
+    await target.prepare_projection_cache()
 
     projection = project_artifact_catalog(target)
 

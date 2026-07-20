@@ -63,6 +63,12 @@ class ArtifactPolicy:
         object.__setattr__(self, "allowed_media_types", allowed_media_types)
 
 
+@dataclass(frozen=True, slots=True)
+class _ArtifactProjectionCache:
+    catalog: ArtifactPage
+    mounts: tuple[tuple[ContextMount, ArtifactRecord, bytes], ...]
+
+
 class ArtifactRuntime:
     """管理单个 Session 的 Artifact 操作与当前 Turn Mount。"""
 
@@ -80,6 +86,8 @@ class ArtifactRuntime:
         self._policy = policy if policy is not None else ArtifactPolicy()
         self._event_bus = event_bus
         self._mounts: list[ContextMount] = []
+        self._projection_cache: _ArtifactProjectionCache | None = None
+        self._projection_revision = 0
 
     @property
     def session_id(self) -> str:
@@ -93,7 +101,7 @@ class ArtifactRuntime:
 
         return self._policy
 
-    def upload(
+    async def upload(
         self,
         *,
         data: bytes,
@@ -109,12 +117,13 @@ class ArtifactRuntime:
             raise ArtifactValidationError("unsupported artifact media type")
         if len(data) > self._policy.max_size_bytes:
             raise ArtifactValidationError("artifact exceeds maximum size")
-        record = self._store.put(
+        record = await self._store.put(
             session_id=self._session_id,
             data=data,
             filename=filename,
             media_type=media_type,
         )
+        self._invalidate_projection_cache()
         self._emit(
             ArtifactUploadedEvent(
                 session_id=self._session_id,
@@ -126,21 +135,21 @@ class ArtifactRuntime:
         )
         return record
 
-    def list(
+    async def list(
         self,
         cursor: str | None = None,
         limit: int = 20,
     ) -> ArtifactPage:
         """列出当前 Session 的 Artifact 元数据。"""
 
-        return self._store.list(self._session_id, cursor, limit)
+        return await self._store.list(self._session_id, cursor, limit)
 
-    def read(self, artifact_id: str) -> bytes:
+    async def read(self, artifact_id: str) -> bytes:
         """读取当前 Session 的 Artifact 内容。"""
 
-        return self._store.read(self._session_id, artifact_id)
+        return await self._store.read(self._session_id, artifact_id)
 
-    def load_attachment(self, handle: str) -> str:
+    async def load_attachment(self, handle: str) -> str:
         """挂载 Tool Result Artifact，并返回固定有界确认。"""
 
         validate_artifact_id(handle)
@@ -150,7 +159,7 @@ class ArtifactRuntime:
                 handle=handle,
             )
         )
-        mount, record, created = self._mount(handle, "tool_result")
+        mount, record, created = await self._mount(handle, "tool_result")
         if created:
             self._emit_mounted(mount, record)
         return (
@@ -158,23 +167,30 @@ class ArtifactRuntime:
             "附件内容将在下一次模型请求中作为当前轮次的工具结果数据提供。"
         )
 
-    def mount_user_upload(self, handle: str) -> ContextMount:
+    async def mount_user_upload(self, handle: str) -> ContextMount:
         """把已存储 Artifact 挂载为当前 Turn 的用户上传。"""
 
-        mount, record, created = self._mount(handle, "user_upload")
+        mount, record, created = await self._mount(handle, "user_upload")
         if created:
             self._emit_mounted(mount, record)
         return mount
 
-    def prepare_user_uploads(
+    async def prepare_user_uploads(
         self,
         handles: tuple[str, ...],
     ) -> tuple[ArtifactRef, ...]:
         """Resolve user handles before atomically establishing their mounts."""
 
-        records = tuple(self._store.get(self._session_id, handle) for handle in handles)
+        records = tuple(
+            [await self._store.get(self._session_id, handle) for handle in handles]
+        )
         for record in records:
-            self.mount_user_upload(record.id)
+            mount, mounted_record, created = self._mount_record(
+                record,
+                "user_upload",
+            )
+            if created:
+                self._emit_mounted(mount, mounted_record)
         return tuple(
             ArtifactRef(
                 artifact_id=record.id,
@@ -189,76 +205,143 @@ class ArtifactRuntime:
 
         return tuple(self._mounts)
 
-    def resolve_mount(self, mount: ContextMount) -> tuple[ArtifactRecord, bytes]:
+    async def resolve_mount(
+        self,
+        mount: ContextMount,
+    ) -> tuple[ArtifactRecord, bytes]:
         """从 Store 重新读取一个仍然有效的 Mount。"""
 
         if type(mount) is not ContextMount or mount not in self._mounts:
             raise ArtifactValidationError("artifact mount is not active")
-        record = self._store.get(self._session_id, mount.artifact_id)
-        data = self._store.read(self._session_id, mount.artifact_id)
+        record = await self._store.get(self._session_id, mount.artifact_id)
+        data = await self._store.read(self._session_id, mount.artifact_id)
         return record, data
+
+    async def prepare_projection_cache(self) -> None:
+        """加载当前 Turn 的 Artifact 数据，供同步请求组装读取。"""
+
+        while True:
+            revision = self._projection_revision
+            mounts = tuple(self._mounts)
+            catalog = await self._store.list(self._session_id, limit=20)
+            resolved = tuple([await self.resolve_mount(mount) for mount in mounts])
+            if (
+                revision != self._projection_revision
+                or mounts != tuple(self._mounts)
+            ):
+                continue
+            self._projection_cache = _ArtifactProjectionCache(
+                catalog=catalog,
+                mounts=tuple(
+                    (mount, record, data)
+                    for mount, (record, data) in zip(
+                        mounts,
+                        resolved,
+                        strict=True,
+                    )
+                ),
+            )
+            return
+
+    def projection_catalog(self) -> ArtifactPage:
+        """返回当前 Provider attempt 已准备的 Catalog。"""
+
+        return self._require_projection_cache().catalog
+
+    def projection_mounts(
+        self,
+    ) -> tuple[tuple[ContextMount, ArtifactRecord, bytes], ...]:
+        """返回当前 Provider attempt 已准备的 Mount 数据。"""
+
+        return self._require_projection_cache().mounts
 
     def clear_mounts(self) -> tuple[ContextMount, ...]:
         """清除当前 Turn Mount，但不删除 Artifact。"""
 
         cleared = tuple(self._mounts)
         self._mounts.clear()
+        self._clear_projection_cache()
         for mount in cleared:
             self._emit_unmounted(mount)
         return cleared
 
-    def delete(self, artifact_id: str) -> None:
+    async def delete(self, artifact_id: str) -> None:
         """删除当前 Session Artifact，并移除对应 Mount。"""
 
-        record = self._store.get(self._session_id, artifact_id)
+        record = await self._store.get(self._session_id, artifact_id)
         removed_mounts = tuple(
             mount for mount in self._mounts if mount.artifact_id == artifact_id
         )
-        self._store.delete(self._session_id, artifact_id)
+        await self._store.delete(self._session_id, artifact_id)
         self._mounts = [mount for mount in self._mounts if mount not in removed_mounts]
+        self._invalidate_projection_cache()
         for mount in removed_mounts:
             self._emit_unmounted(mount)
         self._emit_deleted(record)
 
-    def delete_session(self) -> None:
+    async def delete_session(self) -> None:
         """删除当前 Session 全部 Artifact 和 Mount。"""
 
-        records = self._all_records()
+        records = await self._all_records()
         mounts = tuple(self._mounts)
-        self._store.delete_session(self._session_id)
+        await self._store.delete_session(self._session_id)
         self._mounts.clear()
+        self._invalidate_projection_cache()
         for mount in mounts:
             self._emit_unmounted(mount)
         for record in records:
             self._emit_deleted(record)
 
-    def _mount(
+    async def _mount(
         self,
         artifact_id: str,
         reason: ArtifactMountReason,
     ) -> tuple[ContextMount, ArtifactRecord, bool]:
-        record = self._store.get(self._session_id, artifact_id)
+        record = await self._store.get(self._session_id, artifact_id)
+        return self._mount_record(record, reason)
+
+    def _mount_record(
+        self,
+        record: ArtifactRecord,
+        reason: ArtifactMountReason,
+    ) -> tuple[ContextMount, ArtifactRecord, bool]:
+        artifact_id = record.id
         for index, mount in enumerate(self._mounts):
             if mount.artifact_id == artifact_id:
                 if mount.reason == "user_upload" and reason == "tool_result":
                     upgraded = ContextMount(artifact_id=artifact_id, reason=reason)
                     self._mounts[index] = upgraded
+                    self._invalidate_projection_cache()
                     self._emit_unmounted(mount)
                     return upgraded, record, True
                 return mount, record, False
         mount = ContextMount(artifact_id=artifact_id, reason=reason)
         self._mounts.append(mount)
+        self._invalidate_projection_cache()
         return mount, record, True
 
-    def _all_records(self) -> tuple[ArtifactRecord, ...]:
+    async def _all_records(self) -> tuple[ArtifactRecord, ...]:
         records: list[ArtifactRecord] = []
         cursor: str | None = None
         while True:
-            page = self._store.list(self._session_id, cursor, 100)
+            page = await self._store.list(self._session_id, cursor, 100)
             records.extend(page.items)
             if page.next_cursor is None:
                 return tuple(records)
             cursor = page.next_cursor
+
+    def _require_projection_cache(self) -> _ArtifactProjectionCache:
+        cache = self._projection_cache
+        if cache is None:
+            raise RuntimeError("artifact projection cache is not prepared")
+        return cache
+
+    def _invalidate_projection_cache(self) -> None:
+        self._projection_revision += 1
+
+    def _clear_projection_cache(self) -> None:
+        self._projection_revision += 1
+        self._projection_cache = None
 
     def _emit_mounted(
         self,

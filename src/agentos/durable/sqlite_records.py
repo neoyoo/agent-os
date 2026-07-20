@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
+
+import aiosqlite
 
 from agentos._waiting import WaitReason
 from agentos.runtime.checkpoint import RunCheckpoint
@@ -9,44 +10,45 @@ from agentos.runtime.errors import CheckpointCorruptedError
 from agentos.runtime.run_state import RunNotFoundError, RunState, RunStatus
 
 
-def select_run(
-    connection: sqlite3.Connection,
+async def select_run(
+    connection: aiosqlite.Connection,
     session_id: str,
     run_id: str,
-) -> sqlite3.Row | None:
-    return connection.execute(
+) -> aiosqlite.Row | None:
+    async with connection.execute(
         "SELECT * FROM durable_runs WHERE session_id = ? AND run_id = ?",
         (session_id, run_id),
-    ).fetchone()
+    ) as cursor:
+        return await cursor.fetchone()
 
 
-def require_run(
-    connection: sqlite3.Connection,
+async def require_run(
+    connection: aiosqlite.Connection,
     session_id: str,
     run_id: str,
 ) -> RunState:
-    row = select_run(connection, session_id, run_id)
+    row = await select_run(connection, session_id, run_id)
     if row is None:
         raise RunNotFoundError(f"run not found: {run_id}")
     return row_to_state(row)
 
 
-def insert_run(connection: sqlite3.Connection, state: RunState) -> None:
-    connection.execute(
+async def insert_run(connection: aiosqlite.Connection, state: RunState) -> None:
+    await connection.execute(
         "INSERT INTO durable_runs "
         "(session_id, run_id, status, aggregate_version) VALUES (?, ?, ?, ?)",
         (state.session_id, state.run_id, state.status.value, state.aggregate_version),
     )
 
 
-def update_run(
-    connection: sqlite3.Connection,
+async def update_run(
+    connection: aiosqlite.Connection,
     state: RunState,
     *,
     recovery_error: str | None = None,
 ) -> None:
     reason = state.wait_reason
-    connection.execute(
+    await connection.execute(
         "UPDATE durable_runs SET status = ?, wait_kind = ?, wait_handle = ?, "
         "wait_detail = ?, wait_not_before = ?, aggregate_version = ?, "
         "recovery_error = ? WHERE session_id = ? AND run_id = ?",
@@ -68,7 +70,7 @@ def update_run(
     )
 
 
-def row_to_state(row: sqlite3.Row) -> RunState:
+def row_to_state(row: aiosqlite.Row) -> RunState:
     try:
         reason = None
         if row["wait_kind"] is not None:
@@ -92,7 +94,7 @@ def row_to_state(row: sqlite3.Row) -> RunState:
         raise CheckpointCorruptedError("durable run record is corrupted") from None
 
 
-def row_to_checkpoint(row: sqlite3.Row) -> RunCheckpoint:
+def row_to_checkpoint(row: aiosqlite.Row) -> RunCheckpoint:
     try:
         return RunCheckpoint(
             checkpoint_id=row["checkpoint_id"],
@@ -115,26 +117,27 @@ def normalize_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def recover_abandoned_running(
-    connection: sqlite3.Connection,
+async def recover_abandoned_running(
+    connection: aiosqlite.Connection,
     session_id: str,
 ) -> tuple[RunState, ...]:
     """把遗留 RUNNING Run fail-closed 为 FAILED。"""
 
-    rows = connection.execute(
+    async with connection.execute(
         "SELECT * FROM durable_runs WHERE session_id = ? AND status = ? "
         "ORDER BY run_id",
         (session_id, RunStatus.RUNNING.value),
-    ).fetchall()
+    ) as cursor:
+        rows = await cursor.fetchall()
     recovered = []
     for row in rows:
         updated = row_to_state(row).transition(RunStatus.FAILED)
-        connection.execute(
+        await connection.execute(
             "DELETE FROM durable_execution_cursors "
             "WHERE session_id = ? AND run_id = ?",
             (updated.session_id, updated.run_id),
         )
-        update_run(
+        await update_run(
             connection,
             updated,
             recovery_error="abandoned running run failed closed",

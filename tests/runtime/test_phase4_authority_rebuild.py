@@ -4,6 +4,11 @@ import asyncio
 from collections.abc import Callable
 
 from agentos import Agent
+from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
+from agentos.artifacts.projection import (
+    ArtifactCatalogProjectionProvider,
+    ArtifactMountProjectionProvider,
+)
 from agentos.context import (
     ContextProjectionRegistry,
     ContextRuntime,
@@ -60,6 +65,16 @@ class MutableSkillProjectionProvider:
         )
 
 
+class CountingArtifactStore(InMemoryArtifactStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_calls = 0
+
+    async def read(self, session_id: str, artifact_id: str) -> bytes:
+        self.read_calls += 1
+        return await super().read(session_id, artifact_id)
+
+
 class RetryMutatingProvider:
     def __init__(self, update_authority: Callable[[], None]) -> None:
         self._update_authority = update_authority
@@ -107,19 +122,21 @@ def _agent(
     provider: object,
     notices: MutableNoticeProvider | None = None,
     retry_policy: RetryPolicy | None = None,
+    artifacts: ArtifactRuntime | None = None,
 ) -> Agent:
     messages = MessageRuntime()
     token_counter = HeuristicTokenCounter()
+    context_projections = [ContextRuntimeProjectionProvider(context), skills]
+    input_projections = ()
+    if artifacts is not None:
+        context_projections.append(ArtifactCatalogProjectionProvider(artifacts))
+        input_projections = (ArtifactMountProjectionProvider(artifacts),)
     request_builder = ProviderRequestBuilder(
         context_renderer=default_context_renderer(),
         message_runtime=messages,
         snapshot_renderer=ContextSnapshotRenderer(token_counter),
-        context_projections=ContextProjectionRegistry(
-            (
-                ContextRuntimeProjectionProvider(context),
-                skills,
-            ),
-        ),
+        context_projections=ContextProjectionRegistry(context_projections),
+        input_projections=input_projections,
     )
     return Agent(
         QueryLoop(
@@ -130,6 +147,7 @@ def _agent(
             turn_notice_provider=notices,
             retry_policy=retry_policy,
             token_counter=token_counter,
+            artifact_runtime=artifacts,
         ),
     )
 
@@ -186,6 +204,38 @@ def test_provider_retry_rebuilds_context_and_extension_projections() -> None:
         assert "goal-before-retry" not in retry_snapshot
         assert 'name="skill-before-retry"' not in retry_snapshot
         assert skills.calls == 2
+
+    asyncio.run(run())
+
+
+def test_provider_retry_reuses_prepared_artifact_blob() -> None:
+    async def run() -> None:
+        context = _context_with_goal("inspect drawing")
+        skills = MutableSkillProjectionProvider("drawing-review")
+        store = CountingArtifactStore()
+        artifacts = ArtifactRuntime(session_id="session_1", store=store)
+        record = await artifacts.upload(
+            data=b"image-bytes",
+            filename="drawing.png",
+            media_type="image/png",
+        )
+        await artifacts.load_attachment(record.id)
+        provider = RetryMutatingProvider(lambda: None)
+        agent = _agent(
+            context=context,
+            skills=skills,
+            provider=provider,
+            retry_policy=RetryPolicy(max_retries=1, backoff_base=0, jitter=0),
+            artifacts=artifacts,
+        )
+
+        result = await agent.run("inspect current drawing")
+
+        assert result.content == "recovered"
+        assert len(provider.requests) == 2
+        assert provider.requests[0].messages[-1].kind == "context_mount"
+        assert provider.requests[1].messages[-1].kind == "context_mount"
+        assert store.read_calls == 1
 
     asyncio.run(run())
 

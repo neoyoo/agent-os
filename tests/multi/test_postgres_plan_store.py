@@ -16,7 +16,6 @@ from agentos.planning import (
 )
 from agentos.multi.postgres_plan import PostgresPlanClaimStore, PostgresPlanStore
 from agentos.planning.serializers import plan_state_from_dict, plan_state_to_dict
-from agentos.testing.contracts.plan_store import run_plan_store_contract
 from agentos.workspace import WorkspaceHandle
 
 
@@ -237,24 +236,6 @@ def plan(plan_id: str = "plan_1", *, owner_agent_id: str = "leader") -> PlanStat
             metadata={"tenant": "acme"},
         ),
     )
-
-
-def test_postgres_plan_store_satisfies_reusable_plan_store_contract() -> None:
-    connections: dict[int, FakeConnection] = {}
-
-    def factory() -> PostgresPlanStore:
-        connection = FakeConnection()
-        store = PostgresPlanStore(
-            dsn="postgresql://unused",
-            connection=connection,
-        )
-        connections[id(store)] = connection
-        return store
-
-    def seed_claim(store: object, claim: PlanClaimRecord) -> None:
-        connections[id(store)].claims[claim.plan_id] = claim
-
-    run_plan_store_contract(factory, seed_claim=seed_claim)
 
 
 def test_plan_state_serializer_round_trips_workspace_and_nested_records() -> None:

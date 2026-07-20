@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.planning._async import async_test
+
 
 import pytest
 
@@ -15,14 +17,17 @@ from tests.planning._runtime_fixtures import (
 )
 
 
-def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -> None:
+@async_test
+async def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -> (
+    None
+):
     clock = ManualClock(10.0)
     runtime = PlannerRuntime(
         store=InMemoryPlanStore(),
         retry_policy=PlanRetryPolicy(max_attempts=3, backoff_seconds=5.0),
         clock=clock,
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="ready_plan",
             objective="Has ready work.",
@@ -38,7 +43,7 @@ def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="retry_plan",
             objective="Has due retry work.",
@@ -57,7 +62,7 @@ def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="blocked_plan",
             objective="Blocked by dependency.",
@@ -73,7 +78,7 @@ def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="assigned_plan",
             objective="Already assigned.",
@@ -89,7 +94,7 @@ def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -
         ),
     )
 
-    summaries = runtime.schedulable_plans(owner_agent_id="leader")
+    summaries = await runtime.schedulable_plans(owner_agent_id="leader")
 
     assert [summary.plan_id for summary in summaries] == [
         "ready_plan",
@@ -112,9 +117,12 @@ def test_planner_runtime_lists_schedulable_plans_by_ready_or_retryable_steps() -
     assert summaries[1].reasons == ("due-retries",)
 
 
-def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> None:
+@async_test
+async def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> (
+    None
+):
     runtime = PlannerRuntime(store=InMemoryPlanStore(), clock=lambda: 10.0)
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="first_running",
             objective="First running plan.",
@@ -129,7 +137,7 @@ def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> N
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="other_owner",
             objective="Other owner plan.",
@@ -144,7 +152,7 @@ def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> N
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="draft_plan",
             objective="Draft plan.",
@@ -159,7 +167,7 @@ def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> N
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="completed_plan",
             objective="Completed plan should not be selected by default.",
@@ -174,7 +182,7 @@ def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> N
             ),
         ),
     )
-    runtime.store.create_plan(
+    await runtime.store.create_plan(
         PlanState(
             plan_id="second_running",
             objective="Second running plan.",
@@ -190,12 +198,12 @@ def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> N
         ),
     )
 
-    running_only = runtime.schedulable_plans(
+    running_only = await runtime.schedulable_plans(
         owner_agent_id="leader",
         statuses=("running",),
         limit=1,
     )
-    with_completed = runtime.schedulable_plans(
+    with_completed = await runtime.schedulable_plans(
         owner_agent_id="leader",
         statuses=("completed",),
     )
@@ -214,11 +222,12 @@ def test_planner_runtime_schedulable_plans_filters_owner_status_and_limit() -> N
         ({"statuses": ("",)}, "unsupported plan status"),
     ],
 )
-def test_planner_runtime_schedulable_plans_rejects_invalid_filters(
+@async_test
+async def test_planner_runtime_schedulable_plans_rejects_invalid_filters(
     kwargs: dict[str, object],
     match: str,
 ) -> None:
     runtime = PlannerRuntime(store=InMemoryPlanStore())
 
     with pytest.raises(ValueError, match=match):
-        runtime.schedulable_plans(**kwargs)
+        await runtime.schedulable_plans(**kwargs)

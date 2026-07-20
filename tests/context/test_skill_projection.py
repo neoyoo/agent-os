@@ -183,7 +183,7 @@ def test_policy_revocation_and_disable_remove_trusted_instruction() -> None:
 
     policy.verified = True
     asyncio.run(runtime.load("session-a", "review"))
-    runtime.disable("session-a", "review")
+    asyncio.run(runtime.disable("session-a", "review"))
     assert runtime.items("session-a") == ()
 
 
@@ -282,7 +282,7 @@ def test_close_session_clears_all_activations() -> None:
     async def run() -> SkillRuntime:
         runtime = await runtime_for(definition(), MutableTrustPolicy())
         await runtime.load("session-a", "review")
-        runtime.close_session("session-a")
+        await runtime.close_session("session-a")
         return runtime
 
     assert asyncio.run(run()).items("session-a") == ()
