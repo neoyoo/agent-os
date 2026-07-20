@@ -39,6 +39,7 @@ LiveWaitKind: TypeAlias = Literal[
     "remote_result",
     "resource_availability",
     "retry_backoff",
+    "side_effect_reconciliation",
 ]
 
 _CONTEXT_SOURCES = frozenset({"runtime", "memory", "session", "attachment"})
@@ -51,6 +52,7 @@ _WAIT_KINDS = frozenset(
         "remote_result",
         "resource_availability",
         "retry_backoff",
+        "side_effect_reconciliation",
     },
 )
 _TIMED_WAIT_KINDS = frozenset({"timer", "retry_backoff"})

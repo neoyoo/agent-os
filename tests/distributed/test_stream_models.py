@@ -3,10 +3,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from agentos._waiting import WaitReason
 from agentos.distributed.models import (
     LiveContentDelta,
     LiveToolStatus,
     LiveTurnFailed,
+    LiveTurnWaiting,
     ReplayBatch,
     ReplayItem,
     RunEventEnvelope,
@@ -20,6 +22,7 @@ from agentos.runtime.stream_events import (
     ToolStreamCompleted,
     TurnStreamFailed,
     TurnStreamStarted,
+    TurnStreamWaiting,
 )
 
 
@@ -53,6 +56,21 @@ def test_live_event_projection_is_allowlisted_and_redacts_internal_payloads() ->
     assert failed == LiveTurnFailed()
     assert project_live_event(AssistantThinkingDelta(0, "private reasoning")) is None
     assert "secret" not in repr((started, content, tool, failed))
+
+
+def test_live_event_projection_preserves_side_effect_reconciliation_wait() -> None:
+    operation_id = "operation_0123456789abcdef0123456789abcdef"
+    waiting = project_live_event(
+        TurnStreamWaiting(
+            "run_1",
+            WaitReason("side_effect_reconciliation", operation_id),
+        ),
+    )
+
+    assert waiting == LiveTurnWaiting(
+        kind="side_effect_reconciliation",
+        handle=operation_id,
+    )
 
 
 def test_event_kind_is_derived_from_the_typed_projection() -> None:
