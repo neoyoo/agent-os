@@ -528,6 +528,12 @@ Wave 2 完成后冻结 Shared Contract。后续 subagent 不得自行扩展 Prot
 
 共享 facade 只在三支线全部绿色后由主线修改。
 
+主线 `distributed/profile.py` 组合必须遵守
+`2026-07-20-agentos-phase6-wave3-profile-contract-addendum.md`：只公开 claim-only hydration，
+Worker/Relay 使用独立 Queue，BlobStore 为 borrowed resource，构造阶段零 I/O，Worker 显式启动，
+claim Artifact view 只读且绑定 tenant/session。当前静态 `context_projections` 在 Distributed
+Profile 中 fail closed，直到独立的 claim-scoped projection factory 合同获批。
+
 ## 10. Wave 4：6B Transport Leaf 并行
 
 ### Workstream D：HTTP/SSE

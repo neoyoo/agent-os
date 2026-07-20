@@ -7,6 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = PROJECT_ROOT / "src" / "agentos" / "distributed"
+COMPOSITION_ROOTS = {"__init__.py", "profile.py", "_claim_artifacts.py"}
 FORBIDDEN_ROOT_IMPORTS = {"agentos"}
 FORBIDDEN_DOMAIN_IMPORTS = (
     "agentos.channels",
@@ -35,7 +36,7 @@ FORBIDDEN_RUNTIME_SYMBOLS = {
 
 def test_distributed_contract_models_do_not_depend_on_legacy_owners() -> None:
     violations: dict[str, list[str]] = {}
-    for path in SOURCE_ROOT.glob("*.py"):
+    for path in _contract_paths():
         imported = _imports(path)
         forbidden = [
             module
@@ -50,7 +51,7 @@ def test_distributed_contract_models_do_not_depend_on_legacy_owners() -> None:
 
 def test_distributed_contract_modules_do_not_import_execution_owners() -> None:
     violations: dict[str, list[str]] = {}
-    for path in SOURCE_ROOT.glob("*.py"):
+    for path in _contract_paths():
         imported = _imported_symbols(path)
         modules = _imports(path)
         forbidden = sorted(imported & FORBIDDEN_RUNTIME_SYMBOLS)
@@ -122,6 +123,14 @@ def _imports(path: Path) -> list[str]:
         elif isinstance(node, ast.ImportFrom) and node.module is not None:
             modules.append(node.module)
     return modules
+
+
+def _contract_paths() -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in SOURCE_ROOT.glob("*.py")
+        if path.name not in COMPOSITION_ROOTS
+    )
 
 
 def _is_forbidden_domain_import(module: str) -> bool:

@@ -13,6 +13,9 @@
 >
 > Task 6 补充合同：
 > `2026-07-20-agentos-phase6-task6-side-effect-contract-addendum.md`
+>
+> Wave 3 Profile 补充合同：
+> `2026-07-20-agentos-phase6-wave3-profile-contract-addendum.md`
 
 ## 1. 目的
 
@@ -140,9 +143,10 @@ class RunWriteGuard:
   executor 包装同步驱动；
 - 不为调用方便重新增加同步 QueryLoop、同步 Agent 或同步 Store facade。
 
-持有 I/O 资源的 Durable/Distributed Profile 使用 async `open/build_agent/close` 和 async
-context manager；Local `AgentBuilder.build()` 仍是无 I/O 的同步组装。不得在同步 Profile
-constructor 中隐式连接数据库或启动 Worker。
+持有 I/O 资源的 Durable Profile 使用 async `open/build_agent/close`；Distributed Profile 使用
+async `open/close` 和 claim-only 内部 hydrate。两者均使用 async context manager。Local
+`AgentBuilder.build()` 仍是无 I/O 的同步组装。不得在同步 Profile constructor 中隐式连接数据库
+或启动 Worker。
 
 同一原则适用于执行路径上的 `ArtifactStore` 以及 Distributed 的 Plan、Task、Team、Queue、
 Lease、Replay Port：in-memory 实现可以立即返回，但 I/O 实现必须原生 async。SQLite/
