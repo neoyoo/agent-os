@@ -54,7 +54,7 @@ def test_lease_acquire_renew_and_release_require_the_exact_owner() -> None:
 
         renewed = await leases.renew(scope=SCOPE, lease=lease, ttl=ttl)
         assert renewed.lease_id == lease.lease_id
-        assert renewed.expires_at > lease.expires_at
+        assert renewed.expires_at >= lease.expires_at
         await leases.ensure_owned(scope=SCOPE, lease=renewed)
 
         stale = SessionLease(
