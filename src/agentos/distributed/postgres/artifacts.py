@@ -225,6 +225,23 @@ class PostgresArtifactStore:
         require_identifier(deletion_id, "deletion_id")
         async with self._database.transaction() as connection:
             await advisory_lock(connection, scope.tenant_id, deletion_id)
+            deletion = await fetchone(
+                connection,
+                """
+                SELECT session_id, artifact_id
+                FROM agentos_distributed_artifact_deletions
+                WHERE tenant_id = %s AND deletion_id = %s
+                FOR UPDATE
+                """,
+                (scope.tenant_id, deletion_id),
+            )
+            if deletion is not None and (
+                deletion["session_id"] != session_id
+                or deletion["artifact_id"] != artifact_id
+            ):
+                raise ArtifactValidationError(
+                    "artifact deletion conflicts with existing request",
+                )
             row = await fetchone(
                 connection,
                 """
@@ -234,10 +251,23 @@ class PostgresArtifactStore:
                 """,
                 (scope.tenant_id, session_id, artifact_id),
             )
-            if row is None or (
-                row["lifecycle"] != "active" and row["deletion_id"] != deletion_id
-            ):
+            if row is None:
                 raise ArtifactNotFoundError()
+            if deletion is None:
+                if row["lifecycle"] != "active":
+                    raise ArtifactNotFoundError()
+                await connection.execute(
+                    """
+                    INSERT INTO agentos_distributed_artifact_deletions
+                        (tenant_id, deletion_id, session_id, artifact_id)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (scope.tenant_id, deletion_id, session_id, artifact_id),
+                )
+            elif row["deletion_id"] not in {None, deletion_id}:
+                raise ArtifactValidationError(
+                    "artifact deletion conflicts with existing request",
+                )
             if row["lifecycle"] == "active":
                 await connection.execute(
                     """

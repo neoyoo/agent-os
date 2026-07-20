@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from agentos._waiting import WaitReason
 from agentos.capabilities.tools import SideEffectPolicy
-from agentos.distributed.errors import SideEffectInFlightError
+from agentos.distributed.errors import CheckpointConflictError, SideEffectInFlightError
 from agentos.distributed.postgres._database import AsyncConnection, fetchall
 from agentos.distributed.postgres._side_effect_records import (
     record_from_row,
@@ -13,6 +13,7 @@ from agentos.distributed.postgres._side_effect_records import (
     with_fence,
 )
 from agentos.runtime.run_runtime import RunWriteGuard
+from agentos.runtime.run_state import RunStatus
 from agentos.runtime.side_effect_cancel import plan_side_effect_cancel
 from agentos.runtime.side_effect_integrity import wait_reason_digest
 from agentos.runtime.side_effect_types import (
@@ -74,6 +75,53 @@ async def apply_cancel_safe_stop(
     session_id: str,
     run_id: str,
 ) -> None:
+    records = await _lock_current_records(
+        connection,
+        tenant_id=tenant_id,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    try:
+        plan = plan_side_effect_cancel(records)
+    except RuntimeSideEffectInFlightError:
+        raise SideEffectInFlightError() from None
+    by_id = {record.attempt_id: record for record in records}
+    for attempt_id in plan.cancel_before_start:
+        await update_record(
+            connection,
+            replace(
+                by_id[attempt_id],
+                status=SideEffectStatus.RESOLVED,
+                resolution=SideEffectResolutionOutcome.CANCELLED_BEFORE_START,
+            ),
+        )
+
+
+async def ensure_terminal_safe_stop(
+    connection: AsyncConnection,
+    *,
+    tenant_id: str,
+    session_id: str,
+    run_id: str,
+    status: RunStatus,
+) -> None:
+    records = await _lock_current_records(
+        connection,
+        tenant_id=tenant_id,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    if any(not _terminal_allowed(record, status) for record in records):
+        raise CheckpointConflictError()
+
+
+async def _lock_current_records(
+    connection: AsyncConnection,
+    *,
+    tenant_id: str,
+    session_id: str,
+    run_id: str,
+) -> tuple[SideEffectRecord, ...]:
     rows = await fetchall(
         connection,
         """
@@ -93,21 +141,41 @@ async def apply_cancel_safe_stop(
         """,
         (tenant_id, session_id, run_id, tenant_id, session_id, run_id),
     )
-    records = tuple(record_from_row(row) for row in rows)
-    try:
-        plan = plan_side_effect_cancel(records)
-    except RuntimeSideEffectInFlightError:
-        raise SideEffectInFlightError() from None
-    by_id = {record.attempt_id: record for record in records}
-    for attempt_id in plan.cancel_before_start:
-        await update_record(
-            connection,
-            replace(
-                by_id[attempt_id],
-                status=SideEffectStatus.RESOLVED,
-                resolution=SideEffectResolutionOutcome.CANCELLED_BEFORE_START,
-            ),
+    return tuple(record_from_row(row) for row in rows)
+
+
+def _terminal_allowed(record: SideEffectRecord, status: RunStatus) -> bool:
+    if status is RunStatus.COMPLETED:
+        return (
+            record.status is SideEffectStatus.COMPLETED
+            and record.outcome_kind is SideEffectOutcomeKind.PROVIDER_RESULT
+        ) or (
+            record.status is SideEffectStatus.RESOLVED
+            and record.resolution is SideEffectResolutionOutcome.ACCEPTED
         )
+    if status is not RunStatus.FAILED:
+        return False
+    if record.status in {
+        SideEffectStatus.STARTED,
+        SideEffectStatus.AMBIGUOUS,
+        SideEffectStatus.COMPENSATING,
+    }:
+        return False
+    if record.status is SideEffectStatus.COMPLETED:
+        return record.outcome_kind is not SideEffectOutcomeKind.WAIT_CONTROL
+    if record.status is SideEffectStatus.RESOLVED:
+        return record.resolution in {
+            SideEffectResolutionOutcome.ACCEPTED,
+            SideEffectResolutionOutcome.FAILED,
+        }
+    return record.status in {
+        SideEffectStatus.RESERVED,
+        SideEffectStatus.COMPENSATED,
+    }
 
 
-__all__ = ["apply_cancel_safe_stop", "complete_wait_control"]
+__all__ = [
+    "apply_cancel_safe_stop",
+    "complete_wait_control",
+    "ensure_terminal_safe_stop",
+]

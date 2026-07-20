@@ -37,6 +37,24 @@ def test_schema_scopes_idempotency_keys_by_tenant() -> None:
     assert "primary key (tenant_id, submission_id)" in schema
     assert "primary key (tenant_id, command_id)" in schema
     assert "unique (tenant_id, upload_id)" in schema
+    assert "agentos_distributed_artifact_deletions" in schema
+    assert "primary key (tenant_id, deletion_id)" in schema
+
+
+def test_accepted_input_preserves_authoritative_principal() -> None:
+    schema = "\n".join(SCHEMA_STATEMENTS).lower()
+    accepted = schema.split(
+        "create table if not exists agentos_distributed_accepted_inputs",
+        1,
+    )[1].split(")\n", 1)[0]
+
+    assert "principal_id text not null" in accepted
+
+
+def test_checkpoint_uses_database_monotonic_session_order() -> None:
+    schema = "\n".join(SCHEMA_STATEMENTS).lower()
+
+    assert "checkpoint_sequence bigint generated always as identity unique" in schema
 
 
 def test_phase6_migration_is_packaged_without_drift() -> None:
@@ -54,6 +72,7 @@ def test_phase6_migration_is_packaged_without_drift() -> None:
         "agentos_distributed_sessions",
         "agentos_distributed_runs",
         "agentos_distributed_artifacts",
+        "agentos_distributed_artifact_deletions",
         "agentos_distributed_submissions",
         "agentos_distributed_commands",
         "agentos_distributed_accepted_inputs",

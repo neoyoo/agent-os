@@ -38,7 +38,6 @@ async def write_checkpoint(
         connection,
         scope.tenant_id,
         checkpoint.session_id,
-        run_id,
         checkpoint,
     )
     checkpoint_id = f"checkpoint_{uuid4().hex}"
@@ -204,18 +203,17 @@ async def _validate_message_history(
     connection: AsyncConnection,
     tenant_id: str,
     session_id: str,
-    run_id: str,
     checkpoint: SessionCheckpoint,
 ) -> None:
     row = await fetchone(
         connection,
         """
         SELECT snapshot_json FROM agentos_distributed_checkpoints
-        WHERE tenant_id = %s AND session_id = %s AND run_id = %s
+        WHERE tenant_id = %s AND session_id = %s
           AND snapshot_json IS NOT NULL
-        ORDER BY aggregate_version DESC LIMIT 1
+        ORDER BY checkpoint_sequence DESC LIMIT 1
         """,
-        (tenant_id, session_id, run_id),
+        (tenant_id, session_id),
     )
     if row is None:
         return

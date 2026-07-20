@@ -23,13 +23,21 @@ async def recover_expired(
             connection,
             """
             SELECT s.session_id, s.active_claim_run_id AS run_id,
+                   input.principal_id,
                    s.fencing_token, r.status, r.wait_kind, r.wait_handle,
                    r.wait_detail, r.wait_not_before, r.aggregate_version
             FROM agentos_distributed_sessions AS s
             JOIN agentos_distributed_runs AS r
               ON r.tenant_id = s.tenant_id
              AND r.session_id = s.session_id
-             AND r.run_id = s.active_claim_run_id
+              AND r.run_id = s.active_claim_run_id
+            JOIN agentos_distributed_accepted_inputs AS input
+              ON input.tenant_id = s.tenant_id
+             AND input.session_id = s.session_id
+             AND input.run_id = s.active_claim_run_id
+             AND input.status = 'claimed'
+             AND input.claim_id = s.active_claim_id
+             AND input.fencing_token = s.fencing_token
             WHERE s.tenant_id = %s AND s.active_claim_id IS NOT NULL
               AND s.active_claim_expires_at <= clock_timestamp()
             ORDER BY s.active_claim_expires_at, s.session_id
@@ -64,9 +72,13 @@ async def recover_expired(
                 (token, scope.tenant_id, row["session_id"]),
             )
             source_id = f"{row['run_id']}:{token}"
+            recovered_scope = RequestScope(
+                scope.tenant_id,
+                cast(str, row["principal_id"]),
+            )
             identifier = await insert_outbox(
                 connection,
-                scope=scope,
+                scope=recovered_scope,
                 session_id=cast(str, row["session_id"]),
                 run_id=cast(str, row["run_id"]),
                 source_kind="recover",
@@ -76,8 +88,8 @@ async def recover_expired(
             )
             target_row = dict(row)
             target_row.update(
-                tenant_id=scope.tenant_id,
-                principal_id=scope.principal_id,
+                tenant_id=recovered_scope.tenant_id,
+                principal_id=recovered_scope.principal_id,
                 outbox_id=identifier,
             )
             recovered.append(target_from_row(target_row))

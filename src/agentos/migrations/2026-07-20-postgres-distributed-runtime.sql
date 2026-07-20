@@ -92,6 +92,19 @@ ON agentos_distributed_artifacts (
     tenant_id, session_id, lifecycle, created_at DESC, artifact_id DESC
 );
 
+CREATE TABLE IF NOT EXISTS agentos_distributed_artifact_deletions (
+    tenant_id TEXT NOT NULL,
+    deletion_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, deletion_id),
+    FOREIGN KEY (tenant_id, session_id, artifact_id)
+        REFERENCES agentos_distributed_artifacts(
+            tenant_id, session_id, artifact_id
+        )
+);
+
 CREATE TABLE IF NOT EXISTS agentos_distributed_submissions (
     tenant_id TEXT NOT NULL,
     submission_id TEXT NOT NULL,
@@ -127,6 +140,7 @@ CREATE TABLE IF NOT EXISTS agentos_distributed_commands (
 
 CREATE TABLE IF NOT EXISTS agentos_distributed_accepted_inputs (
     tenant_id TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
     turn_id TEXT NOT NULL,
@@ -167,6 +181,7 @@ ON agentos_distributed_accepted_inputs (tenant_id, session_id, run_id)
 WHERE status IN ('accepted', 'claimed');
 
 CREATE TABLE IF NOT EXISTS agentos_distributed_checkpoints (
+    checkpoint_sequence BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
     tenant_id TEXT NOT NULL,
     checkpoint_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -252,6 +267,7 @@ DROP INDEX IF EXISTS agentos_distributed_one_pending_input;
 DROP TABLE IF EXISTS agentos_distributed_accepted_inputs;
 DROP TABLE IF EXISTS agentos_distributed_commands;
 DROP TABLE IF EXISTS agentos_distributed_submissions;
+DROP TABLE IF EXISTS agentos_distributed_artifact_deletions;
 DROP INDEX IF EXISTS agentos_distributed_artifact_page;
 DROP TABLE IF EXISTS agentos_distributed_artifacts;
 DROP INDEX IF EXISTS agentos_distributed_one_active_run;

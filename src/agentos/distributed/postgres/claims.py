@@ -109,6 +109,8 @@ class PostgresClaimStore:
             )
             if input_row is None:
                 return None
+            if input_row["principal_id"] != scope.principal_id:
+                raise ClaimConflictError()
             claim_id = f"claim_{uuid4().hex}"
             claimed_session = await fetchone(
                 connection,

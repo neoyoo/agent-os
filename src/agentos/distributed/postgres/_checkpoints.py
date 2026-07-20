@@ -23,6 +23,7 @@ from agentos.distributed.postgres._records import (
 from agentos.distributed.postgres._side_effect_composite import (
     apply_cancel_safe_stop,
     complete_wait_control,
+    ensure_terminal_safe_stop,
 )
 from agentos.runtime.checkpoint import RunCheckpoint, SessionCheckpoint
 from agentos.runtime.run_commit import RunTerminalStatus
@@ -189,6 +190,14 @@ async def commit_terminal(
                 tenant_id=scope.tenant_id,
                 session_id=checkpoint.session_id,
                 run_id=run_id,
+            )
+        else:
+            await ensure_terminal_safe_stop(
+                connection,
+                tenant_id=scope.tenant_id,
+                session_id=checkpoint.session_id,
+                run_id=run_id,
+                status=terminal,
             )
         updated = current.transition(terminal)
         committed = await write_checkpoint(

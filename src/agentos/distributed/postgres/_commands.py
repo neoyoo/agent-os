@@ -129,12 +129,13 @@ async def _commit_continuation(
     await connection.execute(
         """
         INSERT INTO agentos_distributed_accepted_inputs
-            (tenant_id, session_id, run_id, turn_id, source_kind, source_id,
+            (tenant_id, principal_id, session_id, run_id, turn_id, source_kind, source_id,
              continuation_kind, payload_json, status)
-        VALUES (%s, %s, %s, %s, 'command', %s, %s, %s, 'accepted')
+        VALUES (%s, %s, %s, %s, %s, 'command', %s, %s, %s, 'accepted')
         """,
         (
             scope.tenant_id,
+            scope.principal_id,
             current.session_id,
             current.run_id,
             turn_id,

@@ -101,13 +101,14 @@ async def submit(
         await connection.execute(
             """
             INSERT INTO agentos_distributed_accepted_inputs
-                (tenant_id, session_id, run_id, turn_id, source_kind,
+                (tenant_id, principal_id, session_id, run_id, turn_id, source_kind,
                  source_id, content, artifact_handles, user_message_id, status)
-            VALUES (%s, %s, %s, %s, 'submission', %s, %s, %s::jsonb,
+            VALUES (%s, %s, %s, %s, %s, 'submission', %s, %s, %s::jsonb,
                     %s, 'accepted')
             """,
             (
                 scope.tenant_id,
+                scope.principal_id,
                 submission.session_id,
                 run_id,
                 turn_id,

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from agentos._json_values import freeze_json_mapping
+from agentos.capabilities.tools import SideEffectPolicy
 from agentos.context import WorkingStateField
 from agentos.context.state import CompressedSegment
 from agentos.distributed.errors import (
@@ -14,7 +15,10 @@ from agentos.distributed.errors import (
 )
 from agentos.distributed.models import RequestScope
 from agentos.distributed.postgres._checkpoints import commit_terminal
+from agentos.distributed.postgres._checkpoint_records import _validate_message_history
 from agentos.distributed.postgres._guards import lock_fenced_run
+from agentos.distributed.postgres._records import session_checkpoint_to_json
+from agentos.distributed.postgres._side_effect_codec import side_effect_record_to_json
 from agentos.runtime.checkpoint import (
     CheckpointStoredMessage,
     CheckpointToolCall,
@@ -23,6 +27,12 @@ from agentos.runtime.checkpoint import (
 )
 from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.run_runtime import RunWriteGuard
+from agentos.runtime.side_effect_types import (
+    SideEffectAttemptId,
+    SideEffectRecord,
+    SideEffectStatus,
+)
+from agentos.runtime.tool_identity import compensation_operation_id
 from tests.planning._async import async_test
 
 
@@ -218,3 +228,100 @@ async def test_new_worker_fence_rejects_stale_worker_write() -> None:
         guard=RunWriteGuard(1, "claim_new", 8),
     )
     assert current is row
+
+
+@async_test
+async def test_checkpoint_history_cannot_shrink_across_runs() -> None:
+    previous = _checkpoint(
+        CheckpointStoredMessage("message_1", "user", "first run"),
+    )
+    current = _checkpoint(
+        CheckpointStoredMessage("message_2", "user", "second run"),
+    )
+
+    class HistoryConnection:
+        async def execute(
+            self,
+            query: str,
+            params: tuple[object, ...] = (),
+        ) -> Cursor:
+            normalized = " ".join(query.split())
+            if normalized.startswith("SELECT snapshot_json") and len(params) == 2:
+                return Cursor(row={"snapshot_json": session_checkpoint_to_json(previous)})
+            return Cursor()
+
+    with pytest.raises(CheckpointConflictError):
+        await _validate_message_history(  # type: ignore[arg-type]
+            HistoryConnection(),
+            "tenant_1",
+            "session_1",
+            current,
+        )
+
+
+@async_test
+async def test_compensated_side_effect_only_allows_failed_terminal() -> None:
+    record = SideEffectRecord(
+        SideEffectAttemptId(
+            "tenant_1",
+            "session_1",
+            "operation_0123456789abcdef0123456789abcdef",
+            1,
+        ),
+        "run_1",
+        "turn_1",
+        INVOCATION_ID,
+        "charge",
+        SideEffectPolicy.COMPENSATABLE,
+        SideEffectStatus.COMPENSATED,
+        "sha256:" + "a" * 64,
+        invocation_ref=ProtectedPayloadRef("sealed", "digest"),
+        compensation_operation_id=compensation_operation_id(
+            "operation_0123456789abcdef0123456789abcdef",
+        ),
+        compensation_attempt=1,
+        claim_id="claim_1",
+        fencing_token=7,
+    )
+    effect_row = {
+        "tenant_id": "tenant_1",
+        "session_id": "session_1",
+        "operation_id": record.attempt_id.operation_id,
+        "attempt": 1,
+        "run_id": "run_1",
+        "status": "compensated",
+        "payload_json": side_effect_record_to_json(record),
+    }
+
+    class CompensatedConnection(TerminalConnection):
+        async def execute(
+            self,
+            query: str,
+            params: tuple[object, ...] = (),
+        ) -> Cursor:
+            normalized = " ".join(query.split())
+            if normalized.startswith("SELECT effect.*"):
+                self.staged.append(normalized)
+                return Cursor(rows=[effect_row])
+            return await super().execute(query, params)
+
+    database = TransactionDatabase()
+    database.connection = CompensatedConnection()
+
+    with pytest.raises(CheckpointConflictError):
+        await commit_terminal(  # type: ignore[arg-type]
+            database,
+            SCOPE,
+            checkpoint=_checkpoint(
+                CheckpointStoredMessage("message_1", "assistant", "invalid success"),
+            ),
+            run_id="run_1",
+            turn_id="turn_1",
+            status="completed",
+            guard=RunWriteGuard(1, "claim_1", 7),
+        )
+
+    assert not any(
+        query.startswith(("INSERT", "UPDATE", "DELETE"))
+        for query in database.connection.staged
+    )

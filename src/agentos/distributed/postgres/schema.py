@@ -106,6 +106,20 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS agentos_distributed_artifact_deletions (
+        tenant_id TEXT NOT NULL,
+        deletion_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (tenant_id, deletion_id),
+        FOREIGN KEY (tenant_id, session_id, artifact_id)
+            REFERENCES agentos_distributed_artifacts(
+                tenant_id, session_id, artifact_id
+            )
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agentos_distributed_submissions (
         tenant_id TEXT NOT NULL,
         submission_id TEXT NOT NULL,
@@ -143,6 +157,7 @@ SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS agentos_distributed_accepted_inputs (
         tenant_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         run_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
@@ -186,6 +201,7 @@ SCHEMA_STATEMENTS = (
     """,
     """
     CREATE TABLE IF NOT EXISTS agentos_distributed_checkpoints (
+        checkpoint_sequence BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
         tenant_id TEXT NOT NULL,
         checkpoint_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
