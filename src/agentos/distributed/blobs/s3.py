@@ -13,6 +13,7 @@ from agentos.distributed.errors import (
     DistributedBackendUnavailableError,
     DistributedStoreClosedError,
 )
+from agentos.distributed._cancel_safe import close_cancelled_acquisition
 
 
 class _AsyncClientContext(Protocol):
@@ -79,7 +80,15 @@ class S3BlobStore:
             exit_context = getattr(context, "__aexit__", None)
             if not callable(enter) or not callable(exit_context):
                 raise TypeError
-            client = await enter()
+            acquisition = asyncio.create_task(enter())
+            try:
+                client = await asyncio.shield(acquisition)
+            except asyncio.CancelledError as cancellation:
+                await close_cancelled_acquisition(
+                    acquisition,
+                    lambda _: exit_context(None, None, None),
+                )
+                raise cancellation from None
         except Exception:
             raise DistributedBackendUnavailableError() from None
         try:

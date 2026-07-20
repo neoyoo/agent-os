@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import ModuleType
 
 import pytest
 
@@ -184,5 +185,62 @@ def test_pool_cancelled_close_remains_retryable() -> None:
         with pytest.raises(DistributedStoreClosedError):
             async with pool.connection():
                 pass
+
+    asyncio.run(exercise())
+
+
+def test_pool_cancelled_open_finishes_acquisition_and_closes_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BlockingOpenPool(FakePool):
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            super().__init__()
+            self.open_started = asyncio.Event()
+            self.allow_open = asyncio.Event()
+            self.close_started = asyncio.Event()
+            self.allow_close = asyncio.Event()
+            self.opened = False
+
+        async def open(self, *, wait: bool) -> None:
+            assert wait is True
+            self.open_started.set()
+            await self.allow_open.wait()
+            self.opened = True
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            self.close_started.set()
+            await self.allow_close.wait()
+
+    async def exercise() -> None:
+        raw = BlockingOpenPool()
+        psycopg = ModuleType("psycopg")
+        psycopg.Error = FakeDatabaseError  # type: ignore[attr-defined]
+        rows = ModuleType("psycopg.rows")
+        rows.dict_row = object()  # type: ignore[attr-defined]
+        psycopg_pool = ModuleType("psycopg_pool")
+        psycopg_pool.AsyncConnectionPool = (  # type: ignore[attr-defined]
+            lambda **kwargs: raw
+        )
+        monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+        monkeypatch.setitem(sys.modules, "psycopg.rows", rows)
+        monkeypatch.setitem(sys.modules, "psycopg_pool", psycopg_pool)
+
+        opening = asyncio.create_task(PostgresPool.open("postgresql://db/agentos"))
+        await raw.open_started.wait()
+        opening.cancel("caller stopped")
+        raw.allow_open.set()
+        await raw.close_started.wait()
+
+        assert opening.done() is False
+        raw.allow_close.set()
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await opening
+
+        assert caught.value.args == ("caller stopped",)
+        assert raw.opened is True
+        assert raw.close_calls == 1
 
     asyncio.run(exercise())

@@ -305,6 +305,56 @@ async def test_s3_blob_store_cancelled_close_can_be_retried() -> None:
 
 
 @async_test
+async def test_s3_blob_store_cancelled_open_finishes_acquisition_and_closes_client(
+) -> None:
+    from agentos.distributed.blobs.s3 import S3BlobStore
+
+    class BlockingClientContext(FakeClientContext):
+        def __init__(self, client: FakeS3Client) -> None:
+            super().__init__(client)
+            self.enter_started = asyncio.Event()
+            self.allow_enter = asyncio.Event()
+            self.exit_started = asyncio.Event()
+            self.allow_exit = asyncio.Event()
+            self.exit_calls = 0
+
+        async def __aenter__(self) -> FakeS3Client:
+            self.enter_started.set()
+            await self.allow_enter.wait()
+            self.entered = True
+            return self.client
+
+        async def __aexit__(self, *args: object) -> None:
+            self.exit_calls += 1
+            self.exit_started.set()
+            await self.allow_exit.wait()
+            self.exited = True
+
+    context = BlockingClientContext(FakeS3Client())
+    opening = asyncio.create_task(
+        S3BlobStore.open(
+            bucket_name="private-artifacts",
+            session=FakeSession(context),
+        ),
+    )
+    await context.enter_started.wait()
+    opening.cancel("caller stopped")
+    context.allow_enter.set()
+    await context.exit_started.wait()
+
+    assert opening.done() is False
+    context.allow_exit.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await opening
+
+    assert caught.value.args == ("caller stopped",)
+    assert context.entered is True
+    assert context.exit_calls == 1
+    assert context.exited is True
+
+
+@async_test
 async def test_s3_blob_store_maps_missing_optional_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

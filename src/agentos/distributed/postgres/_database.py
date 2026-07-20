@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol, cast
@@ -8,6 +9,7 @@ from agentos.distributed.errors import (
     DistributedBackendUnavailableError,
     DistributedStoreClosedError,
 )
+from agentos.distributed._cancel_safe import close_cancelled_acquisition
 
 
 Row = Mapping[str, object]
@@ -90,7 +92,15 @@ class PostgresPool:
                 kwargs={"row_factory": dict_row},
                 open=False,
             )
-            await raw_pool.open(wait=True)
+            acquisition = asyncio.create_task(raw_pool.open(wait=True))
+            try:
+                await asyncio.shield(acquisition)
+            except asyncio.CancelledError as cancellation:
+                await close_cancelled_acquisition(
+                    acquisition,
+                    lambda _: raw_pool.close(),
+                )
+                raise cancellation from None
         except Exception:
             raise DistributedBackendUnavailableError() from None
         return cls(
