@@ -196,7 +196,7 @@ ContextRuntime。
 
 | 写入 | 唯一 Owner | Fence 规则 |
 |---|---|---|
-| accepted input start/recover、running checkpoint、WAITING、execution terminal | Worker 内的 RunDriver/RunCommitRuntime | 必须提供当前 claim ID、fence、expected version |
+| accepted input preparation、running checkpoint、WAITING、execution terminal | Worker 内的 RunDriver/RunCommitRuntime | 必须提供当前 claim ID、fence、expected version |
 | 外部 cancel | RunCommandService transaction | 调用方不提供 fence；事务锁行、轮转 fence、清 Claim，并原子终结未提交 input/cursor/checkpoint |
 | resume/wakeup/retry/HITL/side-effect resolution 接受 | RunCommandService transaction | 只接受 WAITING；锁行并记录当前 fence/version |
 | expired claim recovery | Reconciler transaction | 轮转 fence、释放 Claim、恢复 input、写 recover Outbox；不提交 WAITING/terminal |
@@ -244,8 +244,8 @@ Wave 2 冻结以下共享类型。后续 PostgreSQL、Redis、Worker、Channel �
 - `RunDeliveryTarget(scope, outbox_id, session_id, run)` 是 PostgreSQL 根据 outbox ID
   解析出的权威执行目标；
 - `ClaimedExecution(target, claim, execution)` 同时绑定 PostgreSQL 权威 delivery target、Claim、
-  canonical `AcceptedTurnExecution` 及 execution guard 的 version/claim ID/fencing token；start 只允许
-  QUEUED target，recover 只允许 RUNNING target；
+  canonical `AcceptedTurnExecution` 及 execution guard 的 version/claim ID/fencing token；
+  `execution.preparation` 必须是下文冻结的封闭 preparation，不能使用字符串 mode 或裸 cursor；
 - `SessionLease(scope, session_id, owner_id, lease_id, expires_at)` 只表达 Redis 排他调度，
   不能替代 PostgreSQL fence；
 - `OutboxRecord(scope, outbox_id, topic, payload, created_at, publish_attempts,
@@ -368,7 +368,22 @@ class AcceptedStartInput:
 class AcceptedTurnExecution:
     input: AcceptedTurnInput
     guard: RunWriteGuard
-    mode: Literal["start", "recover"]
+    preparation: AcceptedTurnPreparation
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyAcceptedInput:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreAcceptedTurn:
+    cursor: RunExecutionCursor
+
+
+AcceptedTurnPreparation = (
+    ApplyAcceptedInput | RestoreAcceptedTurn | SideEffectResume
+)
 ```
 
 `AcceptedStartInput` 进入标准 User Turn 准备路径；`AcceptedContinuationInput` 同样增加
@@ -377,10 +392,24 @@ acceptance 时确定性分配的 `turn_id`，并进入标准 Continuation Turn �
 `AcceptedTurnExecution.guard.expected_version`。内部类型不作为外部 Transport wire type
 导出。
 
-首次 Claim 返回 `mode="start"`，要求 Run 为 QUEUED，RunDriver 执行 `QUEUED -> RUNNING`。
-过期 Claim takeover 返回 `mode="recover"`，要求 Run 仍为 RUNNING 且旧 claim 已由数据库
-判定过期；RunDriver 校验新 fence 后从最近 checkpoint 和同一 accepted input 重建当前
-execution slice，不执行第二次 start transition。
+PostgreSQL Claim 根据权威 Run、accepted input、当前 execution cursor 和 resolution ledger
+生成唯一 preparation：
+
+- 当前 accepted turn 没有 cursor 时返回 `ApplyAcceptedInput`；RunDriver 只在权威 Run 为
+  QUEUED 时执行 `QUEUED -> RUNNING`，Run 已为 RUNNING 时不重复 start transition；
+- 当前 cursor 属于该 accepted turn 时返回 `RestoreAcceptedTurn(cursor)`；恢复不得重复追加
+  StoredMessage、递增 turn number 或发布首次 Turn/UserMessage Event，但必须从已持久化
+  ArtifactRef 和 continuation data 重建当前 Turn 必要的临时投影；
+- 首次执行 `resolve_side_effect` 创建新的 continuation execution turn，并通过
+  `SideEffectResume` 携带旧 source `pending_tools` cursor、current ledger record 和 typed
+  resolution；它不等同于 `RestoreAcceptedTurn`，resolution payload 不投影给 Provider；新的
+  continuation cursor 提交后发生崩溃时，后续 claim 使用 `RestoreAcceptedTurn` 恢复该新 Turn；
+- cursor 属于其他 turn、cursor/checkpoint/version 不一致或 resolution source 无法验证时
+  fail closed。
+
+RunDriver 在任何 Run/Turn 写入前拒绝缺失 `SideEffectResumeValidator` 的
+`SideEffectResume`。Validator 是独立的内部协作 Port，不属于 `SideEffectStore`，因为
+Ledger CRUD 不能证明 source cursor、current attempt、resolution 和当前 fence 的组合一致性。
 
 accepted turn 使用以下持久状态机：
 
@@ -404,8 +433,9 @@ StoredMessage。
 
 如果进程在 `QUEUED -> RUNNING`、用户消息内存追加或首次 Provider 调用附近崩溃，过期
 Claim Reconciler 轮转 fence、让 Run 保持 RUNNING、将 CLAIMED 重新变为 ACCEPTED，并保留
-相同 ID。下一 Worker 以 recover mode 接管。尚未提交的内存状态被
-丢弃；已由 WAITING/terminal 原子提交的 input 已是 COMMITTED，重投只 ACK。不得在独立
+相同 ID。下一 Worker 根据权威 cursor 取得 `ApplyAcceptedInput` 或
+`RestoreAcceptedTurn` 后接管。尚未提交的内存状态被丢弃；已由 WAITING/terminal 原子提交的
+input 已是 COMMITTED，重投只 ACK。不得在独立
 事务中提前标记 input consumed。
 
 ### 4.3 Running Execution Checkpoint
@@ -625,8 +655,9 @@ Claim 激活后，对 checkpoint、terminal、heartbeat、release 和 side-effec
 过期 Claim 不在进程启动时直接标记 Run FAILED。Reconciler 必须先由 PostgreSQL
 `recover_expired_claim()` 轮转 fencing token、使 CLAIMED input 回到 ACCEPTED，再根据
 Side Effect Ledger 的固定恢复矩阵发布 recover delivery。Run 保持 RUNNING，由下一 claim
-的 recover mode 接管；需要 reconciliation 时也由该 Worker 的 RunDriver 从最新 execution
-checkpoint 原子提交 WAITING。不得伪造一条普通 `RUNNING -> QUEUED` 领域转换。
+根据权威 cursor 生成 typed preparation 后接管；需要 reconciliation 时也由该 Worker 的
+RunDriver 从最新 execution checkpoint 原子提交 WAITING。不得伪造一条普通
+`RUNNING -> QUEUED` 领域转换。
 
 本 Contract 不再定义独立 `generation`。`fencing_token` 就是 Session/Run 的单调执行代次，
 事件中的 `execution_attempt` 等于该 token。唯一 live event key 是
@@ -824,9 +855,17 @@ Phase 6 把 `ArtifactStore` I/O 方法和 `ArtifactRuntime` 中涉及 I/O 的方
 契约。Artifact metadata、blob key、size/digest 和 lifecycle 在 PostgreSQL；bytes 只进入
 BlobStore，不进入 Message、Checkpoint、Redis 或 PostgreSQL JSON。
 
-上传使用受控 staging -> blob conditional put -> metadata transaction；失败必须清理 staging。
-删除使用 metadata tombstone/transaction 与幂等 blob cleanup，不能让可见 metadata 指向已知
-删除内容。跨 tenant/session 的 get/read/list/cursor 一律 not-found。Worker 在执行 Provider
+上传使用 durable staging metadata -> blob conditional put -> metadata activation transaction。
+`staging` metadata 和已完成但尚未 activation 的 blob 都是可恢复状态；同一 tenant 下相同
+`upload_id` 和相同 canonical metadata/digest 必须复用原 artifact ID 并幂等收敛，不同内容必须在
+blob I/O 前冲突失败。失败或 cancellation 保留 staging/blob 供同一 upload 重试，不能执行
+best-effort 删除制造新的崩溃窗口。`staging` 对 read/list 不可见，只有完成 size/digest 校验并
+原子切换为 active 后才能读取。
+
+在 Artifact upload 尚无可续租 lease/ownership contract 前，不执行基于 age 的 stale staging
+cleanup，避免 cleanup 与慢上传竞态；该能力延期到独立 upload lease Spec。删除使用 metadata
+tombstone/transaction 与幂等 blob cleanup，不能让可见 metadata 指向已知删除内容。跨
+tenant/session 的 get/read/list/cursor 一律 not-found。Worker 在执行 Provider
 前异步解析 active mount 并把 bytes 放入仅当前 Turn 的内存 projection cache；同步
 ProviderRequest build 不发起网络/磁盘 I/O，Turn 终态清除 cache 但不删除 Artifact。
 

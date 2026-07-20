@@ -225,7 +225,9 @@ Phase 6 必须处理或删除的超大模块：
 - AMBIGUOUS WAITING 不再保证直接 cancel；调用方先 resolution，Run 仍非终态才按幂等规则重试，
   resolution 已产生 FAILED 时不再 cancel；
 - accepted input 在 claim/load/start 崩溃后仍可恢复，deterministic message 不重复；
-- start mode 只接受 QUEUED，recover mode 接管过期 claim 的 RUNNING 且不二次 start；
+- `AcceptedTurnExecution.preparation` 只允许 `ApplyAcceptedInput`、
+  `RestoreAcceptedTurn(cursor)` 或 `SideEffectResume`，不保留字符串 mode 或裸 cursor；
+  RunDriver 根据权威 QUEUED/RUNNING 状态决定是否执行 start transition；
 - RunDriver 唯一提交 execution terminal；外部 CANCELLED 只由 RunCommandService 提交，
   Worker 只 ACK；
 - Provider/tool 边界 execution cursor 不依赖模型重现 tool call ID；
@@ -288,7 +290,8 @@ python -m pytest tests/runtime -q
 - SDK stable invocation ID 与原 Provider tool-call ID mapping；
 - PayloadProtector 对持久 Tool arguments 加密、授权 hydrate 和错误/trace 零明文；
 - pending_tools checkpoint 成功前绝不启动 Tool handler；
-- recover mode 从 cursor 继续，不重新调用已经持久化响应对应的 Provider；
+- `RestoreAcceptedTurn(cursor)` 从 cursor 继续，不重新调用已经持久化响应对应的 Provider，
+  不重复追加 StoredMessage/Turn 首次事件，并重建 Artifact/continuation 临时投影；
 - WaitRequest 的 WAITING commit 原子移除 ActiveWindow tool-use、清除 running cursor 且不伪造
   Tool Result；
 - WaitRequest commit 前崩溃从同一 pending invocation 恢复，commit 后 continuation 不恢复旧 batch；
@@ -442,7 +445,8 @@ Wave 2 完成后冻结 Shared Contract。后续 subagent 不得自行扩展 Prot
 - submission/command duplicate and conflict；
 - tenant-scoped unique key、跨 tenant not-found；
 - accepted -> claimed -> committed/expired -> accepted；
-- expired RUNNING 使用 recover mode，不新增 `RUNNING -> QUEUED` 领域转换；
+- expired RUNNING 保持 RUNNING，并按权威 cursor 生成 typed preparation，不新增
+  `RUNNING -> QUEUED` 领域转换；
 - running execution checkpoint 每次递增 aggregate version 并返回新 guard；
 - checkpoint/terminal atomic rollback；
 - two-worker claim；
@@ -456,6 +460,9 @@ Wave 2 完成后冻结 Shared Contract。后续 subagent 不得自行扩展 Prot
 - side-effect 全状态、result_ref 和 compensation；
 - protected invocation ref、stable invocation ID 和 running cursor recovery；
 - PostgreSQL Artifact metadata + shared Blob 跨 Worker reload；
+- Artifact upload 先持久化 staging，再 conditional put blob 和 activation；同一 `upload_id`
+  同内容幂等恢复，冲突在 blob I/O 前失败，staging 对 read/list 不可见；失败/cancellation 保留
+  staging/blob，不在缺少 upload lease 时执行 age-based stale cleanup；
 - connection cancellation/close。
 
 提交：`feat: add fenced postgres runtime truth store`
@@ -709,6 +716,8 @@ claim/heartbeat、drain、stream gap 和 ambiguous effect。
 - SSE/WebSocket replay gap；
 - cross-tenant isolation；
 - Worker A upload / Worker B hydration and artifact reload；
+- staging 后、blob put 后到 activation 前两个上传崩溃窗口均使用同一 `upload_id` 恢复；
+  慢上传期间不得由 age-based cleanup 删除 staging/blob；
 - full restart/hydration/artifact reload。
 
 真实后端命令使用项目已有 integration marker 和 test compose。跳过 live suite 不能生成
@@ -811,7 +820,8 @@ rg -n -i "ocr" src tests docs/superpowers/specs/2026-07-17-agentos-phase6-distri
 - immutable type/strict validation；
 - secret redaction；
 - worker drain/backpressure；
-- shared Artifact staging/cleanup/cross-worker visibility；
+- shared Artifact staging/retry/cross-worker visibility，以及无 upload lease 时禁止 age-based
+  stale cleanup；
 - test determinism；
 - 300/500/800 文件规模；
 - public API 最小化；
