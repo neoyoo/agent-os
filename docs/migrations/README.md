@@ -30,6 +30,7 @@ required environment variables and idempotency behavior.
 | `2026-06-15-postgres-team-ui-events.sql` | Postgres | Team UI replay/follow events. |
 | `2026-06-15-postgres-team-worker-cancellations.sql` | Postgres | Team worker cancellation intent state. |
 | `2026-06-16-postgres-plan-claims.sql` | Postgres | Planner claim/lease state. |
+| `2026-07-20-postgres-distributed-runtime.sql` | Postgres | Phase 6 tenant-scoped Run, claim/fence, checkpoint, outbox, side-effect, and Artifact truth store. |
 
 ## Ownership
 
