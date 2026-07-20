@@ -29,26 +29,34 @@ async def evaluate_agentos_script(
     args: tuple[object, ...],
 ) -> object:
     if "agentos:queue:reserve:v1" in script:
-        assert numkeys == 2 and len(args) == 3
-        processing, committed, delivery_id = map(str, args)
+        assert numkeys == 3 and len(args) == 5
+        processing, committed, stream, delivery_id, group = map(str, args)
         if committed in redis.values:
+            await redis.xack(stream, group, delivery_id)
             return 2
         current = redis.values.get(processing)
         if current is None:
             redis.values[processing] = delivery_id
             return 1
-        return 1 if current == delivery_id else 0
+        if current == delivery_id:
+            return 1
+        await redis.xack(stream, group, delivery_id)
+        return 0
 
     if "agentos:queue:ack:v1" in script:
         assert numkeys == 3 and len(args) == 6
         processing, committed, stream = map(str, args[:3])
         delivery_id, group = map(str, args[3:5])
         current = redis.values.get(processing)
-        if committed not in redis.values and current != delivery_id:
+        committed_delivery = redis.values.get(committed)
+        if committed_delivery is not None:
+            if committed_delivery != delivery_id:
+                return -1
+            return await redis.xack(stream, group, delivery_id)
+        if current != delivery_id:
             return -1
-        redis.values[committed] = "1"
-        if current == delivery_id:
-            redis.values.pop(processing, None)
+        redis.values[committed] = delivery_id
+        redis.values.pop(processing, None)
         return await redis.xack(stream, group, delivery_id)
 
     if "agentos:queue:trim:v1" in script:

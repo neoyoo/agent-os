@@ -9,6 +9,7 @@ from agentos.distributed.redis._client import AsyncRedisClient
 _RESERVE_DELIVERY_SCRIPT = """
 -- agentos:queue:reserve:v1
 if redis.call('GET', KEYS[2]) then
+    redis.call('XACK', KEYS[3], ARGV[2], ARGV[1])
     return 2
 end
 local current = redis.call('GET', KEYS[1])
@@ -19,6 +20,7 @@ end
 if current == ARGV[1] then
     return 1
 end
+redis.call('XACK', KEYS[3], ARGV[2], ARGV[1])
 return 0
 """
 
@@ -26,13 +28,18 @@ _ACK_DELIVERY_SCRIPT = """
 -- agentos:queue:ack:v1
 local committed = redis.call('GET', KEYS[2])
 local current = redis.call('GET', KEYS[1])
-if not committed and current ~= ARGV[1] then
+if committed then
+    if committed ~= ARGV[1] then
+        return -1
+    end
+    redis.call('EXPIRE', KEYS[2], ARGV[3])
+    return redis.call('XACK', KEYS[3], ARGV[2], ARGV[1])
+end
+if current ~= ARGV[1] then
     return -1
 end
-redis.call('SET', KEYS[2], '1', 'EX', ARGV[3])
-if current == ARGV[1] then
-    redis.call('DEL', KEYS[1])
-end
+redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[3])
+redis.call('DEL', KEYS[1])
 return redis.call('XACK', KEYS[3], ARGV[2], ARGV[1])
 """
 
@@ -109,10 +116,12 @@ async def reserve_delivery(
     result = await redis.call(
         "eval",
         _RESERVE_DELIVERY_SCRIPT,
-        2,
+        3,
         _processing_key(stream, group, outbox_id),
         _committed_key(stream, group, outbox_id),
+        stream,
         delivery_id,
+        group,
     )
     states = {0: "duplicate", 1: "reserved", 2: "committed"}
     try:

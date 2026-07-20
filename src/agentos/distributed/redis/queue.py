@@ -165,7 +165,7 @@ class RedisQueueAdapter:
         counts: dict[str, int],
     ) -> tuple[QueueDelivery, ...]:
         deliveries: list[QueueDelivery] = []
-        committed_duplicates: list[str] = []
+        discarded_duplicate = False
         for delivery_id, fields in rows:
             outbox_id = field_text(fields, "outbox_id")
             if outbox_id is None:
@@ -177,20 +177,13 @@ class RedisQueueAdapter:
                 outbox_id=outbox_id,
                 delivery_id=delivery_id,
             )
-            if state == "committed":
-                committed_duplicates.append(delivery_id)
-                continue
             if state == "reserved":
                 deliveries.append(
                     QueueDelivery(delivery_id, outbox_id, counts.get(delivery_id, 1)),
                 )
-        if committed_duplicates:
-            await self._redis.call(
-                "xack",
-                self._stream_key(topic),
-                self._group_name,
-                *committed_duplicates,
-            )
+            else:
+                discarded_duplicate = True
+        if discarded_duplicate:
             await self._trim_safely(topic)
         return tuple(deliveries)
 

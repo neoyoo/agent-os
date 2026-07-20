@@ -5,9 +5,11 @@ from uuid import uuid4
 
 import pytest
 
+from agentos.distributed.errors import DeliveryUnavailableError
 from agentos.distributed.models import (
     LiveContentDelta,
     OutboxRecord,
+    QueueDelivery,
     ReplayBatch,
     RequestScope,
     RunEventEnvelope,
@@ -186,6 +188,107 @@ def test_live_queue_deduplicates_across_adapters_and_preserves_new_group() -> No
         finally:
             await first_queue.close()
             await second_queue.close()
+            await _delete_prefix(client, prefix)
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_live_queue_reclaims_canonical_after_older_noncanonical_duplicate() -> None:
+    async def scenario() -> None:
+        client = await _redis_client()
+        prefix = f"agentos_live_{uuid4().hex}"
+        topic = "run_wakeup"
+        stream = f"{prefix}:queue:{topic}"
+        queue = RedisQueueAdapter(
+            client=client,
+            key_prefix=prefix,
+            group_name="workers",
+            block_ms=10,
+        )
+        try:
+            await queue.publish(record=_record("outbox_1", topic))
+            await queue.publish(record=_record("outbox_1", topic))
+            raw_rows = await client.xreadgroup(
+                "workers",
+                "slow_worker",
+                {stream: ">"},
+                count=1,
+                block=10,
+            )
+            older_id = raw_rows[0][1][0][0]
+            canonical = await queue.receive(
+                topic=topic,
+                consumer_id="crashed_worker",
+                limit=1,
+            )
+            await asyncio.sleep(0.01)
+
+            assert await queue.reclaim(
+                topic=topic,
+                consumer_id="recovery_worker",
+                min_idle=timedelta(milliseconds=1),
+                limit=1,
+            ) == ()
+            reclaimed = await queue.reclaim(
+                topic=topic,
+                consumer_id="recovery_worker",
+                min_idle=timedelta(milliseconds=1),
+                limit=1,
+            )
+
+            assert older_id != canonical[0].delivery_id
+            assert reclaimed[0].delivery_id == canonical[0].delivery_id
+        finally:
+            await queue.close()
+            await _delete_prefix(client, prefix)
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_live_queue_ack_binds_committed_marker_to_canonical_delivery() -> None:
+    async def scenario() -> None:
+        client = await _redis_client()
+        prefix = f"agentos_live_{uuid4().hex}"
+        topic = "run_wakeup"
+        stream = f"{prefix}:queue:{topic}"
+        queue = RedisQueueAdapter(
+            client=client,
+            key_prefix=prefix,
+            group_name="workers",
+            block_ms=10,
+            dedup_ttl_seconds=60,
+        )
+        try:
+            await queue.publish(record=_record("outbox_1", topic))
+            await queue.publish(record=_record("outbox_2", topic))
+            first, second = await queue.receive(
+                topic=topic,
+                consumer_id="worker_1",
+                limit=2,
+            )
+            await queue.ack(topic=topic, delivery=first)
+            await queue.ack(topic=topic, delivery=first)
+            committed_key = f"{stream}:group:workers:committed:outbox_1"
+            assert await client.get(committed_key) == first.delivery_id
+            assert 0 < await client.ttl(committed_key) <= 60
+
+            mismatched = QueueDelivery(
+                second.delivery_id,
+                first.outbox_id,
+                second.delivery_count,
+            )
+            with pytest.raises(DeliveryUnavailableError):
+                await queue.ack(topic=topic, delivery=mismatched)
+
+            processing_key = f"{stream}:group:workers:processing:outbox_2"
+            assert await client.get(processing_key) == second.delivery_id
+            assert (await client.xpending(stream, "workers"))["pending"] == 1
+            await queue.ack(topic=topic, delivery=second)
+            assert await client.get(processing_key) is None
+        finally:
+            await queue.close()
             await _delete_prefix(client, prefix)
             await client.aclose()
 

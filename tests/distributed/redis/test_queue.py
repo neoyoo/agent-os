@@ -7,7 +7,7 @@ from agentos.distributed.errors import (
     DeliveryUnavailableError,
     DistributedStoreClosedError,
 )
-from agentos.distributed.models import OutboxRecord, RequestScope
+from agentos.distributed.models import OutboxRecord, QueueDelivery, RequestScope
 from agentos.distributed.redis.queue import RedisQueueAdapter
 
 from _fake_redis import FakeAsyncRedis
@@ -99,7 +99,7 @@ def test_queue_uses_redis_ids_and_deduplicates_stable_outbox_ids() -> None:
             if "agentos:queue:" in script
         }
         assert command_shapes == {
-            ("-- agentos:queue:reserve:v1", 2, 3),
+            ("-- agentos:queue:reserve:v1", 3, 5),
             ("-- agentos:queue:ack:v1", 3, 6),
             ("-- agentos:queue:trim:v1", 1, 2),
         }
@@ -129,11 +129,11 @@ def test_queue_deduplicates_same_group_across_adapter_instances() -> None:
         assert len(canonical) == 1
         assert duplicate == ()
         pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
-        assert pending["pending"] == 2
+        assert pending["pending"] == 1
 
         await first_queue.ack(topic="run_wakeup", delivery=canonical[0])
         pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
-        assert pending["pending"] == 1
+        assert pending["pending"] == 0
         redis.advance_pending(5_000)
         assert await second_queue.reclaim(
             topic="run_wakeup",
@@ -143,6 +143,82 @@ def test_queue_deduplicates_same_group_across_adapter_instances() -> None:
         ) == ()
         pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
         assert pending["pending"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_queue_reclaims_canonical_after_older_duplicate_was_reserved_late() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        queue = RedisQueueAdapter(client=redis, group_name="workers", block_ms=10)
+        await queue.publish(record=_record("outbox_1"))
+        await queue.publish(record=_record("outbox_1"))
+
+        raw_rows = await redis.xreadgroup(
+            "workers",
+            "slow_worker",
+            {"agentos:queue:run_wakeup": ">"},
+            count=1,
+            block=10,
+            noack=False,
+        )
+        older_id = raw_rows[0][1][0][0]
+        canonical = await queue.receive(
+            topic="run_wakeup",
+            consumer_id="crashed_worker",
+            limit=1,
+        )
+        redis.advance_pending(5_000)
+
+        assert await queue.reclaim(
+            topic="run_wakeup",
+            consumer_id="recovery_worker",
+            min_idle=timedelta(seconds=1),
+            limit=1,
+        ) == ()
+        reclaimed = await queue.reclaim(
+            topic="run_wakeup",
+            consumer_id="recovery_worker",
+            min_idle=timedelta(seconds=1),
+            limit=1,
+        )
+
+        assert older_id != canonical[0].delivery_id
+        assert reclaimed[0].delivery_id == canonical[0].delivery_id
+
+    asyncio.run(scenario())
+
+
+def test_queue_ack_rejects_delivery_from_another_outbox() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        queue = RedisQueueAdapter(client=redis, group_name="workers")
+        await queue.publish(record=_record("outbox_1"))
+        await queue.publish(record=_record("outbox_2"))
+        first, second = await queue.receive(
+            topic="run_wakeup",
+            consumer_id="worker_1",
+            limit=2,
+        )
+        await queue.ack(topic="run_wakeup", delivery=first)
+        await queue.ack(topic="run_wakeup", delivery=first)
+
+        mismatched = QueueDelivery(
+            second.delivery_id,
+            first.outbox_id,
+            second.delivery_count,
+        )
+        with pytest.raises(DeliveryUnavailableError):
+            await queue.ack(topic="run_wakeup", delivery=mismatched)
+
+        pending = await redis.xpending("agentos:queue:run_wakeup", "workers")
+        assert pending["pending"] == 1
+        processing_key = (
+            "agentos:queue:run_wakeup:group:workers:processing:outbox_2"
+        )
+        assert redis.values[processing_key] == second.delivery_id
+        await queue.ack(topic="run_wakeup", delivery=second)
+        assert processing_key not in redis.values
 
     asyncio.run(scenario())
 
