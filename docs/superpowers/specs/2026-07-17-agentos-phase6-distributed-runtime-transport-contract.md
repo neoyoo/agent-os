@@ -222,6 +222,84 @@ Kernel 的 RunState 保持 Session-scoped，
 不读取鉴权对象。跨 tenant 的 Session/Run/Artifact/cursor 一律返回稳定 not-found，不能
 通过错误差异泄露存在性。
 
+### 3.6 Distributed Shared Contract v1
+
+Wave 2 冻结以下共享类型。后续 PostgreSQL、Redis、Worker、Channel 和 Transport 只能实现或
+映射这些类型，不得在 Adapter 内复制同义 DTO：
+
+- `AcceptedStartInput`、`AcceptedTurnExecution`、`AcceptedTurnInput`、
+  `RunWriteGuard`、`DurableRunCommand`、`DurableCommandReceipt` 和 `RunState` 继续由
+  `agentos.runtime` 唯一拥有；`agentos.distributed` 只引用，不重新定义或包装；
+- `RunReadModel(tenant_id, session_id, run_id, status, wait_reason, aggregate_version, result)`
+  是 PostgreSQL 查询边界的独立 immutable DTO；status/wait reason/result 分别直接引用 canonical
+  `RunStatus`、`WaitReason` 和 `AgentResult` 并执行精确类型校验，COMPLETED 必须有 result，
+  其他状态不得携带 result；
+- `ArtifactRecord`、`ArtifactPage` 和 `ArtifactNotFoundError` 继续由
+  `agentos.artifacts` 唯一拥有；
+- `QueueDelivery(delivery_id, outbox_id, delivery_count)` 只承载 Redis delivery identity、
+  稳定 outbox identity 和投递次数，不携带 tenant、session、run 或业务 payload；
+- `RunDeliveryTarget(scope, outbox_id, session_id, run)` 是 PostgreSQL 根据 outbox ID
+  解析出的权威执行目标；
+- `ClaimedExecution(target, claim, execution)` 同时绑定 PostgreSQL 权威 delivery target、Claim、
+  canonical `AcceptedTurnExecution` 及 execution guard 的 version/claim ID/fencing token；start 只允许
+  QUEUED target，recover 只允许 RUNNING target；
+- `SessionLease(scope, session_id, owner_id, lease_id, expires_at)` 只表达 Redis 排他调度，
+  不能替代 PostgreSQL fence；
+- `OutboxRecord(scope, outbox_id, topic, payload, created_at, publish_attempts,
+  last_publish_attempt_at, published_at)` 保存 PostgreSQL 真值和冻结 JSON payload；
+- `OutboxClaim(record, owner_id, claim_id, expires_at)` 是 Relay 的短期领取结果；
+- `RunEventEnvelope(tenant_id, session_id, run_id, turn_id, execution_attempt, event_sequence,
+  event, occurred_at)` 是 Replay、SSE、WebSocket 和 A2A 共用的 typed event 信封；`event` 必须是
+  Worker 从 canonical `TurnStreamEvent` 投影出的 allowlisted `LiveRunEvent`，`event_kind` 由具体
+  projection 类型派生，调用方不能独立填写；
+- `ReplayItem(cursor, event)`、`ReplayBatch(items, next_cursor)` 和
+  `StreamGap(tenant_id, session_id, run_id, requested_cursor, oldest_available_cursor, reason)`
+  定义 Replay + Tail 与显式 Gap；Replay identity 只包含 tenant/session/run，不保存发起
+  principal；Gap reason 只允许 `trimmed` 或 `unavailable`；
+- 非空 `ReplayBatch.next_cursor` 必须等于最后一个 item cursor；`StreamGap.requested_cursor` 必须
+  等于当前 subscription 请求 cursor；
+- `ArtifactContent(record, data)` 是 Artifact read 的 immutable application result；
+- `WorkerState(worker_id, status, accepting_claims, active_claim_count, last_heartbeat_at,
+  drain_started_at)` 是 Readiness 使用的不可变快照；status 只允许 `created`、`running`、
+  `draining`、`closed`。
+
+共享类型校验规则固定为：
+
+- identifier 必须是精确 `str`、1..255 个 Unicode 字符、无首尾空白、无任何空白或控制字符；
+- Artifact handle 额外遵守 canonical `art_` + UUID4；
+- aggregate version、attempt count、active count 和 event sequence 是拒绝 `bool` 的非负整数；
+- delivery count、fencing token 和 execution attempt 是拒绝 `bool` 的正整数；
+- datetime 必须 timezone-aware，进入 DTO 时统一规范为 UTC；
+- Outbox attempt/published 时间不得早于 created time；零次 attempt 不得有 attempt/published
+  时间，非零 attempt 必须有 `last_publish_attempt_at`，`published_at` 不得早于最后一次 attempt；
+- tuple 和 JSON payload 在构造边界复制并冻结；所有 DTO 使用 `frozen=True, slots=True`。
+
+State/Application Port 按接口隔离原则冻结为 `RunSubmissionPort`、`RunCommandPort`、
+`RunQueryPort`；一次 `submit` 或 `submit_command` 必须由 Port 在单个 PostgreSQL 事务中完成，
+Service 不能跨多个 Port 拼接 Run、AcceptedInput 和 Outbox。Worker/Relay Port 冻结为
+`ExecutionClaimPort`、`OutboxPort`、`QueuePort`、`LeasePort` 和 `EventReplayPort`；Artifact
+Application Port 冻结为 `DistributedArtifactPort`。所有 I/O 方法必须是 coroutine 或返回
+`AsyncIterator`，不得存在同步 shadow method。
+
+Scope 规则分为两步：
+
+1. Application、tenant state、claim、lease、replay 和 artifact 操作显式接收
+   `RequestScope`；
+2. Queue 全部操作和 Outbox Relay claim 是受信任内部 delivery bootstrap，不接收 request
+   scope。Queue topic/partition 是部署级全局地址，只保存全局唯一 opaque `outbox_id`；
+   `ExecutionClaimPort.resolve_delivery(outbox_id)` 必须从 PostgreSQL 返回权威
+   `RunDeliveryTarget.scope`，后续所有操作显式使用该 scope。
+
+因此 Redis tenant 字段即使存在也没有权限语义。Outbox claim 返回的 `OutboxRecord.scope`
+同样来自 PostgreSQL，mark/release 必须提交完整 claim，不能由调用方另传 tenant；
+`QueuePort.publish(record=claim.record)` 接收该权威 record，并且只向 record 指定的部署级全局
+topic/partition 写入稳定 `outbox_id`，不写 scope 或业务 payload。确定性 outbox ID 的生成必须把
+tenant 纳入 identity，最终 ID 在 PostgreSQL 中全局唯一，允许无 scope bootstrap 查询。
+
+Side Effect DTO 和 `SideEffectStore` 必须由 Task 6 在 canonical capability/runtime leaf 中一起
+冻结。Task 5 不允许用 `dict`、`object`、字符串状态或位于 `distributed` 的临时类型占位；
+Task 6 完成后 PostgreSQL Adapter 直接实现该 canonical Port。
+
 ## 4. 首次 Run 与 Command Contract
 
 ### 4.1 RunSubmission
@@ -261,6 +339,10 @@ canonical input 使用版本化 JSON，摘要覆盖 tenant、session、正文和
 同内容返回 `duplicate=True`；同 ID 不同内容抛出 `RunSubmissionConflictError`。用户正文
 只在 Worker 开始 Turn 后追加为 StoredMessage；pending start input 是 Command 数据，
 不是第二份 Conversation Read Model。
+
+所有 Adapter 必须调用 shared contract 的 `canonical_submission_digest(scope, submission)`：v1
+使用 UTF-8 JSON、排序 object key、无多余空白，字段固定为 `version=1`、`tenant_id`、
+`session_id`、`content` 和有序 `artifact_handles`；principal 与 submission ID 不进入摘要。
 
 ### 4.2 AcceptedTurnInput
 
@@ -756,9 +838,15 @@ execution_attempt / event_sequence / event_kind
 规则：
 
 - Worker Event Sink 发布类型化 QueryLoop Event，不保存 ContextSnapshot 或敏感 payload；
+- 安全投影保留用户可见 content/final/status/plan 信息，但删除原始 Prompt、thinking、Tool Result、
+  WaitReason detail、异常对象/文本、内部 cancellation detail；Tool 事件只保留 name、call ID 和状态；
 - Redis replay 使用稳定 cursor、Replay + Tail 和显式 Gap；
 - 裁剪、Redis 丢失或 cursor 过旧时返回 `StreamGap`，不得伪造连续历史；
 - Terminal truth 始终可从 PostgreSQL 查询；
+- `RunEventStream.subscribe()` 在返回 iterator、Channel 发送 SSE headers 前，必须 await
+  `RunQueryPort` 完成同 tenant/session/run 的 PostgreSQL existence/authorization preflight；
+- `EventReplayPort.follow()` 返回显式支持 async `aclose()` 的 `EventSubscription`；Application
+  validation wrapper 在正常结束、校验失败、消费者取消/关闭三条路径都必须关闭底层 tail；
 - SSE/WebSocket disconnect 不取消 Run，除非客户端另行提交 Cancel Command；
 - 多个 observer 不分享消费型 ACK，不影响 Worker delivery。
 
@@ -991,6 +1079,7 @@ Adapter 中禁止使用同步 connection/client。
 
 至少提供稳定、无 secret 的领域错误：
 
+- `RunNotFoundError`；
 - `RunSubmissionConflictError`；
 - `ActiveRunConflictError`；
 - `CommandConflictError` / `CommandStateError`；
@@ -1005,6 +1094,10 @@ Adapter 中禁止使用同步 connection/client。
 
 错误文本不得包含 DSN、密码、Token、SQL、Artifact 路径、Tool secret arguments 或原始
 Prompt。Transport 使用稳定 error code 映射，不把 Adapter exception 原样返回网络。
+Distributed Store/Service 使用 `agentos.distributed.errors` 中无参数构造、固定 code/message 的
+领域错误；不得直接重新导出允许携带任意内部文本的 runtime/Adapter exception。已有 canonical
+domain owner 提供同样固定安全文本的 not-found 类型（例如 `ArtifactNotFoundError`）保持例外，
+由 Transport 按类型映射稳定 code。
 
 ## 17. 故障注入门禁
 

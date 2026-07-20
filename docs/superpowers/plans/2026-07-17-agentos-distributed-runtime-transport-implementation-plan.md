@@ -333,9 +333,10 @@ python -m pytest tests/architecture/test_distributed_import_boundaries.py -q
 
 新增：
 
-- `distributed/models.py`：RequestScope、Submission/Receipt、Accepted execution、Claim、
-  Delivery、Outbox、StreamGap、WorkerState；
-- `distributed/protocols.py`：State/Claim/Outbox/Queue/Lease/Replay/SideEffect Port；
+- `distributed/models.py` 及职责 leaf：RequestScope、Submission/Receipt、RunReadModel、canonical
+  submission digest、accepted execution 引用、Claim、Delivery、Outbox、安全 LiveEvent projection、
+  StreamGap、WorkerState；
+- `distributed/protocols.py`：State/Claim/Outbox/Queue/Lease/Replay/Artifact Port；
 - `distributed/services.py`：RunSubmission/Command/Query/Event/Artifact Application Service；
 - `distributed/errors.py`。
 
@@ -348,11 +349,20 @@ python -m pytest tests/architecture/test_distributed_import_boundaries.py -q
 - Service 全部显式接收 RequestScope，数据库键固定 tenant-scoped；
 - identifier、UTC datetime、version/fence 严格校验；
 - Service 不执行 QueryLoop。
+- Accepted execution、Run/Command、Artifact、RunStatus、WaitReason 和 AgentResult 直接引用
+  canonical runtime/domain type，不在 distributed 复制定义；
+- Replay 使用从 `TurnStreamEvent` allowlist 投影的 typed `RunEventEnvelope`，删除 Prompt、thinking、
+  Tool Result 和异常 payload，`event_kind` 从 projection 派生；
+- `RunQueryPort` 返回 PostgreSQL `RunReadModel`；Event subscribe 在打开 stream 前异步 preflight；
+- Replay tail 使用显式 async-close subscription，Application wrapper 负责透传关闭；
+- Queue delivery 不携带或信任 tenant payload，publish 接收 PostgreSQL 权威 `OutboxRecord`；
+- Side Effect DTO/Port 与 ToolInvocation 在 Task 6 的 canonical capability/runtime leaf 一起
+  冻结，Task 5 不使用 `dict`/`object` 临时占位。
 
 验证：
 
 ```powershell
-python -m pytest tests/distributed/test_models.py tests/distributed/test_protocols.py tests/distributed/test_services.py tests/distributed/test_run_submission_contract.py -q
+python -m pytest tests/distributed tests/architecture/test_distributed_import_boundaries.py -q
 python -m ruff check src/agentos/distributed tests/distributed
 ```
 
