@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from agentos.distributed.protocols import OutboxPort, QueuePort
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class OutboxRelay:
     """把 PostgreSQL Outbox claim 发布到 at-least-once Queue。"""
 
@@ -15,6 +16,14 @@ class OutboxRelay:
     owner_id: str
     batch_size: int
     claim_ttl: timedelta
+    _activity: asyncio.Lock = field(
+        default_factory=asyncio.Lock,
+        compare=False,
+        init=False,
+        repr=False,
+    )
+    _closing: bool = field(default=False, compare=False, init=False, repr=False)
+    _closed: bool = field(default=False, compare=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.owner_id.strip():
@@ -25,6 +34,25 @@ class OutboxRelay:
             raise ValueError("claim_ttl must be positive")
 
     async def relay_once(self) -> int:
+        """Publish one bounded batch while the relay accepts work."""
+
+        if self._closing:
+            raise RuntimeError("relay is closing or closed")
+        async with self._activity:
+            if self._closing:
+                raise RuntimeError("relay is closing or closed")
+            return await self._relay_batch()
+
+    async def close(self) -> None:
+        """Stop new batches and wait for the active batch to finish."""
+
+        if self._closed:
+            return
+        self._closing = True
+        async with self._activity:
+            self._closed = True
+
+    async def _relay_batch(self) -> int:
         """发布一个有界批次；mark 失败保留可重复发布窗口。"""
 
         claims = await self.outbox.claim_batch(
