@@ -16,7 +16,12 @@ from agentos.distributed.models import (
     SessionLease,
 )
 from agentos.runtime.durable_commands import AcceptedContinuationInput
-from agentos.runtime.execution import AcceptedStartInput, AcceptedTurnExecution
+from agentos.runtime.execution import (
+    AcceptedStartInput,
+    AcceptedTurnExecution,
+    AcceptedTurnPreparation,
+    ApplyAcceptedInput,
+)
 from agentos.runtime.run import UserTurnInput
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunState, RunStatus
@@ -44,11 +49,14 @@ def delivery_target(status: RunStatus = RunStatus.QUEUED) -> RunDeliveryTarget:
 
 def claimed_execution(
     *,
-    mode: str = "start",
+    preparation: AcceptedTurnPreparation | None = None,
     continuation: AcceptedContinuationInput | None = None,
 ) -> ClaimedExecution:
+    selected_preparation = preparation or ApplyAcceptedInput()
     target = delivery_target(
-        RunStatus.QUEUED if mode == "start" else RunStatus.RUNNING,
+        RunStatus.QUEUED
+        if type(selected_preparation) is ApplyAcceptedInput
+        else RunStatus.RUNNING,
     )
     claim = ExecutionClaim(
         tenant_id=SCOPE.tenant_id,
@@ -73,7 +81,7 @@ def claimed_execution(
             claim_id=claim.claim_id,
             fencing_token=claim.fencing_token,
         ),
-        mode=mode,  # type: ignore[arg-type]
+        preparation=selected_preparation,
     )
     return ClaimedExecution(target, claim, execution)
 

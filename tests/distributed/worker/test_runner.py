@@ -8,6 +8,7 @@ import pytest
 from agentos.distributed.errors import DistributedBackendUnavailableError
 from agentos.distributed.worker.runner import WorkerRunner
 from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.execution import RestoreAcceptedTurn, RunExecutionCursor
 from agentos.runtime.side_effect_resolution import side_effect_resolution_to_payload
 from agentos.runtime.side_effect_types import (
     SideEffectResolution,
@@ -253,7 +254,11 @@ def test_side_effect_reconciliation_wait_is_published_before_ack() -> None:
         from agentos._waiting import WaitReason
 
         trace: list[str] = []
-        claimed = claimed_execution(mode="recover")
+        claimed = claimed_execution(
+            preparation=RestoreAcceptedTurn(
+                RunExecutionCursor("turn_1", "before_provider", 0),
+            ),
+        )
         claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
         queue = FakeQueue(trace)
         leases = FakeLeases(trace)
@@ -298,7 +303,12 @@ def test_side_effect_recovery_is_passed_to_the_standard_agent_unchanged() -> Non
             payload=side_effect_resolution_to_payload(resolution),
             turn_id="turn_2",
         )
-        claimed = claimed_execution(mode="recover", continuation=continuation)
+        claimed = claimed_execution(
+            preparation=RestoreAcceptedTurn(
+                RunExecutionCursor("turn_2", "before_provider", 0),
+            ),
+            continuation=continuation,
+        )
         claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
         queue = FakeQueue(trace)
         leases = FakeLeases(trace)
