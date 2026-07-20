@@ -137,9 +137,11 @@ class DistributedWorker:
                     limit=available,
                 )
             self._last_heartbeat_at = self._clock()
-            if self._status != "running":
+            if not self._can_accept_claims():
                 return
             for delivery in deliveries:
+                if not self._can_accept_claims():
+                    return
                 task = asyncio.create_task(self._runner.run_delivery(delivery))
                 self._active.add(task)
                 task.add_done_callback(self._delivery_done)
@@ -155,11 +157,20 @@ class DistributedWorker:
         error = task.exception()
         if error is None:
             return
-        if self._failure is None:
-            self._failure = error
+        self._remember_failure(error)
         receiver = self._receiver
         if receiver is not None and not receiver.done():
             receiver.cancel()
+
+    def _can_accept_claims(self) -> bool:
+        for task in tuple(self._active):
+            if task.done() and not task.cancelled():
+                self._remember_failure(task.exception())
+        return self._status == "running" and self._failure is None
+
+    def _remember_failure(self, error: BaseException | None) -> None:
+        if error is not None and self._failure is None:
+            self._failure = error
 
     def _receiver_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
@@ -168,7 +179,7 @@ class DistributedWorker:
         if error is not None:
             if self._failure is None:
                 self._failure = error
-        elif self._status == "running":
+        elif self._status == "running" and self._failure is None:
             self._failure = RuntimeError("worker receive loop stopped")
 
     async def _finish_active(self, timeout: float) -> None:
