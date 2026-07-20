@@ -1,3 +1,10 @@
+"""PostgreSQL Artifact metadata orchestration with durable upload staging.
+
+Staging rows and blobs are recovery state: retries with the same upload id converge
+them to active. Automatic age-based cleanup is intentionally deferred until an
+upload lease can distinguish stale work from slow in-flight blob I/O.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -14,18 +21,14 @@ from agentos.distributed.blobs.protocol import BlobStore
 from agentos.distributed.errors import DistributedBackendUnavailableError
 from agentos.distributed.models import ArtifactContent, RequestScope
 from agentos.distributed._model_validation import require_identifier
-from agentos.distributed.postgres._artifact_blobs import (
-    cleanup_blob,
-    put_upload_candidate,
-)
+from agentos.distributed.postgres._artifact_blobs import put_upload_candidate
 from agentos.distributed.postgres._artifact_records import (
     advisory_lock,
     decode_cursor,
-    duplicate_upload,
     encode_cursor,
     ensure_session,
-    placeholder_time,
     record_from_row,
+    validate_upload_retry,
 )
 from agentos.distributed.postgres._database import PostgresPool, fetchall, fetchone
 
@@ -63,76 +66,108 @@ class PostgresArtifactStore:
         if type(data) is not bytes:
             raise ArtifactValidationError("artifact data must be bytes")
         require_identifier(upload_id, "upload_id")
-        artifact_id = self._id_factory()
         digest = sha256(data).hexdigest()
-        candidate = ArtifactRecord(
-            artifact_id,
-            session_id,
-            filename,
-            media_type,
-            len(data),
-            placeholder_time(),
-        )
-        created = False
-        try:
-            created = await put_upload_candidate(
-                self._blobs,
-                artifact_id=artifact_id,
-                data=data,
+        async with self._database.transaction() as connection:
+            await advisory_lock(connection, scope.tenant_id, upload_id)
+            row = await fetchone(
+                connection,
+                """
+                SELECT * FROM agentos_distributed_artifacts
+                WHERE tenant_id = %s AND upload_id = %s
+                FOR UPDATE
+                """,
+                (scope.tenant_id, upload_id),
             )
-            if not created:
-                raise ArtifactValidationError("artifact id collision")
-            async with self._database.transaction() as connection:
-                await advisory_lock(connection, scope.tenant_id, upload_id)
-                duplicate = await fetchone(
+            if row is None:
+                artifact_id = self._id_factory()
+                await ensure_session(connection, scope.tenant_id, session_id)
+                row = await fetchone(
                     connection,
                     """
-                    SELECT * FROM agentos_distributed_artifacts
-                    WHERE tenant_id = %s AND upload_id = %s
-                    FOR UPDATE
+                    INSERT INTO agentos_distributed_artifacts
+                        (tenant_id, session_id, artifact_id, upload_id,
+                         filename, media_type, size_bytes, content_digest,
+                         blob_key, lifecycle)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'staging')
+                    RETURNING *
                     """,
-                    (scope.tenant_id, upload_id),
+                    (
+                        scope.tenant_id,
+                        session_id,
+                        artifact_id,
+                        upload_id,
+                        filename,
+                        media_type,
+                        len(data),
+                        digest,
+                        artifact_id,
+                    ),
                 )
-                if duplicate is not None:
-                    record = duplicate_upload(
-                        duplicate,
-                        candidate,
-                        digest=digest,
-                    )
-                else:
-                    await ensure_session(connection, scope.tenant_id, session_id)
-                    row = await fetchone(
-                        connection,
-                        """
-                        INSERT INTO agentos_distributed_artifacts
-                            (tenant_id, session_id, artifact_id, upload_id,
-                             filename, media_type, size_bytes, content_digest,
-                             blob_key, lifecycle)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
-                        RETURNING *
-                        """,
-                        (
-                            scope.tenant_id,
-                            session_id,
-                            artifact_id,
-                            upload_id,
-                            filename,
-                            media_type,
-                            len(data),
-                            digest,
-                            artifact_id,
-                        ),
-                    )
-                    if row is None:
-                        raise DistributedBackendUnavailableError()
-                    record = record_from_row(row)
-            if record.id != artifact_id:
-                await cleanup_blob(self._blobs, artifact_id)
+                if row is None:
+                    raise DistributedBackendUnavailableError()
+            record = validate_upload_retry(
+                row,
+                session_id=session_id,
+                filename=filename,
+                media_type=media_type,
+                size_bytes=len(data),
+                digest=digest,
+            )
+            if row["lifecycle"] == "active":
+                return record
+
+        created = await put_upload_candidate(
+            self._blobs,
+            artifact_id=record.id,
+            data=data,
+        )
+        if not created:
+            existing = await self._blobs.read(artifact_id=record.id)
+            if (
+                existing is None
+                or len(existing) != record.size_bytes
+                or sha256(existing).hexdigest() != digest
+            ):
+                raise DistributedBackendUnavailableError()
+
+        async with self._database.transaction() as connection:
+            await advisory_lock(connection, scope.tenant_id, upload_id)
+            row = await fetchone(
+                connection,
+                """
+                SELECT * FROM agentos_distributed_artifacts
+                WHERE tenant_id = %s AND upload_id = %s
+                FOR UPDATE
+                """,
+                (scope.tenant_id, upload_id),
+            )
+            if row is None:
+                raise DistributedBackendUnavailableError()
+            record = validate_upload_retry(
+                row,
+                session_id=session_id,
+                filename=filename,
+                media_type=media_type,
+                size_bytes=len(data),
+                digest=digest,
+            )
+            if row["lifecycle"] == "active":
+                return record
+            row = await fetchone(
+                connection,
+                """
+                UPDATE agentos_distributed_artifacts
+                SET lifecycle = 'active'
+                WHERE tenant_id = %s AND upload_id = %s
+                  AND lifecycle = 'staging'
+                RETURNING *
+                """,
+                (scope.tenant_id, upload_id),
+            )
+            if row is None:
+                raise DistributedBackendUnavailableError()
+            record = record_from_row(row)
             return record
-        except BaseException:
-            if created:
-                await cleanup_blob(self._blobs, artifact_id)
-            raise
 
     async def list(
         self,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime
+from datetime import datetime
 import json
 from typing import cast
 
@@ -28,20 +28,24 @@ def record_from_row(row: Row) -> ArtifactRecord:
         raise DistributedBackendUnavailableError() from None
 
 
-def duplicate_upload(
+def validate_upload_retry(
     row: Row,
-    candidate: ArtifactRecord,
     *,
+    session_id: str,
+    filename: str | None,
+    media_type: str,
+    size_bytes: int,
     digest: str,
 ) -> ArtifactRecord:
     record = record_from_row(row)
     if (
-        row["lifecycle"] != "active"
-        or record.session_id != candidate.session_id
-        or record.filename != candidate.filename
-        or record.media_type != candidate.media_type
-        or record.size_bytes != candidate.size_bytes
+        row["lifecycle"] not in {"staging", "active"}
+        or record.session_id != session_id
+        or record.filename != filename
+        or record.media_type != media_type
+        or record.size_bytes != size_bytes
         or row["content_digest"] != digest
+        or row["blob_key"] != record.id
     ):
         raise ArtifactValidationError("artifact upload conflicts with existing request")
     return record
@@ -108,16 +112,11 @@ def decode_cursor(cursor: str) -> str:
         raise ArtifactValidationError("invalid artifact cursor") from None
 
 
-def placeholder_time() -> datetime:
-    return datetime.min.replace(tzinfo=UTC)
-
-
 __all__ = [
     "advisory_lock",
     "decode_cursor",
-    "duplicate_upload",
     "encode_cursor",
     "ensure_session",
-    "placeholder_time",
     "record_from_row",
+    "validate_upload_retry",
 ]
