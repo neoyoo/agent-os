@@ -18,6 +18,7 @@ from agentos.runtime.side_effect_types import (
     SideEffectResolutionOutcome,
     SideEffectStatus,
 )
+from tests.planning._async import async_test
 
 
 OPERATION_ID = "operation_0123456789abcdef0123456789abcdef"
@@ -85,7 +86,7 @@ class CancelConnection:
         return Cursor([])
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_cancel_resolves_reserved_effect_before_start() -> None:
     connection = CancelConnection(_side_effect(SideEffectStatus.RESERVED))
 
@@ -103,7 +104,7 @@ async def test_cancel_resolves_reserved_effect_before_start() -> None:
     assert record.resolution is SideEffectResolutionOutcome.CANCELLED_BEFORE_START
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_cancel_in_flight_effect_performs_no_writes() -> None:
     connection = CancelConnection(_side_effect(SideEffectStatus.STARTED))
 

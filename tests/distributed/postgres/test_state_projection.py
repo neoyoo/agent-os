@@ -40,6 +40,7 @@ from agentos.runtime.side_effect_types import (
     SideEffectResolution,
     SideEffectResolutionKind,
 )
+from tests.planning._async import async_test
 
 
 def _checkpoint(*messages: CheckpointStoredMessage) -> SessionCheckpoint:
@@ -212,7 +213,7 @@ def test_non_completed_read_model_rejects_result(status: RunStatus) -> None:
         run_read_model(_run_row(status, "must not persist"))
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_resolution_maps_corrupt_ledger_state_to_command_error() -> None:
     operation_id = "operation_0123456789abcdef0123456789abcdef"
     state = RunState(

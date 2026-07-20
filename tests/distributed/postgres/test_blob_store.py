@@ -9,6 +9,7 @@ from agentos.distributed.errors import (
     DistributedBackendUnavailableError,
     DistributedStoreClosedError,
 )
+from tests.planning._async import async_test
 
 
 ARTIFACT_ID = "art_12345678-1234-4234-9234-123456789abc"
@@ -107,7 +108,7 @@ class FakeSession:
         return self.context
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_conditionally_puts_reads_and_deletes() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -142,7 +143,7 @@ async def test_s3_blob_store_conditionally_puts_reads_and_deletes() -> None:
     assert await store.read(artifact_id=ARTIFACT_ID) is None
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_validates_before_calling_backend() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -157,7 +158,7 @@ async def test_s3_blob_store_validates_before_calling_backend() -> None:
     assert client.calls == []
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_rejects_key_injection_and_endpoint_credentials() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -182,7 +183,7 @@ async def test_s3_blob_store_rejects_key_injection_and_endpoint_credentials() ->
     assert session.calls == []
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_redacts_backend_failure() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -199,7 +200,7 @@ async def test_s3_blob_store_redacts_backend_failure() -> None:
     assert captured.value.__cause__ is None
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_closes_only_session_owned_client() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -236,7 +237,7 @@ async def test_s3_blob_store_closes_only_session_owned_client() -> None:
     assert context.exited is True
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_close_failure_is_redacted_and_retryable() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -268,7 +269,7 @@ async def test_s3_blob_store_close_failure_is_redacted_and_retryable() -> None:
     assert context.exited is True
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_cancelled_close_can_be_retried() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 
@@ -303,7 +304,7 @@ async def test_s3_blob_store_cancelled_close_can_be_retried() -> None:
     assert context.exited is True
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_maps_missing_optional_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -322,7 +323,7 @@ async def test_s3_blob_store_maps_missing_optional_dependency(
     assert captured.value.__cause__ is None
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_s3_blob_store_closes_read_body_when_read_fails() -> None:
     from agentos.distributed.blobs.s3 import S3BlobStore
 

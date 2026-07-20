@@ -23,6 +23,7 @@ from agentos.runtime.checkpoint import (
 )
 from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.run_runtime import RunWriteGuard
+from tests.planning._async import async_test
 
 
 NOW = datetime(2026, 7, 20, tzinfo=UTC)
@@ -128,7 +129,7 @@ class TransactionDatabase:
             self.connection.staged.clear()
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_terminal_outbox_failure_rolls_back_all_checkpoint_writes() -> None:
     database = TransactionDatabase()
     checkpoint = _checkpoint(
@@ -151,7 +152,7 @@ async def test_terminal_outbox_failure_rolls_back_all_checkpoint_writes() -> Non
     assert database.committed == []
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_invalid_terminal_history_never_opens_transaction() -> None:
     call = CheckpointToolCall(
         "provider_call_1",
@@ -182,7 +183,7 @@ async def test_invalid_terminal_history_never_opens_transaction() -> None:
         )
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_new_worker_fence_rejects_stale_worker_write() -> None:
     row = _running_row()
     row.update(

@@ -16,6 +16,7 @@ from agentos.distributed.postgres._artifact_records import (
     record_from_row,
 )
 from agentos.distributed.postgres.artifacts import PostgresArtifactStore
+from tests.planning._async import async_test
 
 
 CANDIDATE_ID = "art_00000000-0000-4000-8000-000000000001"
@@ -103,7 +104,7 @@ async def _upload(store: PostgresArtifactStore):  # type: ignore[no-untyped-def]
     )
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_blob_collision_never_deletes_existing_content() -> None:
     blobs = RecordingBlobs(created=False)
     store = _store(object(), blobs)
@@ -114,7 +115,7 @@ async def test_blob_collision_never_deletes_existing_content() -> None:
     assert blobs.deleted == []
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_duplicate_upload_deletes_only_this_candidate_blob() -> None:
     blobs = RecordingBlobs()
     row = {
@@ -135,7 +136,7 @@ async def test_duplicate_upload_deletes_only_this_candidate_blob() -> None:
     assert blobs.deleted == [CANDIDATE_ID]
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_database_failure_cleans_new_candidate_blob() -> None:
     blobs = RecordingBlobs()
     store = _store(Database(FailingConnection()), blobs)
@@ -146,7 +147,7 @@ async def test_database_failure_cleans_new_candidate_blob() -> None:
     assert blobs.deleted == [CANDIDATE_ID]
 
 
-@pytest.mark.asyncio
+@async_test
 async def test_cancellation_waits_for_conditional_put_before_cleanup() -> None:
     class BlockingPutBlobs(RecordingBlobs):
         def __init__(self) -> None:
