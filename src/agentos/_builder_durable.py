@@ -4,24 +4,18 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from agentos._builder_hydration import hydrate_runtime_checkpoint
 from agentos._builder_state import RuntimeStateComponents
-from agentos._json_values import thaw_json_value
 from agentos.artifacts import ArtifactRuntime
 from agentos.artifacts.sqlite_filesystem import SqliteFilesystemArtifactStore
-from agentos.context import ContextRuntime, ContextState, WorkingStateSchema
-from agentos.context.models import ContextProtocolError
-from agentos.context.schema import (
-    validate_working_state_fields,
-    validate_working_state_value,
-)
-from agentos.messages import ActiveWindow, MessageRef, MessageRuntime
+from agentos.context import ContextRuntime
+from agentos.messages import MessageRuntime
 from agentos.runtime.agent import Agent
 from agentos.runtime.checkpoint import RuntimeCheckpointSource, SessionCheckpoint
 from agentos.runtime.durable_runtime import (
     DurableCommandRuntime,
     DurableStateStore,
 )
-from agentos.runtime.errors import CheckpointCorruptedError
 from agentos.runtime.payloads import PayloadProtectionContext, PayloadProtector
 from agentos.runtime.run_runtime import RunRuntime
 from agentos.runtime.session import SessionState
@@ -110,7 +104,11 @@ def _runtime_components(
         messages = MessageRuntime()
         context = ContextRuntime(event_bus=event_bus, session_id=session_id)
     else:
-        session, messages, context = _hydrate(checkpoint, event_bus, payloads)
+        session, messages, context = hydrate_runtime_checkpoint(
+            checkpoint,
+            event_bus,
+            payloads,
+        )
     return (
         RuntimeStateComponents(
             context=context,
@@ -124,47 +122,4 @@ def _runtime_components(
         ),
         messages,
     )
-
-
-def _hydrate(
-    checkpoint: SessionCheckpoint,
-    event_bus: EventBus | None,
-    payloads: ToolPayloadRuntime,
-) -> tuple[SessionState, MessageRuntime, ContextRuntime]:
-    try:
-        fields = validate_working_state_fields(
-            checkpoint.context.schema,
-            allow_empty=True,
-        )
-        declared = {field.name: field for field in fields}
-        working = thaw_json_value(checkpoint.context.working_state)
-        if type(working) is not dict or set(working) - set(declared):
-            raise ContextProtocolError("checkpoint working state is invalid")
-        for name, value in working.items():
-            validate_working_state_value(declared[name].type, value)
-        messages = MessageRuntime()
-        messages.hydrate_messages(list(payloads.restore_messages(checkpoint.messages)))
-        messages.active_window = ActiveWindow(
-            MessageRef(message_id) for message_id in checkpoint.active_refs
-        )
-        context = ContextRuntime(
-            state=ContextState(
-                working_state_schema=WorkingStateSchema(fields),
-                working_state=working,
-                compressed_history=checkpoint.context.compressed_history,
-                inherited_state=checkpoint.context.inherited_state,
-            ),
-            event_bus=event_bus,
-            session_id=checkpoint.session_id,
-        )
-        session = SessionState.from_snapshot(
-            checkpoint.session_id,
-            checkpoint.session_status,
-            checkpoint.next_turn_number,
-        )
-        return session, messages, context
-    except (ContextProtocolError, KeyError, TypeError, ValueError):
-        raise CheckpointCorruptedError("checkpoint hydration state is corrupted") from None
-
-
 __all__ = ["build_durable_agent", "validate_durable_builder"]
