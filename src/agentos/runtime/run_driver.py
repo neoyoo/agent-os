@@ -10,10 +10,10 @@ from agentos.runtime._execution_control import (
     ExecutionControl,
     PendingToolsCheckpointRequest,
     RunningCheckpointRequest,
+    TerminalFailureRequest,
     WaitingCheckpointRequest,
 )
 from agentos.runtime.query_loop_support import _FinalContent
-from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.errors import (
     CommandStateError,
     RunProtocolError,
@@ -22,7 +22,9 @@ from agentos.runtime.errors import (
 from agentos.runtime.execution import (
     AcceptedStartInput,
     AcceptedTurnExecution,
-    ExecutionMode,
+    AcceptedTurnPreparation,
+    ApplyAcceptedInput,
+    RestoreAcceptedTurn,
     RunExecutionCursor,
 )
 from agentos.runtime.run import LocalContinuationInput, RunRequest, UserTurnInput
@@ -32,8 +34,14 @@ from agentos.runtime.run_state import RunAlreadyExistsError, RunNotFoundError, R
 from agentos.runtime.stream_events import FinalResult, StatusUpdate, TurnStreamEvent
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
+from agentos.runtime.turn_preparation import (
+    prepare_execution_turn,
+    turn_execution_input,
+)
 from agentos.runtime.tool_payloads import ToolPayloadRuntime
 from agentos.runtime.side_effect_types import WaitingToolCompletion
+from agentos.runtime.side_effect_types import SideEffectResolutionKind
+from agentos.runtime.side_effect_resume import SideEffectResume
 
 
 ProviderToolEvents = Callable[
@@ -41,7 +49,7 @@ ProviderToolEvents = Callable[
         str,
         TurnState | None,
         object,
-        RunExecutionCursor | None,
+        RestoreAcceptedTurn | SideEffectResume,
         Callable[[], RunWriteGuard],
     ],
     AsyncIterator[TurnStreamEvent | _FinalContent | ExecutionControl | WaitRequest],
@@ -55,10 +63,9 @@ class RunDriver:
     runs: RunRuntime
     turns: TurnLifecycle
     commits: RunCommitRuntime
-    recovery_cursor: RunExecutionCursor | None = None
     tool_payloads: ToolPayloadRuntime | None = None
     _execution_guards: dict[str, RunWriteGuard] = field(default_factory=dict, init=False)
-    _execution_modes: dict[str, ExecutionMode] = field(default_factory=dict, init=False)
+    _preparations: dict[str, AcceptedTurnPreparation] = field(default_factory=dict, init=False)
     _local_run_ids: set[str] = field(default_factory=set, init=False)
     _turn_ids: dict[str, str] = field(default_factory=dict, init=False)
     _uncertain_commits: set[str] = field(default_factory=set, init=False)
@@ -72,7 +79,7 @@ class RunDriver:
 
         run_id = self.runs.new_run_id()
         self._local_run_ids.add(run_id)
-        self._execution_modes[run_id] = "start"
+        self._preparations[run_id] = ApplyAcceptedInput()
         try:
             run = await self.runs.create_run(run_id=run_id)
             self._execution_guards[run_id] = RunWriteGuard(
@@ -138,48 +145,40 @@ class RunDriver:
         turn: TurnState | None = None
         pending: tuple[TurnStreamEvent, ...] = ()
         final_events: tuple[TurnStreamEvent, ...] = ()
-        turn_input = _turn_input(request.input)
+        preparation = self._require_preparation(run_id)
+        turn_input = turn_execution_input(request.input)
         continuation = not isinstance(
             turn_input,
             (UserTurnInput, AcceptedStartInput),
         )
         try:
             execution_guard = self._require_guard(run_id)
-            mode = self._execution_modes.get(run_id)
-            if mode == "start":
+            current = await self.runs.get_run(run_id)
+            if current.status is RunStatus.QUEUED:
                 running = await self.runs.start(run_id, guard=execution_guard)
                 execution_guard = _next_guard(execution_guard, running.aggregate_version)
-            elif mode == "recover":
-                running = await self.runs.get_run(run_id)
+            elif current.status is RunStatus.RUNNING:
+                running = current
                 if (
-                    running.status is not RunStatus.RUNNING
-                    or running.aggregate_version != execution_guard.expected_version
+                    running.aggregate_version != execution_guard.expected_version
                 ):
                     raise CommandStateError("accepted recovery is stale")
             else:
-                raise RunProtocolError("run execution mode is missing")
+                raise CommandStateError("accepted turn execution is stale")
             self._execution_guards[run_id] = execution_guard
-            if type(turn_input) is AcceptedStartInput:
-                turn, pending = await self.turns.prepare_user_turn(
-                    turn_input.input,
-                    turn_id=turn_input.turn_id,
-                    user_message_id=turn_input.user_message_id,
-                )
-            elif isinstance(turn_input, UserTurnInput):
-                turn, pending = await self.turns.prepare_user_turn(turn_input)
-            else:
-                turn, pending = self.turns.prepare_continuation_turn(turn_input)
+            turn, pending = await prepare_execution_turn(
+                turns=self.turns,
+                input=turn_input,
+                preparation=preparation,
+            )
             if turn is not None:
                 self._turn_ids[run_id] = turn.id
 
-            recovery_cursor = self._take_recovery_cursor(mode)
-            if recovery_cursor is not None:
-                if turn is None or recovery_cursor.turn_id != turn.id:
-                    raise RunProtocolError(
-                        "running execution cursor does not match the prepared turn",
-                    )
-            elif turn is not None:
-                recovery_cursor = RunExecutionCursor(
+            provider_preparation: RestoreAcceptedTurn | SideEffectResume
+            if type(preparation) is ApplyAcceptedInput:
+                if turn is None:
+                    raise RunProtocolError("accepted input requires turn state")
+                cursor = RunExecutionCursor(
                     turn_id=turn.id,
                     stage="before_provider",
                     provider_call_index=0,
@@ -187,10 +186,13 @@ class RunDriver:
                 execution_guard = await self._commit_running(
                     run_id=run_id,
                     turn_id=turn.id,
-                    cursor=recovery_cursor,
+                    cursor=cursor,
                     guard=execution_guard,
                 )
                 self._execution_guards[run_id] = execution_guard
+                provider_preparation = RestoreAcceptedTurn(cursor)
+            else:
+                provider_preparation = preparation
 
             final_content = ""
             async with aclosing(
@@ -198,7 +200,7 @@ class RunDriver:
                     run_id,
                     turn,
                     request.options,
-                    recovery_cursor,
+                    provider_preparation,
                     lambda: execution_guard,
                 )
             ) as provider_events:
@@ -276,6 +278,16 @@ class RunDriver:
                             reason=event.reason,
                         )
                         return
+                    elif isinstance(event, TerminalFailureRequest):
+                        execution_guard = await self._commit_terminal(
+                            run_id=run_id,
+                            guard=execution_guard,
+                            status="failed",
+                            turn_id=None if turn is None else turn.id,
+                        )
+                        self._execution_guards[run_id] = execution_guard
+                        yield self.turns.fail(turn, event.error)
+                        return
                     elif isinstance(event, WaitRequest):
                         if turn is None:
                             raise WaitingUnsupportedError(
@@ -313,6 +325,15 @@ class RunDriver:
         except Exception as error:
             if run_id in self._uncertain_commits:
                 raise
+            if (
+                type(preparation) is SideEffectResume
+                and preparation.resolution.kind is SideEffectResolutionKind.COMPENSATE
+            ):
+                self._uncertain_commits.add(run_id)
+                for prepared_event in pending:
+                    yield prepared_event
+                yield self.turns.fail(turn, error, mark_turn=False)
+                return
             state = await self.runs.get_run(run_id)
             if state.status is RunStatus.RUNNING:
                 await self._commit_terminal(
@@ -331,16 +352,18 @@ class RunDriver:
     async def _prepare_accepted(self, execution: AcceptedTurnExecution) -> str:
         run_id = execution.input.run_id
         run = await self.runs.get_run(run_id)
-        expected_status = (
-            RunStatus.QUEUED if execution.mode == "start" else RunStatus.RUNNING
-        )
         if (
-            run.status is not expected_status
+            run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}
             or run.aggregate_version != execution.guard.expected_version
         ):
             raise CommandStateError("accepted turn execution is stale")
+        if (
+            type(execution.preparation) is RestoreAcceptedTurn
+            and run.status is not RunStatus.RUNNING
+        ):
+            raise CommandStateError("accepted turn restoration requires running state")
         self._execution_guards[run_id] = execution.guard
-        self._execution_modes[run_id] = execution.mode
+        self._preparations[run_id] = execution.preparation
         return run_id
 
     def _require_guard(self, run_id: str) -> RunWriteGuard:
@@ -349,18 +372,11 @@ class RunDriver:
             raise RunProtocolError("run execution guard is missing")
         return guard
 
-    def _take_recovery_cursor(
-        self,
-        mode: ExecutionMode,
-    ) -> RunExecutionCursor | None:
-        if mode != "recover":
-            if self.recovery_cursor is not None:
-                raise RunProtocolError(
-                    "running execution cursor requires recover mode",
-                )
-            return None
-        cursor, self.recovery_cursor = self.recovery_cursor, None
-        return cursor
+    def _require_preparation(self, run_id: str) -> AcceptedTurnPreparation:
+        preparation = self._preparations.get(run_id)
+        if preparation is None:
+            raise RunProtocolError("accepted turn preparation is missing")
+        return preparation
 
     def _require_tool_payloads(self) -> ToolPayloadRuntime:
         payloads = self.tool_payloads
@@ -454,23 +470,10 @@ class RunDriver:
 
     def _forget(self, run_id: str) -> None:
         self._execution_guards.pop(run_id, None)
-        self._execution_modes.pop(run_id, None)
+        self._preparations.pop(run_id, None)
         self._local_run_ids.discard(run_id)
         self._turn_ids.pop(run_id, None)
         self._uncertain_commits.discard(run_id)
-
-
-def _turn_input(
-    input: UserTurnInput | LocalContinuationInput | AcceptedTurnExecution,
-) -> (
-    UserTurnInput
-    | LocalContinuationInput
-    | AcceptedStartInput
-    | AcceptedContinuationInput
-):
-    if type(input) is not AcceptedTurnExecution:
-        return input
-    return input.input
 
 
 def _next_guard(guard: RunWriteGuard, expected_version: int) -> RunWriteGuard:

@@ -40,8 +40,20 @@ class WaitingCheckpointRequest:
             raise TypeError("completion must be WaitingToolCompletion or None")
 
 
+@dataclass(frozen=True, slots=True)
+class TerminalFailureRequest:
+    """Request an intentional FAILED terminal commit without a Provider call."""
+
+    error: BaseException
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.error, BaseException):
+            raise TypeError("error must be a BaseException")
+
+
 ExecutionControl = (
     RunningCheckpointRequest
+    | TerminalFailureRequest
     | PendingToolsCheckpointRequest
     | WaitingCheckpointRequest
 )
@@ -51,5 +63,6 @@ __all__ = [
     "ExecutionControl",
     "PendingToolsCheckpointRequest",
     "RunningCheckpointRequest",
+    "TerminalFailureRequest",
     "WaitingCheckpointRequest",
 ]

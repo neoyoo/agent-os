@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from agentos.capabilities.tools import SideEffectPolicy
-from agentos.distributed.postgres._database import PostgresPool
+from agentos.distributed.postgres._database import AsyncConnection, PostgresPool
 from agentos.distributed.postgres._side_effect_records import (
     insert_record,
     require_current,
@@ -114,18 +114,30 @@ async def begin_compensation(
     guard: RunWriteGuard,
 ) -> SideEffectRecord:
     async with database.transaction() as connection:
-        current = await require_current(connection, attempt_id, guard)
-        if current.status is not SideEffectStatus.COMPENSATING:
-            raise SideEffectTransitionError()
-        updated = with_fence(
-            replace(
-                current,
-                compensation_attempt=(current.compensation_attempt or 0) + 1,
-            ),
+        return await begin_compensation_current(
+            connection,
+            attempt_id,
             guard,
         )
-        await update_record(connection, updated)
-        return updated
+
+
+async def begin_compensation_current(
+    connection: AsyncConnection,
+    attempt_id: SideEffectAttemptId,
+    guard: RunWriteGuard,
+) -> SideEffectRecord:
+    current = await require_current(connection, attempt_id, guard)
+    if current.status is not SideEffectStatus.COMPENSATING:
+        raise SideEffectTransitionError()
+    updated = with_fence(
+        replace(
+            current,
+            compensation_attempt=(current.compensation_attempt or 0) + 1,
+        ),
+        guard,
+    )
+    await update_record(connection, updated)
+    return updated
 
 
 async def complete_compensation(
@@ -162,41 +174,50 @@ async def resolve(
     guard: RunWriteGuard,
 ) -> SideEffectRecord:
     async with database.transaction() as connection:
-        current = await require_current(connection, attempt_id, guard)
-        if (
-            current.status is not SideEffectStatus.AMBIGUOUS
-            or current.attempt_id.operation_id != resolution.operation_id
-        ):
+        return await resolve_current(connection, attempt_id, resolution, guard)
+
+
+async def resolve_current(
+    connection: AsyncConnection,
+    attempt_id: SideEffectAttemptId,
+    resolution: SideEffectResolution,
+    guard: RunWriteGuard,
+) -> SideEffectRecord:
+    current = await require_current(connection, attempt_id, guard)
+    if (
+        current.status is not SideEffectStatus.AMBIGUOUS
+        or current.attempt_id.operation_id != resolution.operation_id
+    ):
+        raise SideEffectTransitionError()
+    if resolution.kind is SideEffectResolutionKind.ACCEPT_RESULT:
+        updated = resolved_record(
+            current,
+            SideEffectResolutionOutcome.ACCEPTED,
+            result_ref=resolution.result_ref,
+            result_digest=resolution.result_digest,
+        )
+    elif resolution.kind is SideEffectResolutionKind.FAIL:
+        updated = resolved_record(current, SideEffectResolutionOutcome.FAILED)
+    elif resolution.kind is SideEffectResolutionKind.COMPENSATE:
+        if current.policy is not SideEffectPolicy.COMPENSATABLE:
             raise SideEffectTransitionError()
-        if resolution.kind is SideEffectResolutionKind.ACCEPT_RESULT:
-            updated = resolved_record(
-                current,
-                SideEffectResolutionOutcome.ACCEPTED,
-                result_ref=resolution.result_ref,
-                result_digest=resolution.result_digest,
-            )
-        elif resolution.kind is SideEffectResolutionKind.FAIL:
-            updated = resolved_record(current, SideEffectResolutionOutcome.FAILED)
-        elif resolution.kind is SideEffectResolutionKind.COMPENSATE:
-            if current.policy is not SideEffectPolicy.COMPENSATABLE:
-                raise SideEffectTransitionError()
-            updated = replace(
-                current,
-                status=SideEffectStatus.COMPENSATING,
-                compensation_operation_id=compensation_operation_id(
-                    current.attempt_id.operation_id,
-                ),
-                compensation_attempt=1,
-            )
-        else:
-            resolved, reserved = retry_resolution_records(current, resolution)
-            await update_record(connection, with_fence(resolved, guard))
-            reserved = with_fence(reserved, guard)
-            await insert_record(connection, reserved)
-            return reserved
-        updated = with_fence(updated, guard)
-        await update_record(connection, updated)
-        return updated
+        updated = replace(
+            current,
+            status=SideEffectStatus.COMPENSATING,
+            compensation_operation_id=compensation_operation_id(
+                current.attempt_id.operation_id,
+            ),
+            compensation_attempt=1,
+        )
+    else:
+        resolved, reserved = retry_resolution_records(current, resolution)
+        await update_record(connection, with_fence(resolved, guard))
+        reserved = with_fence(reserved, guard)
+        await insert_record(connection, reserved)
+        return reserved
+    updated = with_fence(updated, guard)
+    await update_record(connection, updated)
+    return updated
 
 
 async def _transition(
@@ -220,9 +241,11 @@ async def _transition(
 
 __all__ = [
     "begin_compensation",
+    "begin_compensation_current",
     "complete",
     "complete_compensation",
     "mark_ambiguous",
     "mark_started",
     "resolve",
+    "resolve_current",
 ]

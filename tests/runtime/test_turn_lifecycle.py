@@ -19,6 +19,7 @@ from agentos.runtime.errors import (
     WaitingUnsupportedError,
 )
 from agentos.runtime.continuation import ContinuationNotice, ContinuationRuntime
+from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime import WaitReason
 from agentos.runtime.run import RunRequest, UserTurnInput
 from agentos.runtime.query_loop_support import ArtifactRuntimeBoundary
@@ -207,6 +208,34 @@ def test_prepare_continuation_sets_notice_without_user_message() -> None:
             is_continuation=True,
         ),
     ]
+
+
+def test_continuation_recover_rebuilds_ephemeral_projection_without_starting_turn() -> None:
+    async def run() -> None:
+        messages = MessageRuntime()
+        event_bus = EventBus()
+        continuation = ContinuationRuntime()
+        lifecycle = make_lifecycle(
+            messages=messages,
+            continuation=continuation,
+            event_bus=event_bus,
+        )
+        accepted = AcceptedContinuationInput(
+            "run_1",
+            "command_1",
+            "hitl_answer",
+            {"answer": "approved"},
+            "turn_stable",
+        )
+
+        turn = await lifecycle.restore_turn(accepted)
+
+        assert turn == TurnState("turn_stable", "")
+        assert messages.store.all() == []
+        assert event_bus.events == []
+        assert "approved" in continuation.inputs()[0].content[0].text  # type: ignore[union-attr]
+
+    asyncio.run(run())
 
 
 def test_complete_fail_and_cancel_apply_terminal_transitions() -> None:

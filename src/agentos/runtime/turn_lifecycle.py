@@ -25,6 +25,7 @@ from agentos.runtime.query_loop_support import (
     TurnNoticeProvider,
 )
 from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.execution import AcceptedStartInput, AcceptedTurnInput
 from agentos.runtime.run import LocalContinuationInput, UserTurnInput
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
@@ -105,10 +106,48 @@ class TurnLifecycle:
         if self.continuation_runtime is None:
             raise RuntimeError("continuation runtime is not configured")
         if type(input) is AcceptedContinuationInput:
-            self.continuation_runtime.set_durable(input)
+            if input.kind == "resolve_side_effect":
+                self.continuation_runtime.clear()
+            else:
+                self.continuation_runtime.set_durable(input)
         else:
             self.continuation_runtime.set_notices(notices)
         return turn, (TurnStreamStarted(""),)
+
+    async def restore_turn(self, input: AcceptedTurnInput) -> TurnState | None:
+        """恢复已持久化 Turn 的内存状态，不重复产生首次应用副作用。"""
+
+        if type(input) is AcceptedStartInput:
+            content = input.input.content
+            turn_id = input.turn_id
+            user = self.message_runtime.store.get(input.user_message_id)
+            if (
+                user.role != "user"
+                or user.content != content
+                or tuple(input.input.artifact_handles)
+                != tuple(ref.artifact_id for ref in user.artifact_refs)
+            ):
+                raise RuntimeError("accepted user message does not match persisted input")
+            if user.artifact_refs:
+                if self.artifact_runtime is None:
+                    raise RuntimeError(
+                        "artifact runtime is required to restore artifact handles",
+                    )
+                await self.artifact_runtime.restore_user_uploads(user.artifact_refs)
+        elif type(input) is AcceptedContinuationInput:
+            content = ""
+            turn_id = input.turn_id
+            if self.continuation_runtime is None:
+                raise RuntimeError("continuation runtime is not configured")
+            if input.kind == "resolve_side_effect":
+                self.continuation_runtime.clear()
+            else:
+                self.continuation_runtime.set_durable(input)
+        else:
+            raise TypeError("input must be an accepted turn input")
+        if self.session_state is None:
+            return None
+        return TurnState(id=turn_id, user_input=content)
 
     def complete(
         self,

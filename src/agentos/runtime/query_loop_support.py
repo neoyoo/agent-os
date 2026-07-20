@@ -6,7 +6,7 @@ from typing import Protocol
 
 from agentos._waiting import WaitRequest
 from agentos.artifacts import ArtifactRef
-from agentos.capabilities.invocation import ToolInvocation
+from agentos.capabilities.invocation import ToolCompensationInvocation, ToolInvocation
 from agentos.capabilities.executor import ToolExecutionOutcome, ToolExecutionResult
 from agentos.capabilities.tools import ToolConcurrencyPolicy, ToolExecutionContract
 from agentos.context import ContextState
@@ -56,6 +56,12 @@ class ArtifactRuntimeBoundary(Protocol):
     ) -> tuple[ArtifactRef, ...]:
         """解析用户 Artifact handle 并建立当前 Turn mount。"""
 
+    async def restore_user_uploads(
+        self,
+        artifact_refs: tuple[ArtifactRef, ...],
+    ) -> None:
+        """从已持久化引用重建当前 Turn mount，不发布首次事件。"""
+
     async def prepare_projection_cache(self) -> None:
         """加载当前 Provider attempt 使用的 Artifact 投影。"""
 
@@ -81,6 +87,13 @@ class ToolCallRouterBoundary(Protocol):
         invocation: ToolInvocation,
     ) -> ToolExecutionOutcome:
         """异步执行单个 canonical ToolInvocation。"""
+
+    async def execute_compensation(
+        self,
+        tool_name: str,
+        invocation: ToolCompensationInvocation,
+    ) -> None:
+        """Execute a canonical compensation invocation."""
 
     def concurrency_policy_for(
         self,

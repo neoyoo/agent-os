@@ -87,7 +87,7 @@ SCHEMA_STATEMENTS = (
         content_digest TEXT NOT NULL,
         blob_key TEXT NOT NULL,
         lifecycle TEXT NOT NULL CHECK (
-            lifecycle IN ('active', 'tombstoned', 'deleted')
+            lifecycle IN ('staging', 'active', 'tombstoned', 'deleted')
         ),
         deletion_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -214,6 +214,7 @@ SCHEMA_STATEMENTS = (
         fencing_token BIGINT NOT NULL,
         PRIMARY KEY (tenant_id, checkpoint_id),
         UNIQUE (tenant_id, session_id, run_id, aggregate_version),
+        UNIQUE (tenant_id, session_id, run_id, checkpoint_id),
         FOREIGN KEY (tenant_id, session_id, run_id)
             REFERENCES agentos_distributed_runs(tenant_id, session_id, run_id)
     )
@@ -228,6 +229,48 @@ SCHEMA_STATEMENTS = (
         PRIMARY KEY (tenant_id, session_id, run_id),
         FOREIGN KEY (tenant_id, checkpoint_id)
             REFERENCES agentos_distributed_checkpoints(tenant_id, checkpoint_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agentos_distributed_reconciliation_sources (
+        tenant_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        waiting_aggregate_version BIGINT NOT NULL CHECK (
+            waiting_aggregate_version > 0
+        ),
+        source_checkpoint_id TEXT NOT NULL,
+        waiting_checkpoint_id TEXT NOT NULL,
+        cursor_payload_json TEXT NOT NULL,
+        resolution_command_id TEXT,
+        consumed_checkpoint_id TEXT,
+        consumed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (
+            tenant_id, session_id, run_id, waiting_aggregate_version
+        ),
+        UNIQUE (tenant_id, resolution_command_id),
+        FOREIGN KEY (tenant_id, session_id, run_id, source_checkpoint_id)
+            REFERENCES agentos_distributed_checkpoints(
+                tenant_id, session_id, run_id, checkpoint_id
+            ),
+        FOREIGN KEY (tenant_id, session_id, run_id, waiting_checkpoint_id)
+            REFERENCES agentos_distributed_checkpoints(
+                tenant_id, session_id, run_id, checkpoint_id
+            ),
+        FOREIGN KEY (tenant_id, resolution_command_id)
+            REFERENCES agentos_distributed_commands(tenant_id, command_id),
+        FOREIGN KEY (tenant_id, session_id, run_id, consumed_checkpoint_id)
+            REFERENCES agentos_distributed_checkpoints(
+                tenant_id, session_id, run_id, checkpoint_id
+            ),
+        CHECK (source_checkpoint_id <> waiting_checkpoint_id),
+        CHECK (
+            (consumed_checkpoint_id IS NULL AND consumed_at IS NULL)
+            OR
+            (consumed_checkpoint_id IS NOT NULL AND consumed_at IS NOT NULL)
+        )
     )
     """,
     """

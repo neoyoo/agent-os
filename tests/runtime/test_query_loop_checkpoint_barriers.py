@@ -22,7 +22,7 @@ from agentos.runtime._execution_control import (
     RunningCheckpointRequest,
 )
 from agentos.runtime.checkpoint import RuntimeCheckpointSource
-from agentos.runtime.execution import RunExecutionCursor
+from agentos.runtime.execution import RestoreAcceptedTurn, RunExecutionCursor
 from agentos.runtime.errors import PayloadProtectionError
 from agentos.runtime.payloads import (
     PayloadProtectionContext,
@@ -317,7 +317,12 @@ def test_before_provider_recovery_calls_provider_at_the_saved_index() -> None:
 
         checkpoint = None
         async with aclosing(
-            loop._run_provider_tool_events("run_1", turn, RunOptions(), cursor),
+            loop._run_provider_tool_events(
+                "run_1",
+                turn,
+                RunOptions(),
+                RestoreAcceptedTurn(cursor),
+            ),
         ) as events:
             async for event in events:
                 if isinstance(event, PendingToolsCheckpointRequest):
@@ -359,7 +364,7 @@ def test_pending_tools_recovery_replays_the_saved_batch_before_next_provider() -
                 "run_1",
                 turn,
                 RunOptions(),
-                cursor,
+                RestoreAcceptedTurn(cursor),
             )
         ]
 
@@ -403,7 +408,12 @@ def test_after_tools_recovery_skips_tool_batch_and_advances_provider_index() -> 
 
         checkpoint = None
         async with aclosing(
-            loop._run_provider_tool_events("run_1", turn, RunOptions(), cursor),
+            loop._run_provider_tool_events(
+                "run_1",
+                turn,
+                RunOptions(),
+                RestoreAcceptedTurn(cursor),
+            ),
         ) as events:
             async for event in events:
                 if isinstance(event, PendingToolsCheckpointRequest):
@@ -451,7 +461,7 @@ def test_after_tools_recovery_executes_same_arguments_as_a_new_operation() -> No
                 "run_1",
                 turn,
                 RunOptions(),
-                cursor,
+                RestoreAcceptedTurn(cursor),
             )
         ]
 
@@ -501,7 +511,7 @@ def test_recovery_preserves_consumed_tool_iteration_budget() -> None:
                     "run_1",
                     turn,
                     RunOptions(),
-                    cursor,
+                    RestoreAcceptedTurn(cursor),
                 )
             ]
 

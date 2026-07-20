@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 
 from agentos._sync_work import run_sync
@@ -18,7 +19,9 @@ from agentos.runtime._async_bridge import (
 )
 from agentos.runtime.provider_attempt_state import ProviderAttemptState
 from agentos.runtime.provider_request_builder import ProviderRequestFactory
+from agentos.runtime.event_bus import AgentEvent, ProviderRetryEvent
 from agentos.runtime.retry import RetryPolicy
+from agentos.runtime.stream_events import ContextLoaded, StatusUpdate
 
 
 def ensure_provider_response_usable(response: ProviderResponse) -> None:
@@ -143,3 +146,60 @@ class ProviderAttemptRunner:
                     state.record_terminal_failure(policy)
                     raise
                 await self.on_retry(attempt, error)
+
+
+async def announced_provider_attempt_events(
+    stream: AsyncIterator[ProviderStreamEvent],
+    prepared_request: Callable[[], ProviderRequest | None],
+) -> AsyncIterator[ProviderStreamEvent | ContextLoaded | StatusUpdate]:
+    """在首次 Provider stream event 前发布本次请求的有界装载状态。"""
+
+    announced = False
+    async with aclosing(stream):
+        async for event in stream:
+            if not announced:
+                request = prepared_request()
+                if request is None:
+                    raise RuntimeError("provider attempt did not prepare a request")
+                yield ContextLoaded(
+                    "runtime",
+                    f"已装载 {len(request.messages)} 条消息和 "
+                    f"{len(request.tools)} 个工具声明。",
+                )
+                yield StatusUpdate("model", "正在请求模型生成下一步响应。")
+                announced = True
+            yield event
+
+
+async def record_provider_retry(
+    attempt: int,
+    error: Exception,
+    *,
+    policy: RetryPolicy | None,
+    emit: Callable[[AgentEvent], None],
+    log: Callable[..., None],
+    event_context: dict[str, str | None],
+) -> None:
+    """记录 Provider retry 事实并执行已声明的退避。"""
+
+    if policy is None:
+        raise RuntimeError("provider retry policy is missing")
+    delay = policy.delay_for_attempt(attempt)
+    fields = {
+        "attempt": attempt,
+        "max_retries": policy.max_retries,
+        "error": str(error),
+        "delay_seconds": delay,
+    }
+    emit(ProviderRetryEvent(**fields, **event_context))
+    log("provider_retry", **fields)
+    await run_sync(policy.sleep, delay)
+
+
+__all__ = [
+    "ProviderAttemptRunner",
+    "announced_provider_attempt_events",
+    "ensure_provider_response_usable",
+    "provider_stream_events",
+    "record_provider_retry",
+]

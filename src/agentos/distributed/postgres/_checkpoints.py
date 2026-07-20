@@ -20,6 +20,10 @@ from agentos.distributed.postgres._records import (
     session_checkpoint_from_json,
     terminal_result_from_checkpoint,
 )
+from agentos.distributed.postgres._reconciliation_sources import (
+    capture_reconciliation_source,
+    consume_reconciliation_source,
+)
 from agentos.distributed.postgres._side_effect_composite import (
     apply_cancel_safe_stop,
     complete_wait_control,
@@ -63,6 +67,14 @@ async def commit_running(
             turn_id=turn_id,
             aggregate_version=current.aggregate_version + 1,
             fencing_token=cast(int, guard.fencing_token),
+        )
+        await consume_reconciliation_source(
+            connection,
+            scope=scope,
+            run_id=run_id,
+            turn_id=turn_id,
+            checkpoint=committed,
+            guard=guard,
         )
         await connection.execute(
             """
@@ -122,6 +134,14 @@ async def commit_waiting(
             turn_id=turn_id,
             aggregate_version=updated.aggregate_version,
             fencing_token=cast(int, guard.fencing_token),
+        )
+        await capture_reconciliation_source(
+            connection,
+            scope=scope,
+            run=current,
+            reason=reason,
+            waiting_checkpoint=committed,
+            guard=guard,
         )
         await commit_input(
             connection,

@@ -206,6 +206,27 @@ class ArtifactRuntime:
             for record in records
         )
 
+    async def restore_user_uploads(
+        self,
+        artifact_refs: tuple[ArtifactRef, ...],
+    ) -> None:
+        """从 StoredMessage 引用重建用户附件 mount，不重复发布首次事件。"""
+
+        refs = tuple(artifact_refs)
+        if any(type(ref) is not ArtifactRef for ref in refs):
+            raise TypeError("artifact_refs must contain ArtifactRef values")
+        records = tuple(
+            [await self._store.get(self._session_id, ref.artifact_id) for ref in refs]
+        )
+        restored_refs = tuple(
+            ArtifactRef(record.id, record.filename, record.media_type)
+            for record in records
+        )
+        if restored_refs != refs:
+            raise ArtifactValidationError("stored artifact reference changed")
+        for record in records:
+            self._mount_record(record, "user_upload")
+
     def active_mounts(self) -> tuple[ContextMount, ...]:
         """按建立顺序返回当前 Turn 的不可变 Mount 快照。"""
 

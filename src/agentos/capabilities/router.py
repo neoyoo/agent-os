@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 from agentos._json_values import thaw_json
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
-from agentos.capabilities.invocation import ToolInvocation
+from agentos.capabilities.invocation import ToolCompensationInvocation, ToolInvocation
 from agentos.capabilities.executor import (
     ToolExecutionOutcome,
     ToolExecutionResult,
@@ -145,6 +145,24 @@ class ToolCallRouter:
                 invocation,
             )
         return await self._tool_executor().execute(invocation)
+
+    async def execute_compensation(
+        self,
+        tool_name: str,
+        invocation: ToolCompensationInvocation,
+    ) -> None:
+        """Route a typed compensation invocation to its declared handler."""
+
+        if tool_name.startswith("mcp__"):
+            if self.mcp_adapter is None:
+                raise ToolExecutionError("mcp adapter is required for compensation")
+            tool = self.mcp_adapter.registered_tool_for(tool_name)
+        else:
+            try:
+                tool = self.tool_registry.get(tool_name)
+            except KeyError as error:
+                raise ToolExecutionError("compensation tool is not registered") from error
+        await self._tool_executor().execute_compensation(tool, invocation)
 
     def _tool_executor(self) -> ToolExecutor:
         """延迟创建外部工具 executor。"""

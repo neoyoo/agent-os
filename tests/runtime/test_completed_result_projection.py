@@ -19,7 +19,7 @@ from agentos.runtime import ProviderRequestBuilder, QueryLoop
 from agentos.runtime.completed_result_projection import CompletedResultProjector
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run import RunOptions
-from agentos.runtime.execution import RunExecutionCursor
+from agentos.runtime.execution import RestoreAcceptedTurn, RunExecutionCursor
 from agentos.runtime.payloads import PayloadProtectionContext
 from agentos.runtime.session import SessionState
 from agentos.runtime.side_effect_memory import InMemorySideEffectStore
@@ -299,7 +299,7 @@ async def test_after_tools_query_recovery_mounts_attachment_before_provider() ->
             "run_1",
             turn,
             RunOptions(),
-            cursor,
+                RestoreAcceptedTurn(cursor),
         )
     ]
 

@@ -98,6 +98,8 @@ def project_durable_continuation(
 
     if type(continuation) is not AcceptedContinuationInput:
         raise TypeError("durable continuation input is invalid")
+    if continuation.kind == "resolve_side_effect":
+        raise ValueError("side effect resolution is runtime control")
     payload = json.dumps(
         thaw_json_value(continuation.payload),
         ensure_ascii=False,

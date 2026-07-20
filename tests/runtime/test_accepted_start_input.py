@@ -2,7 +2,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agentos.runtime.execution import AcceptedStartInput, AcceptedTurnExecution
+from agentos.runtime.execution import (
+    AcceptedStartInput,
+    AcceptedTurnExecution,
+    ApplyAcceptedInput,
+    RestoreAcceptedTurn,
+    RunExecutionCursor,
+)
 from agentos.runtime.run import UserTurnInput
 from agentos.runtime.run_runtime import RunWriteGuard
 
@@ -42,7 +48,7 @@ def test_accepted_start_input_rejects_empty_identifiers(field_name: str) -> None
         AcceptedStartInput(**values)  # type: ignore[arg-type]
 
 
-def test_accepted_turn_execution_binds_input_to_guard_and_mode() -> None:
+def test_accepted_turn_execution_binds_input_to_guard_and_preparation() -> None:
     accepted = AcceptedStartInput(
         run_id="run_1",
         submission_id="submission_1",
@@ -59,15 +65,15 @@ def test_accepted_turn_execution_binds_input_to_guard_and_mode() -> None:
     execution = AcceptedTurnExecution(
         input=accepted,
         guard=guard,
-        mode="start",
+        preparation=ApplyAcceptedInput(),
     )
 
     assert execution.input is accepted
     assert execution.guard is guard
-    assert execution.mode == "start"
+    assert execution.preparation == ApplyAcceptedInput()
 
 
-def test_accepted_turn_execution_rejects_unknown_mode() -> None:
+def test_restore_accepted_turn_requires_a_typed_cursor() -> None:
     accepted = AcceptedStartInput(
         run_id="run_1",
         submission_id="submission_1",
@@ -76,9 +82,32 @@ def test_accepted_turn_execution_rejects_unknown_mode() -> None:
         user_message_id="message_1",
     )
 
-    with pytest.raises(ValueError, match="mode"):
+    cursor = RunExecutionCursor("turn_1", "before_provider", 0)
+    execution = AcceptedTurnExecution(
+        input=accepted,
+        guard=RunWriteGuard(expected_version=1),
+        preparation=RestoreAcceptedTurn(cursor),
+    )
+
+    assert execution.preparation == RestoreAcceptedTurn(cursor)
+    with pytest.raises(TypeError, match="cursor"):
+        RestoreAcceptedTurn("turn_1")  # type: ignore[arg-type]
+
+
+def test_restore_accepted_turn_rejects_another_turn_cursor() -> None:
+    accepted = AcceptedStartInput(
+        run_id="run_1",
+        submission_id="submission_1",
+        input=UserTurnInput("hello"),
+        turn_id="turn_1",
+        user_message_id="message_1",
+    )
+
+    with pytest.raises(ValueError, match="prepared turn"):
         AcceptedTurnExecution(
             input=accepted,
             guard=RunWriteGuard(expected_version=1),
-            mode="resume",  # type: ignore[arg-type]
+            preparation=RestoreAcceptedTurn(
+                RunExecutionCursor("turn_2", "before_provider", 0),
+            ),
         )

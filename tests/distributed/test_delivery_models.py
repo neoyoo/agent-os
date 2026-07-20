@@ -16,6 +16,11 @@ from agentos.distributed.models import (
     SessionLease,
 )
 from agentos.runtime.execution import AcceptedTurnExecution as RuntimeExecution
+from agentos.runtime.execution import (
+    ApplyAcceptedInput,
+    RestoreAcceptedTurn,
+    RunExecutionCursor,
+)
 from agentos.runtime.run import UserTurnInput
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunState, RunStatus
@@ -73,7 +78,7 @@ def test_accepted_execution_is_the_canonical_runtime_type() -> None:
     assert AcceptedTurnExecution is RuntimeExecution
 
 
-def test_claimed_execution_binds_target_claim_guard_and_mode() -> None:
+def test_claimed_execution_binds_target_claim_guard_and_preparation() -> None:
     scope = RequestScope("tenant_1", "user_1")
     target = RunDeliveryTarget(
         scope,
@@ -84,7 +89,7 @@ def test_claimed_execution_binds_target_claim_guard_and_mode() -> None:
     execution = AcceptedTurnExecution(
         input=_accepted(),
         guard=RunWriteGuard(0, "claim_1", 2),
-        mode="start",
+        preparation=ApplyAcceptedInput(),
     )
 
     assert ClaimedExecution(target, _claim(), execution).execution is execution
@@ -105,7 +110,7 @@ def test_claimed_execution_binds_target_claim_guard_and_mode() -> None:
                     user_message_id="message_2",
                 ),
                 guard=RunWriteGuard(0, "claim_2", 2),
-                mode="start",
+                preparation=ApplyAcceptedInput(),
             ),
         )
     with pytest.raises(ValueError, match="guard"):
@@ -115,7 +120,7 @@ def test_claimed_execution_binds_target_claim_guard_and_mode() -> None:
             AcceptedTurnExecution(
                 input=_accepted(),
                 guard=RunWriteGuard(0, "other_claim", 9),
-                mode="start",
+                preparation=ApplyAcceptedInput(),
             ),
         )
     with pytest.raises(ValueError, match="version"):
@@ -125,10 +130,10 @@ def test_claimed_execution_binds_target_claim_guard_and_mode() -> None:
             AcceptedTurnExecution(
                 input=_accepted(),
                 guard=RunWriteGuard(1, "claim_1", 2),
-                mode="start",
+                preparation=ApplyAcceptedInput(),
             ),
         )
-    with pytest.raises(ValueError, match="mode"):
+    with pytest.raises(ValueError, match="preparation"):
         ClaimedExecution(
             RunDeliveryTarget(
                 scope,
@@ -151,10 +156,14 @@ def test_claimed_execution_binds_target_claim_guard_and_mode() -> None:
         AcceptedTurnExecution(
             input=_accepted(),
             guard=RunWriteGuard(0, "claim_1", 2),
-            mode="recover",
+            preparation=RestoreAcceptedTurn(
+                RunExecutionCursor("turn_1", "before_provider", 0),
+            ),
         ),
     )
-    assert recovered.execution.mode == "recover"
+    assert recovered.execution.preparation == RestoreAcceptedTurn(
+        RunExecutionCursor("turn_1", "before_provider", 0),
+    )
 
 
 def test_outbox_datetimes_are_normalized_and_payload_is_frozen() -> None:

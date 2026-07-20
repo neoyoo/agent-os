@@ -10,6 +10,7 @@ from agentos.distributed.postgres import (
     PostgresClaimStore,
     PostgresOutboxStore,
     PostgresSideEffectStore,
+    PostgresSideEffectResumeValidator,
     PostgresStateStore,
 )
 from agentos.distributed.postgres import claims as claims_module
@@ -142,11 +143,14 @@ def test_postgres_adapters_expose_only_async_io_methods() -> None:
             "complete_compensation",
             "resolve",
         ),
+        PostgresSideEffectResumeValidator: ("validate",),
         PostgresArtifactStore: ("upload", "list", "read", "delete"),
     }
     for adapter, names in methods.items():
         for name in names:
             assert inspect.iscoroutinefunction(getattr(adapter, name))
+
+    assert not hasattr(PostgresSideEffectStore, "validate_resume")
 
 
 def test_claim_authority_uses_database_time_only() -> None:

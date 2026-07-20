@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias, Union
 
 from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.payloads import ProtectedPayloadRef
@@ -9,16 +9,15 @@ from agentos.runtime.run_runtime import RunWriteGuard
 
 if TYPE_CHECKING:
     from agentos.runtime.run import UserTurnInput
+    from agentos.runtime.side_effect_resume import SideEffectResume
 
 
-ExecutionMode: TypeAlias = Literal["start", "recover"]
 ExecutionCheckpointStage: TypeAlias = Literal[
     "before_provider",
     "pending_tools",
     "after_tools",
 ]
 
-_EXECUTION_MODES = frozenset({"start", "recover"})
 _CHECKPOINT_STAGES = frozenset(
     {"before_provider", "pending_tools", "after_tools"},
 )
@@ -49,12 +48,35 @@ AcceptedTurnInput: TypeAlias = AcceptedStartInput | AcceptedContinuationInput
 
 
 @dataclass(frozen=True, slots=True)
+class ApplyAcceptedInput:
+    """首次把已接受输入应用到当前 Turn。"""
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreAcceptedTurn:
+    """从已持久化 execution cursor 恢复当前 Turn。"""
+
+    cursor: RunExecutionCursor
+
+    def __post_init__(self) -> None:
+        if type(self.cursor) is not RunExecutionCursor:
+            raise TypeError("cursor must be RunExecutionCursor")
+
+
+AcceptedTurnPreparation: TypeAlias = Union[
+    ApplyAcceptedInput,
+    RestoreAcceptedTurn,
+    "SideEffectResume",
+]
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedTurnExecution:
-    """一次已领取输入及其不可变写入权限。"""
+    """一次已领取输入、不可变写入权限及唯一恢复判别。"""
 
     input: AcceptedTurnInput
     guard: RunWriteGuard
-    mode: ExecutionMode
+    preparation: AcceptedTurnPreparation
 
     def __post_init__(self) -> None:
         if type(self.input) not in {
@@ -64,8 +86,54 @@ class AcceptedTurnExecution:
             raise TypeError("input must be an accepted turn input")
         if type(self.guard) is not RunWriteGuard:
             raise TypeError("guard must be RunWriteGuard")
-        if self.mode not in _EXECUTION_MODES:
-            raise ValueError("execution mode is invalid")
+        from agentos.runtime.side_effect_resume import SideEffectResume
+
+        if type(self.preparation) not in {
+            ApplyAcceptedInput,
+            RestoreAcceptedTurn,
+            SideEffectResume,
+        }:
+            raise TypeError("preparation must be an accepted turn preparation")
+        self._validate_preparation()
+
+    def _validate_preparation(self) -> None:
+        from agentos.runtime.side_effect_resolution import (
+            side_effect_resolution_from_payload,
+        )
+        from agentos.runtime.side_effect_resume import SideEffectResume
+
+        preparation = self.preparation
+        resolving = (
+            type(self.input) is AcceptedContinuationInput
+            and self.input.kind == "resolve_side_effect"
+        )
+        if not resolving:
+            if type(preparation) is SideEffectResume:
+                raise ValueError("typed side effect resume is not allowed")
+            if (
+                type(preparation) is RestoreAcceptedTurn
+                and preparation.cursor.turn_id != self.input.turn_id
+            ):
+                raise ValueError("recovery cursor does not match prepared turn")
+            return
+        if type(preparation) is ApplyAcceptedInput:
+            raise ValueError("typed side effect preparation is required")
+        if type(preparation) is RestoreAcceptedTurn:
+            if preparation.cursor.turn_id != self.input.turn_id:
+                raise ValueError("recovery cursor does not match prepared turn")
+            return
+        resume = preparation
+        assert type(resume) is SideEffectResume
+        assert type(self.input) is AcceptedContinuationInput
+        resolution = side_effect_resolution_from_payload(self.input.payload)
+        if (
+            resume.run_id != self.input.run_id
+            or resume.continuation_turn_id != self.input.turn_id
+            or resume.resolution != resolution
+            or resume.record.claim_id != self.guard.claim_id
+            or resume.record.fencing_token != self.guard.fencing_token
+        ):
+            raise ValueError("typed side effect resume does not match execution")
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,9 +223,11 @@ __all__ = [
     "AcceptedStartInput",
     "AcceptedTurnExecution",
     "AcceptedTurnInput",
+    "AcceptedTurnPreparation",
+    "ApplyAcceptedInput",
     "ExecutionCheckpointStage",
-    "ExecutionMode",
     "PendingToolInvocation",
     "ProtectedPayloadRef",
+    "RestoreAcceptedTurn",
     "RunExecutionCursor",
 ]

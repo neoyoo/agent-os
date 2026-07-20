@@ -88,7 +88,15 @@ def _resolution_matches_record(
             and record.result_digest == resolution.result_digest
         )
     if resolution.kind is SideEffectResolutionKind.RETRY_PROVEN_SAFE:
-        return record.status is SideEffectStatus.RESERVED and record.attempt_id.attempt > 1
+        return (
+            record.attempt_id.attempt > 1
+            and record.status in {
+                SideEffectStatus.RESERVED,
+                SideEffectStatus.STARTED,
+                SideEffectStatus.COMPLETED,
+                SideEffectStatus.AMBIGUOUS,
+            }
+        )
     if resolution.kind is SideEffectResolutionKind.COMPENSATE:
         return record.status in {
             SideEffectStatus.COMPENSATING,

@@ -67,9 +67,6 @@ async def build_durable_agent(
     kwargs["checkpoint_store"] = store
     kwargs["side_effect_store"] = store.side_effect_store
     kwargs["tool_payload_runtime"] = payloads
-    kwargs["recovery_cursor"] = (
-        None if checkpoint is None else checkpoint.execution_cursor
-    )
     command_runtime = DurableCommandRuntime(session_id, store, clock)
     return Agent(
         query_loop_kwargs=kwargs,

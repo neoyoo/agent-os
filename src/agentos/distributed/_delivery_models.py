@@ -13,7 +13,7 @@ from agentos.distributed._model_validation import (
     require_non_negative,
     require_positive,
 )
-from agentos.runtime.execution import AcceptedTurnExecution
+from agentos.runtime.execution import AcceptedTurnExecution, RestoreAcceptedTurn
 from agentos.runtime.run_state import RunState, RunStatus
 
 
@@ -107,13 +107,16 @@ class ClaimedExecution:
             raise ValueError("execution guard does not match claim")
         if self.execution.guard.expected_version != self.target.run.aggregate_version:
             raise ValueError("execution guard version does not match delivery target")
-        expected_status = (
-            RunStatus.QUEUED
-            if self.execution.mode == "start"
-            else RunStatus.RUNNING
-        )
-        if self.target.run.status is not expected_status:
-            raise ValueError("execution mode does not match delivery target status")
+        if (
+            self.target.run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}
+            or (
+                type(self.execution.preparation) is RestoreAcceptedTurn
+                and self.target.run.status is not RunStatus.RUNNING
+            )
+        ):
+            raise ValueError(
+                "execution preparation does not match delivery target status",
+            )
 
 
 @dataclass(frozen=True, slots=True)

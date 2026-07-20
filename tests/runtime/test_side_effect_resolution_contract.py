@@ -12,8 +12,16 @@ from agentos.runtime.durable_commands import (
     AcceptedContinuationInput,
     DurableRunCommand,
 )
-from agentos.runtime.execution import PendingToolInvocation, RunExecutionCursor
+from agentos.runtime.continuation import project_durable_continuation
+from agentos.runtime.execution import (
+    AcceptedTurnExecution,
+    ApplyAcceptedInput,
+    PendingToolInvocation,
+    RestoreAcceptedTurn,
+    RunExecutionCursor,
+)
 from agentos.runtime.payloads import ProtectedPayloadRef
+from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.side_effect_integrity import result_ref_digest
 from agentos.runtime.side_effect_resolution import (
     side_effect_resolution_from_payload,
@@ -357,3 +365,102 @@ def test_side_effect_resume_rejects_cursor_without_matching_protected_invocation
             record=_record(),
             resolution=_resolution(),
         )
+
+
+def _accepted_resolution() -> AcceptedContinuationInput:
+    return AcceptedContinuationInput(
+        "run_1",
+        "command_1",
+        "resolve_side_effect",
+        side_effect_resolution_to_payload(_resolution()),
+        "turn_2",
+    )
+
+
+def _fenced_resume() -> SideEffectResume:
+    return SideEffectResume(
+        tenant_id=None,
+        session_id="session_1",
+        run_id="run_1",
+        continuation_turn_id="turn_2",
+        source_cursor=_cursor(),
+        record=replace(_record(), claim_id="claim_1", fencing_token=7),
+        resolution=_resolution(),
+    )
+
+
+def test_accepted_resolution_execution_requires_exact_typed_resume() -> None:
+    guard = RunWriteGuard(4, "claim_1", 7)
+
+    execution = AcceptedTurnExecution(
+        _accepted_resolution(),
+        guard,
+        _fenced_resume(),
+    )
+
+    assert execution.preparation == _fenced_resume()
+    with pytest.raises(ValueError, match="typed side effect preparation"):
+        AcceptedTurnExecution(_accepted_resolution(), guard, ApplyAcceptedInput())
+
+
+def test_recovered_resolution_allows_consumed_source_cursor_recovery() -> None:
+    execution = AcceptedTurnExecution(
+        _accepted_resolution(),
+        RunWriteGuard(5, "claim_1", 7),
+        RestoreAcceptedTurn(
+            RunExecutionCursor("turn_2", "before_provider", 0),
+        ),
+    )
+
+    assert execution.preparation == RestoreAcceptedTurn(
+        RunExecutionCursor("turn_2", "before_provider", 0),
+    )
+
+
+@pytest.mark.parametrize(
+    "resume",
+    [
+        replace(_fenced_resume(), continuation_turn_id="turn_3"),
+        replace(
+            _fenced_resume(),
+            run_id="run_2",
+            record=replace(_fenced_resume().record, run_id="run_2"),
+        ),
+        replace(
+            _fenced_resume(),
+            record=replace(_fenced_resume().record, claim_id="claim_other"),
+        ),
+    ],
+    ids=("turn", "run", "fence"),
+)
+def test_accepted_resolution_execution_rejects_resume_mismatch(
+    resume: SideEffectResume,
+) -> None:
+    with pytest.raises(ValueError, match="typed side effect resume"):
+        AcceptedTurnExecution(
+            _accepted_resolution(),
+            RunWriteGuard(4, "claim_1", 7),
+            resume,
+        )
+
+
+def test_non_resolution_execution_rejects_side_effect_resume() -> None:
+    continuation = AcceptedContinuationInput(
+        "run_1",
+        "command_1",
+        "resume",
+        {},
+        "turn_2",
+    )
+
+    with pytest.raises(ValueError, match="typed side effect resume"):
+        AcceptedTurnExecution(
+            continuation,
+            RunWriteGuard(4, "claim_1", 7),
+            _fenced_resume(),
+        )
+
+
+def test_resolution_payload_cannot_be_projected_to_provider() -> None:
+    with pytest.raises(ValueError, match="runtime control"):
+        project_durable_continuation(_accepted_resolution())

@@ -5,7 +5,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from functools import partial
 
-from agentos._sync_work import SyncWorkTracker, bind_sync_work_tracker, run_sync
+from agentos._sync_work import SyncWorkTracker, bind_sync_work_tracker
 from agentos.compression import CompressionRuntime
 from agentos.hooks import HookManager
 from agentos.messages import MessageRuntime, ToolCall
@@ -28,19 +28,21 @@ from agentos.runtime.event_bus import (
     EventBus,
     ProviderRequestBuiltEvent,
     ProviderResponseReceivedEvent,
-    ProviderRetryEvent,
 )
 from agentos.runtime._execution_control import (
     ExecutionControl,
     PendingToolsCheckpointRequest,
     RunningCheckpointRequest,
+    TerminalFailureRequest,
     WaitingCheckpointRequest,
 )
 from agentos.runtime.continuation import ContinuationRuntime
 from agentos.runtime.provider_attempt import (
     ProviderAttemptRunner,
+    announced_provider_attempt_events,
     ensure_provider_response_usable,
     provider_stream_events,
+    record_provider_retry,
 )
 from agentos.runtime.provider_request_builder import (
     ProviderRequestBuild,
@@ -55,9 +57,13 @@ from agentos.runtime.query_loop_support import (
     ToolCallRouterBoundary,
     TurnNoticeProvider,
 )
-from agentos.runtime.query_loop_recovery import restore_tool_loop
+from agentos.runtime.query_loop_recovery import restore_prepared_tool_loop
 from agentos.runtime.retry import RetryPolicy
-from agentos.runtime.execution import AcceptedTurnExecution, RunExecutionCursor
+from agentos.runtime.execution import (
+    AcceptedTurnExecution,
+    RestoreAcceptedTurn,
+    RunExecutionCursor,
+)
 from agentos.runtime.run import LocalContinuationInput, RunOptions, RunRequest, UserTurnInput
 from agentos.runtime.run_commit import CheckpointCommitStore, RunCommitRuntime
 from agentos.runtime.checkpoint import RuntimeCheckpointSource
@@ -79,6 +85,11 @@ from agentos.runtime.tool_payloads import ToolPayloadRuntime
 from agentos.runtime.tool_scheduler import ToolCallScheduler
 from agentos.runtime.side_effect_memory import InMemorySideEffectStore
 from agentos.runtime.side_effect_store import SideEffectStore
+from agentos.runtime.side_effect_resume import SideEffectResume
+from agentos.runtime.side_effect_resume_validator import (
+    SideEffectResumeValidator,
+    require_side_effect_resume_validator,
+)
 from agentos.runtime.completed_result_projection import CompletedResultProjector
 from agentos.runtime.tool_side_effect_runtime import ToolSideEffectRuntime
 from agentos.runtime.turn import TurnState
@@ -104,10 +115,10 @@ class QueryLoop:
     waiting_runtime: WaitingRuntime | None = None
     checkpoint_source: RuntimeCheckpointSource | None = None
     checkpoint_store: CheckpointCommitStore | None = None
-    recovery_cursor: RunExecutionCursor | None = None
     tool_payload_runtime: ToolPayloadRuntime | None = None
     artifact_runtime: ArtifactRuntimeBoundary | None = None
     side_effect_store: SideEffectStore | None = None
+    side_effect_resume_validator: SideEffectResumeValidator | None = None
     continuation_runtime: ContinuationRuntime = field(
         default_factory=ContinuationRuntime,
     )
@@ -124,6 +135,7 @@ class QueryLoop:
     _lifecycle: TurnLifecycle = field(init=False, repr=False)
     _run_driver: RunDriver = field(init=False, repr=False)
     _side_effects: ToolSideEffectRuntime = field(init=False, repr=False)
+    _tool_payloads: ToolPayloadRuntime = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.run_runtime is None:
@@ -144,6 +156,7 @@ class QueryLoop:
             self.tool_payload_runtime = ToolPayloadRuntime.for_session(
                 self.run_runtime.session_id,
             )
+        self._tool_payloads = self.tool_payload_runtime
         if self.side_effect_store is None:
             self.side_effect_store = InMemorySideEffectStore()
         if self.waiting_runtime is None and self.checkpoint_store is None:
@@ -194,7 +207,6 @@ class QueryLoop:
                 checkpoint_source=self.checkpoint_source,
                 checkpoint_store=self.checkpoint_store,
             ),
-            recovery_cursor=self.recovery_cursor,
             tool_payloads=self.tool_payload_runtime,
         )
 
@@ -208,6 +220,11 @@ class QueryLoop:
             (UserTurnInput, LocalContinuationInput, AcceptedTurnExecution),
         ):
             raise TypeError("run request contains an unsupported input")
+        if type(request.input) is AcceptedTurnExecution:
+            require_side_effect_resume_validator(
+                request.input.preparation,
+                self.side_effect_resume_validator,
+            )
         self._lifecycle.session_state = self.session_state
         reservation = self._execution_lease.reserve()
         try:
@@ -248,19 +265,24 @@ class QueryLoop:
         run_id: str,
         turn: TurnState | None,
         options: RunOptions,
-        recovery_cursor: RunExecutionCursor | None,
+        preparation: RestoreAcceptedTurn | SideEffectResume,
         guard_source: Callable[[], RunWriteGuard] | None = None,
     ) -> AsyncIterator[TurnStreamEvent | _FinalContent | ExecutionControl]:
         current_guard = guard_source or (lambda: RunWriteGuard(0))
-        recovery = await restore_tool_loop(
+        recovery, terminal_error = await restore_prepared_tool_loop(
             run_id=run_id,
-            cursor=recovery_cursor,
+            preparation=preparation,
             messages=self.message_runtime,
-            payloads=self._require_tool_payload_runtime(),
+            payloads=self._tool_payloads,
             router=self.tool_call_router,
             side_effects=self._side_effects,
+            validator=self.side_effect_resume_validator,
             guard=current_guard(),
         )
+        if terminal_error is not None:
+            yield TerminalFailureRequest(terminal_error)
+            return
+        assert recovery is not None
         iterations = recovery.iterations
         provider_call_index = recovery.provider_call_index
         recovered_plan = recovery.pending_plan
@@ -288,7 +310,11 @@ class QueryLoop:
                             yield event
                 if response is None:
                     raise RuntimeError("provider stream ended without completion event")
-                self._emit(ProviderResponseReceivedEvent(**self._event_context(turn)))
+                self._emit(
+                    ProviderResponseReceivedEvent(
+                        **self._lifecycle.event_context(turn),
+                    ),
+                )
                 calls = tuple(response.tool_calls)
                 if calls and self.tool_call_router is None:
                     raise RuntimeError("tool call router is required for tool calls")
@@ -301,7 +327,7 @@ class QueryLoop:
                     assistant = self.message_runtime.append_assistant(response.content)
                     self._emit(AssistantMessageAppendedEvent(
                         message_id=assistant.id,
-                        **self._event_context(turn),
+                        **self._lifecycle.event_context(turn),
                     ))
                     yield AssistantCompleted(
                         content=response.content,
@@ -314,7 +340,7 @@ class QueryLoop:
                 if turn is None:
                     raise RuntimeError("tool invocation plan requires turn state")
                 assistant_id = f"msg_{self.message_runtime.store.next_id_number()}"
-                batch = self._require_tool_payload_runtime().prepare_batch(
+                batch = self._tool_payloads.prepare_batch(
                     run_id=run_id,
                     turn_id=turn.id,
                     provider_call_index=provider_call_index,
@@ -331,7 +357,7 @@ class QueryLoop:
                     raise RuntimeError("assistant message identity changed during planning")
                 self._emit(AssistantMessageAppendedEvent(
                     message_id=assistant.id,
-                    **self._event_context(turn),
+                    **self._lifecycle.event_context(turn),
                 ))
                 yield AssistantCompleted(
                     content=response.content,
@@ -363,7 +389,7 @@ class QueryLoop:
                 hooks=self._hooks,
                 result_budget=self.tool_result_budget,
                 token_counter=self.token_counter,
-                event_context=self._event_context(turn),
+                event_context=self._lifecycle.event_context(turn),
                 emit=self._emit,
                 side_effects=self._side_effects,
                 logger=self.structured_logger,
@@ -387,12 +413,6 @@ class QueryLoop:
                     ),
                 )
             provider_call_index = plan.provider_call_index + 1
-
-    def _require_tool_payload_runtime(self) -> ToolPayloadRuntime:
-        payloads = self.tool_payload_runtime
-        if payloads is None:
-            raise RuntimeError("tool payload runtime is required for recovery")
-        return payloads
 
     async def _provider_attempt_events(
         self,
@@ -421,22 +441,21 @@ class QueryLoop:
             ensure_usable=ensure_provider_response_usable,
             consume_temporary=self.message_runtime.consume_temporary_refs,
             retry_policy=self.retry_policy,
-            on_retry=self._on_provider_retry,
+            on_retry=partial(
+                record_provider_retry,
+                policy=self.retry_policy,
+                emit=self._emit,
+                log=self._log,
+                event_context=self._lifecycle.event_context(None),
+            ),
         )
-        announced = False
         stream = runner.run_stream(ProviderStreamOptions(options.thinking, options.show_thinking))
-        async with aclosing(stream):
-            async for event in stream:
-                if not announced:
-                    if prepared_request is None:
-                        raise RuntimeError("provider attempt did not prepare a request")
-                    yield ContextLoaded(
-                        "runtime",
-                        f"已装载 {len(prepared_request.messages)} 条消息和 "
-                        f"{len(prepared_request.tools)} 个工具声明。",
-                    )
-                    yield StatusUpdate("model", "正在请求模型生成下一步响应。")
-                    announced = True
+        announced = announced_provider_attempt_events(
+            stream,
+            lambda: prepared_request,
+        )
+        async with aclosing(announced):
+            async for event in announced:
                 yield event
 
     def _build_request(self) -> ProviderRequestBuild:
@@ -450,36 +469,15 @@ class QueryLoop:
         turn: TurnState | None,
     ) -> ProviderRequest:
         request = self._hooks.before_provider_call(request)
-        self._emit(ProviderRequestBuiltEvent(**self._event_context(turn)))
+        self._emit(
+            ProviderRequestBuiltEvent(**self._lifecycle.event_context(turn)),
+        )
         self._log(
             "provider_call",
             message_count=len(request.messages),
             tool_count=len(request.tools),
         )
         return request
-
-    async def _on_provider_retry(self, attempt: int, error: Exception) -> None:
-        policy = self.retry_policy
-        if policy is None:
-            raise RuntimeError("provider retry policy is missing")
-        delay = policy.delay_for_attempt(attempt)
-        self._emit(
-            ProviderRetryEvent(
-                attempt=attempt,
-                max_retries=policy.max_retries,
-                error=str(error),
-                delay_seconds=delay,
-                **self._event_context(None),
-            ),
-        )
-        self._log(
-            "provider_retry",
-            attempt=attempt,
-            max_retries=policy.max_retries,
-            error=str(error),
-            delay_seconds=delay,
-        )
-        await run_sync(policy.sleep, delay)
 
     def _next_provider_stream_request_id(self) -> str:
         self._provider_stream_counter += 1
@@ -494,6 +492,3 @@ class QueryLoop:
             if self.session_state is not None:
                 fields.setdefault("session_id", self.session_state.id)
             self.structured_logger.log(event, **fields)
-
-    def _event_context(self, turn: TurnState | None) -> dict[str, str | None]:
-        return self._lifecycle.event_context(turn)

@@ -13,7 +13,7 @@ from agentos.runtime.durable_commands import (
     DurableCommandReceipt,
     DurableRunCommand,
 )
-from agentos.runtime.execution import AcceptedTurnExecution
+from agentos.runtime.execution import AcceptedTurnExecution, ApplyAcceptedInput
 from agentos.runtime.errors import (
     CommandConflictError,
     CommandNotDueError,
@@ -87,7 +87,7 @@ async def accept_command(
             turn_id,
         ),
         guard=RunWriteGuard(updated.aggregate_version),
-        mode="start",
+        preparation=ApplyAcceptedInput(),
     )
 
 
@@ -128,7 +128,7 @@ async def load_pending_continuation(
                 turn_id=row["turn_id"],
             ),
             guard=RunWriteGuard(row["aggregate_version"]),
-            mode="start",
+            preparation=ApplyAcceptedInput(),
         )
     except (KeyError, TypeError, ValueError):
         raise CheckpointCorruptedError(

@@ -12,6 +12,9 @@ from agentos.distributed.models import (
     RunDeliveryTarget,
 )
 from agentos.distributed.postgres._claim_records import accepted_input, target_from_row
+from agentos.distributed.postgres._claim_preparation import (
+    classify_accepted_turn_preparation,
+)
 from agentos.distributed.postgres._claim_recovery import recover_expired
 from agentos.distributed.postgres._claim_lifecycle import (
     heartbeat,
@@ -162,10 +165,19 @@ class PostgresClaimStore:
                 token,
                 cast(datetime, claimed_session["active_claim_expires_at"]),
             )
+            input = accepted_input(input_row)
+            guard = RunWriteGuard(target.run.aggregate_version, claim_id, token)
+            preparation = await classify_accepted_turn_preparation(
+                connection,
+                scope=scope,
+                run=target.run,
+                accepted=input,
+                guard=guard,
+            )
             execution = AcceptedTurnExecution(
-                input=accepted_input(input_row),
-                guard=RunWriteGuard(target.run.aggregate_version, claim_id, token),
-                mode=("start" if target.run.status is RunStatus.QUEUED else "recover"),
+                input=input,
+                guard=guard,
+                preparation=preparation,
             )
             return ClaimedExecution(target, claim, execution)
 

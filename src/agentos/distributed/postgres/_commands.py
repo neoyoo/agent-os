@@ -12,6 +12,7 @@ from agentos.distributed.errors import (
     CommandConflictError,
     CommandStateError,
     RunNotFoundError,
+    ClaimConflictError,
 )
 from agentos.distributed.models import RequestScope
 from agentos.distributed.postgres._command_cancellation import commit_cancel
@@ -19,6 +20,9 @@ from agentos.distributed.postgres._command_records import update_run
 from agentos.distributed.postgres._database import AsyncConnection, PostgresPool, fetchone
 from agentos.distributed.postgres._outbox_records import EXECUTION_TOPIC, insert_outbox
 from agentos.distributed.postgres._records import run_state_from_row
+from agentos.distributed.postgres._reconciliation_sources import (
+    validate_reconciliation_command_source,
+)
 from agentos.distributed.postgres._side_effect_codec import side_effect_record_from_json
 from agentos.durable.serialization import dump_json
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
@@ -212,6 +216,16 @@ async def _validate_resolution(
         raise CommandStateError() from None
     if record.status is not SideEffectStatus.AMBIGUOUS:
         raise CommandStateError()
+    try:
+        await validate_reconciliation_command_source(
+            connection,
+            scope=scope,
+            run=state,
+            resolution=resolution,
+            record=record,
+        )
+    except ClaimConflictError:
+        raise CommandStateError() from None
     if type(resolution.result_ref) is ArtifactToolResultRef:
         artifact = await fetchone(
             connection,
