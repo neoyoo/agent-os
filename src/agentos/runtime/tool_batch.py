@@ -4,28 +4,31 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from functools import partial
 
+from agentos._waiting import WaitRequest
 from agentos.capabilities.executor import (
     ToolExecutionError,
     ToolExecutionOutcome,
     ToolExecutionResult,
 )
 from agentos.messages import ActiveWindow, MessageRuntime
-from agentos.policies import SecurityPolicyError, ToolResultBudget
+from agentos.policies import ToolResultBudget
+from agentos.policies.security import SecurityPolicyError
 from agentos.providers import ProviderToolCall
 from agentos.runtime._execution_control import WaitingCheckpointRequest
 from agentos.runtime._tool_observation import ToolObservationMapper
-from agentos.runtime.event_bus import AgentEvent, ToolResultAppendedEvent
+from agentos.runtime.event_bus import (
+    AgentEvent,
+    ToolResultAppendedEvent,
+    ToolResultCappedEvent,
+)
 from agentos.runtime.query_loop_hooks import QueryLoopHooks
 from agentos.runtime.query_loop_support import (
     _ToolCallFailure,
     StructuredLoggerBoundary,
     ToolCallRouterBoundary,
-    duplicate_tool_call_result,
     map_tool_result_cap,
     resolve_waiting_tool_batch,
     skill_loaded_event,
-    tool_call_signature,
-    waiting_peer_completion,
 )
 from agentos.runtime.stream_events import (
     StatusUpdate,
@@ -35,6 +38,12 @@ from agentos.runtime.stream_events import (
     TurnStreamEvent,
 )
 from agentos.runtime.tool_scheduler import ToolCallScheduler, ToolExecutionContext
+from agentos.runtime.tool_invocations import PreparedToolInvocationBatch
+from agentos.runtime.run_runtime import RunWriteGuard
+from agentos.runtime.tool_side_effect_runtime import (
+    ToolSideEffectRuntime,
+    WaitingToolHandoff,
+)
 from agentos.tokens import TokenCounter
 
 
@@ -50,21 +59,37 @@ class ToolBatchRunner:
     token_counter: TokenCounter
     event_context: dict[str, str | None]
     emit: Callable[[AgentEvent], None]
+    side_effects: ToolSideEffectRuntime
     logger: StructuredLoggerBoundary | None = None
 
     async def events(
         self,
         *,
-        calls: tuple[ProviderToolCall, ...],
-        applied_signatures: set[str],
-        assistant_id: str,
+        batch: PreparedToolInvocationBatch,
+        guard: RunWriteGuard,
     ) -> AsyncIterator[TurnStreamEvent | WaitingCheckpointRequest]:
-        immediate: dict[str, ToolExecutionResult] = {}
+        plan = batch.plan
+        calls = plan.provider_calls()
+        assistant_id = plan.assistant_message_id
+        entry_by_call_id = {
+            entry.invocation.context.tool_call_id: entry
+            for entry in plan.entries
+        }
+        contract_by_call_id = {
+            entry.invocation.context.tool_call_id: contract
+            for entry, contract in zip(
+                plan.entries,
+                batch.contracts,
+                strict=True,
+            )
+        }
         scheduled: list[tuple[int, ProviderToolCall]] = []
         appended_result_ids: list[str] = []
         started_calls: list[ProviderToolCall] = []
         started_events_emitted = False
         waiting_handoff = False
+        waiting_outcomes: dict[str, WaitingToolHandoff] = {}
+        cap_events: dict[str, ToolResultCappedEvent] = {}
         sanitized_failure = False
         try:
             for batch_index, call in enumerate(calls):
@@ -76,15 +101,7 @@ class ToolBatchRunner:
                     tool_call_id=call.id,
                     **self.event_context,
                 ))
-                result = duplicate_tool_call_result(call, applied_signatures)
-                if result is None:
-                    result = self.hooks.before_tool_call(call)
-                    applied_signatures.add(tool_call_signature(call))
-                if result is None:
-                    scheduled.append((batch_index, call))
-                else:
-                    immediate[call.id] = result
-                    started_calls.append(call)
+                scheduled.append((batch_index, call))
 
             observation = ToolObservationMapper(**self.event_context)
             cap_result = partial(
@@ -108,27 +125,50 @@ class ToolBatchRunner:
                     )
                 self.emit(observation.started(call, context))
                 try:
-                    return await self.router.async_execute_tool_call(call)
-                except SecurityPolicyError as error:
-                    raise _ToolCallFailure(call, error) from error
+                    entry = entry_by_call_id[call.id]
+
+                    async def produce(invocation):  # type: ignore[no-untyped-def]
+                        result = self.hooks.before_tool_call(call)
+                        if result is None:
+                            result = await self.router.execute(invocation)
+                        if isinstance(result, WaitRequest):
+                            return result
+                        result = self.hooks.after_tool_call(call, result)
+                        capped = cap_result(call, result)
+                        if capped.event is not None:
+                            cap_events[call.id] = capped.event
+                        return capped.result
+
+                    outcome = await self.side_effects.execute(
+                        entry,
+                        contract_by_call_id[call.id],
+                        guard=guard,
+                        produce=produce,
+                    )
+                    if isinstance(outcome, WaitingToolHandoff):
+                        waiting_outcomes[call.id] = outcome
+                        return outcome.request
+                    return outcome
                 except Exception as error:
                     raise _ToolCallFailure(
                         call,
                         error,
-                        expose_error=False,
+                        expose_error=isinstance(error, SecurityPolicyError),
                     ) from error
 
             completed = await self.scheduler.execute_batch(
                 calls=tuple(call for _, call in scheduled),
                 batch_indexes=tuple(index for index, _ in scheduled),
                 batch_size=len(calls),
-                policy_for=self.router.concurrency_policy_for,
+                policy_for=lambda call: contract_by_call_id[
+                    call.id
+                ].concurrency_policy,
                 execute=execute,
                 on_completed=lambda item: self.emit(observation.completed(item)),
             )
             waiting = resolve_waiting_tool_batch(
                 calls=calls,
-                immediate=immediate,
+                immediate={},
                 completed=completed,
             )
             if waiting is not None:
@@ -137,15 +177,7 @@ class ToolBatchRunner:
                         yield ToolStreamStarted(call.name, call.id)
                 started_events_emitted = True
                 for call, result in waiting.peer_results:
-                    completed_event, cap_event = waiting_peer_completion(
-                        call,
-                        result,
-                        self.hooks.after_tool_call,
-                        cap_result,
-                    )
-                    if cap_event is not None:
-                        self.emit(cap_event)
-                    yield completed_event
+                    yield ToolStreamCompleted(call.name, call.id, result.content)
                 remove_refs = (assistant_id, *appended_result_ids)
                 projection = ActiveWindow.from_refs(
                     self.messages.active_window.snapshot_refs(),
@@ -160,28 +192,29 @@ class ToolBatchRunner:
                         if not ref.temporary
                     ),
                     remove_active_refs=remove_refs,
+                    completion=waiting_outcomes[waiting.tool_call_id].completion,
                 )
                 return
 
             for call in started_calls:
                 yield ToolStreamStarted(call.name, call.id)
             started_events_emitted = True
-            raw_results = immediate | {
+            raw_results = {
                 item.tool_call.id: item.result for item in completed
             }
-            final_results = []
-            for call in calls:
-                result = self.hooks.after_tool_call(call, raw_results[call.id])
-                capped = cap_result(call, result)
-                final_results.append((call, capped.result, capped.event))
             committed_results = []
-            for call, result, cap_event in final_results:
+            for call in calls:
+                result = raw_results[call.id]
+                if not isinstance(result, ToolExecutionResult):
+                    raise RuntimeError("tool batch did not produce a provider result")
                 stored = self.messages.append_tool_result(
                     result.tool_call_id,
                     result.content,
                 )
                 appended_result_ids.append(stored.id)
-                committed_results.append((call, result, stored.id, cap_event))
+                committed_results.append(
+                    (call, result, stored.id, cap_events.get(call.id)),
+                )
         except _ToolCallFailure as failure:
             if not started_events_emitted:
                 for call in started_calls:

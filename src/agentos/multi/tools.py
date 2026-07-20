@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from agentos.capabilities import RegisteredTool, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.multi.coordinator import AgentCoordinator
 from agentos.multi.types import TaskHandle
 
@@ -31,6 +36,7 @@ class AgentCoordinationTools:
                 description="Spawn an isolated local subagent for a task.",
                 parameters=self._spawn_parameters(),
                 handler=self._spawn_subagent,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         registry.register(
@@ -39,6 +45,7 @@ class AgentCoordinationTools:
                 description="Dispatch a task to an available expert agent.",
                 parameters=self._dispatch_parameters(),
                 handler=self._dispatch_to_expert,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         registry.register(
@@ -47,6 +54,7 @@ class AgentCoordinationTools:
                 description="Check active multi-agent tasks and collect results.",
                 parameters={"type": "object", "properties": {}},
                 handler=self._check_agent_tasks,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         registry.register(
@@ -55,10 +63,12 @@ class AgentCoordinationTools:
                 description="Cancel a queued or running multi-agent task.",
                 parameters=self._cancel_parameters(),
                 handler=self._cancel_agent_task,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
 
-    def _spawn_subagent(self, arguments: dict[str, object]) -> str:
+    def _spawn_subagent(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         handle = self.coordinator.spawn(
             instruction=str(arguments["instruction"]),
             allowed_tool_names=self._string_tuple(
@@ -69,7 +79,8 @@ class AgentCoordinationTools:
         )
         return self._json_handle(handle)
 
-    def _dispatch_to_expert(self, arguments: dict[str, object]) -> str:
+    def _dispatch_to_expert(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         handle = self.coordinator.dispatch(
             instruction=str(arguments["instruction"]),
             required_capabilities=self._string_tuple(
@@ -83,7 +94,7 @@ class AgentCoordinationTools:
         )
         return self._json_handle(handle)
 
-    def _check_agent_tasks(self, arguments: dict[str, object]) -> str:
+    def _check_agent_tasks(self, invocation: ToolInvocation) -> str:
         active_tasks = self.coordinator.active_tasks(self.parent_agent_id)
         results = self.coordinator.collect_results(self.parent_agent_id)
         return json.dumps(
@@ -94,7 +105,8 @@ class AgentCoordinationTools:
             sort_keys=True,
         )
 
-    def _cancel_agent_task(self, arguments: dict[str, object]) -> str:
+    def _cancel_agent_task(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         task_id = str(arguments["task_id"])
         return json.dumps(
             {

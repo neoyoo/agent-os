@@ -12,11 +12,22 @@ from agentos._sync_work import (
     current_sync_work_tracker,
     run_sync,
 )
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
-from agentos.runtime import AgentBusyError, ProviderRequestBuilder, QueryLoop
+from agentos.runtime import (
+    AgentBusyError,
+    ProviderRequestBuilder,
+    QueryLoop,
+    SessionState,
+)
 from agentos.workspace import (
     LocalWorkspaceExecutionBackend,
     WorkspaceExecutionRequest,
@@ -163,7 +174,7 @@ def test_workspace_backend_sync_work_converges_before_run_lease_release(
             capability="process.exec",
         )
 
-        async def execute_workspace(_arguments: dict[str, object]) -> str:
+        async def execute_workspace(_invocation: ToolInvocation) -> str:
             result = await backend.async_run(request)
             return result.stdout
 
@@ -176,6 +187,7 @@ def test_workspace_backend_sync_work_converges_before_run_lease_release(
                 description="Execute a workspace command.",
                 parameters={"type": "object", "properties": {}},
                 handler=execute_workspace,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
@@ -203,6 +215,7 @@ def test_workspace_backend_sync_work_converges_before_run_lease_release(
                     ],
                 ),
                 tool_call_router=router,
+                session_state=SessionState(id="session_sync_work_tracker"),
             ),
         )
         stream = await agent.run("hello", stream=True)

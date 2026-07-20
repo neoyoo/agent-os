@@ -21,6 +21,10 @@ from agentos.runtime.errors import (
 )
 from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
+from agentos.runtime.side_effect_types import (
+    SideEffectResolution,
+    SideEffectResolutionKind,
+)
 from tests.durable._async_support import create_running, run
 from tests.durable._fixtures import NOW, checkpoint_source, database_path
 
@@ -175,6 +179,29 @@ def test_cancel_command_persists_and_deduplicates(tmp_path) -> None:
     )
     assert state is not None and state.status is RunStatus.CANCELLED
     run(reopened.close())
+
+
+def test_sqlite_runtime_fails_closed_without_resolution_resume_assembly(
+    tmp_path,
+) -> None:
+    operation_id = "operation_d340f3861e0c6a7eefbaf707fdc69d3d"
+    store, runs = waiting_run(
+        tmp_path,
+        WaitReason("side_effect_reconciliation", operation_id),
+    )
+    runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
+    command = DurableRunCommand(
+        "run_1",
+        "cmd_resolve",
+        "resolve_side_effect",
+        SideEffectResolution(operation_id, SideEffectResolutionKind.FAIL),
+    )
+
+    with pytest.raises(CommandStateError, match="not assembled"):
+        run(runtime.accept(command))
+
+    assert run(runs.get_run("run_1")).status is RunStatus.WAITING
+    run(store.close())
 
 
 def test_timer_command_is_rejected_until_due_without_being_recorded(tmp_path) -> None:

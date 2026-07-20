@@ -3,7 +3,13 @@ import asyncio
 import pytest
 
 from agentos import Agent
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.context import ContextRuntime
 from agentos.hooks import HookContext, HookManager, HookRegistry, HookResult
 from agentos.messages import MessageRuntime
@@ -19,6 +25,7 @@ from agentos.runtime import (
     EventBus,
     ProviderRequestBuilder,
     QueryLoop,
+    SessionState,
     ToolExecutionCompletedEvent,
     ToolExecutionStartedEvent,
 )
@@ -44,6 +51,11 @@ def build_loop(
         provider=provider,
         tool_call_router=router,
         hook_manager=hook_manager,
+        session_state=(
+            SessionState(id="session_query_loop_hooks")
+            if router is not None
+            else None
+        ),
     )
 
 
@@ -110,7 +122,7 @@ def test_after_provider_call_hook_observes_response() -> None:
 
 
 def test_before_tool_call_hook_can_deny_tool_execution_and_write_result() -> None:
-    called: list[dict[str, object]] = []
+    called: list[ToolInvocation] = []
     registry = HookRegistry()
     registry.register(
         "before_tool_call",
@@ -120,7 +132,8 @@ def test_before_tool_call_hook_can_deny_tool_execution_and_write_result() -> Non
         name="lookup",
         description="Lookup.",
         parameters={"type": "object", "properties": {}},
-        handler=lambda arguments: called.append(arguments) or "should not run",
+        handler=lambda invocation: called.append(invocation) or "should not run",
+        side_effect_policy=SideEffectPolicy.PURE,
     )
     tool_registry = ToolRegistry()
     tool_registry.register(tool)
@@ -147,6 +160,33 @@ def test_before_tool_call_hook_can_deny_tool_execution_and_write_result() -> Non
     assert tool_result.content[0].text == "tool call denied by hook: tool blocked"  # type: ignore[union-attr]
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "declare_schema",
+        "update_state",
+        "extend_schema",
+        "start_chapter",
+        "load_attachment",
+    ],
+)
+def test_projection_tool_hook_deny_cannot_forge_completed_result(
+    tool_name: str,
+) -> None:
+    registry = HookRegistry()
+    registry.register(
+        "before_tool_call",
+        lambda _context: HookResult(action="deny", reason="blocked"),
+    )
+
+    from agentos.runtime.query_loop_hooks import QueryLoopHooks
+
+    with pytest.raises(RuntimeError, match="projection tool denied"):
+        QueryLoopHooks(HookManager(registry)).before_tool_call(
+            ProviderToolCall("call_1", tool_name, {}),
+        )
+
+
 def test_tool_events_keep_original_index_after_immediate_hook_result() -> None:
     registry = HookRegistry()
 
@@ -165,7 +205,8 @@ def test_tool_events_keep_original_index_after_immediate_hook_result() -> None:
             name="lookup",
             description="Lookup.",
             parameters={"type": "object", "properties": {}},
-            handler=lambda _arguments: "scheduled result",
+            handler=lambda _invocation: "scheduled result",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     router = ToolCallRouter(tool_registry=tools, context_runtime=context)
@@ -193,6 +234,7 @@ def test_tool_events_keep_original_index_after_immediate_hook_result() -> None:
         tool_call_router=router,
         hook_manager=HookManager(registry),
         event_bus=event_bus,
+        session_state=SessionState(id="session_tool_event_hooks"),
     )
 
     assert run_turn(loop, "use tools") == "done"
@@ -205,17 +247,26 @@ def test_tool_events_keep_original_index_after_immediate_hook_result() -> None:
         for event in event_bus.events
         if isinstance(event, ToolExecutionCompletedEvent)
     ]
-    assert len(started) == len(completed) == 1
-    assert started[0].tool_call_id == completed[0].tool_call_id == "scheduled"
-    assert started[0].batch_index == completed[0].batch_index == 1
-    assert started[0].batch_size == completed[0].batch_size == 2
-    assert started[0].concurrency_policy == completed[0].concurrency_policy == "exclusive"
-    assert started[0].max_parallel_calls == completed[0].max_parallel_calls == 8
-    assert started[0].queue_wait_seconds is not None
-    assert started[0].queue_wait_seconds >= 0
-    assert not hasattr(started[0], "execution_duration_seconds")
-    assert completed[0].execution_duration_seconds is not None
-    assert completed[0].execution_duration_seconds >= 0
+    assert [event.tool_call_id for event in started] == ["immediate", "scheduled"]
+    assert [event.tool_call_id for event in completed] == ["immediate", "scheduled"]
+    assert [event.batch_index for event in started] == [0, 1]
+    assert [event.batch_index for event in completed] == [0, 1]
+    assert all(event.batch_size == 2 for event in (*started, *completed))
+    assert all(
+        event.concurrency_policy == "exclusive"
+        for event in (*started, *completed)
+    )
+    assert all(event.max_parallel_calls == 8 for event in (*started, *completed))
+    assert all(
+        event.queue_wait_seconds is not None and event.queue_wait_seconds >= 0
+        for event in started
+    )
+    assert all(not hasattr(event, "execution_duration_seconds") for event in started)
+    assert all(
+        event.execution_duration_seconds is not None
+        and event.execution_duration_seconds >= 0
+        for event in completed
+    )
 
 
 def test_after_tool_call_hook_observes_result() -> None:
@@ -231,7 +282,8 @@ def test_after_tool_call_hook_observes_result() -> None:
             name="lookup",
             description="Lookup.",
             parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: "lookup result",
+            handler=lambda _invocation: "lookup result",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     router = ToolCallRouter(tool_registry=tool_registry, context_runtime=ContextRuntime())
@@ -267,7 +319,8 @@ def test_after_tool_call_hook_ignores_invalid_modified_result_type() -> None:
             name="lookup",
             description="Lookup.",
             parameters={"type": "object", "properties": {}},
-            handler=lambda _arguments: "lookup result",
+            handler=lambda _invocation: "lookup result",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     router = ToolCallRouter(tool_registry=tool_registry, context_runtime=ContextRuntime())

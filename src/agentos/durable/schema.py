@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import aiosqlite
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS durable_schema (
@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS durable_execution_cursors (
     FOREIGN KEY (session_id, run_id)
         REFERENCES durable_runs(session_id, run_id)
 );
+
+CREATE TABLE IF NOT EXISTS durable_side_effects (
+    session_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK (attempt > 0),
+    run_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (session_id, operation_id, attempt),
+    FOREIGN KEY (session_id, run_id)
+        REFERENCES durable_runs(session_id, run_id)
+);
 """
 
 
@@ -149,6 +161,14 @@ _EXPECTED_COLUMNS = {
         ("run_id", "TEXT", 1, 2),
         ("payload_json", "TEXT", 1, 0),
     ),
+    "durable_side_effects": (
+        ("session_id", "TEXT", 1, 1),
+        ("operation_id", "TEXT", 1, 2),
+        ("attempt", "INTEGER", 1, 3),
+        ("run_id", "TEXT", 1, 0),
+        ("status", "TEXT", 1, 0),
+        ("payload_json", "TEXT", 1, 0),
+    ),
 }
 _EXPECTED_UNIQUE = {
     "durable_sessions": {("session_id",)},
@@ -165,6 +185,7 @@ _EXPECTED_UNIQUE = {
     },
     "durable_context_states": {("session_id",)},
     "durable_execution_cursors": {("session_id", "run_id")},
+    "durable_side_effects": {("session_id", "operation_id", "attempt")},
 }
 _EXPECTED_FOREIGN_TARGETS = {
     "durable_runs": {"durable_sessions"},
@@ -174,6 +195,7 @@ _EXPECTED_FOREIGN_TARGETS = {
     "durable_active_refs": {"durable_messages"},
     "durable_context_states": {"durable_sessions"},
     "durable_execution_cursors": {"durable_runs"},
+    "durable_side_effects": {"durable_runs"},
 }
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from agentos.capabilities import ToolCallRouter, ToolRegistry
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.compression import CompressionIndex, CompressionRuntime
@@ -18,8 +20,8 @@ from agentos.messages import (
     ToolCall,
 )
 from agentos.policies import BudgetPolicy
-from agentos.providers import ProviderToolCall
 from agentos.recall import RecallContextError, RecallRuntime, SegmentRepository
+from tests.tool_invocation import make_tool_invocation
 
 import pytest
 
@@ -238,16 +240,17 @@ def test_recall_router_returns_standard_tool_result_and_injects_originals() -> N
         recall_runtime=_recall_runtime(messages, compression.index),
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_recall",
-            name="recall_context",
-            arguments={"handle": "seg_1"},
+    result = asyncio.run(
+        router.execute(
+            make_tool_invocation(
+                "recall_context",
+                {"handle": "seg_1"},
+            ),
         ),
     )
 
     assert isinstance(result, ToolExecutionResult)
-    assert result.tool_call_id == "call_recall"
+    assert result.tool_call_id == "call_recall_context"
     assert '<recalled-context source="compressed_history" handle="seg_1">' in (
         result.content
     )

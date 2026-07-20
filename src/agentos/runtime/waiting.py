@@ -5,6 +5,8 @@ from typing import Protocol
 
 from agentos._waiting import WaitReason
 from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
+from agentos.runtime.side_effect_memory import InMemorySideEffectStore
+from agentos.runtime.side_effect_types import WaitingToolCompletion
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +36,7 @@ class WaitingRuntime(Protocol):
         turn_id: str,
         reason: WaitReason,
         guard: RunWriteGuard,
+        completion: WaitingToolCompletion | None = None,
     ) -> WaitingCommit: ...
 
 
@@ -42,6 +45,7 @@ class LocalWaitingRuntime:
     """Commit WAITING to the Level 1 in-memory RunRuntime."""
 
     runs: RunRuntime
+    side_effects: InMemorySideEffectStore
 
     async def commit_waiting(
         self,
@@ -50,10 +54,27 @@ class LocalWaitingRuntime:
         turn_id: str,
         reason: WaitReason,
         guard: RunWriteGuard,
+        completion: WaitingToolCompletion | None = None,
     ) -> WaitingCommit:
-        waiting = await self.runs.wait(
-            run_id,
+        async def commit_run() -> WaitingCommit:
+            waiting = await self.runs.wait(
+                run_id,
+                reason=reason,
+                guard=guard,
+            )
+            return WaitingCommit(run_id, reason, waiting.aggregate_version)
+
+        if completion is None:
+            return await commit_run()
+        committed = await self.side_effects.commit_wait_control(
+            completion=completion,
+            session_id=self.runs.session_id,
+            run_id=run_id,
+            turn_id=turn_id,
             reason=reason,
             guard=guard,
+            commit_run=commit_run,
         )
-        return WaitingCommit(run_id, reason, waiting.aggregate_version)
+        if type(committed) is not WaitingCommit:
+            raise TypeError("local waiting commit returned invalid metadata")
+        return committed

@@ -6,6 +6,7 @@ from agentos.runtime.run_commit import RunCommitRuntime
 from agentos.runtime.run_driver import RunDriver
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.waiting import WaitingCommit
+from agentos.runtime.side_effect_types import WaitingToolCompletion
 
 
 def test_run_driver_uses_run_commit_runtime_for_execution_outcomes() -> None:
@@ -31,6 +32,7 @@ def test_waiting_commit_uses_atomic_version_without_reading_run_store() -> None:
             turn_id: str,
             reason: WaitReason,
             guard: RunWriteGuard,
+            completion: WaitingToolCompletion | None = None,
         ) -> WaitingCommit:
             return WaitingCommit(run_id, reason, aggregate_version=9)
 

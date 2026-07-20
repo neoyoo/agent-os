@@ -4,8 +4,11 @@ from typing import TypeAlias, cast
 
 from agentos._waiting import WaitRequest
 from agentos._json_values import thaw_json
-from agentos._redaction import is_secret_like_key
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
+from agentos.capabilities.invocation import (
+    ToolCompensationInvocation,
+    ToolInvocation,
+)
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.sandbox import ToolSandboxPolicy
 from agentos.capabilities.tools import RegisteredTool
@@ -23,6 +26,12 @@ class ToolExecutionResult:
 
     tool_call_id: str
     content: str
+
+    def __post_init__(self) -> None:
+        if type(self.tool_call_id) is not str or not self.tool_call_id.strip():
+            raise ValueError("tool_call_id must not be empty")
+        if type(self.content) is not str:
+            raise TypeError("tool result content must be str")
 
 
 ToolExecutionOutcome: TypeAlias = ToolExecutionResult | WaitRequest
@@ -54,9 +63,8 @@ def validate_tool_arguments(
         expected = spec.get("type")
         if expected is None or _matches_json_type(value, expected):
             continue
-        safe_value = _redact_value(name, value)
         raise ToolExecutionError(
-            f"invalid tool argument {name}: expected {expected}, got {safe_value!r}",
+            f"invalid tool argument {name}: expected {expected}",
         )
 
 
@@ -70,48 +78,85 @@ class ToolExecutor:
     resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
     sandbox_policy: ToolSandboxPolicy | None = None
 
-    def execute(self, tool_call: ProviderToolCall) -> ToolExecutionOutcome:
-        """执行 provider tool call 对应的外部工具。"""
+    async def execute(self, invocation: ToolInvocation) -> ToolExecutionOutcome:
+        """异步执行 canonical ToolInvocation。"""
 
-        self.security_policy.ensure_tool_allowed(tool_call.name)
-        tool = self._tool_for_call(tool_call)
-        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
-        self._validate_arguments(tool_call.name, arguments, tool.parameters)
-        self._ensure_sandbox_allowed(tool, arguments)
-        outcome = self.backend.run(
+        tool = self._tool_for_name(invocation.tool_name)
+        return await self.execute_registered(tool, invocation)
+
+    async def execute_registered(
+        self,
+        tool: RegisteredTool,
+        invocation: ToolInvocation,
+    ) -> ToolExecutionOutcome:
+        """执行 Router 已解析的单个 RegisteredTool。"""
+
+        prepared = self.prepare_registered_call(
             tool,
-            arguments,
+            ProviderToolCall(
+                invocation.context.tool_call_id,
+                invocation.tool_name,
+                invocation.arguments,
+            ),
+        )
+        prepared_invocation = invocation
+        if prepared.arguments != invocation.arguments:
+            prepared_invocation = ToolInvocation(
+                invocation.tool_name,
+                prepared.arguments,
+                invocation.context,
+            )
+        outcome = await self.backend.execute(
+            tool,
+            prepared_invocation,
             resource_policy=self.resource_policy,
         )
         if isinstance(outcome, WaitRequest):
             return outcome
         return ToolExecutionResult(
-            tool_call_id=tool_call.id,
+            tool_call_id=invocation.context.tool_call_id,
             content=outcome,
         )
 
-    async def async_execute(self, tool_call: ProviderToolCall) -> ToolExecutionOutcome:
-        """异步执行 provider tool call。"""
+    def prepare_registered_call(
+        self,
+        tool: RegisteredTool,
+        call: ProviderToolCall,
+    ) -> ProviderToolCall:
+        """Validate and freeze the arguments that execution will observe."""
 
-        self.security_policy.ensure_tool_allowed(tool_call.name)
-        tool = self._tool_for_call(tool_call)
-        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
-        self._validate_arguments(tool_call.name, arguments, tool.parameters)
+        if tool.name != call.name:
+            raise ToolExecutionError("tool declaration does not match invocation")
+        self.security_policy.ensure_tool_allowed(call.name)
+        arguments = cast(dict[str, object], thaw_json(call.arguments))
+        self._validate_arguments(call.name, arguments, tool.parameters)
         self._ensure_sandbox_allowed(tool, arguments)
-        outcome = await self.backend.async_run(
+        return ProviderToolCall(call.id, call.name, arguments)
+
+    async def execute_compensation(
+        self,
+        tool: RegisteredTool,
+        invocation: ToolCompensationInvocation,
+    ) -> None:
+        """执行已注册 compensatable Tool 的 typed 补偿 handler。"""
+
+        try:
+            registered = self.registry.get(tool.name)
+        except KeyError as error:
+            raise ToolExecutionError("compensation tool is not registered") from error
+        if registered is not tool or tool.compensation_handler is None:
+            raise ToolExecutionError("tool does not declare compensation")
+        await self.backend.execute_compensation(
             tool,
-            arguments,
+            invocation,
             resource_policy=self.resource_policy,
         )
-        if isinstance(outcome, WaitRequest):
-            return outcome
-        return ToolExecutionResult(tool_call_id=tool_call.id, content=outcome)
 
-    def _tool_for_call(self, tool_call: ProviderToolCall) -> RegisteredTool:
+    def _tool_for_name(self, tool_name: str) -> RegisteredTool:
         try:
-            return self.registry.get(tool_call.name)
+            return self.registry.get(tool_name)
         except KeyError as error:
-            raise ToolExecutionError(f"unknown tool: {tool_call.name}") from error
+            raise ToolExecutionError(f"unknown tool: {tool_name}") from error
 
     def _ensure_sandbox_allowed(
         self,
@@ -151,15 +196,3 @@ def _matches_json_type(value: object, expected: object) -> bool:
     if expected == "null":
         return value is None
     return True
-
-
-def _redact_value(name: str, value: object) -> object:
-    """避免敏感工具参数出现在校验错误中。"""
-
-    if is_secret_like_key(name):
-        return "[REDACTED]"
-    if not isinstance(value, str):
-        return value
-    if value.startswith(("sk-", "sk_", "pk-")):
-        return "[REDACTED]"
-    return value

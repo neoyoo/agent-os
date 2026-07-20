@@ -19,6 +19,7 @@ from agentos.planning import (
 
 from tests.planning._async import async_test
 from tests.planning._tool_fixtures import FakePlanStepDispatcher, ManualClock
+from tests.tool_invocation import call_tool
 
 
 @async_test
@@ -87,7 +88,8 @@ async def test_planner_tools_schedulable_plans_handler_returns_owner_scoped_summ
     ).register(registry)
 
     payload = json.loads(
-        await registry.get("plan_schedulable_plans").handler(
+        await call_tool(
+            registry.get("plan_schedulable_plans"),
             {
                 "statuses": ["running"],
                 "limit": 5,
@@ -144,7 +146,9 @@ async def test_planner_tools_schedulable_plans_handler_reports_due_retries() -> 
         authorization_policy=AllowAllPlannerToolAuthorizationPolicy(),
     ).register(registry)
 
-    payload = json.loads(await registry.get("plan_schedulable_plans").handler({}))
+    payload = json.loads(
+        await call_tool(registry.get("plan_schedulable_plans"), {}),
+    )
 
     assert payload["plans"][0]["plan_id"] == "retry_plan"
     assert payload["plans"][0]["retryable_step_ids"] == ["retry_step"]
@@ -198,7 +202,8 @@ async def test_planner_tools_claim_schedulable_plans_handler_returns_owner_scope
     ).register(registry)
 
     payload = json.loads(
-        await registry.get("plan_claim_schedulable_plans").handler(
+        await call_tool(
+            registry.get("plan_claim_schedulable_plans"),
             {
                 "worker_id": "scheduler_a",
                 "lease_seconds": 20.0,
@@ -267,7 +272,8 @@ async def test_planner_tools_claim_schedulable_plans_handler_reports_busy_claims
     ).register(registry)
 
     payload = json.loads(
-        await registry.get("plan_claim_schedulable_plans").handler(
+        await call_tool(
+            registry.get("plan_claim_schedulable_plans"),
             {
                 "worker_id": "scheduler_b",
                 "lease_seconds": 20.0,
@@ -318,7 +324,10 @@ async def test_planner_tools_claim_schedulable_plans_handler_rejects_invalid_arg
     ).register(registry)
 
     with pytest.raises(ValueError, match=match):
-        await registry.get("plan_claim_schedulable_plans").handler(arguments)
+        await call_tool(
+            registry.get("plan_claim_schedulable_plans"),
+            arguments,
+        )
 
 
 @async_test
@@ -403,7 +412,8 @@ async def test_planner_tools_claimed_scheduler_tick_handler_ticks_only_claimed_p
     ).register(registry)
 
     payload = json.loads(
-        await registry.get("plan_claimed_scheduler_tick").handler(
+        await call_tool(
+            registry.get("plan_claimed_scheduler_tick"),
             {
                 "worker_id": "scheduler_b",
                 "lease_seconds": 30.0,
@@ -445,14 +455,16 @@ async def test_planner_tools_claimed_scheduler_tick_handler_rejects_invalid_argu
     ).register(registry)
 
     with pytest.raises(ValueError, match="worker_id"):
-        await registry.get("plan_claimed_scheduler_tick").handler(
+        await call_tool(
+            registry.get("plan_claimed_scheduler_tick"),
             {
                 "worker_id": "",
                 "lease_seconds": 30.0,
             },
         )
     with pytest.raises(ValueError, match="lease_seconds"):
-        await registry.get("plan_claimed_scheduler_tick").handler(
+        await call_tool(
+            registry.get("plan_claimed_scheduler_tick"),
             {
                 "worker_id": "scheduler",
                 "lease_seconds": 0.0,

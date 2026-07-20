@@ -1,7 +1,13 @@
 from pathlib import Path
 
 from agentos import AgentBuilder
-from agentos.capabilities import RegisteredTool, WaitRequest
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolConcurrencyPolicy,
+    ToolInvocation,
+    WaitRequest,
+)
 from agentos.durable import DurableRuntimeProfile
 from agentos.providers import Provider
 from agentos.runtime import WaitReason
@@ -9,7 +15,7 @@ from agentos.runtime.payloads import PayloadProtector
 
 
 def _approval_tool() -> RegisteredTool:
-    async def wait_for_approval(_arguments: dict[str, object]) -> WaitRequest:
+    async def wait_for_approval(_invocation: ToolInvocation) -> WaitRequest:
         return WaitRequest(WaitReason("human_input", "approval_1"))
 
     return RegisteredTool(
@@ -17,6 +23,9 @@ def _approval_tool() -> RegisteredTool:
         description="Pause the current run until a human answers.",
         parameters={"type": "object", "properties": {}},
         handler=wait_for_approval,
+        side_effect_policy=SideEffectPolicy.PURE,
+        concurrency_policy=ToolConcurrencyPolicy.EXCLUSIVE,
+        wait_capable=True,
     )
 
 

@@ -79,8 +79,8 @@
     },
     "agentos.capabilities": {
       "exports": {
-        "AsyncToolHandler": {
-          "signature": "(*args, **kwargs)",
+        "ArtifactToolResultRef": {
+          "signature": "(artifact: 'ArtifactRef', preview: 'str') -> None",
           "stability": "experimental"
         },
         "BuiltinSkillSource": {
@@ -97,8 +97,8 @@
         },
         "ExecutionBackend": {
           "methods": {
-            "async_run": "(self, tool: 'RegisteredTool', arguments: 'dict[str, object]', *, resource_policy: 'ResourcePolicy') -> 'ToolHandlerResult'",
-            "run": "(self, tool: 'RegisteredTool', arguments: 'dict[str, object]', *, resource_policy: 'ResourcePolicy') -> 'ToolHandlerResult'"
+            "execute": "(self, tool: 'RegisteredTool', invocation: 'ToolInvocation', *, resource_policy: 'ResourcePolicy') -> 'ToolHandlerResult'",
+            "execute_compensation": "(self, tool: 'RegisteredTool', invocation: 'ToolCompensationInvocation', *, resource_policy: 'ResourcePolicy') -> 'None'"
           },
           "signature": "(*args, **kwargs)",
           "stability": "experimental"
@@ -109,6 +109,10 @@
         },
         "InProcessExecutionBackend": {
           "signature": "() -> None",
+          "stability": "experimental"
+        },
+        "InlineToolResultRef": {
+          "signature": "(content: 'str') -> None",
           "stability": "experimental"
         },
         "MCPClient": {
@@ -124,7 +128,7 @@
           "stability": "experimental"
         },
         "MCPServerRegistration": {
-          "signature": "(name: 'str', description: 'str', client: 'MCPClient', endpoint: 'str | None' = None, allowed_tools: 'set[str] | None' = None, supports_parallel_tool_calls: 'bool' = False) -> None",
+          "signature": "(name: 'str', description: 'str', client: 'MCPClient', endpoint: 'str | None' = None, allowed_tools: 'set[str] | None' = None, supports_parallel_tool_calls: 'bool' = False, side_effect_policies: 'Mapping[str, SideEffectPolicy]' = <factory>) -> None",
           "stability": "experimental"
         },
         "MCPToolAdapter": {
@@ -136,12 +140,16 @@
           "stability": "experimental"
         },
         "RegisteredTool": {
-          "signature": "(name: str, description: str, parameters: collections.abc.Mapping[str, None | bool | int | float | str | tuple['FrozenJsonValue', ...] | agentos._json_values.FrozenJsonObject], handler: collections.abc.Callable[[dict[str, object]], str | agentos._waiting.WaitRequest] | collections.abc.Callable[[dict[str, object]], collections.abc.Awaitable[str | agentos._waiting.WaitRequest]], kind: Literal['external', 'context', 'skill', 'mcp'] = 'external', concurrency_policy: agentos.capabilities.tools.ToolConcurrencyPolicy = <ToolConcurrencyPolicy.EXCLUSIVE: 'exclusive'>, metadata: collections.abc.Mapping[str, None | bool | int | float | str | tuple['FrozenJsonValue', ...] | agentos._json_values.FrozenJsonObject] = <factory>) -> None",
+          "signature": "(name: str, description: str, parameters: collections.abc.Mapping[str, None | bool | int | float | str | tuple['FrozenJsonValue', ...] | agentos._json_values.FrozenJsonObject], handler: collections.abc.Callable[[agentos.capabilities.invocation.ToolInvocation], str | agentos._waiting.WaitRequest | collections.abc.Awaitable[str | agentos._waiting.WaitRequest]], side_effect_policy: agentos.capabilities.tools.SideEffectPolicy, kind: Literal['external', 'context', 'skill', 'mcp'] = 'external', concurrency_policy: agentos.capabilities.tools.ToolConcurrencyPolicy = <ToolConcurrencyPolicy.EXCLUSIVE: 'exclusive'>, wait_capable: bool = False, compensation_handler: collections.abc.Callable[[agentos.capabilities.invocation.ToolCompensationInvocation], None | collections.abc.Awaitable[None]] | None = None, metadata: collections.abc.Mapping[str, None | bool | int | float | str | tuple['FrozenJsonValue', ...] | agentos._json_values.FrozenJsonObject] = <factory>) -> None",
           "stability": "experimental"
         },
         "SQLiteSkillActivationStore": {
           "signature": "(connection: 'aiosqlite.Connection') -> 'None'",
           "stability": "stable"
+        },
+        "SideEffectPolicy": {
+          "signature": "(*values)",
+          "stability": "experimental"
         },
         "SkillContentSource": {
           "signature": "()",
@@ -171,8 +179,20 @@
           "signature": "(tool_registry: agentos.capabilities.registry.ToolRegistry, context_runtime: agentos.context.runtime.ContextRuntime | None = None, recall_runtime: agentos.recall.runtime.RecallRuntime | None = None, mcp_adapter: agentos.capabilities.mcp.MCPToolAdapter | None = None, security_policy: agentos.policies.security.SecurityPolicy = <factory>, backend: agentos.capabilities.backend.ExecutionBackend = <factory>, resource_policy: agentos.policies.resource_policy.ResourcePolicy = <factory>, sandbox_policy: agentos.capabilities.sandbox.ToolSandboxPolicy | None = None, _executor: agentos.capabilities.executor.ToolExecutor | None = None) -> None",
           "stability": "experimental"
         },
+        "ToolCompensationContext": {
+          "signature": "(original_operation_id: 'str', compensation_operation_id: 'str', tenant_id: 'str | None', session_id: 'str', run_id: 'str', turn_id: 'str', invocation_id: 'str', attempt: 'int') -> None",
+          "stability": "experimental"
+        },
+        "ToolCompensationHandler": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "ToolCompensationInvocation": {
+          "signature": "(arguments: 'dict[str, object] | FrozenJsonObject', context: 'ToolCompensationContext', result_ref: 'ToolResultRef | None') -> 'None'",
+          "stability": "experimental"
+        },
         "ToolConcurrencyPolicy": {
-          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+          "signature": "(*values)",
           "stability": "experimental"
         },
         "ToolExecutionError": {
@@ -195,12 +215,24 @@
           "signature": "non-callable",
           "stability": "experimental"
         },
+        "ToolInvocation": {
+          "signature": "(tool_name: 'str', arguments: 'dict[str, object] | FrozenJsonObject', context: 'ToolInvocationContext') -> 'None'",
+          "stability": "experimental"
+        },
+        "ToolInvocationContext": {
+          "signature": "(invocation_id: 'str', operation_id: 'str', tenant_id: 'str | None', session_id: 'str', run_id: 'str', turn_id: 'str', tool_call_id: 'str', attempt: 'int') -> None",
+          "stability": "experimental"
+        },
         "ToolPathSandboxRule": {
           "signature": "(argument_name: 'str') -> None",
           "stability": "experimental"
         },
         "ToolRegistry": {
           "signature": "() -> None",
+          "stability": "experimental"
+        },
+        "ToolResultRef": {
+          "signature": "non-callable",
           "stability": "experimental"
         },
         "ToolSandboxError": {
@@ -2624,7 +2656,7 @@
           "stability": "stable"
         },
         "DurableRunCommand": {
-          "signature": "(run_id: 'str', command_id: 'str', kind: 'DurableRunCommandKind', payload: 'dict[str, object] | FrozenJsonObject | None' = None) -> 'None'",
+          "signature": "(run_id: 'str', command_id: 'str', kind: 'DurableRunCommandKind', payload: 'dict[str, object] | FrozenJsonObject | SideEffectResolution | None' = None) -> 'None'",
           "stability": "stable"
         },
         "EventBus": {
@@ -2680,7 +2712,7 @@
           "stability": "experimental"
         },
         "QueryLoop": {
-          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, checkpoint_source: 'RuntimeCheckpointSource | None' = None, checkpoint_store: 'CheckpointCommitStore | None' = None, recovery_cursor: 'RunExecutionCursor | None' = None, tool_payload_runtime: 'ToolPayloadRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
+          "signature": "(context_runtime: 'ContextRuntimeBoundary', message_runtime: 'MessageRuntime', request_builder: 'ProviderRequestBuilder', provider: 'Provider', compression_runtime: 'CompressionRuntime | None' = None, tool_call_router: 'ToolCallRouterBoundary | None' = None, event_bus: 'EventBus | None' = None, hook_manager: 'HookManager | None' = None, session_state: 'SessionState | None' = None, turn_notice_provider: 'TurnNoticeProvider | None' = None, waiting_runtime: 'WaitingRuntime | None' = None, checkpoint_source: 'RuntimeCheckpointSource | None' = None, checkpoint_store: 'CheckpointCommitStore | None' = None, recovery_cursor: 'RunExecutionCursor | None' = None, tool_payload_runtime: 'ToolPayloadRuntime | None' = None, artifact_runtime: 'ArtifactRuntimeBoundary | None' = None, side_effect_store: 'SideEffectStore | None' = None, continuation_runtime: 'ContinuationRuntime' = <factory>, run_runtime: 'RunRuntime | None' = None, retry_policy: 'RetryPolicy | None' = None, structured_logger: 'StructuredLoggerBoundary | None' = None, tool_result_budget: 'ToolResultBudget' = <factory>, token_counter: 'TokenCounter' = <factory>, max_tool_iterations: 'int' = 8, tool_scheduler: 'ToolCallScheduler' = <factory>) -> None",
           "stability": "stable"
         },
         "RecallContextFailedEvent": {
@@ -2735,6 +2767,18 @@
         },
         "SessionState": {
           "signature": "(id: str, status: Literal['new', 'running', 'closed'] = 'new', _next_turn_number: int = 1) -> None",
+          "stability": "experimental"
+        },
+        "SideEffectResolution": {
+          "signature": "(operation_id: 'str', kind: 'SideEffectResolutionKind', result_ref: 'ToolResultRef | None' = None, result_digest: 'str | None' = None, attestation_ref: 'ProtectedPayloadRef | None' = None, attestation_digest: 'str | None' = None) -> None",
+          "stability": "experimental"
+        },
+        "SideEffectResolutionKind": {
+          "signature": "(*values)",
+          "stability": "experimental"
+        },
+        "SideEffectResume": {
+          "signature": "(tenant_id: 'str | None', session_id: 'str', run_id: 'str', continuation_turn_id: 'str', source_cursor: 'RunExecutionCursor', record: 'SideEffectRecord', resolution: 'SideEffectResolution') -> None",
           "stability": "experimental"
         },
         "SkillLoaded": {
@@ -2895,6 +2939,14 @@
         "iter_sse": {
           "signature": "(events: 'AsyncIterator[TurnStreamEvent]', *, show_thinking: 'bool' = False) -> 'AsyncIterator[str]'",
           "stability": "stable"
+        },
+        "side_effect_resolution_from_payload": {
+          "signature": "(payload: 'Mapping[str, object]') -> 'SideEffectResolution'",
+          "stability": "experimental"
+        },
+        "side_effect_resolution_to_payload": {
+          "signature": "(resolution: 'SideEffectResolution') -> 'FrozenJsonObject'",
+          "stability": "experimental"
         }
       }
     },

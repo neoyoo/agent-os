@@ -1,4 +1,9 @@
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolRegistry,
+)
 
 
 def test_provider_tool_specs_default_to_external_tools_only() -> None:
@@ -14,7 +19,8 @@ def test_provider_tool_specs_default_to_external_tools_only() -> None:
                 name=name,
                 description=f"{name} description.",
                 parameters={"type": "object"},
-                handler=lambda arguments: "ok",
+                handler=lambda _invocation: "ok",
+                side_effect_policy=SideEffectPolicy.PURE,
                 kind=kind,
             ),
         )
@@ -31,7 +37,8 @@ def test_provider_tool_specs_can_explicitly_include_skill_tools() -> None:
             name="load_skill",
             description="Load a skill.",
             parameters={"type": "object"},
-            handler=lambda arguments: "ok",
+            handler=lambda _invocation: "ok",
+            side_effect_policy=SideEffectPolicy.PURE,
             kind="skill",
         ),
     )
@@ -56,7 +63,8 @@ def test_tool_call_router_explicitly_composes_external_and_skill_specs() -> None
                 name=name,
                 description=f"{name} description.",
                 parameters={"type": "object"},
-                handler=lambda arguments: "ok",
+                handler=lambda _invocation: "ok",
+                side_effect_policy=SideEffectPolicy.PURE,
                 kind=kind,
             ),
         )
@@ -85,7 +93,8 @@ def test_provider_tool_specs_can_explicitly_include_all_provider_kinds() -> None
                 name=name,
                 description=f"{name} description.",
                 parameters={"type": "object"},
-                handler=lambda arguments: "ok",
+                handler=lambda _invocation: "ok",
+                side_effect_policy=SideEffectPolicy.PURE,
                 kind=kind,
             ),
         )

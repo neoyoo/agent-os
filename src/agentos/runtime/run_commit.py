@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias
 
 from agentos._waiting import WaitReason
-from agentos.runtime.errors import RunProtocolError
+from agentos.runtime.errors import RunProtocolError, WaitingUnsupportedError
 from agentos.runtime.checkpoint import (
     RunCheckpoint,
     RuntimeCheckpointSource,
@@ -13,6 +13,7 @@ from agentos.runtime.checkpoint import (
 from agentos.runtime.execution import RunExecutionCursor
 from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunState
+from agentos.runtime.side_effect_types import WaitingToolCompletion
 from agentos.runtime.waiting import WaitingRuntime
 
 
@@ -39,6 +40,7 @@ class CheckpointCommitStore(Protocol):
         turn_id: str,
         reason: WaitReason,
         guard: RunWriteGuard,
+        completion: WaitingToolCompletion | None = None,
     ) -> RunCheckpoint: ...
 
     async def commit_terminal(
@@ -57,7 +59,7 @@ class RunCommitRuntime:
     """统一提交 execution 的 WAITING 与终态。"""
 
     runs: RunRuntime
-    waiting: WaitingRuntime
+    waiting: WaitingRuntime | None
     checkpoint_source: RuntimeCheckpointSource | None = None
     checkpoint_store: CheckpointCommitStore | None = None
 
@@ -101,6 +103,7 @@ class RunCommitRuntime:
         reason: WaitReason,
         guard: RunWriteGuard,
         active_refs: tuple[str, ...] | None = None,
+        completion: WaitingToolCompletion | None = None,
     ) -> RunWriteGuard:
         """提交 WAITING 并返回推进后的 immutable guard。"""
 
@@ -117,6 +120,7 @@ class RunCommitRuntime:
                 turn_id=turn_id,
                 reason=reason,
                 guard=guard,
+                completion=completion,
             )
             return _next_checkpoint_guard(
                 guard,
@@ -125,11 +129,15 @@ class RunCommitRuntime:
                 run_id=run_id,
                 turn_id=turn_id,
             )
-        commit = await self.waiting.commit_waiting(
+        waiting = self.waiting
+        if waiting is None:
+            raise WaitingUnsupportedError("waiting runtime is not configured")
+        commit = await waiting.commit_waiting(
             run_id=run_id,
             turn_id=turn_id,
             reason=reason,
             guard=guard,
+            completion=completion,
         )
         if commit.run_id != run_id or commit.reason != reason:
             raise RunProtocolError("waiting runtime returned another run")

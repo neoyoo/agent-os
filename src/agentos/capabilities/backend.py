@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 import inspect
 from typing import Protocol
 
 from agentos._sync_work import run_sync
+from agentos.capabilities.invocation import (
+    ToolCompensationInvocation,
+    ToolInvocation,
+)
 from agentos.capabilities.tools import RegisteredTool, ToolHandlerResult
 from agentos.policies.resource_policy import ResourcePolicy
 
@@ -12,24 +17,24 @@ from agentos.policies.resource_policy import ResourcePolicy
 class ExecutionBackend(Protocol):
     """工具 handler 的执行后端接缝。"""
 
-    def run(
+    async def execute(
         self,
         tool: RegisteredTool,
-        arguments: dict[str, object],
+        invocation: ToolInvocation,
         *,
         resource_policy: ResourcePolicy,
     ) -> ToolHandlerResult:
-        """同步执行 tool handler。"""
+        """执行一个 canonical ToolInvocation。"""
         ...
 
-    async def async_run(
+    async def execute_compensation(
         self,
         tool: RegisteredTool,
-        arguments: dict[str, object],
+        invocation: ToolCompensationInvocation,
         *,
         resource_policy: ResourcePolicy,
-    ) -> ToolHandlerResult:
-        """异步执行 tool handler。"""
+    ) -> None:
+        """执行一个 canonical ToolCompensationInvocation。"""
         ...
 
 
@@ -37,37 +42,56 @@ class ExecutionBackend(Protocol):
 class InProcessExecutionBackend:
     """默认 in-process 后端，复用当前工具 handler 调用语义。"""
 
-    def run(
+    async def execute(
         self,
         tool: RegisteredTool,
-        arguments: dict[str, object],
-        *,
-        resource_policy: ResourcePolicy,
-    ) -> ToolHandlerResult:
-        """同步执行 tool handler；ResourcePolicy 由未来沙箱后端消费。"""
-
-        content = tool.handler(arguments)
-        if inspect.isawaitable(content):
-            close = getattr(content, "close", None)
-            if callable(close):
-                close()
-            raise RuntimeError("async handler requires ExecutionBackend.async_run")
-        return content
-
-    async def async_run(
-        self,
-        tool: RegisteredTool,
-        arguments: dict[str, object],
+        invocation: ToolInvocation,
         *,
         resource_policy: ResourcePolicy,
     ) -> ToolHandlerResult:
         """异步执行 tool handler；同步 handler 放入线程。"""
 
         if inspect.iscoroutinefunction(tool.handler):
-            return await tool.handler(arguments)
-        return await run_sync(
-            self.run,
+            return await tool.handler(invocation)
+        result = await run_sync(
+            _run_sync_handler,
             tool,
-            arguments,
-            resource_policy=resource_policy,
+            invocation,
         )
+        return await result if inspect.isawaitable(result) else result
+
+    async def execute_compensation(
+        self,
+        tool: RegisteredTool,
+        invocation: ToolCompensationInvocation,
+        *,
+        resource_policy: ResourcePolicy,
+    ) -> None:
+        """异步执行补偿 handler；同步实现放入线程。"""
+
+        handler = tool.compensation_handler
+        if handler is None:
+            raise RuntimeError("tool does not declare a compensation handler")
+        if inspect.iscoroutinefunction(handler):
+            await handler(invocation)
+            return
+        result = await run_sync(_run_sync_compensation_handler, tool, invocation)
+        if inspect.isawaitable(result):
+            await result
+
+
+def _run_sync_handler(
+    tool: RegisteredTool,
+    invocation: ToolInvocation,
+) -> ToolHandlerResult | Awaitable[ToolHandlerResult]:
+    return tool.handler(invocation)
+
+
+def _run_sync_compensation_handler(
+    tool: RegisteredTool,
+    invocation: ToolCompensationInvocation,
+) -> None | Awaitable[None]:
+    handler = tool.compensation_handler
+    if handler is None:
+        raise RuntimeError("tool does not declare a compensation handler")
+    return handler(invocation)

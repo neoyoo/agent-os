@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from agentos import AgentBuilder
-from agentos.capabilities import RegisteredTool, WaitRequest
+from agentos.capabilities import RegisteredTool, SideEffectPolicy, WaitRequest
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import (
     AgentWaiting,
@@ -37,7 +37,9 @@ def _wait_tool(reason: WaitReason) -> RegisteredTool:
         name="wait_here",
         description="Pause this durable run.",
         parameters={"type": "object", "properties": {}},
-        handler=lambda _arguments: WaitRequest(reason),
+        handler=lambda _invocation: WaitRequest(reason),
+        side_effect_policy=SideEffectPolicy.PURE,
+        wait_capable=True,
     )
 
 

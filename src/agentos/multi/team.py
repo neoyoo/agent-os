@@ -10,7 +10,12 @@ from threading import Event, RLock, Thread
 from typing import Literal, Mapping, Protocol, cast
 from uuid import uuid4
 
-from agentos.capabilities import RegisteredTool, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.multi.message_queue import AgentMessageQueue, QueueDelivery
 from agentos.multi.types import AgentEnvelope
 from agentos.runtime.agent import Agent
@@ -1692,6 +1697,7 @@ class TeamTools:
                 description="Create a team discussion with this agent as leader.",
                 parameters=self._team_create_parameters(),
                 handler=self._team_create,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         registry.register(
@@ -1700,6 +1706,7 @@ class TeamTools:
                 description="Add an agent member to an existing team discussion.",
                 parameters=self._agent_create_parameters(),
                 handler=self._agent_create,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         registry.register(
@@ -1708,6 +1715,7 @@ class TeamTools:
                 description="Send a message from this agent into a team discussion.",
                 parameters=self._team_say_parameters(),
                 handler=self._team_say,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
         registry.register(
@@ -1716,6 +1724,7 @@ class TeamTools:
                 description="Read team messages visible to this agent.",
                 parameters=self._team_read_messages_parameters(),
                 handler=self._team_read_messages,
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         )
         registry.register(
@@ -1724,10 +1733,12 @@ class TeamTools:
                 description="Mark a team discussion deleted.",
                 parameters=self._team_delete_parameters(),
                 handler=self._team_delete,
+                side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
 
-    def _team_create(self, arguments: dict[str, object]) -> str:
+    def _team_create(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         self._authorize("team_create", None)
         team = self.runtime.create_team(
             team_id=(
@@ -1753,7 +1764,8 @@ class TeamTools:
             sort_keys=True,
         )
 
-    def _agent_create(self, arguments: dict[str, object]) -> str:
+    def _agent_create(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         team_id = str(arguments["team_id"])
         self._authorize("agent_create", team_id)
         self._require_leader(team_id)
@@ -1770,7 +1782,8 @@ class TeamTools:
         )
         return json.dumps(self._member_to_dict(member), sort_keys=True)
 
-    def _team_say(self, arguments: dict[str, object]) -> str:
+    def _team_say(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         team_id = str(arguments["team_id"])
         self._authorize("team_say", team_id)
         message = self.runtime.say(
@@ -1795,7 +1808,8 @@ class TeamTools:
         )
         return json.dumps(self._message_to_dict(message), sort_keys=True)
 
-    def _team_read_messages(self, arguments: dict[str, object]) -> str:
+    def _team_read_messages(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         team_id = str(arguments["team_id"])
         self._authorize("team_read_messages", team_id)
         messages = self.runtime.messages_for(
@@ -1817,7 +1831,8 @@ class TeamTools:
             sort_keys=True,
         )
 
-    def _team_delete(self, arguments: dict[str, object]) -> str:
+    def _team_delete(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         team_id = str(arguments["team_id"])
         self._authorize("team_delete", team_id)
         self._require_leader(team_id)

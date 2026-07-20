@@ -4,7 +4,7 @@ import pytest
 
 from agentos import Agent, AgentBuilder
 from agentos.artifacts import ArtifactRecord
-from agentos.capabilities import RegisteredTool, WaitRequest
+from agentos.capabilities import RegisteredTool, SideEffectPolicy, WaitRequest
 from agentos.providers import (
     FakeProvider,
     ImagePart,
@@ -182,7 +182,9 @@ def test_artifact_waiting_cleans_mount_but_preserves_artifact() -> None:
             name="request_artifact_approval",
             description="等待人工确认附件分析。",
             parameters={"type": "object", "properties": {}},
-            handler=lambda _arguments: WaitRequest(reason),
+            handler=lambda _invocation: WaitRequest(reason),
+            side_effect_policy=SideEffectPolicy.PURE,
+            wait_capable=True,
         )
         provider = FakeProvider(
             [

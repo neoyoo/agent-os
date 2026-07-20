@@ -81,6 +81,15 @@ from agentos.runtime.run import (
     UserTurnInput,
 )
 from agentos.runtime.session import SessionState
+from agentos.runtime.side_effect_resolution import (
+    side_effect_resolution_from_payload,
+    side_effect_resolution_to_payload,
+)
+from agentos.runtime.side_effect_resume import SideEffectResume
+from agentos.runtime.side_effect_types import (
+    SideEffectResolution,
+    SideEffectResolutionKind,
+)
 from agentos.runtime.stream_events import (
     AssistantCompleted,
     AssistantContentDelta,
@@ -171,6 +180,9 @@ __all__ = [
     "RecallContextInjectedEvent",
     "RecallContextRequestedEvent",
     "SessionState",
+    "SideEffectResolution",
+    "SideEffectResolutionKind",
+    "SideEffectResume",
     "SkillLoaded",
     "SnapshotLoadedEvent",
     "SnapshotSavedEvent",
@@ -212,4 +224,6 @@ __all__ = [
     "event_type",
     "iter_jsonl",
     "iter_sse",
+    "side_effect_resolution_from_payload",
+    "side_effect_resolution_to_payload",
 ]

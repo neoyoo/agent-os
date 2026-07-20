@@ -105,6 +105,11 @@ def test_non_timer_wait_rejects_not_before() -> None:
         )
 
 
+def test_reconciliation_wait_reason_requires_canonical_operation_handle() -> None:
+    with pytest.raises(ValueError, match="operation handle"):
+        WaitReason("side_effect_reconciliation", "charge_1")
+
+
 def test_run_state_version_increments_on_every_transition() -> None:
     created = RunState("run_1", "session_1")
     queued = created.transition(status=RunStatus.QUEUED)

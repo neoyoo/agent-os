@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
 from agentos._waiting import WaitRequest
 from agentos.artifacts import ArtifactRef
+from agentos.capabilities.invocation import ToolInvocation
 from agentos.capabilities.executor import ToolExecutionOutcome, ToolExecutionResult
-from agentos.capabilities.tools import ToolConcurrencyPolicy
+from agentos.capabilities.tools import ToolConcurrencyPolicy, ToolExecutionContract
 from agentos.context import ContextState
 from agentos.messages import MessageRuntime
 from agentos.policies import ToolResultBudget
 from agentos.policies.tool_result_budget import cap_tool_result_content
 from agentos.providers import ProviderToolCall
-from agentos._json_values import thaw_json
 from agentos.runtime.event_bus import ToolResultCappedEvent
 from agentos.runtime.execution import RunExecutionCursor
 from agentos.runtime.continuation import ContinuationNotice
-from agentos.runtime.stream_events import SkillLoaded, ToolStreamCompleted
+from agentos.runtime.stream_events import SkillLoaded
 from agentos.runtime.tool_scheduler import ScheduledToolCallResult
 from agentos.tokens import TokenCounter
 
@@ -74,17 +73,26 @@ class TurnNoticeProvider(Protocol):
 class ToolCallRouterBoundary(Protocol):
     """QueryLoop 依赖的 tool call router 边界。"""
 
-    async def async_execute_tool_call(
+    def prepare_call(self, call: ProviderToolCall) -> ProviderToolCall:
+        """Return the validated canonical call used by checkpoints and execution."""
+
+    async def execute(
         self,
-        tool_call: ProviderToolCall,
+        invocation: ToolInvocation,
     ) -> ToolExecutionOutcome:
-        """异步执行单个 provider tool call。"""
+        """异步执行单个 canonical ToolInvocation。"""
 
     def concurrency_policy_for(
         self,
         tool_call: ProviderToolCall,
     ) -> ToolConcurrencyPolicy:
         """返回单个调用的正式并发策略。"""
+
+    def tool_contract_for(
+        self,
+        invocation: ToolInvocation,
+    ) -> ToolExecutionContract:
+        """返回本地可信的副作用与并发声明。"""
 
 
 class StructuredLoggerBoundary(Protocol):
@@ -107,6 +115,7 @@ class WaitingToolBatchResolution:
     """描述等待请求选定后仍可对外完成的工具调用。"""
 
     request: WaitRequest
+    tool_call_id: str
     visible_started_call_ids: frozenset[str]
     peer_results: tuple[tuple[ProviderToolCall, ToolExecutionResult], ...]
 
@@ -136,6 +145,7 @@ def resolve_waiting_tool_batch(
     visible_ids.add(wait_item.tool_call.id)
     return WaitingToolBatchResolution(
         request=wait_item.result,
+        tool_call_id=wait_item.tool_call.id,
         visible_started_call_ids=frozenset(visible_ids),
         peer_results=tuple(peer_results),
     )
@@ -173,31 +183,6 @@ def map_tool_result_cap(
     )
 
 
-def waiting_peer_completion(
-    tool_call: ProviderToolCall,
-    result: ToolExecutionResult,
-    after_tool_call: Callable[
-        [ProviderToolCall, ToolExecutionResult],
-        ToolExecutionResult,
-    ],
-    cap_result: Callable[
-        [ProviderToolCall, ToolExecutionResult],
-        ToolResultCapMapping,
-    ],
-) -> tuple[ToolStreamCompleted, ToolResultCappedEvent | None]:
-    """把 WAITING 同批成功结果映射为预算受限的终止流事件。"""
-
-    try:
-        result = after_tool_call(tool_call, result)
-    except Exception as error:
-        raise _ToolCallFailure(tool_call, error) from error
-    capped = cap_result(tool_call, result)
-    return (
-        ToolStreamCompleted(tool_call.name, tool_call.id, capped.result.content),
-        capped.event,
-    )
-
-
 def skill_loaded_event(
     tool_call: ProviderToolCall,
     result: ToolExecutionResult,
@@ -223,44 +208,11 @@ def skill_loaded_event(
     )
 
 
-def duplicate_tool_call_result(
-    tool_call: ProviderToolCall,
-    applied_tool_signatures: set[str],
-) -> ToolExecutionResult | None:
-    """对同一 Turn 内完全相同的工具调用生成确定性抑制结果。"""
-
-    signature = tool_call_signature(tool_call)
-    if signature not in applied_tool_signatures:
-        return None
-    return ToolExecutionResult(
-        tool_call_id=tool_call.id,
-        content=(
-            f"duplicate tool call ignored: {tool_call.name} with identical "
-            "arguments was already applied in this turn; continue with the "
-            "next step or return the final answer"
-        ),
-    )
-
-
-def tool_call_signature(tool_call: ProviderToolCall) -> str:
-    """返回工具名称和参数的稳定调用签名。"""
-
-    return json.dumps(
-        {
-            "name": tool_call.name,
-            "arguments": thaw_json(tool_call.arguments),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def restored_tool_loop_state(
+def restored_tool_iteration_count(
     messages: MessageRuntime,
     cursor: RunExecutionCursor,
-) -> tuple[int, set[str]]:
-    """从持久化消息和执行游标重建当前 Turn 的工具循环状态。"""
+) -> int:
+    """从执行游标恢复已经消费的 Provider Tool batch 数。"""
 
     completed_batches = cursor.provider_call_index
     stored = messages.store.all()
@@ -280,18 +232,4 @@ def restored_tool_loop_state(
     if cursor.stage == "after_tools":
         completed_batches += 1
         boundary += 1
-    if completed_batches == 0:
-        return 0, set()
-    assistant_batches = [
-        message
-        for message in stored[:boundary]
-        if message.role == "assistant" and message.tool_calls
-    ]
-    signatures = {
-        tool_call_signature(
-            ProviderToolCall(call.id, call.name, call.arguments),
-        )
-        for message in assistant_batches[-completed_batches:]
-        for call in message.tool_calls
-    }
-    return completed_batches, signatures
+    return completed_batches

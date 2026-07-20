@@ -19,6 +19,8 @@ from agentos.runtime.run_runtime import RunStore, RunWriteGuard
 from agentos.runtime.run_state import RunState
 from agentos.runtime.session import SessionState
 from agentos.runtime.run_commit import RunTerminalStatus
+from agentos.runtime.side_effect_types import WaitingToolCompletion
+from agentos.runtime.side_effect_store import SideEffectStore
 
 
 CommandAcceptance = AcceptedTurnExecution | DurableCommandReceipt
@@ -26,6 +28,9 @@ CommandAcceptance = AcceptedTurnExecution | DurableCommandReceipt
 
 class DurableStateStore(RunStore, Protocol):
     """Durable Profile 依赖的 Run、Command 和 Checkpoint Port。"""
+
+    @property
+    def side_effect_store(self) -> SideEffectStore: ...
 
     async def initialize_session(self, session: SessionState) -> None: ...
 
@@ -46,6 +51,7 @@ class DurableStateStore(RunStore, Protocol):
         turn_id: str,
         reason: WaitReason,
         guard: RunWriteGuard,
+        completion: WaitingToolCompletion | None = None,
     ) -> RunCheckpoint: ...
 
     async def commit_terminal(

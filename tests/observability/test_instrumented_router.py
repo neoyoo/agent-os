@@ -1,9 +1,13 @@
+import asyncio
 from pathlib import Path
 
 from agentos.capabilities import (
     RegisteredTool,
+    SideEffectPolicy,
     ToolCallRouter,
     ToolConcurrencyPolicy,
+    ToolInvocation,
+    ToolInvocationContext,
     ToolRegistry,
     read_file_tool,
 )
@@ -13,6 +17,28 @@ from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.providers import ProviderToolCall
 
 
+def _invocation(
+    name: str,
+    arguments: dict[str, object],
+    *,
+    call_id: str = "call_1",
+) -> ToolInvocation:
+    return ToolInvocation(
+        name,
+        arguments,
+        ToolInvocationContext(
+            "invocation_ea91f27fdf596bceb7c90d2578c5e988",
+            "operation_d340f3861e0c6a7eefbaf707fdc69d3d",
+            None,
+            "session_1",
+            "run_1",
+            "turn_1",
+            call_id,
+            1,
+        ),
+    )
+
+
 def test_instrumented_router_delegates_concurrency_policy_for_call() -> None:
     registry = ToolRegistry()
     registry.register(
@@ -20,7 +46,8 @@ def test_instrumented_router_delegates_concurrency_policy_for_call() -> None:
             name="parallel_tool",
             description="并发安全工具。",
             parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: "ok",
+            handler=lambda _invocation: "ok",
+            side_effect_policy=SideEffectPolicy.PURE,
             concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
         ),
     )
@@ -30,11 +57,32 @@ def test_instrumented_router_delegates_concurrency_policy_for_call() -> None:
         capture_policy=CapturePolicy.metadata_only(),
     )
 
-    policy = instrumented.concurrency_policy_for(
-        ProviderToolCall(id="call_parallel", name="parallel_tool", arguments={}),
+    contract = instrumented.tool_contract_for(
+        _invocation("parallel_tool", {}, call_id="call_parallel"),
     )
 
-    assert policy is ToolConcurrencyPolicy.PARALLEL_SAFE
+    assert contract.concurrency_policy is ToolConcurrencyPolicy.PARALLEL_SAFE
+
+
+def test_instrumented_router_delegates_call_preparation() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="lookup",
+            description="Lookup.",
+            parameters={"type": "object"},
+            handler=lambda _invocation: "ok",
+            side_effect_policy=SideEffectPolicy.PURE,
+        ),
+    )
+    instrumented = InstrumentedToolCallRouter(
+        ToolCallRouter(tool_registry=registry),
+        tracer=InMemoryTracer(),
+        capture_policy=CapturePolicy.metadata_only(),
+    )
+    call = ProviderToolCall("call_1", "lookup", {"query": "drawing"})
+
+    assert instrumented.prepare_call(call) == call
 
 
 def test_instrumented_router_records_tool_span(tmp_path: Path) -> None:
@@ -49,11 +97,9 @@ def test_instrumented_router_records_tool_span(tmp_path: Path) -> None:
         capture_policy=CapturePolicy.full_for_local_development(),
     )
 
-    result = instrumented.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="read_file",
-            arguments={"path": "pyproject.toml"},
+    result = asyncio.run(
+        instrumented.execute(
+            _invocation("read_file", {"path": "pyproject.toml"}),
         ),
     )
 
@@ -85,11 +131,9 @@ def test_instrumented_router_records_error_and_reraises() -> None:
     )
 
     try:
-        instrumented.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "pyproject.toml"},
+        asyncio.run(
+            instrumented.execute(
+                _invocation("read_file", {"path": "pyproject.toml"}),
             ),
         )
     except SecurityPolicyError:
@@ -116,11 +160,9 @@ def test_instrumented_router_metadata_mode_records_input_output_summaries(tmp_pa
         capture_policy=CapturePolicy.metadata_only(),
     )
 
-    instrumented.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="read_file",
-            arguments={"path": "pyproject.toml"},
+    asyncio.run(
+        instrumented.execute(
+            _invocation("read_file", {"path": "pyproject.toml"}),
         ),
     )
 

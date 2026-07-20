@@ -6,9 +6,12 @@ import pytest
 
 from agentos.capabilities import (
     ToolCallRouter,
+    ToolInvocation,
+    ToolInvocationContext,
     ToolRegistry,
     ToolSandboxError,
     WorkspaceToolSandboxPolicy,
+    SideEffectPolicy,
     ToolConcurrencyPolicy,
 )
 from agentos.capabilities.executor import ToolExecutionError
@@ -20,6 +23,28 @@ from agentos.capabilities.mcp import (
 )
 from agentos.providers import ProviderToolCall, ProviderToolSpec
 from agentos.workspace import WorkspaceHandle
+
+
+def _invocation(
+    tool_name: str,
+    arguments: dict[str, object],
+    *,
+    tool_call_id: str = "call_1",
+) -> ToolInvocation:
+    return ToolInvocation(
+        tool_name,
+        arguments,
+        ToolInvocationContext(
+            invocation_id="invocation_0123456789abcdef0123456789abcdef",
+            operation_id="operation_0123456789abcdef0123456789abcdef",
+            tenant_id=None,
+            session_id="session_1",
+            run_id="run_1",
+            turn_id="turn_1",
+            tool_call_id=tool_call_id,
+            attempt=1,
+        ),
+    )
 
 
 class FakeMCPClient:
@@ -47,6 +72,58 @@ class FakeMCPClient:
         if "title" not in arguments:
             return "ok"
         return f"{tool_name}:{arguments['title']}"
+
+
+def test_mcp_side_effect_policy_defaults_to_non_retryable() -> None:
+    registry = MCPRegistry()
+    registry.register(
+        MCPServerRegistration("search", "search", FakeMCPClient()),
+    )
+
+    tool = MCPToolAdapter(registry).registered_tool_for(
+        "mcp__search__create_issue",
+    )
+
+    assert tool.side_effect_policy is SideEffectPolicy.NON_RETRYABLE
+
+
+def test_mcp_pure_policy_requires_remote_read_only_hint() -> None:
+    registry = MCPRegistry()
+    registry.register(
+        MCPServerRegistration(
+            "search",
+            "search",
+            FakeMCPClient(
+                [MCPToolInfo("lookup", "lookup", read_only_hint=False)],
+            ),
+            side_effect_policies={"lookup": SideEffectPolicy.PURE},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="read_only_hint"):
+        MCPToolAdapter(registry).registered_tool_for("mcp__search__lookup")
+
+
+def test_mcp_side_effect_policies_are_immutable_and_reject_compensation() -> None:
+    policies = {"lookup": SideEffectPolicy.IDEMPOTENT}
+    registration = MCPServerRegistration(
+        "search",
+        "search",
+        FakeMCPClient(),
+        side_effect_policies=policies,
+    )
+    policies["lookup"] = SideEffectPolicy.PURE
+
+    assert registration.side_effect_policies["lookup"] is SideEffectPolicy.IDEMPOTENT
+    with pytest.raises(TypeError):
+        registration.side_effect_policies["lookup"] = SideEffectPolicy.PURE  # type: ignore[index]
+    with pytest.raises(ValueError, match="compensatable"):
+        MCPServerRegistration(
+            "search",
+            "search",
+            FakeMCPClient(),
+            side_effect_policies={"lookup": SideEffectPolicy.COMPENSATABLE},
+        )
 
 
 @pytest.mark.parametrize(
@@ -127,11 +204,10 @@ def test_mcp_sync_client_work_converges_with_bound_run_tracker() -> None:
         tracker = SyncWorkTracker()
 
         async def events() -> AsyncIterator[object]:
-            yield await router.async_execute_tool_call(
-                ProviderToolCall(
-                    id="call_1",
-                    name="mcp__github__create_issue",
-                    arguments={"title": "Bug"},
+            yield await router.execute(
+                _invocation(
+                    "mcp__github__create_issue",
+                    {"title": "Bug"},
                 ),
             )
 
@@ -196,66 +272,21 @@ def test_mcp_tool_adapter_executes_prefixed_provider_call() -> None:
         mcp_adapter=adapter,
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="mcp__github__create_issue",
-            arguments={"title": "Bug"},
-        )
-    )
+    result = asyncio.run(router.execute(
+        _invocation(
+            "mcp__github__create_issue",
+            {"title": "Bug"},
+        ),
+    ))
 
     assert result.tool_call_id == "call_1"
     assert result.content == "create_issue:Bug"
     assert client.calls == [("create_issue", {"title": "Bug"})]
 
 
-def test_mcp_tool_adapter_direct_execute_requires_prevalidation_marker() -> None:
-    client = FakeMCPClient()
-    registry = MCPRegistry()
-    registry.register(
-        MCPServerRegistration(
-            name="github",
-            description="Manage GitHub issues.",
-            client=client,
-        ),
-    )
-    adapter = MCPToolAdapter(registry)
-
-    with pytest.raises(ToolExecutionError, match="ToolCallRouter"):
-        adapter.execute(
-            ProviderToolCall(
-                id="call_1",
-                name="mcp__github__create_issue",
-                arguments={"title": "Bug"},
-            ),
-        )
-
-    assert client.calls == []
-
-
-def test_mcp_tool_adapter_rejects_forged_public_prevalidation_flag() -> None:
-    client = FakeMCPClient()
-    registry = MCPRegistry()
-    registry.register(
-        MCPServerRegistration(
-            name="github",
-            description="Manage GitHub issues.",
-            client=client,
-        ),
-    )
-    adapter = MCPToolAdapter(registry)
-
-    with pytest.raises(ToolExecutionError, match="ToolCallRouter"):
-        adapter.execute(
-            ProviderToolCall(
-                id="call_1",
-                name="mcp__github__create_issue",
-                arguments={"title": "Bug"},
-            ),
-            prevalidated=True,
-        )
-
-    assert client.calls == []
+def test_mcp_tool_adapter_exposes_no_direct_execution_surface() -> None:
+    assert not hasattr(MCPToolAdapter, "execute")
+    assert not hasattr(MCPToolAdapter, "async_execute")
 
 
 def test_mcp_registry_rejects_invalid_server_names() -> None:
@@ -316,13 +347,12 @@ def test_mcp_registry_refreshes_automatically_after_register() -> None:
         mcp_adapter=adapter,
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="mcp__github__create_issue",
-            arguments={"title": "Bug"},
-        )
-    )
+    result = asyncio.run(router.execute(
+        _invocation(
+            "mcp__github__create_issue",
+            {"title": "Bug"},
+        ),
+    ))
 
     assert result.content == "create_issue:Bug"
 
@@ -372,13 +402,12 @@ def test_tool_router_applies_sandbox_policy_before_mcp_adapter(tmp_path) -> None
     )
 
     with pytest.raises(ToolSandboxError, match="escapes workspace root"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="mcp__docs__read",
-                arguments={"path": "../secret.txt"},
+        asyncio.run(router.execute(
+            _invocation(
+                "mcp__docs__read",
+                {"path": "../secret.txt"},
             ),
-        )
+        ))
 
     assert client.calls == []
 
@@ -427,13 +456,12 @@ def test_tool_router_passes_sandbox_normalized_mcp_paths_to_client(tmp_path) -> 
         ),
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="mcp__docs__read",
-            arguments={"path": "notes/todo.txt"},
+    result = asyncio.run(router.execute(
+        _invocation(
+            "mcp__docs__read",
+            {"path": "notes/todo.txt"},
         ),
-    )
+    ))
 
     expected_path = str((tmp_path / "notes" / "todo.txt").resolve())
     assert result.content == f"read:{expected_path}"
@@ -456,13 +484,12 @@ def test_tool_router_validates_mcp_required_arguments_before_client_call() -> No
     )
 
     with pytest.raises(ToolExecutionError, match="missing required tool argument"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="mcp__github__create_issue",
-                arguments={},
+        asyncio.run(router.execute(
+            _invocation(
+                "mcp__github__create_issue",
+                {},
             ),
-        )
+        ))
 
     assert client.calls == []
 
@@ -483,13 +510,12 @@ def test_tool_router_validates_mcp_argument_types_before_client_call() -> None:
     )
 
     with pytest.raises(ToolExecutionError, match="invalid tool argument title"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="mcp__github__create_issue",
-                arguments={"title": 42},
+        asyncio.run(router.execute(
+            _invocation(
+                "mcp__github__create_issue",
+                {"title": 42},
             ),
-        )
+        ))
 
     assert client.calls == []
 
@@ -519,13 +545,12 @@ def test_tool_router_applies_capability_allowlist_to_mcp_tools(tmp_path) -> None
     )
 
     with pytest.raises(ToolSandboxError, match="capability not allowed"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="mcp__github__create_issue",
-                arguments={"title": "Bug"},
+        asyncio.run(router.execute(
+            _invocation(
+                "mcp__github__create_issue",
+                {"title": "Bug"},
             ),
-        )
+        ))
 
     assert client.calls == []
 
@@ -566,13 +591,12 @@ def test_tool_router_uses_mcp_tool_declared_capability_for_allowlist(tmp_path) -
         ),
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="mcp__files__read_file",
-            arguments={"path": "notes/todo.txt"},
+    result = asyncio.run(router.execute(
+        _invocation(
+            "mcp__files__read_file",
+            {"path": "notes/todo.txt"},
         ),
-    )
+    ))
 
     assert result.content == "ok"
     assert client.calls == [("read_file", {"path": "notes/todo.txt"})]

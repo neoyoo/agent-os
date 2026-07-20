@@ -14,6 +14,7 @@ from agentos.runtime.execution import RunExecutionCursor
 from agentos.runtime.run_commit import RunCommitRuntime
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime, RunWriteGuard
 from agentos.runtime.session import SessionState
+from agentos.runtime.side_effect_memory import InMemorySideEffectStore
 from agentos.runtime.waiting import LocalWaitingRuntime
 
 
@@ -110,9 +111,10 @@ def _runtime(
     store: RecordingCheckpointStore,
 ) -> RunCommitRuntime:
     runs = RunRuntime(session_id="session_1", store=InMemoryRunStore())
+    side_effects = InMemorySideEffectStore()
     return RunCommitRuntime(
         runs,
-        LocalWaitingRuntime(runs),
+        LocalWaitingRuntime(runs, side_effects),
         checkpoint_source=source,  # type: ignore[arg-type]
         checkpoint_store=store,  # type: ignore[arg-type]
     )

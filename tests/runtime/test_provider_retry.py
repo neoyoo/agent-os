@@ -71,6 +71,7 @@ def test_query_loop_retries_provider_failures_and_emits_event() -> None:
     retry_events = [event for event in bus.events if isinstance(event, ProviderRetryEvent)]
     assert retry_events == [
         ProviderRetryEvent(
+            session_id="session_local",
             attempt=1,
             max_retries=1,
             error="temporary provider failure",

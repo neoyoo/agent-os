@@ -78,7 +78,7 @@ class PendingToolInvocation:
     invocation_ref: ProtectedPayloadRef
 
     def __post_init__(self) -> None:
-        _require_identifier(self.invocation_id, "invocation_id")
+        _require_stable_id(self.invocation_id, "invocation", "invocation_id")
         _require_identifier(self.provider_tool_call_id, "provider_tool_call_id")
         _require_identifier(self.tool_name, "tool_name")
         if type(self.invocation_ref) is not ProtectedPayloadRef:
@@ -124,17 +124,31 @@ class RunExecutionCursor:
             raise ValueError("pending_tools cursor requires tool invocations")
         if self.stage == "after_tools" and pending:
             raise ValueError("after_tools cursor cannot contain pending invocations")
-        identities = [
-            (item.invocation_id, item.provider_tool_call_id)
-            for item in pending
-        ]
-        if len(set(identities)) != len(identities):
-            raise ValueError("pending tool identities must be unique")
+        invocation_ids = [item.invocation_id for item in pending]
+        if len(set(invocation_ids)) != len(invocation_ids):
+            raise ValueError("pending invocation ids must be unique")
+        provider_call_ids = [item.provider_tool_call_id for item in pending]
+        if len(set(provider_call_ids)) != len(provider_call_ids):
+            raise ValueError("pending provider tool call ids must be unique")
 
 
 def _require_identifier(value: object, field_name: str) -> None:
     if type(value) is not str or not value.strip():
         raise ValueError(f"{field_name} must not be empty")
+
+
+def _require_stable_id(value: object, prefix: str, field_name: str) -> None:
+    expected_prefix = f"{prefix}_"
+    if (
+        type(value) is not str
+        or len(value) != len(expected_prefix) + 32
+        or not value.startswith(expected_prefix)
+        or any(
+            character not in "0123456789abcdef"
+            for character in value[len(expected_prefix):]
+        )
+    ):
+        raise ValueError(f"{field_name} must be a canonical {prefix} id")
 
 
 __all__ = [

@@ -7,14 +7,16 @@ import pytest
 
 from agentos.capabilities import (
     RegisteredTool,
+    SideEffectPolicy,
     ToolCallRouter,
+    ToolInvocation,
     ToolPathSandboxRule,
     ToolRegistry,
     ToolSandboxError,
     WorkspaceToolSandboxPolicy,
 )
-from agentos.providers import ProviderToolCall
 from agentos.workspace import WorkspaceHandle
+from tests.tool_invocation import make_tool_invocation
 
 
 def test_workspace_tool_sandbox_allows_path_inside_workspace(
@@ -34,11 +36,9 @@ def test_workspace_tool_sandbox_allows_path_inside_workspace(
         ),
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="read_file",
-            arguments={"path": "notes/todo.txt"},
+    result = asyncio.run(
+        router.execute(
+            make_tool_invocation("read_file", {"path": "notes/todo.txt"}),
         ),
     )
 
@@ -65,11 +65,9 @@ def test_workspace_tool_sandbox_rejects_relative_escape_before_handler(
     )
 
     with pytest.raises(ToolSandboxError, match="escapes workspace root"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "../secret.txt"},
+        asyncio.run(
+            router.execute(
+                make_tool_invocation("read_file", {"path": "../secret.txt"}),
             ),
         )
 
@@ -95,11 +93,9 @@ def test_workspace_tool_sandbox_rejects_absolute_escape_before_handler(
     )
 
     with pytest.raises(ToolSandboxError, match="escapes workspace root"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": str(outside)},
+        asyncio.run(
+            router.execute(
+                make_tool_invocation("read_file", {"path": str(outside)}),
             ),
         )
 
@@ -122,11 +118,9 @@ def test_workspace_tool_sandbox_rejects_sandbox_required_tool_without_root() -> 
     )
 
     with pytest.raises(ToolSandboxError, match="requires a workspace root"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "notes/todo.txt"},
+        asyncio.run(
+            router.execute(
+                make_tool_invocation("read_file", {"path": "notes/todo.txt"}),
             ),
         )
 
@@ -150,11 +144,9 @@ def test_workspace_tool_sandbox_rejects_unauthorized_capability_before_handler(
     )
 
     with pytest.raises(ToolSandboxError, match="capability not allowed"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="run_shell",
-                arguments={"command": "echo hello"},
+        asyncio.run(
+            router.execute(
+                make_tool_invocation("run_shell", {"command": "echo hello"}),
             ),
         )
 
@@ -178,11 +170,9 @@ def test_workspace_tool_sandbox_rejects_missing_capability_when_allowlist_is_set
     )
 
     with pytest.raises(ToolSandboxError, match="tool capability is required"):
-        router.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "notes/todo.txt"},
+        asyncio.run(
+            router.execute(
+                make_tool_invocation("read_file", {"path": "notes/todo.txt"}),
             ),
         )
 
@@ -206,12 +196,8 @@ def test_workspace_tool_sandbox_enforces_async_execution_path(
     )
 
     async def run() -> object:
-        return await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="read_file",
-                arguments={"path": "../secret.txt"},
-            ),
+        return await router.execute(
+            make_tool_invocation("read_file", {"path": "../secret.txt"}),
         )
 
     with pytest.raises(ToolSandboxError, match="escapes workspace root"):
@@ -230,11 +216,9 @@ def test_workspace_tool_sandbox_ignores_tools_without_sandbox_requirements() -> 
         ),
     )
 
-    result = router.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="read_file",
-            arguments={"path": "../legacy.txt"},
+    result = asyncio.run(
+        router.execute(
+            make_tool_invocation("read_file", {"path": "../legacy.txt"}),
         ),
     )
 
@@ -257,8 +241,11 @@ def _file_registry(
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"],
             },
-            handler=lambda arguments: called.append(str(arguments["path"]))
-            or f"read:{arguments['path']}",
+            handler=lambda invocation: called.append(
+                str(invocation.arguments["path"]),
+            )
+            or f"read:{invocation.arguments['path']}",
+            side_effect_policy=SideEffectPolicy.PURE,
             metadata={"sensitivity": sensitivity},
         ),
     )
@@ -266,9 +253,9 @@ def _file_registry(
 
 
 def _async_file_registry(called: list[str]) -> ToolRegistry:
-    async def read_file(arguments: dict[str, object]) -> str:
-        called.append(str(arguments["path"]))
-        return f"read:{arguments['path']}"
+    async def read_file(invocation: ToolInvocation) -> str:
+        called.append(str(invocation.arguments["path"]))
+        return f"read:{invocation.arguments['path']}"
 
     registry = ToolRegistry()
     registry.register(
@@ -281,6 +268,7 @@ def _async_file_registry(called: list[str]) -> ToolRegistry:
                 "required": ["path"],
             },
             handler=read_file,
+            side_effect_policy=SideEffectPolicy.PURE,
             metadata={"sensitivity": "sandbox-required"},
         ),
     )
@@ -298,7 +286,11 @@ def _shell_registry(called: list[str]) -> ToolRegistry:
                 "properties": {"command": {"type": "string"}},
                 "required": ["command"],
             },
-            handler=lambda arguments: called.append(str(arguments["command"])) or "ok",
+            handler=lambda invocation: called.append(
+                str(invocation.arguments["command"]),
+            )
+            or "ok",
+            side_effect_policy=SideEffectPolicy.PURE,
             metadata={
                 "sensitivity": "sandbox-required",
                 "capability": "process.exec",

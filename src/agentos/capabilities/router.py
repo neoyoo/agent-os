@@ -1,20 +1,25 @@
 from dataclasses import dataclass, field
-from typing import cast
 
-from agentos._sync_work import run_sync
 from agentos._json_values import thaw_json
 from agentos.capabilities.backend import ExecutionBackend, InProcessExecutionBackend
+from agentos.capabilities.invocation import ToolInvocation
 from agentos.capabilities.executor import (
     ToolExecutionOutcome,
     ToolExecutionResult,
     ToolExecutor,
+    ToolExecutionError,
     validate_tool_arguments,
 )
 from agentos.capabilities.mcp import MCPToolAdapter
 from agentos.capabilities.registry import ToolRegistry
 from agentos.capabilities.sandbox import ToolSandboxPolicy
-from agentos.capabilities.tools import ToolConcurrencyPolicy
-from agentos.context import ContextRuntime, WorkingStateField
+from agentos.capabilities.tools import (
+    SideEffectPolicy,
+    ToolConcurrencyPolicy,
+    ToolExecutionContract,
+)
+from agentos.context import ContextRuntime
+from agentos.context.tool_mutations import apply_context_mutation
 from agentos.context_protocol import (
     CONTEXT_PROTOCOL_TOOL_NAMES,
     context_protocol_tool_specs,
@@ -52,6 +57,34 @@ class ToolCallRouter:
             ),
         ]
 
+    def prepare_call(self, call: ProviderToolCall) -> ProviderToolCall:
+        """Validate and canonicalize a Provider call before checkpointing."""
+
+        if call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
+            self.security_policy.ensure_tool_allowed(call.name)
+            spec = next(
+                item
+                for item in context_protocol_tool_specs()
+                if item.function.name == call.name
+            )
+            arguments = thaw_json(call.arguments)
+            validate_tool_arguments(
+                call.name,
+                arguments,
+                spec.function.parameters,
+            )
+            return ProviderToolCall(call.id, call.name, arguments)
+        if call.name.startswith("mcp__"):
+            if self.mcp_adapter is None:
+                raise ToolExecutionError("mcp adapter is required for MCP tool calls")
+            tool = self.mcp_adapter.registered_tool_for(call.name)
+        else:
+            try:
+                tool = self.tool_registry.get(call.name)
+            except KeyError as error:
+                raise ToolExecutionError(f"unknown tool: {call.name}") from error
+        return self._tool_executor().prepare_registered_call(tool, call)
+
     def concurrency_policy_for(
         self,
         tool_call: ProviderToolCall,
@@ -69,31 +102,49 @@ class ToolCallRouter:
         except KeyError:
             return ToolConcurrencyPolicy.EXCLUSIVE
 
-    def execute_tool_call(self, tool_call: ProviderToolCall) -> ToolExecutionOutcome:
-        """执行 provider tool call，并按工具类型路由。"""
+    def tool_contract_for(
+        self,
+        invocation: ToolInvocation,
+    ) -> ToolExecutionContract:
+        """在执行批次前解析本地可信 Tool contract。"""
 
-        self.security_policy.ensure_tool_allowed(tool_call.name)
-        if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
-            return self._execute_context_tool(tool_call)
-        if tool_call.name.startswith("mcp__"):
+        name = invocation.tool_name
+        if name in CONTEXT_PROTOCOL_TOOL_NAMES:
+            policy = (
+                SideEffectPolicy.PURE
+                if name == "recall_context"
+                else SideEffectPolicy.IDEMPOTENT
+            )
+            return ToolExecutionContract(
+                policy,
+                ToolConcurrencyPolicy.EXCLUSIVE,
+            )
+        if name.startswith("mcp__"):
+            if self.mcp_adapter is None:
+                raise ToolExecutionError("mcp adapter is required for MCP tool calls")
+            return self.mcp_adapter.registered_tool_for(name).execution_contract()
+        try:
+            return self.tool_registry.get(name).execution_contract()
+        except KeyError as error:
+            raise ToolExecutionError(f"unknown tool: {name}") from error
+
+    async def execute(
+        self,
+        invocation: ToolInvocation,
+    ) -> ToolExecutionOutcome:
+        """按能力类型异步执行 canonical ToolInvocation。"""
+
+        if invocation.tool_name in CONTEXT_PROTOCOL_TOOL_NAMES:
+            self.security_policy.ensure_tool_allowed(invocation.tool_name)
+            return self._execute_context_tool(invocation)
+        if invocation.tool_name.startswith("mcp__"):
             if self.mcp_adapter is None:
                 raise RuntimeError("mcp adapter is required for MCP tool calls")
-            prepared_call = self._prepare_mcp_tool_call(tool_call)
-            return self.mcp_adapter._execute_prevalidated(prepared_call)
-        return self._tool_executor().execute(tool_call)
-
-    async def async_execute_tool_call(
-        self,
-        tool_call: ProviderToolCall,
-    ) -> ToolExecutionOutcome:
-        """异步执行 provider tool call；阻塞外部工具放入线程执行。"""
-
-        if tool_call.name in CONTEXT_PROTOCOL_TOOL_NAMES:
-            return self.execute_tool_call(tool_call)
-        if tool_call.name.startswith("mcp__"):
-            return await run_sync(self.execute_tool_call, tool_call)
-        self.security_policy.ensure_tool_allowed(tool_call.name)
-        return await self._tool_executor().async_execute(tool_call)
+            return await self._tool_executor().execute_registered(
+                self.mcp_adapter.registered_tool_for(invocation.tool_name),
+                invocation,
+            )
+        return await self._tool_executor().execute(invocation)
 
     def _tool_executor(self) -> ToolExecutor:
         """延迟创建外部工具 executor。"""
@@ -108,66 +159,33 @@ class ToolCallRouter:
             )
         return self._executor
 
-    def _prepare_mcp_tool_call(
-        self,
-        tool_call: ProviderToolCall,
-    ) -> ProviderToolCall:
-        if self.mcp_adapter is None:
-            return tool_call
-        tool = self.mcp_adapter.registered_tool_for(tool_call.name)
-        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
-        validate_tool_arguments(tool_call.name, arguments, tool.parameters)
-        if self.sandbox_policy is not None:
-            self.sandbox_policy.ensure_tool_call_allowed(tool, arguments)
-        return ProviderToolCall(
-            id=tool_call.id,
-            name=tool_call.name,
-            arguments=arguments,
-        )
-
     def _execute_context_tool(
         self,
-        tool_call: ProviderToolCall,
+        invocation: ToolInvocation,
     ) -> ToolExecutionResult:
         """把 context tool call 应用到 ContextRuntime。"""
 
-        if tool_call.name == "recall_context":
-            return self._execute_recall_context(tool_call)
+        if invocation.tool_name == "recall_context":
+            return self._execute_recall_context(invocation)
         if self.context_runtime is None:
             raise RuntimeError("context runtime is required for context tools")
 
-        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
-        if tool_call.name == "declare_schema":
-            self.context_runtime.declare_schema(self._working_state_fields(arguments))
-        elif tool_call.name == "update_state":
-            self.context_runtime.update_state(
-                field_name=str(arguments["field_name"]),
-                value=arguments["value"],  # type: ignore[arg-type]
-            )
-        elif tool_call.name == "extend_schema":
-            self.context_runtime.extend_schema(self._working_state_fields(arguments))
-        elif tool_call.name == "start_chapter":
-            fields = arguments.get("fields")
-            self.context_runtime.start_chapter(
-                None if fields is None else self._working_state_fields(arguments),
-            )
-        else:
-            raise RuntimeError(f"unknown context tool: {tool_call.name}")
+        apply_context_mutation(self.context_runtime, invocation)
 
         return ToolExecutionResult(
-            tool_call_id=tool_call.id,
-            content=f"context tool {tool_call.name} applied",
+            tool_call_id=invocation.context.tool_call_id,
+            content=f"context tool {invocation.tool_name} applied",
         )
 
     def _execute_recall_context(
         self,
-        tool_call: ProviderToolCall,
+        invocation: ToolInvocation,
     ) -> ToolExecutionResult:
         """把 recall_context 工具调用交给 RecallRuntime。"""
 
         if self.recall_runtime is None:
             raise RuntimeError("recall runtime is required for recall_context")
-        arguments = tool_call.arguments
+        arguments = invocation.arguments
         handle = arguments.get("handle")
         query = arguments.get("query")
         limit = int(arguments.get("limit", 1))
@@ -177,7 +195,7 @@ class ToolCallRouter:
             limit=limit,
         )
         return ToolExecutionResult(
-            tool_call_id=tool_call.id,
+            tool_call_id=invocation.context.tool_call_id,
             content=self._format_recalled_context(
                 handle=None if handle is None else str(handle),
                 query=None if query is None else str(query),
@@ -207,28 +225,6 @@ class ToolCallRouter:
             )
         lines.append("</recalled-context>")
         return "\n".join(lines)
-
-    def _working_state_fields(
-        self,
-        arguments: dict[str, object],
-    ) -> list[WorkingStateField]:
-        """从 provider arguments 中解析 working state field 声明。"""
-
-        raw_fields = arguments.get("fields")
-        if not isinstance(raw_fields, list):
-            raise ValueError("context schema tools require a fields list")
-        fields: list[WorkingStateField] = []
-        for raw_field in raw_fields:
-            if not isinstance(raw_field, dict):
-                raise ValueError("working state field must be an object")
-            fields.append(
-                WorkingStateField(
-                    name=str(raw_field["name"]),
-                    type=str(raw_field["type"]),
-                    purpose=str(raw_field["purpose"]),
-                ),
-            )
-        return fields
 
     def _escape_attr(self, value: str) -> str:
         return (

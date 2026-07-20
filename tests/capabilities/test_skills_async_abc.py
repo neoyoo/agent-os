@@ -18,7 +18,7 @@ from agentos.capabilities.skills import (
     register_skill_loader_tools,
 )
 from agentos.capabilities import ToolCallRouter, ToolRegistry
-from agentos.providers import ProviderToolCall
+from tests.tool_invocation import make_tool_invocation
 
 
 class RejectingTrustPolicy:
@@ -173,11 +173,10 @@ def test_load_skill_tool_result_includes_resource_manifest() -> None:
             "session-1",
         )
         router = ToolCallRouter(tool_registry=tools)
-        return await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="load_skill",
-                arguments={"skill_name": "reporting"},
+        return await router.execute(
+            make_tool_invocation(
+                "load_skill",
+                {"skill_name": "reporting"},
             ),
         )
 
@@ -215,11 +214,10 @@ def test_load_skill_resource_tool_loads_source_resource() -> None:
             "session-1",
         )
         router = ToolCallRouter(tool_registry=tools)
-        return await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_2",
-                name="load_skill_resource",
-                arguments={"skill_name": "reporting", "path": "examples/brief.md"},
+        return await router.execute(
+            make_tool_invocation(
+                "load_skill_resource",
+                {"skill_name": "reporting", "path": "examples/brief.md"},
             ),
         )
 

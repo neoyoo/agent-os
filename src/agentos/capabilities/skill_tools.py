@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from agentos.capabilities.invocation import ToolInvocation
 from agentos.capabilities.skill_runtime import SkillRuntime
-from agentos.capabilities.tools import RegisteredTool
+from agentos.capabilities.tools import RegisteredTool, SideEffectPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,19 +16,22 @@ class BoundSkillTools:
     session_id: str
 
     def registered_tools(self) -> tuple[RegisteredTool, ...]:
-        async def load_skill(arguments: dict[str, object]) -> str:
+        async def load_skill(invocation: ToolInvocation) -> str:
+            arguments = invocation.arguments
             skill_name = str(arguments.get("skill_name", ""))
             try:
                 return await self.runtime.load(self.session_id, skill_name)
             except KeyError:
                 return self._not_found(skill_name)
 
-        async def disable_skill(arguments: dict[str, object]) -> str:
+        async def disable_skill(invocation: ToolInvocation) -> str:
+            arguments = invocation.arguments
             skill_name = str(arguments.get("skill_name", ""))
             await self.runtime.disable(self.session_id, skill_name)
             return f"Skill 已停用：{skill_name}。"
 
-        async def load_skill_resource(arguments: dict[str, object]) -> str:
+        async def load_skill_resource(invocation: ToolInvocation) -> str:
+            arguments = invocation.arguments
             skill_name = str(arguments.get("skill_name", ""))
             path = str(arguments.get("path", ""))
             try:
@@ -48,6 +52,7 @@ class BoundSkillTools:
                 description="Load a Skill for the current Session.",
                 parameters=parameters,
                 handler=load_skill,
+                side_effect_policy=SideEffectPolicy.IDEMPOTENT,
                 kind="skill",
             ),
             RegisteredTool(
@@ -55,6 +60,7 @@ class BoundSkillTools:
                 description="Disable an active Skill for the current Session.",
                 parameters=parameters,
                 handler=disable_skill,
+                side_effect_policy=SideEffectPolicy.IDEMPOTENT,
                 kind="skill",
             ),
             RegisteredTool(
@@ -70,6 +76,7 @@ class BoundSkillTools:
                     "additionalProperties": False,
                 },
                 handler=load_skill_resource,
+                side_effect_policy=SideEffectPolicy.PURE,
                 kind="skill",
             ),
         )

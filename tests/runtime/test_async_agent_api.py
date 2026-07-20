@@ -1,13 +1,19 @@
 import asyncio
 import threading
 
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolRegistry,
+)
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
-from agentos.providers import FakeProvider, ProviderToolCall
+from agentos.providers import FakeProvider
 from agentos.providers.base import ProviderRequest, ProviderResponse
 from agentos.runtime import Agent, ProviderRequestBuilder, TurnStreamCompleted
 from tests._context_protocol_fixtures import default_context_renderer
+from tests.tool_invocation import make_tool_invocation
 
 
 def build_agent_with_response(content: str) -> Agent:
@@ -106,16 +112,17 @@ def test_tool_call_router_async_executes_external_tool() -> None:
             name="lookup",
             description="Lookup.",
             parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: "async tool result",
+            handler=lambda _invocation: "async tool result",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     router = ToolCallRouter(tool_registry=registry, context_runtime=ContextRuntime())
 
     result = asyncio.run(
-        router.async_execute_tool_call(
-            ProviderToolCall(id="call_1", name="lookup", arguments={}),
+        router.execute(
+            make_tool_invocation("lookup", {}),
         ),
     )
 
-    assert result.tool_call_id == "call_1"
+    assert result.tool_call_id == "call_lookup"
     assert result.content == "async tool result"

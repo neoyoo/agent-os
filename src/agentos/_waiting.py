@@ -11,6 +11,7 @@ WaitReasonKind: TypeAlias = Literal[
     "remote_result",
     "resource_availability",
     "retry_backoff",
+    "side_effect_reconciliation",
 ]
 
 
@@ -30,10 +31,22 @@ class WaitReason:
             "remote_result",
             "resource_availability",
             "retry_backoff",
+            "side_effect_reconciliation",
         }:
             raise ValueError("wait reason kind is invalid")
         if type(self.handle) is not str or not self.handle.strip():
             raise ValueError("wait reason handle must not be empty")
+        if self.kind == "side_effect_reconciliation" and (
+            len(self.handle) != len("operation_") + 32
+            or not self.handle.startswith("operation_")
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.handle[len("operation_"):]
+            )
+        ):
+            raise ValueError(
+                "side effect reconciliation requires a canonical operation handle",
+            )
         if self.detail is not None and type(self.detail) is not str:
             raise TypeError("wait reason detail must be str or None")
         timed = self.kind in {"timer", "retry_backoff"}

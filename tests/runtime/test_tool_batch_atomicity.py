@@ -6,8 +6,10 @@ import pytest
 from agentos import Agent
 from agentos.capabilities import (
     RegisteredTool,
+    SideEffectPolicy,
     ToolCallRouter,
     ToolConcurrencyPolicy,
+    ToolInvocation,
     ToolRegistry,
 )
 from agentos.capabilities.executor import ToolExecutionError
@@ -22,7 +24,7 @@ from agentos.hooks import HookContext, HookManager, HookRegistry
 from agentos.messages import MessageRuntime, StoredMessage
 from agentos.policies import ToolResultBudget
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
-from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime import ProviderRequestBuilder, QueryLoop, SessionState
 from agentos.runtime.errors import AgentBusyError
 from agentos.runtime.stream_events import (
     ToolStreamCompleted,
@@ -76,14 +78,15 @@ def _agent(
         tool_call_router=router,
         event_bus=event_bus,
         hook_manager=hook_manager,
+        session_state=SessionState(id="session_tool_batch_atomicity"),
     )
     return Agent(loop), messages, event_bus, provider
 
 
-def test_duplicate_reservation_happens_before_scheduler_tasks_start() -> None:
+def test_same_arguments_use_independent_invocations_in_one_batch() -> None:
     calls = 0
 
-    async def lookup(_arguments: dict[str, object]) -> str:
+    async def lookup(_invocation: ToolInvocation) -> str:
         nonlocal calls
         calls += 1
         return "value"
@@ -95,6 +98,7 @@ def test_duplicate_reservation_happens_before_scheduler_tasks_start() -> None:
                 "lookup",
                 {"type": "object"},
                 lookup,
+                side_effect_policy=SideEffectPolicy.DEDUPLICATED,
                 concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
             ),
         ],
@@ -109,7 +113,7 @@ def test_duplicate_reservation_happens_before_scheduler_tasks_start() -> None:
     outcome = asyncio.run(agent.run("hello"))
 
     assert outcome.content == "done"
-    assert calls == 1
+    assert calls == 2
     assert [
         event.tool_call_id
         for event in event_bus.events
@@ -122,10 +126,10 @@ def test_duplicate_reservation_happens_before_scheduler_tasks_start() -> None:
 
 
 def test_batch_failure_appends_no_partial_tool_results_and_clears_window() -> None:
-    async def succeed(_arguments: dict[str, object]) -> str:
+    async def succeed(_invocation: ToolInvocation) -> str:
         return "ok"
 
-    async def fail(_arguments: dict[str, object]) -> str:
+    async def fail(_invocation: ToolInvocation) -> str:
         raise RuntimeError("tool failed")
 
     agent, messages, event_bus, _provider = _agent(
@@ -135,6 +139,7 @@ def test_batch_failure_appends_no_partial_tool_results_and_clears_window() -> No
                 "first",
                 {"type": "object"},
                 succeed,
+                side_effect_policy=SideEffectPolicy.PURE,
                 concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
             ),
             RegisteredTool(
@@ -142,6 +147,7 @@ def test_batch_failure_appends_no_partial_tool_results_and_clears_window() -> No
                 "second",
                 {"type": "object"},
                 fail,
+                side_effect_policy=SideEffectPolicy.PURE,
                 concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
             ),
         ],
@@ -166,11 +172,21 @@ def test_tool_handler_failure_does_not_expose_argument_values() -> None:
     async def scenario() -> None:
         secret = "secret-tool-argument-must-not-leak"
 
-        async def fail(arguments: dict[str, object]) -> str:
-            raise RuntimeError(f"backend rejected {arguments['api_key']}")
+        async def fail(invocation: ToolInvocation) -> str:
+            raise RuntimeError(
+                f"backend rejected {invocation.arguments['api_key']}",
+            )
 
         agent, _messages, _event_bus, _provider = _agent(
-            [RegisteredTool("lookup", "lookup", {"type": "object"}, fail)],
+            [
+                RegisteredTool(
+                    "lookup",
+                    "lookup",
+                    {"type": "object"},
+                    fail,
+                    side_effect_policy=SideEffectPolicy.PURE,
+                ),
+            ],
             ProviderResponse(
                 tool_calls=(
                     ProviderToolCall("call_1", "lookup", {"api_key": secret}),
@@ -220,7 +236,8 @@ def test_before_tool_hook_failure_rolls_back_assistant_batch() -> None:
                 "lookup",
                 "lookup",
                 {"type": "object"},
-                lambda _arguments: "unused",
+                lambda _invocation: "unused",
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         ],
         ProviderResponse(
@@ -229,10 +246,12 @@ def test_before_tool_hook_failure_rolls_back_assistant_batch() -> None:
         hook_manager=HookManager(registry),
     )
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(
+        ToolExecutionError,
+        match="^tool execution failed$",
+    ):
         asyncio.run(agent.run("hello"))
 
-    assert caught.value is error
     assert [message.role for message in messages.materialize_active()] == ["user"]
     assert not any(
         isinstance(event, ToolResultAppendedEvent) for event in event_bus.events
@@ -247,7 +266,8 @@ def test_stream_close_during_tool_batch_rolls_back_assistant_batch() -> None:
                     "lookup",
                     "lookup",
                     {"type": "object"},
-                    lambda _arguments: "unused",
+                    lambda _invocation: "unused",
+                    side_effect_policy=SideEffectPolicy.PURE,
                 ),
             ],
             ProviderResponse(
@@ -273,7 +293,7 @@ def test_consumer_cancellation_during_tool_execution_rolls_back_batch() -> None:
     async def scenario() -> None:
         tool_started = asyncio.Event()
 
-        async def block(_arguments: dict[str, object]) -> str:
+        async def block(_invocation: ToolInvocation) -> str:
             tool_started.set()
             await asyncio.Event().wait()
             return "unreachable"
@@ -285,6 +305,7 @@ def test_consumer_cancellation_during_tool_execution_rolls_back_batch() -> None:
                     "lookup",
                     {"type": "object"},
                     block,
+                    side_effect_policy=SideEffectPolicy.PURE,
                 ),
             ],
             ProviderResponse(
@@ -317,7 +338,7 @@ def test_external_close_waits_for_sync_tool_and_preserves_batch_rollback() -> No
         release_tool = ThreadEvent()
         tool_finished = ThreadEvent()
 
-        def block(_arguments: dict[str, object]) -> str:
+        def block(_invocation: ToolInvocation) -> str:
             tool_started.set()
             release_tool.wait()
             tool_finished.set()
@@ -330,6 +351,7 @@ def test_external_close_waits_for_sync_tool_and_preserves_batch_rollback() -> No
                     "lookup",
                     {"type": "object"},
                     block,
+                    side_effect_policy=SideEffectPolicy.PURE,
                 ),
             ],
             ProviderResponse(
@@ -377,8 +399,20 @@ def test_tool_result_append_failure_rolls_back_all_active_batch_refs() -> None:
         messages = FailingSecondToolResultRuntime()
         agent, _messages, event_bus, _provider = _agent(
             [
-                RegisteredTool("first", "first", {"type": "object"}, lambda _: "one"),
-                RegisteredTool("second", "second", {"type": "object"}, lambda _: "two"),
+                RegisteredTool(
+                    "first",
+                    "first",
+                    {"type": "object"},
+                    lambda _invocation: "one",
+                    side_effect_policy=SideEffectPolicy.PURE,
+                ),
+                RegisteredTool(
+                    "second",
+                    "second",
+                    {"type": "object"},
+                    lambda _invocation: "two",
+                    side_effect_policy=SideEffectPolicy.PURE,
+                ),
             ],
             ProviderResponse(
                 tool_calls=(
@@ -423,8 +457,20 @@ def test_later_after_tool_hook_failure_emits_no_earlier_cap_fact() -> None:
     registry.register("after_tool_call", fail_second, failure_policy="raise")
     agent, messages, event_bus, _provider = _agent(
         [
-            RegisteredTool("first", "first", {"type": "object"}, lambda _: "x" * 100),
-            RegisteredTool("second", "second", {"type": "object"}, lambda _: "two"),
+            RegisteredTool(
+                "first",
+                "first",
+                {"type": "object"},
+                lambda _invocation: "x" * 100,
+                side_effect_policy=SideEffectPolicy.PURE,
+            ),
+            RegisteredTool(
+                "second",
+                "second",
+                {"type": "object"},
+                lambda _invocation: "two",
+                side_effect_policy=SideEffectPolicy.PURE,
+            ),
         ],
         ProviderResponse(
             tool_calls=(
@@ -437,10 +483,12 @@ def test_later_after_tool_hook_failure_emits_no_earlier_cap_fact() -> None:
     agent.query_loop.tool_result_budget = ToolResultBudget(default_max_tokens=5)
     agent.query_loop.token_counter = HeuristicTokenCounter(char_per_token=1)
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(
+        ToolExecutionError,
+        match="^tool execution failed$",
+    ):
         asyncio.run(agent.run("hello"))
 
-    assert caught.value is error
     assert [message.role for message in messages.materialize_active()] == ["user"]
     assert not any(
         isinstance(event, (ToolResultCappedEvent, ToolResultAppendedEvent))

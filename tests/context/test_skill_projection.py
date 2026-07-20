@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from agentos.capabilities import SideEffectPolicy
 from agentos.capabilities.skills import (
     BoundSkillInstructionProvider,
     BoundSkillProjectionProvider,
@@ -24,6 +25,7 @@ from agentos.capabilities.skills import (
 )
 from agentos.context.snapshot import ContextSnapshotRenderer
 from tests.context._snapshot_fixtures import RecordingTokenCounter
+from tests.tool_invocation import call_tool
 
 
 class MutableTrustPolicy:
@@ -262,7 +264,7 @@ def test_bound_skill_tools_capture_session_without_exposing_it_in_schema() -> No
         runtime = await runtime_for(definition(), policy)
         tools = BoundSkillTools(runtime, "session-a").registered_tools()
         load_tool = tools[0]
-        result = await load_tool.handler({"skill_name": "review"})  # type: ignore[misc]
+        result = await call_tool(load_tool, {"skill_name": "review"})
         assert result.startswith("Skill 已加载")
         return runtime, tools
 
@@ -272,6 +274,11 @@ def test_bound_skill_tools_capture_session_without_exposing_it_in_schema() -> No
         "load_skill",
         "disable_skill",
         "load_skill_resource",
+    ]
+    assert [tool.side_effect_policy for tool in tools] == [
+        SideEffectPolicy.IDEMPOTENT,
+        SideEffectPolicy.IDEMPOTENT,
+        SideEffectPolicy.PURE,
     ]
     assert all("session_id" not in tool.parameters["properties"] for tool in tools)
     assert runtime.items("session-a")

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol, cast
 
 from agentos._json_values import thaw_json
-from agentos.capabilities.executor import ToolExecutionError, ToolExecutionResult
-from agentos.capabilities.tools import RegisteredTool, ToolConcurrencyPolicy
+from agentos.capabilities.invocation import ToolInvocation
+from agentos.capabilities.tools import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolConcurrencyPolicy,
+)
 from agentos.context.projection import MCPServerDeclaration
 from agentos.providers import (
     ProviderFunctionSpec,
-    ProviderToolCall,
     ProviderToolSpec,
 )
 
@@ -51,6 +56,23 @@ class MCPServerRegistration:
     endpoint: str | None = None
     allowed_tools: set[str] | None = None
     supports_parallel_tool_calls: bool = False
+    side_effect_policies: Mapping[str, SideEffectPolicy] = field(
+        default_factory=dict,
+    )
+
+    def __post_init__(self) -> None:
+        policies = dict(self.side_effect_policies)
+        for tool_name, policy in policies.items():
+            _validate_mcp_name(tool_name, "tool")
+            if type(policy) is not SideEffectPolicy:
+                raise TypeError("MCP side effect policy must be SideEffectPolicy")
+            if policy is SideEffectPolicy.COMPENSATABLE:
+                raise ValueError("MCP tools cannot declare compensatable side effects")
+        object.__setattr__(
+            self,
+            "side_effect_policies",
+            MappingProxyType(policies),
+        )
 
 
 class MCPRegistry:
@@ -191,47 +213,33 @@ class MCPToolAdapter:
             return ToolConcurrencyPolicy.PARALLEL_SAFE
         return ToolConcurrencyPolicy.EXCLUSIVE
 
-    def execute(
-        self,
-        tool_call: ProviderToolCall,
-        *,
-        prevalidated: object | None = None,
-    ) -> ToolExecutionResult:
-        """Reject direct MCP execution; route calls through ToolCallRouter."""
-
-        raise ToolExecutionError(
-            "MCPToolAdapter.execute() requires ToolCallRouter validation; "
-            "route production MCP tool calls through ToolCallRouter",
-        )
-
-    def _execute_prevalidated(
-        self,
-        tool_call: ProviderToolCall,
-    ) -> ToolExecutionResult:
-        """Execute an MCP tool call after ToolCallRouter validation."""
-
-        server, local_tool_name = self.registry.resolve_provider_tool(tool_call.name)
-        arguments = cast(dict[str, object], thaw_json(tool_call.arguments))
-        content = server.client.call_tool(local_tool_name, arguments)
-        return ToolExecutionResult(
-            tool_call_id=tool_call.id,
-            content=content,
-        )
-
     def registered_tool_for(self, provider_name: str) -> RegisteredTool:
         """Return MCP tool metadata in the common sandbox policy shape."""
 
-        _server, tool = self.registry.resolve_provider_tool_info(provider_name)
+        server, tool = self.registry.resolve_provider_tool_info(provider_name)
+        local_tool_name = tool.name
+        policy = server.side_effect_policies.get(
+            tool.name,
+            SideEffectPolicy.NON_RETRYABLE,
+        )
+        if policy is SideEffectPolicy.PURE and not tool.read_only_hint:
+            raise ValueError("pure MCP tool requires remote read_only_hint")
         metadata: dict[str, object] = {"mcp_tool_name": tool.name}
         if tool.capability is not None:
             metadata["capability"] = tool.capability
         if tool.capabilities:
             metadata["capabilities"] = tool.capabilities
+
+        def call_mcp(invocation: ToolInvocation) -> str:
+            arguments = cast(dict[str, object], thaw_json(invocation.arguments))
+            return server.client.call_tool(local_tool_name, arguments)
+
         return RegisteredTool(
             name=provider_name,
             description=tool.description,
             parameters=self.registry.normalized_schema(tool.input_schema),
-            handler=lambda _arguments: "",
+            handler=call_mcp,
+            side_effect_policy=policy,
             kind="mcp",
             concurrency_policy=self.concurrency_policy_for(provider_name),
             metadata=metadata,

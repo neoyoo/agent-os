@@ -143,6 +143,10 @@ def _validate_continuation(
 ) -> None:
     if state.status is not RunStatus.WAITING or state.wait_reason is None:
         raise CommandStateError("continuation command requires a waiting run")
+    if command.kind == "resolve_side_effect":
+        raise CommandStateError(
+            "side effect resolution resume is not assembled for SQLite",
+        )
     allowed = {
         "hitl_answer": {"human_input"},
         "resume": {"human_input", "remote_result", "resource_availability"},

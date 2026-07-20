@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from agentos._json_values import FrozenJsonObject, freeze_json_mapping
+from agentos.runtime.side_effect_resolution import (
+    side_effect_resolution_from_payload,
+    side_effect_resolution_to_payload,
+)
+from agentos.runtime.side_effect_types import SideEffectResolution
 
 
 DurableRunCommandKind: TypeAlias = Literal[
@@ -11,6 +16,7 @@ DurableRunCommandKind: TypeAlias = Literal[
     "wakeup",
     "retry",
     "hitl_answer",
+    "resolve_side_effect",
     "cancel",
 ]
 DurableContinuationKind: TypeAlias = Literal[
@@ -18,13 +24,21 @@ DurableContinuationKind: TypeAlias = Literal[
     "wakeup",
     "retry",
     "hitl_answer",
+    "resolve_side_effect",
 ]
 
 _COMMAND_KINDS = frozenset(
-    {"resume", "wakeup", "retry", "hitl_answer", "cancel"},
+    {
+        "resume",
+        "wakeup",
+        "retry",
+        "hitl_answer",
+        "resolve_side_effect",
+        "cancel",
+    },
 )
 _CONTINUATION_KINDS = frozenset(
-    {"resume", "wakeup", "retry", "hitl_answer"},
+    {"resume", "wakeup", "retry", "hitl_answer", "resolve_side_effect"},
 )
 
 
@@ -42,13 +56,13 @@ class DurableRunCommand:
         run_id: str,
         command_id: str,
         kind: DurableRunCommandKind,
-        payload: dict[str, object] | FrozenJsonObject | None = None,
+        payload: dict[str, object] | FrozenJsonObject | SideEffectResolution | None = None,
     ) -> None:
         _require_identifier(run_id, "run_id")
         _require_identifier(command_id, "command_id")
         if kind not in _COMMAND_KINDS:
             raise ValueError("durable command kind is invalid")
-        frozen = freeze_json_mapping({} if payload is None else payload)
+        frozen = _normalize_payload(kind, payload)
         if kind == "hitl_answer" and not frozen:
             raise ValueError("hitl_answer payload must not be empty")
         object.__setattr__(self, "run_id", run_id)
@@ -83,11 +97,7 @@ class AcceptedContinuationInput:
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "command_id", command_id)
         object.__setattr__(self, "kind", kind)
-        object.__setattr__(
-            self,
-            "payload",
-            freeze_json_mapping({} if payload is None else payload),
-        )
+        object.__setattr__(self, "payload", _normalize_payload(kind, payload))
         object.__setattr__(self, "turn_id", turn_id)
 
 
@@ -119,6 +129,24 @@ def _require_identifier(value: object, field_name: str) -> None:
 def _require_version(value: object) -> None:
     if type(value) is not int or value < 0:
         raise ValueError("aggregate_version must be a non-negative integer")
+
+
+def _normalize_payload(
+    kind: str,
+    payload: dict[str, object] | FrozenJsonObject | SideEffectResolution | None,
+) -> FrozenJsonObject:
+    if kind != "resolve_side_effect":
+        if type(payload) is SideEffectResolution:
+            raise TypeError("SideEffectResolution requires resolve_side_effect")
+        return freeze_json_mapping({} if payload is None else payload)
+    if type(payload) is SideEffectResolution:
+        return side_effect_resolution_to_payload(payload)
+    if payload is None:
+        raise TypeError(
+            "resolve_side_effect payload must be SideEffectResolution or canonical payload",
+        )
+    resolution = side_effect_resolution_from_payload(payload)
+    return side_effect_resolution_to_payload(resolution)
 
 
 __all__ = [

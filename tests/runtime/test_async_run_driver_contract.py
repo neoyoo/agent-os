@@ -31,6 +31,7 @@ from agentos.runtime.run_state import (
     RunStatus,
 )
 from agentos.runtime.session import SessionState
+from agentos.runtime.side_effect_memory import InMemorySideEffectStore
 from agentos.runtime.stream_events import (
     FinalResult,
     TurnStreamCompleted,
@@ -44,10 +45,14 @@ from tests.runtime._query_loop_contract_fixtures import make_query_loop
 
 
 def _driver(runs: RunRuntime) -> RunDriver:
+    side_effects = InMemorySideEffectStore()
     return RunDriver(
         runs=runs,
         turns=object(),  # type: ignore[arg-type]
-        commits=RunCommitRuntime(runs, LocalWaitingRuntime(runs)),
+        commits=RunCommitRuntime(
+            runs,
+            LocalWaitingRuntime(runs, side_effects),
+        ),
     )
 
 
@@ -78,11 +83,15 @@ def _recording_driver(
         session_state=session,
         continuation_runtime=ContinuationRuntime(),
     )
+    side_effects = InMemorySideEffectStore()
     return (
         RunDriver(
             runs=runs,
             turns=turns,
-            commits=RunCommitRuntime(runs, LocalWaitingRuntime(runs)),
+            commits=RunCommitRuntime(
+                runs,
+                LocalWaitingRuntime(runs, side_effects),
+            ),
         ),
         session,
         messages,
@@ -340,12 +349,13 @@ def test_accepted_start_recovery_is_idempotent_after_checkpoint_hydration() -> N
             session_state=session,
             continuation_runtime=ContinuationRuntime(),
         )
+        side_effects = InMemorySideEffectStore()
         driver = RunDriver(
             runs=runs,
             turns=turns,
             commits=RunCommitRuntime(
                 runs,
-                LocalWaitingRuntime(runs),
+                LocalWaitingRuntime(runs, side_effects),
             ),
             recovery_cursor=RunExecutionCursor("turn_1", "before_provider", 0),
         )
@@ -368,6 +378,7 @@ def test_accepted_start_recovery_is_idempotent_after_checkpoint_hydration() -> N
             turn,
             _options,
             recovery_cursor,
+            _execution_guard,
         ):
             assert turn is not None
             assert turn.id == "turn_1"
@@ -535,6 +546,7 @@ def test_cancellation_after_authoritative_commit_preserves_committed_outcome(
             turn,
             options,
             recovery_cursor,
+            _execution_guard,
         ):
             if blocked_status is RunStatus.WAITING:
                 yield WaitRequest(WaitReason("human_input", "approval_1"))
@@ -585,6 +597,7 @@ def test_provider_failure_uses_original_guard_after_external_version_advance() -
             turn,
             options,
             recovery_cursor,
+            _execution_guard,
         ):
             assert store.state is not None
             store.state = replace(
@@ -650,6 +663,7 @@ def test_commit_failure_does_not_publish_failure_or_terminal_events(
             turn,
             _options,
             _recovery_cursor,
+            _execution_guard,
         ):
             if failure_boundary == "checkpoint":
                 assert turn is not None

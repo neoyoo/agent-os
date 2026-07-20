@@ -3,8 +3,10 @@ import pytest
 from agentos import AgentBuilder
 from agentos.capabilities import (
     RegisteredTool,
+    SideEffectPolicy,
     ToolCallRouter,
     ToolConcurrencyPolicy,
+    ToolInvocation,
     ToolRegistry,
 )
 from agentos.providers import (
@@ -15,6 +17,10 @@ from agentos.providers import (
 )
 
 
+def _handler(_invocation: ToolInvocation) -> str:
+    return "ok"
+
+
 def _tool(
     *,
     policy: ToolConcurrencyPolicy = ToolConcurrencyPolicy.EXCLUSIVE,
@@ -23,7 +29,8 @@ def _tool(
         name="lookup",
         description="lookup",
         parameters={"type": "object", "properties": {"keys": {"type": "array"}}},
-        handler=lambda _arguments: "ok",
+        handler=_handler,
+        side_effect_policy=SideEffectPolicy.PURE,
         concurrency_policy=policy,
         metadata={"labels": ["read"]},
     )
@@ -36,7 +43,8 @@ def test_registered_tool_freezes_nested_contract_and_defaults_exclusive() -> Non
         name="lookup",
         description="lookup",
         parameters=parameters,
-        handler=lambda _arguments: "ok",
+        handler=_handler,
+        side_effect_policy=SideEffectPolicy.PURE,
         metadata=metadata,
     )
 

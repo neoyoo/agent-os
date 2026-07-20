@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import cast
 
-from agentos.capabilities import ToolCallRouter, ToolConcurrencyPolicy
+from agentos._json_values import thaw_json
+from agentos.capabilities import (
+    ToolCallRouter,
+    ToolConcurrencyPolicy,
+    ToolInvocation,
+)
+from agentos.capabilities.executor import ToolExecutionOutcome
+from agentos.capabilities.tools import ToolExecutionContract
 from agentos.context_protocol import CONTEXT_PROTOCOL_TOOL_NAMES
 from agentos.observability.attributes import (
     apply_common_observability_attributes,
@@ -43,21 +51,26 @@ class InstrumentedToolCallRouter:
         self._tracer = tracer
         self._capture_policy = capture_policy
 
-    def execute_tool_call(self, tool_call: ProviderToolCall) -> object:
-        """执行 Tool Call，并记录 Tool Span。"""
+    async def execute(self, invocation: ToolInvocation) -> ToolExecutionOutcome:
+        """执行 canonical ToolInvocation，并记录 Tool Span。"""
 
-        return self._record_tool_call(
-            tool_call,
-            lambda: self._inner.execute_tool_call(tool_call),
+        tool_call = ProviderToolCall(
+            id=invocation.context.tool_call_id,
+            name=invocation.tool_name,
+            arguments=cast(dict[str, object], thaw_json(invocation.arguments)),
+        )
+        return cast(
+            ToolExecutionOutcome,
+            await self._record_async_tool_call(
+                tool_call,
+                lambda: self._inner.execute(invocation),
+            ),
         )
 
-    async def async_execute_tool_call(self, tool_call: ProviderToolCall) -> object:
-        """异步执行 Tool Call，并记录 Tool Span。"""
+    def prepare_call(self, tool_call: ProviderToolCall) -> ProviderToolCall:
+        """透传底层 Router 的调用准备边界。"""
 
-        return await self._record_async_tool_call(
-            tool_call,
-            lambda: self._inner.async_execute_tool_call(tool_call),
-        )
+        return self._inner.prepare_call(tool_call)
 
     def concurrency_policy_for(
         self,
@@ -67,58 +80,13 @@ class InstrumentedToolCallRouter:
 
         return self._inner.concurrency_policy_for(tool_call)
 
-    def _record_tool_call(
+    def tool_contract_for(
         self,
-        tool_call: ProviderToolCall,
-        execute: Callable[[], object],
-    ) -> object:
-        call_snapshot = build_tool_call_snapshot(tool_call, self._capture_policy)
-        with self._tracer.start_span(
-            f"tool.{tool_call.name}",
-            attributes={
-                LANGFUSE_OBSERVATION_TYPE: "tool",
-                GEN_AI_OPERATION_NAME: "execute_tool",
-                GEN_AI_TOOL_NAME: tool_call.name,
-                GEN_AI_TOOL_CALL_ID: tool_call.id,
-                "tool.name": tool_call.name,
-                "tool.call_id": tool_call.id,
-                "agentos.tool.kind": self._tool_kind(tool_call.name),
-                "agentos.tool.arguments.sha256": call_snapshot.arguments_sha256,
-            },
-        ) as span:
-            apply_common_observability_attributes(
-                span,
-                tracer=self._tracer,
-                capture_policy=self._capture_policy,
-            )
-            span.set_attribute(
-                LANGFUSE_OBSERVATION_INPUT,
-                json_attribute(
-                    self._tool_input_payload(call_snapshot),
-                    policy=self._capture_policy,
-                ),
-            )
-            result = execute()
-            result_snapshot = build_tool_result_snapshot(
-                result,
-                self._capture_policy,
-            )
-            span.set_attribute(
-                "agentos.tool.result.sha256",
-                result_snapshot.content_sha256,
-            )
-            span.set_attribute(
-                "agentos.tool.result.length",
-                result_snapshot.content_length,
-            )
-            span.set_attribute(
-                LANGFUSE_OBSERVATION_OUTPUT,
-                json_attribute(
-                    self._tool_output_payload(result_snapshot),
-                    policy=self._capture_policy,
-                ),
-            )
-            return result
+        invocation: ToolInvocation,
+    ) -> ToolExecutionContract:
+        """透传底层 Router 的执行合同。"""
+
+        return self._inner.tool_contract_for(invocation)
 
     async def _record_async_tool_call(
         self,

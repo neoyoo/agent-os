@@ -4,50 +4,46 @@ from itertools import count
 
 import pytest
 
-
-_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
-
 from agentos import Agent
 from agentos.capabilities import (
     RegisteredTool,
+    SideEffectPolicy,
     ToolCallRouter,
     ToolConcurrencyPolicy,
+    ToolInvocation,
     ToolRegistry,
     WaitRequest,
 )
-from agentos.capabilities.executor import ToolExecutionError
 from agentos.context import ContextRuntime
-from agentos.events import (
-    EventBus,
-    ToolResultAppendedEvent,
-    ToolResultCappedEvent,
-    TurnCompletedEvent,
-)
-from agentos.hooks import HookContext, HookManager, HookRegistry
+from agentos.events import EventBus, ToolResultAppendedEvent, TurnCompletedEvent
+from agentos.hooks import HookManager, HookRegistry
 from agentos.messages import MessageRuntime
-from agentos.policies import ToolResultBudget
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import (
     AgentResult,
     AgentWaiting,
     ProviderRequestBuilder,
     QueryLoop,
-    ToolStreamCompleted,
-    ToolStreamFailed,
-    ToolStreamStarted,
     TurnStreamCompleted,
     TurnStreamWaiting,
     WaitReason,
 )
-from agentos.runtime.session import SessionState
 from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
-from agentos.runtime.tool_scheduler import ToolCallScheduler
+from agentos.runtime.session import SessionState
+from agentos.runtime.side_effect_integrity import wait_reason_digest
+from agentos.runtime.side_effect_memory import InMemorySideEffectStore
+from agentos.runtime.side_effect_types import (
+    SideEffectOutcomeKind,
+    SideEffectStatus,
+    WaitingToolCompletion,
+)
 from agentos.runtime.turn import TurnState
 from agentos.runtime.waiting import WaitingCommit, WaitingRuntime
-from agentos.tokens import HeuristicTokenCounter
 from tests._context_protocol_fixtures import default_context_renderer
-from tests.runtime._query_loop_contract_fixtures import RecordingWaitingRuntime
+
+
+_TIMER_DUE = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 
 class RecordingSessionState(SessionState):
@@ -66,10 +62,55 @@ class RecordingSessionState(SessionState):
         return turn
 
 
-class FailingWaitingRuntime:
-    def __init__(self, order: list[str], error: RuntimeError) -> None:
-        self.order = order
+class TrapSideEffectStore(InMemorySideEffectStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.operations: list[str] = []
+
+    def _trap(self, operation: str) -> None:
+        self.operations.append(operation)
+        raise AssertionError(f"unexpected Ledger operation: {operation}")
+
+    async def get(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("get")
+
+    async def reserve(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("reserve")
+
+    async def mark_started(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("mark_started")
+
+    async def complete(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("complete")
+
+    async def mark_ambiguous(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("mark_ambiguous")
+
+    async def begin_compensation(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("begin_compensation")
+
+    async def complete_compensation(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("complete_compensation")
+
+    async def resolve(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._trap("resolve")
+
+
+class FailingWaitingRunStore(InMemoryRunStore):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
         self.error = error
+
+    async def transition(self, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs["status"] is RunStatus.WAITING:
+            raise self.error
+        return await super().transition(**kwargs)
+
+
+class RecordingWaitingRuntime:
+    def __init__(self, runs: RunRuntime) -> None:
+        self.runs = runs
+        self.completion: WaitingToolCompletion | None = None
 
     async def commit_waiting(
         self,
@@ -78,9 +119,11 @@ class FailingWaitingRuntime:
         turn_id: str,
         reason: WaitReason,
         guard: RunWriteGuard,
+        completion: WaitingToolCompletion | None = None,
     ) -> WaitingCommit:
-        self.order.append("commit_attempted")
-        raise self.error
+        self.completion = completion
+        waiting = await self.runs.wait(run_id, reason=reason, guard=guard)
+        return WaitingCommit(run_id, reason, waiting.aggregate_version)
 
 
 def _agent(
@@ -89,6 +132,8 @@ def _agent(
     responses: list[ProviderResponse],
     waiting_runtime: WaitingRuntime | None = None,
     hook_manager: HookManager | None = None,
+    side_effect_store: InMemorySideEffectStore | None = None,
+    run_store: InMemoryRunStore | None = None,
 ) -> tuple[Agent, RecordingSessionState, MessageRuntime, EventBus]:
     context = ContextRuntime()
     messages = MessageRuntime()
@@ -99,20 +144,15 @@ def _agent(
     session = RecordingSessionState()
     event_bus = EventBus()
     run_number = count(1)
-    base_run_id = getattr(waiting_runtime, "run_id", "run_local")
 
     def next_run_id() -> str:
-        number = next(run_number)
-        return base_run_id if number == 1 else f"{base_run_id}_{number}"
+        return f"run_{next(run_number)}"
 
     run_runtime = RunRuntime(
         session_id=session.id,
-        store=InMemoryRunStore(),
+        store=run_store if run_store is not None else InMemoryRunStore(),
         id_factory=next_run_id,
     )
-    if isinstance(waiting_runtime, RecordingWaitingRuntime):
-        waiting_runtime.bind_runs(run_runtime)
-
     return (
         Agent(
             QueryLoop(
@@ -130,6 +170,7 @@ def _agent(
                 waiting_runtime=waiting_runtime,
                 run_runtime=run_runtime,
                 hook_manager=hook_manager,
+                side_effect_store=side_effect_store,
             ),
         ),
         session,
@@ -142,9 +183,11 @@ def _wait_tool(
     reason: WaitReason,
     *,
     name: str = "request_waiting",
-    concurrency_policy: ToolConcurrencyPolicy = ToolConcurrencyPolicy.PARALLEL_SAFE,
+    seen: list[ToolInvocation] | None = None,
 ) -> RegisteredTool:
-    async def request_waiting(_arguments: dict[str, object]) -> WaitRequest:
+    async def request_waiting(invocation: ToolInvocation) -> WaitRequest:
+        if seen is not None:
+            seen.append(invocation)
         return WaitRequest(reason)
 
     return RegisteredTool(
@@ -152,69 +195,74 @@ def _wait_tool(
         "Request authoritative waiting.",
         {"type": "object"},
         request_waiting,
-        concurrency_policy=concurrency_policy,
+        SideEffectPolicy.PURE,
+        concurrency_policy=ToolConcurrencyPolicy.EXCLUSIVE,
+        wait_capable=True,
     )
 
 
-def test_streaming_wait_commits_before_event_rolls_back_batch_and_releases_lease() -> None:
+def _pure_tool(name: str, calls: list[str]) -> RegisteredTool:
+    def handler(invocation: ToolInvocation) -> str:
+        calls.append(invocation.tool_name)
+        return "unexpected"
+
+    return RegisteredTool(
+        name,
+        "Pure test tool.",
+        {"type": "object"},
+        handler,
+        SideEffectPolicy.PURE,
+    )
+
+
+def test_streaming_wait_commits_typed_completion_before_event() -> None:
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
-        order: list[str] = []
-        after_hook_calls: list[str] = []
-        hooks = HookRegistry()
-
-        def observe_after_tool(context: HookContext) -> None:
-            result = context.payload["result"]
-            after_hook_calls.append(result.tool_call_id)  # type: ignore[attr-defined]
-
-        hooks.register("after_tool_call", observe_after_tool)
-
-        async def completed_peer(_arguments: dict[str, object]) -> str:
-            return "must not be appended"
-
+        seen: list[ToolInvocation] = []
+        store = InMemorySideEffectStore()
         agent, session, messages, event_bus = _agent(
-            tools=[
-                RegisteredTool(
-                    "completed_peer",
-                    "Complete alongside a waiting request.",
-                    {"type": "object"},
-                    completed_peer,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                _wait_tool(reason),
-            ],
+            tools=[_wait_tool(reason, seen=seen)],
             responses=[
                 ProviderResponse(
                     tool_calls=(
-                        ProviderToolCall("call_1", "completed_peer", {}),
-                        ProviderToolCall("call_2", "request_waiting", {}),
+                        ProviderToolCall("call_1", "request_waiting", {}),
                     ),
                 ),
                 ProviderResponse("replacement completed"),
             ],
-            waiting_runtime=RecordingWaitingRuntime(order, run_id="run_1"),
-            hook_manager=HookManager(hooks),
+            side_effect_store=store,
         )
 
         stream = await agent.run("hello", stream=True)
-        events: list[object] = []
+        events = []
+        waiting_record_checked = False
         async for event in stream:
             events.append(event)
             if isinstance(event, TurnStreamWaiting):
-                order.append("waiting_observed")
+                invocation = seen[0]
+                assert agent.query_loop.run_runtime is not None
+                run_state = await agent.query_loop.run_runtime.get_run("run_1")
+                record = await store.get(
+                    tenant_id=None,
+                    session_id="session_1",
+                    operation_id=invocation.context.operation_id,
+                    attempt=None,
+                    guard=RunWriteGuard(run_state.aggregate_version),
+                )
+                assert record is not None
+                assert record.status is SideEffectStatus.COMPLETED
+                assert record.outcome_kind is SideEffectOutcomeKind.WAIT_CONTROL
+                assert record.wait_reason_digest == wait_reason_digest(reason)
+                waiting_record_checked = True
 
         assert stream.closed
-        assert order == ["state_committed", "waiting_observed"]
+        assert waiting_record_checked
         assert session.turns[0].status == "waiting"
         assert events[-1] == TurnStreamWaiting("run_1", reason)
-        assert after_hook_calls == ["call_1"]
-        assert [
-            event.tool_call_id for event in events if isinstance(event, ToolStreamStarted)
-        ] == ["call_1", "call_2"]
-        assert [
-            event.tool_call_id for event in events if isinstance(event, ToolStreamCompleted)
-        ] == ["call_1"]
-        assert not any(isinstance(event, (ToolStreamFailed, TurnStreamCompleted)) for event in events)
+        assert not any(
+            isinstance(event, TurnStreamCompleted)
+            for event in events
+        )
         assert [message.role for message in messages.materialize_active()] == ["user"]
         assert [message.role for message in messages.store.all()] == [
             "user",
@@ -226,348 +274,69 @@ def test_streaming_wait_commits_before_event_rolls_back_batch_and_releases_lease
         )
 
         replacement = await agent.run("replacement")
-
         assert replacement == AgentResult("replacement completed")
-        assert session.turns[1].status == "completed"
 
     asyncio.run(run())
 
 
-def test_waiting_peer_result_is_capped_before_stream_without_append() -> None:
+@pytest.mark.parametrize(
+    "tool_names",
+    [
+        ("request_waiting", "peer"),
+        ("request_waiting", "other_wait"),
+    ],
+)
+def test_wait_capable_batch_fails_before_hook_handler_or_ledger(
+    tool_names: tuple[str, str],
+) -> None:
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
-        raw_content = "x" * 100
-
-        agent, _session, messages, event_bus = _agent(
-            tools=[
-                RegisteredTool(
-                    "oversized_peer",
-                    "Return an oversized result beside a waiting request.",
-                    {"type": "object"},
-                    lambda _arguments: raw_content,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                _wait_tool(reason),
-            ],
+        handler_calls: list[str] = []
+        hook_calls: list[str] = []
+        hooks = HookRegistry()
+        hooks.register(
+            "before_tool_call",
+            lambda context: hook_calls.append(context.payload["tool_call"].id),
+        )
+        tools = [_wait_tool(reason)]
+        tools.append(
+            _wait_tool(reason, name="other_wait")
+            if tool_names[1] == "other_wait"
+            else _pure_tool("peer", handler_calls)
+        )
+        store = TrapSideEffectStore()
+        agent, session, messages, _event_bus = _agent(
+            tools=tools,
             responses=[
                 ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_peer", "oversized_peer", {}),
-                        ProviderToolCall("call_wait", "request_waiting", {}),
+                    tool_calls=tuple(
+                        ProviderToolCall(f"call_{index}", name, {})
+                        for index, name in enumerate(tool_names)
                     ),
                 ),
             ],
-            waiting_runtime=RecordingWaitingRuntime([], run_id="run_capped"),
+            hook_manager=HookManager(hooks),
+            side_effect_store=store,
         )
-        agent.query_loop.tool_result_budget = ToolResultBudget(default_max_tokens=5)
-        agent.query_loop.token_counter = HeuristicTokenCounter(char_per_token=1)
 
-        stream = await agent.run("hello", stream=True)
-        events = [event async for event in stream]
-        completed = [event for event in events if isinstance(event, ToolStreamCompleted)]
+        with pytest.raises(
+            ValueError,
+            match="wait-capable tool batch must contain exactly one invocation",
+        ):
+            await agent.run("hello")
 
-        assert len(completed) == 1
-        assert raw_content not in completed[0].content
-        assert "tool result omitted" in completed[0].content
-        assert any(isinstance(event, ToolResultCappedEvent) for event in event_bus.events)
-        assert not any(
-            isinstance(event, ToolResultAppendedEvent) for event in event_bus.events
-        )
+        assert hook_calls == []
+        assert handler_calls == []
+        assert store.operations == []
+        assert session.turns[0].status == "failed"
         assert [message.role for message in messages.materialize_active()] == ["user"]
 
     asyncio.run(run())
 
 
-def test_default_exclusive_wait_stops_later_side_effect_tool() -> None:
-    async def run() -> None:
-        reason = WaitReason("human_input", "approval_1")
-        side_effects: list[str] = []
-
-        def request_waiting(_arguments: dict[str, object]) -> WaitRequest:
-            return WaitRequest(reason)
-
-        def later_side_effect(_arguments: dict[str, object]) -> str:
-            side_effects.append("ran")
-            return "unexpected"
-
-        agent, _session, _messages, _event_bus = _agent(
-            tools=[
-                RegisteredTool(
-                    "request_waiting",
-                    "Request waiting.",
-                    {"type": "object"},
-                    request_waiting,
-                ),
-                RegisteredTool(
-                    "later_side_effect",
-                    "Must not run after waiting.",
-                    {"type": "object"},
-                    later_side_effect,
-                ),
-            ],
-            responses=[
-                ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_1", "request_waiting", {}),
-                        ProviderToolCall("call_2", "later_side_effect", {}),
-                    ),
-                ),
-            ],
-            waiting_runtime=RecordingWaitingRuntime([], run_id="run_exclusive"),
-        )
-
-        outcome = await agent.run("hello")
-
-        assert outcome == AgentWaiting("run_exclusive", reason)
-        assert side_effects == []
-
-    asyncio.run(run())
-
-
-def test_parallel_wait_does_not_start_queued_or_later_segment_tools() -> None:
+def test_non_streaming_wait_projects_outcome_after_commit() -> None:
     async def run() -> None:
         reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
-        running_started = asyncio.Event()
-        release_running = asyncio.Event()
-        started: list[str] = []
-
-        async def running_peer(_arguments: dict[str, object]) -> str:
-            started.append("running_peer")
-            running_started.set()
-            await release_running.wait()
-            return "peer completed"
-
-        async def queued_side_effect(_arguments: dict[str, object]) -> str:
-            started.append("queued_side_effect")
-            return "unexpected"
-
-        def later_exclusive(_arguments: dict[str, object]) -> str:
-            started.append("later_exclusive")
-            return "unexpected"
-
-        agent, _session, _messages, _event_bus = _agent(
-            tools=[
-                _wait_tool(reason),
-                RegisteredTool(
-                    "running_peer",
-                    "Already running peer.",
-                    {"type": "object"},
-                    running_peer,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                RegisteredTool(
-                    "queued_side_effect",
-                    "Queued side effect.",
-                    {"type": "object"},
-                    queued_side_effect,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                RegisteredTool(
-                    "later_exclusive",
-                    "Later exclusive segment.",
-                    {"type": "object"},
-                    later_exclusive,
-                ),
-            ],
-            responses=[
-                ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_wait", "request_waiting", {}),
-                        ProviderToolCall("call_running", "running_peer", {}),
-                        ProviderToolCall("call_queued", "queued_side_effect", {}),
-                        ProviderToolCall("call_later", "later_exclusive", {}),
-                    ),
-                ),
-            ],
-            waiting_runtime=RecordingWaitingRuntime([], run_id="run_parallel"),
-        )
-        agent.query_loop.tool_scheduler = ToolCallScheduler(max_parallel_calls=2)
-        stream = await agent.run("hello", stream=True)
-        events: list[object] = []
-
-        async def consume() -> None:
-            async for event in stream:
-                events.append(event)
-
-        consumer = asyncio.create_task(consume())
-        try:
-            async with asyncio.timeout(2):
-                await running_started.wait()
-                await asyncio.sleep(0)
-                assert started == ["running_peer"]
-                release_running.set()
-                await consumer
-        finally:
-            release_running.set()
-            if not consumer.done():
-                consumer.cancel()
-
-        assert events[-1] == TurnStreamWaiting("run_parallel", reason)
-        assert [
-            event.tool_call_id for event in events if isinstance(event, ToolStreamStarted)
-        ] == ["call_wait", "call_running"]
-
-    asyncio.run(run())
-
-
-def test_tool_error_wins_over_wait_request_without_committing_waiting() -> None:
-    async def run() -> None:
-        reason = WaitReason("human_input", "approval_1")
-        order: list[str] = []
-        error = RuntimeError("peer failed")
-        wait_returned = asyncio.Event()
-
-        async def request_waiting(_arguments: dict[str, object]) -> WaitRequest:
-            wait_returned.set()
-            return WaitRequest(reason)
-
-        async def fail_peer(_arguments: dict[str, object]) -> str:
-            await wait_returned.wait()
-            raise error
-
-        agent, _session, _messages, _event_bus = _agent(
-            tools=[
-                RegisteredTool(
-                    "request_waiting",
-                    "Request waiting.",
-                    {"type": "object"},
-                    request_waiting,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                RegisteredTool(
-                    "fail_peer",
-                    "Fail after wait request.",
-                    {"type": "object"},
-                    fail_peer,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-            ],
-            responses=[
-                ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_wait", "request_waiting", {}),
-                        ProviderToolCall("call_error", "fail_peer", {}),
-                    ),
-                ),
-            ],
-            waiting_runtime=RecordingWaitingRuntime(order, run_id="unused"),
-        )
-
-        with pytest.raises(
-            ToolExecutionError,
-            match="^tool execution failed$",
-        ):
-            await agent.run("hello")
-
-        assert order == []
-
-    asyncio.run(run())
-
-
-def test_multiple_wait_requests_choose_lowest_provider_index() -> None:
-    async def run() -> None:
-        first = WaitReason("human_input", "approval_first")
-        second = WaitReason("timer", "timer_second", not_before=_TIMER_DUE)
-        release_first = asyncio.Event()
-
-        async def wait_first(_arguments: dict[str, object]) -> WaitRequest:
-            await release_first.wait()
-            return WaitRequest(first)
-
-        async def wait_second(_arguments: dict[str, object]) -> WaitRequest:
-            release_first.set()
-            return WaitRequest(second)
-
-        agent, _session, _messages, _event_bus = _agent(
-            tools=[
-                RegisteredTool(
-                    "wait_first",
-                    "First provider wait.",
-                    {"type": "object"},
-                    wait_first,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                RegisteredTool(
-                    "wait_second",
-                    "Second provider wait.",
-                    {"type": "object"},
-                    wait_second,
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-            ],
-            responses=[
-                ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_first", "wait_first", {}),
-                        ProviderToolCall("call_second", "wait_second", {}),
-                    ),
-                ),
-            ],
-            waiting_runtime=RecordingWaitingRuntime([], run_id="run_multiple"),
-        )
-
-        outcome = await agent.run("hello")
-
-        assert outcome == AgentWaiting("run_multiple", first)
-
-    asyncio.run(run())
-
-
-def test_after_tool_hook_failure_wins_over_wait_request() -> None:
-    async def run() -> None:
-        reason = WaitReason("human_input", "approval_1")
-        order: list[str] = []
-        error = RuntimeError("after hook failed")
-        hooks = HookRegistry()
-
-        def fail_after_tool(_context: HookContext) -> None:
-            raise error
-
-        hooks.register("after_tool_call", fail_after_tool, failure_policy="raise")
-        agent, session, _messages, _event_bus = _agent(
-            tools=[
-                RegisteredTool(
-                    "completed_peer",
-                    "Completed peer.",
-                    {"type": "object"},
-                    lambda _arguments: "peer result",
-                    concurrency_policy=ToolConcurrencyPolicy.PARALLEL_SAFE,
-                ),
-                _wait_tool(reason),
-            ],
-            responses=[
-                ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_peer", "completed_peer", {}),
-                        ProviderToolCall("call_wait", "request_waiting", {}),
-                    ),
-                ),
-            ],
-            waiting_runtime=RecordingWaitingRuntime(order, run_id="unused"),
-            hook_manager=HookManager(hooks),
-        )
-        stream = await agent.run("hello", stream=True)
-        events: list[object] = []
-
-        with pytest.raises(RuntimeError) as caught:
-            async for event in stream:
-                events.append(event)
-
-        assert caught.value is error
-        assert order == []
-        assert session.turns[0].status == "failed"
-        assert not any(isinstance(event, TurnStreamWaiting) for event in events)
-        assert [
-            event.tool_call_id for event in events if isinstance(event, ToolStreamFailed)
-        ] == ["call_peer"]
-
-    asyncio.run(run())
-
-
-def test_non_streaming_wait_projects_outcome_after_authoritative_commit() -> None:
-    async def run() -> None:
-        reason = WaitReason("timer", "timer_1", not_before=_TIMER_DUE)
-        order: list[str] = []
         agent, session, _messages, _event_bus = _agent(
             tools=[_wait_tool(reason)],
             responses=[
@@ -577,59 +346,63 @@ def test_non_streaming_wait_projects_outcome_after_authoritative_commit() -> Non
                     ),
                 ),
             ],
-            waiting_runtime=RecordingWaitingRuntime(order, run_id="run_2"),
         )
 
         outcome = await agent.run("hello")
-        order.append("outcome_observed")
 
-        assert outcome == AgentWaiting("run_2", reason)
-        assert order == ["state_committed", "outcome_observed"]
+        assert outcome == AgentWaiting("run_1", reason)
         assert session.turns[0].status == "waiting"
         assert agent.query_loop.run_runtime is not None
         assert (
-            (await agent.query_loop.run_runtime.get_run("run_2")).status
+            (await agent.query_loop.run_runtime.get_run("run_1")).status
             is RunStatus.WAITING
         )
 
     asyncio.run(run())
 
 
-def test_wait_request_uses_default_local_waiting_runtime() -> None:
+def test_run_commit_forwards_typed_completion_to_waiting_runtime() -> None:
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
-        agent, session, messages, event_bus = _agent(
-            tools=[_wait_tool(reason)],
-            responses=[
-                ProviderResponse(
-                    tool_calls=(
-                        ProviderToolCall("call_1", "request_waiting", {}),
-                    ),
-                ),
-            ],
+        runs = RunRuntime(
+            session_id="session_1",
+            store=InMemoryRunStore(),
+            id_factory=lambda: "run_1",
         )
-        stream = await agent.run("hello", stream=True)
-        events: list[object] = []
+        run = await runs.create_run()
+        run = await runs.queue("run_1", guard=RunWriteGuard(run.aggregate_version))
+        run = await runs.start("run_1", guard=RunWriteGuard(run.aggregate_version))
+        waiting = RecordingWaitingRuntime(runs)
+        completion = WaitingToolCompletion(
+            "invocation_0123456789abcdef0123456789abcdef",
+            "operation_0123456789abcdef0123456789abcdef",
+            1,
+            wait_reason_digest(reason),
+        )
+        from agentos.runtime.run_commit import RunCommitRuntime
 
-        async for event in stream:
-            events.append(event)
+        runtime = RunCommitRuntime(runs, waiting)
+        await runtime.commit_waiting(
+            run_id="run_1",
+            turn_id="turn_1",
+            reason=reason,
+            guard=RunWriteGuard(run.aggregate_version),
+            completion=completion,
+        )
 
-        assert stream.closed
-        assert session.turns[0].status == "waiting"
-        assert any(isinstance(event, TurnStreamWaiting) for event in events)
-        assert not any(isinstance(event, ToolStreamFailed) for event in events)
-        assert not any(isinstance(event, TurnCompletedEvent) for event in event_bus.events)
+        assert waiting.completion == completion
 
     asyncio.run(run())
 
 
-def test_waiting_commit_failure_leaves_turn_running_and_emits_no_waiting() -> None:
+def test_local_waiting_commit_failure_rolls_back_ledger_and_projection() -> None:
     async def run() -> None:
         reason = WaitReason("human_input", "approval_1")
-        order: list[str] = []
         error = RuntimeError("commit failed")
+        seen: list[ToolInvocation] = []
+        store = InMemorySideEffectStore()
         agent, session, messages, event_bus = _agent(
-            tools=[_wait_tool(reason)],
+            tools=[_wait_tool(reason, seen=seen)],
             responses=[
                 ProviderResponse(
                     tool_calls=(
@@ -637,28 +410,53 @@ def test_waiting_commit_failure_leaves_turn_running_and_emits_no_waiting() -> No
                     ),
                 ),
             ],
-            waiting_runtime=FailingWaitingRuntime(order, error),
+            side_effect_store=store,
+            run_store=FailingWaitingRunStore(error),
         )
         stream = await agent.run("hello", stream=True)
-        events: list[object] = []
+        events = []
 
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(RuntimeError, match="^commit failed$") as caught:
             async for event in stream:
                 events.append(event)
 
         assert caught.value is error
         assert stream.closed
-        assert order == ["commit_attempted"]
         assert session.turns[0].status == "running"
+        assert agent.query_loop.run_runtime is not None
+        assert (
+            (await agent.query_loop.run_runtime.get_run("run_1")).status
+            is RunStatus.RUNNING
+        )
+        record = await store.get(
+            tenant_id=None,
+            session_id="session_1",
+            operation_id=seen[0].context.operation_id,
+            attempt=None,
+            guard=RunWriteGuard(
+                (await agent.query_loop.run_runtime.get_run("run_1")).aggregate_version,
+            ),
+        )
+        assert record is not None
+        assert record.status is SideEffectStatus.STARTED
+        assert record.outcome_kind is None
+        assert record.wait_reason_digest is None
         assert [message.role for message in messages.materialize_active()] == [
             "user",
             "assistant",
         ]
+        assert [message.role for message in messages.store.all()] == [
+            "user",
+            "assistant",
+        ]
         assert not any(
-            isinstance(event, (ToolStreamFailed, TurnStreamWaiting, TurnStreamCompleted))
+            isinstance(event, (TurnStreamWaiting, TurnStreamCompleted))
             for event in events
         )
-        assert not any(isinstance(event, TurnCompletedEvent) for event in event_bus.events)
+        assert not any(
+            isinstance(event, (ToolResultAppendedEvent, TurnCompletedEvent))
+            for event in event_bus.events
+        )
 
     asyncio.run(run())
 

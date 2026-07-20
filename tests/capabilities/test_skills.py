@@ -12,7 +12,7 @@ from agentos.capabilities.skills import (
     builtin_schema_template_skill,
     register_skill_loader_tools,
 )
-from agentos.providers import ProviderToolCall
+from tests.tool_invocation import make_tool_invocation
 
 
 class RejectingTrustPolicy:
@@ -99,25 +99,23 @@ def test_skill_loader_tool_returns_content_or_deterministic_error(
         )
         router = ToolCallRouter(tool_registry=tools)
 
-        loaded = await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="load_skill",
-                arguments={"skill_name": "systematic-debugging"},
+        loaded = await router.execute(
+            make_tool_invocation(
+                "load_skill",
+                {"skill_name": "systematic-debugging"},
             ),
         )
-        missing = await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_2",
-                name="load_skill",
-                arguments={"skill_name": "unknown"},
+        missing = await router.execute(
+            make_tool_invocation(
+                "load_skill",
+                {"skill_name": "unknown"},
             ),
         )
         return loaded, missing
 
     loaded, missing = asyncio.run(run())
 
-    assert loaded.tool_call_id == "call_1"
+    assert loaded.tool_call_id == "call_load_skill"
     assert "# Skill: systematic-debugging" in loaded.content
     assert "# Debugging" in loaded.content
     assert missing.content == (
@@ -192,18 +190,16 @@ def test_async_skill_loader_tool_exposes_resource_manifest_and_content(
             "session-1",
         )
         router = ToolCallRouter(tool_registry=tools)
-        loaded = await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="load_skill",
-                arguments={"skill_name": "code-review"},
+        loaded = await router.execute(
+            make_tool_invocation(
+                "load_skill",
+                {"skill_name": "code-review"},
             ),
         )
-        resource = await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_2",
-                name="load_skill_resource",
-                arguments={
+        resource = await router.execute(
+            make_tool_invocation(
+                "load_skill_resource",
+                {
                     "skill_name": "code-review",
                     "path": "references/checklist.md",
                 },

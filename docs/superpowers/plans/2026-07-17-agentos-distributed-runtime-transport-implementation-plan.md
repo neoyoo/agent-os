@@ -38,7 +38,9 @@ Run/Command 持久提交
 5. `docs/superpowers/specs/2026-07-12-agentos-single-async-query-loop-design.md`；
 6. `docs/superpowers/specs/2026-07-17-agentos-phase5-durable-profile-contract.md`；
 7. 本 Phase 6 Contract 和实施计划；
-8. 当前任务直接触碰的类型、调用链和目标测试。
+8. Task 6 读取
+   `docs/superpowers/specs/2026-07-20-agentos-phase6-task6-side-effect-contract-addendum.md`；
+9. 当前任务直接触碰的类型、调用链和目标测试。
 
 Subagent prompt 必须包含允许文件、禁止文件、前置提交、红测试、验证命令和提交边界。
 
@@ -369,6 +371,11 @@ python -m ruff check src/agentos/distributed tests/distributed
 提交：`feat: define distributed runtime contracts`
 
 ### Task 6：Side Effect Contract 与 ToolInvocation
+
+前置条件：先冻结并完整遵守
+`2026-07-20-agentos-phase6-task6-side-effect-contract-addendum.md`。该补充合同解决稳定 identity、
+多 attempt、handler error、result ref、WAITING 原子载荷、reconciliation resume 和
+compensation handler 输入；实现层不得重新解释这些语义。
 
 主线修改：
 

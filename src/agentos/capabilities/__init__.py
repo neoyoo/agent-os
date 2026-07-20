@@ -38,12 +38,24 @@ from agentos.capabilities.skills import (
     register_skill_loader_tools,
 )
 from agentos.capabilities.tools import (
-    AsyncToolHandler,
     RegisteredTool,
+    SideEffectPolicy,
     ToolConcurrencyPolicy,
+    ToolCompensationHandler,
     ToolHandler,
     ToolHandlerResult,
     WaitRequest,
+)
+from agentos.capabilities.invocation import (
+    ToolCompensationContext,
+    ToolCompensationInvocation,
+    ToolInvocation,
+    ToolInvocationContext,
+)
+from agentos.capabilities.result_refs import (
+    ArtifactToolResultRef,
+    InlineToolResultRef,
+    ToolResultRef,
 )
 
 if TYPE_CHECKING:
@@ -60,7 +72,7 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
-    "AsyncToolHandler",
+    "ArtifactToolResultRef",
     "BuiltinSkillSource",
     "BuiltinToolError",
     "ChainedSkillSource",
@@ -73,6 +85,7 @@ __all__ = [
     "MCPToolAdapter",
     "MCPToolInfo",
     "RegisteredTool",
+    "SideEffectPolicy",
     "SQLiteSkillActivationStore",
     "SkillContentSource",
     "SkillDefinition",
@@ -87,10 +100,17 @@ __all__ = [
     "ToolExecutionOutcome",
     "ToolExecutionResult",
     "ToolCallRouter",
+    "ToolCompensationContext",
+    "ToolCompensationHandler",
+    "ToolCompensationInvocation",
     "ToolConcurrencyPolicy",
     "ToolHandler",
     "ToolHandlerResult",
+    "ToolInvocation",
+    "ToolInvocationContext",
     "ToolRegistry",
+    "ToolResultRef",
+    "InlineToolResultRef",
     "WaitRequest",
     "WorkspaceToolSandboxPolicy",
     "builtin_schema_template_skill",

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from agentos.capabilities import ToolRegistry
+from agentos.capabilities import SideEffectPolicy, ToolRegistry
 from agentos.multi import AgentInbox
 from agentos.multi.team import (
     AllowAllTeamToolAuthorizationPolicy,
@@ -17,6 +17,7 @@ from agentos.multi.team import (
     TeamWorkerPermissionError,
     TeamWorkerPermissionPolicy,
 )
+from tests.tool_invocation import call_sync_tool
 
 
 def make_runtime() -> TeamRuntime:
@@ -53,6 +54,13 @@ def test_team_tools_register_external_tools() -> None:
         "team_read_messages",
         "team_delete",
     ]
+    assert [registry.get(name).side_effect_policy for name in names] == [
+        SideEffectPolicy.NON_RETRYABLE,
+        SideEffectPolicy.NON_RETRYABLE,
+        SideEffectPolicy.NON_RETRYABLE,
+        SideEffectPolicy.PURE,
+        SideEffectPolicy.NON_RETRYABLE,
+    ]
 
 
 def test_team_tools_default_policy_denies_management_tools() -> None:
@@ -61,7 +69,8 @@ def test_team_tools_default_policy_denies_management_tools() -> None:
     TeamTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     with pytest.raises(TeamToolAuthorizationError, match="team_create"):
-        registry.get("team_create").handler(
+        call_sync_tool(
+            registry.get("team_create"),
             {
                 "team_id": "team_1",
                 "name": "Research Team",
@@ -69,14 +78,15 @@ def test_team_tools_default_policy_denies_management_tools() -> None:
             },
         )
     with pytest.raises(TeamToolAuthorizationError, match="agent_create"):
-        registry.get("agent_create").handler(
+        call_sync_tool(
+            registry.get("agent_create"),
             {
                 "team_id": "team_1",
                 "agent_id": "worker",
             },
         )
     with pytest.raises(TeamToolAuthorizationError, match="team_delete"):
-        registry.get("team_delete").handler({"team_id": "team_1"})
+        call_sync_tool(registry.get("team_delete"), {"team_id": "team_1"})
 
 
 def test_team_tools_create_agent_say_and_read_flow() -> None:
@@ -85,7 +95,8 @@ def test_team_tools_create_agent_say_and_read_flow() -> None:
     worker_tools = register_tools(runtime, "worker")
 
     created = json.loads(
-        leader_tools.get("team_create").handler(
+        call_sync_tool(
+            leader_tools.get("team_create"),
             {
                 "team_id": "team_1",
                 "name": "Research Team",
@@ -95,7 +106,8 @@ def test_team_tools_create_agent_say_and_read_flow() -> None:
         ),
     )
     member = json.loads(
-        leader_tools.get("agent_create").handler(
+        call_sync_tool(
+            leader_tools.get("agent_create"),
             {
                 "team_id": "team_1",
                 "agent_id": "worker",
@@ -105,7 +117,8 @@ def test_team_tools_create_agent_say_and_read_flow() -> None:
         ),
     )
     sent = json.loads(
-        leader_tools.get("team_say").handler(
+        call_sync_tool(
+            leader_tools.get("team_say"),
             {
                 "team_id": "team_1",
                 "to_agent_id": "worker",
@@ -115,7 +128,8 @@ def test_team_tools_create_agent_say_and_read_flow() -> None:
         ),
     )
     worker_messages = json.loads(
-        worker_tools.get("team_read_messages").handler(
+        call_sync_tool(
+            worker_tools.get("team_read_messages"),
             {
                 "team_id": "team_1",
             },
@@ -142,7 +156,8 @@ def test_team_tools_agent_create_returns_generated_worker_session_id() -> None:
         id_factory=lambda prefix: f"{prefix}_1",
     )
     leader_tools = register_tools(runtime, "leader")
-    leader_tools.get("team_create").handler(
+    call_sync_tool(
+        leader_tools.get("team_create"),
         {
             "team_id": "team_1",
             "name": "Research Team",
@@ -151,7 +166,8 @@ def test_team_tools_agent_create_returns_generated_worker_session_id() -> None:
     )
 
     member = json.loads(
-        leader_tools.get("agent_create").handler(
+        call_sync_tool(
+            leader_tools.get("agent_create"),
             {
                 "team_id": "team_1",
                 "agent_id": "worker",
@@ -177,7 +193,8 @@ def test_team_tools_agent_create_honors_worker_capability_allowlist() -> None:
         id_factory=lambda prefix: f"{prefix}_1",
     )
     leader_tools = register_tools(runtime, "leader")
-    leader_tools.get("team_create").handler(
+    call_sync_tool(
+        leader_tools.get("team_create"),
         {
             "team_id": "team_1",
             "name": "Research Team",
@@ -186,7 +203,8 @@ def test_team_tools_agent_create_honors_worker_capability_allowlist() -> None:
     )
 
     with pytest.raises(TeamWorkerPermissionError, match="capabilities not allowed"):
-        leader_tools.get("agent_create").handler(
+        call_sync_tool(
+            leader_tools.get("agent_create"),
             {
                 "team_id": "team_1",
                 "agent_id": "worker",
@@ -201,14 +219,16 @@ def test_team_tools_agent_create_honors_worker_capability_allowlist() -> None:
 def test_team_tools_say_ignores_spoofed_sender() -> None:
     runtime = make_runtime()
     leader_tools = register_tools(runtime, "leader")
-    leader_tools.get("team_create").handler(
+    call_sync_tool(
+        leader_tools.get("team_create"),
         {
             "team_id": "team_1",
             "name": "Research Team",
             "description": "Finds evidence.",
         },
     )
-    leader_tools.get("agent_create").handler(
+    call_sync_tool(
+        leader_tools.get("agent_create"),
         {
             "team_id": "team_1",
             "agent_id": "worker",
@@ -216,7 +236,8 @@ def test_team_tools_say_ignores_spoofed_sender() -> None:
     )
 
     sent = json.loads(
-        leader_tools.get("team_say").handler(
+        call_sync_tool(
+            leader_tools.get("team_say"),
             {
                 "team_id": "team_1",
                 "from_agent_id": "worker",
@@ -233,20 +254,23 @@ def test_team_tools_read_messages_is_scoped_to_owner_visibility() -> None:
     runtime = make_runtime()
     leader_tools = register_tools(runtime, "leader")
     worker_tools = register_tools(runtime, "worker")
-    leader_tools.get("team_create").handler(
+    call_sync_tool(
+        leader_tools.get("team_create"),
         {
             "team_id": "team_1",
             "name": "Research Team",
             "description": "Finds evidence.",
         },
     )
-    leader_tools.get("agent_create").handler(
+    call_sync_tool(
+        leader_tools.get("agent_create"),
         {
             "team_id": "team_1",
             "agent_id": "worker",
         },
     )
-    leader_tools.get("team_say").handler(
+    call_sync_tool(
+        leader_tools.get("team_say"),
         {
             "team_id": "team_1",
             "to_agent_id": "worker",
@@ -255,10 +279,16 @@ def test_team_tools_read_messages_is_scoped_to_owner_visibility() -> None:
     )
 
     leader_messages = json.loads(
-        leader_tools.get("team_read_messages").handler({"team_id": "team_1"}),
+        call_sync_tool(
+            leader_tools.get("team_read_messages"),
+            {"team_id": "team_1"},
+        ),
     )
     worker_messages = json.loads(
-        worker_tools.get("team_read_messages").handler({"team_id": "team_1"}),
+        call_sync_tool(
+            worker_tools.get("team_read_messages"),
+            {"team_id": "team_1"},
+        ),
     )
 
     assert leader_messages["messages"] == []
@@ -269,7 +299,8 @@ def test_team_tools_delete_requires_owner_membership() -> None:
     runtime = make_runtime()
     leader_tools = register_tools(runtime, "leader")
     outsider_tools = register_tools(runtime, "outsider")
-    leader_tools.get("team_create").handler(
+    call_sync_tool(
+        leader_tools.get("team_create"),
         {
             "team_id": "team_1",
             "name": "Research Team",
@@ -278,10 +309,13 @@ def test_team_tools_delete_requires_owner_membership() -> None:
     )
 
     with pytest.raises(TeamMembershipError):
-        outsider_tools.get("team_delete").handler({"team_id": "team_1"})
+        call_sync_tool(
+            outsider_tools.get("team_delete"),
+            {"team_id": "team_1"},
+        )
 
     deleted = json.loads(
-        leader_tools.get("team_delete").handler({"team_id": "team_1"}),
+        call_sync_tool(leader_tools.get("team_delete"), {"team_id": "team_1"}),
     )
     assert deleted == {"deleted": True, "team_id": "team_1"}
 
@@ -290,14 +324,16 @@ def test_team_tools_management_actions_require_leader_role() -> None:
     runtime = make_runtime()
     leader_tools = register_tools(runtime, "leader")
     worker_tools = register_tools(runtime, "worker")
-    leader_tools.get("team_create").handler(
+    call_sync_tool(
+        leader_tools.get("team_create"),
         {
             "team_id": "team_1",
             "name": "Research Team",
             "description": "Finds evidence.",
         },
     )
-    leader_tools.get("agent_create").handler(
+    call_sync_tool(
+        leader_tools.get("agent_create"),
         {
             "team_id": "team_1",
             "agent_id": "worker",
@@ -305,17 +341,22 @@ def test_team_tools_management_actions_require_leader_role() -> None:
     )
 
     with pytest.raises(TeamMembershipError, match="leader"):
-        worker_tools.get("agent_create").handler(
+        call_sync_tool(
+            worker_tools.get("agent_create"),
             {
                 "team_id": "team_1",
                 "agent_id": "worker_2",
             },
         )
     with pytest.raises(TeamMembershipError, match="leader"):
-        worker_tools.get("team_delete").handler({"team_id": "team_1"})
+        call_sync_tool(
+            worker_tools.get("team_delete"),
+            {"team_id": "team_1"},
+        )
 
     member = json.loads(
-        leader_tools.get("agent_create").handler(
+        call_sync_tool(
+            leader_tools.get("agent_create"),
             {
                 "team_id": "team_1",
                 "agent_id": "worker_2",
@@ -323,7 +364,7 @@ def test_team_tools_management_actions_require_leader_role() -> None:
         ),
     )
     deleted = json.loads(
-        leader_tools.get("team_delete").handler({"team_id": "team_1"}),
+        call_sync_tool(leader_tools.get("team_delete"), {"team_id": "team_1"}),
     )
 
     assert member["agent_id"] == "worker_2"

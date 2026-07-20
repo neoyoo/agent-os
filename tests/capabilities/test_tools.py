@@ -6,7 +6,13 @@ import pytest
 import agentos.capabilities.router as router_module
 from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
 from agentos.artifacts.tool_adapter import ArtifactToolAdapter
-from agentos.capabilities import ToolCallRouter, RegisteredTool, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.context_protocol import context_protocol_tool_specs
 from agentos.compression import CompressionRuntime
 from agentos.context import CompressedSegment, ContextRuntime, WorkingStateField
@@ -18,7 +24,6 @@ from agentos.persistence import (
 from agentos.messages import MessageRef, MessageRuntime, StoredMessage
 from agentos.policies import SecurityPolicy, SecurityPolicyError
 from agentos.policies import BudgetPolicy
-from agentos.providers import ProviderToolCall
 from agentos.recall import (
     CompressedSegmentPackage,
     InMemoryRecallIndex,
@@ -27,6 +32,7 @@ from agentos.recall import (
     SegmentRepository,
 )
 from tests.planning._async import async_test
+from tests.tool_invocation import make_tool_invocation
 
 
 def test_tool_call_router_uses_stored_message_truth() -> None:
@@ -35,26 +41,27 @@ def test_tool_call_router_uses_stored_message_truth() -> None:
     assert hints["messages"] == tuple[StoredMessage, ...]
 
 
-def test_tool_call_router_result_persists_as_stored_message() -> None:
+@async_test
+async def test_tool_call_router_result_persists_as_stored_message() -> None:
     registry = ToolRegistry()
     registry.register(
         RegisteredTool(
             name="echo",
             description="Echo text.",
             parameters={"type": "object"},
-            handler=lambda arguments: str(arguments["text"]),
+            handler=lambda invocation: str(invocation.arguments["text"]),
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
-    result = ToolCallRouter(tool_registry=registry).execute_tool_call(
-        ProviderToolCall(id="call_1", name="echo", arguments={"text": "hello"}),
-    )
+    invocation = make_tool_invocation("echo", {"text": "hello"})
+    result = await ToolCallRouter(tool_registry=registry).execute(invocation)
     messages = MessageRuntime()
     stored = messages.append_tool_result(result.tool_call_id, result.content)
 
     assert type(stored) is StoredMessage
     assert (stored.role, stored.tool_call_id, stored.content) == (
         "tool",
-        "call_1",
+        invocation.context.tool_call_id,
         "hello",
     )
 
@@ -70,7 +77,8 @@ def test_tool_registry_exports_provider_tool_specs() -> None:
                 "properties": {"text": {"type": "string"}},
                 "required": ["text"],
             },
-            handler=lambda arguments: str(arguments["text"]),
+            handler=lambda invocation: str(invocation.arguments["text"]),
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
 
@@ -97,7 +105,8 @@ def test_tool_registry_provider_specs_include_only_external_tools() -> None:
             name="echo",
             description="Echo text.",
             parameters={"type": "object"},
-            handler=lambda arguments: str(arguments),
+            handler=lambda invocation: str(invocation.arguments),
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     registry.register(
@@ -105,7 +114,8 @@ def test_tool_registry_provider_specs_include_only_external_tools() -> None:
             name="internal_context_tool",
             description="Internal context tool.",
             parameters={"type": "object"},
-            handler=lambda arguments: str(arguments),
+            handler=lambda invocation: str(invocation.arguments),
+            side_effect_policy=SideEffectPolicy.PURE,
             kind="context",
         ),
     )
@@ -125,7 +135,8 @@ def test_tool_registry_exports_capability_plane_tool_group() -> None:
             name="echo",
             description="Echo text.",
             parameters={"type": "object"},
-            handler=lambda arguments: str(arguments),
+            handler=lambda invocation: str(invocation.arguments),
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
 
@@ -146,37 +157,36 @@ def test_tool_registry_rejects_external_tools_with_mcp_prefix() -> None:
                 name="mcp__github__create_issue",
                 description="Collides with MCP routing.",
                 parameters={"type": "object"},
-                handler=lambda arguments: "ok",
+                handler=lambda _invocation: "ok",
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         )
 
 
-def test_tool_call_router_executes_external_tool_calls() -> None:
+@async_test
+async def test_tool_call_router_executes_external_tool_calls() -> None:
     registry = ToolRegistry()
     registry.register(
         RegisteredTool(
             name="echo",
             description="Echo text.",
             parameters={"type": "object"},
-            handler=lambda arguments: f"echo:{arguments['text']}",
+            handler=lambda invocation: f"echo:{invocation.arguments['text']}",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     runtime = ToolCallRouter(tool_registry=registry)
 
-    result = runtime.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="echo",
-            arguments={"text": "hello"},
-        ),
-    )
+    invocation = make_tool_invocation("echo", {"text": "hello"})
+    result = await runtime.execute(invocation)
 
-    assert result.tool_call_id == "call_1"
+    assert result.tool_call_id == invocation.context.tool_call_id
     assert result.content == "echo:hello"
 
 
-def test_tool_executor_thaws_nested_arguments_for_handler() -> None:
-    captured: list[dict[str, object]] = []
+@async_test
+async def test_tool_executor_passes_nested_arguments_in_invocation() -> None:
+    captured: list[ToolInvocation] = []
     registry = ToolRegistry()
     registry.register(
         RegisteredTool(
@@ -187,20 +197,19 @@ def test_tool_executor_thaws_nested_arguments_for_handler() -> None:
                 "properties": {"items": {"type": "array"}},
                 "required": ["items"],
             },
-            handler=lambda arguments: captured.append(arguments) or "done",
+            handler=lambda invocation: captured.append(invocation) or "done",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
 
-    result = ToolCallRouter(tool_registry=registry).execute_tool_call(
-        ProviderToolCall(
-            id="call_batch",
-            name="batch",
-            arguments={"items": [{"name": "first"}]},
-        ),
+    result = await ToolCallRouter(tool_registry=registry).execute(
+        make_tool_invocation("batch", {"items": [{"name": "first"}]}),
     )
 
     assert result.content == "done"
-    assert captured == [{"items": [{"name": "first"}]}]
+    assert [invocation.arguments for invocation in captured] == [
+        {"items": [{"name": "first"}]},
+    ]
 
 
 def test_tool_call_router_exposes_context_protocol_tool_specs() -> None:
@@ -232,7 +241,8 @@ def test_start_chapter_schema_validates_optional_field_items() -> None:
     assert fields["items"]["required"] == ["name", "type", "purpose"]
 
 
-def test_security_policy_denies_tool_before_handler_runs() -> None:
+@async_test
+async def test_security_policy_denies_tool_before_handler_runs() -> None:
     called: list[bool] = []
     registry = ToolRegistry()
     registry.register(
@@ -240,7 +250,8 @@ def test_security_policy_denies_tool_before_handler_runs() -> None:
             name="danger",
             description="Dangerous tool.",
             parameters={"type": "object"},
-            handler=lambda arguments: called.append(True) or "done",
+            handler=lambda _invocation: called.append(True) or "done",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     runtime = ToolCallRouter(
@@ -249,12 +260,13 @@ def test_security_policy_denies_tool_before_handler_runs() -> None:
     )
 
     with pytest.raises(SecurityPolicyError, match="denied"):
-        runtime.execute_tool_call(ProviderToolCall(id="call_1", name="danger"))
+        await runtime.execute(make_tool_invocation("danger", {}))
 
     assert called == []
 
 
-def test_security_policy_denies_context_tools_before_state_mutation() -> None:
+@async_test
+async def test_security_policy_denies_context_tools_before_state_mutation() -> None:
     context = ContextRuntime()
     context.declare_schema(
         [
@@ -272,11 +284,10 @@ def test_security_policy_denies_context_tools_before_state_mutation() -> None:
     )
 
     with pytest.raises(SecurityPolicyError, match="denied"):
-        runtime.execute_tool_call(
-            ProviderToolCall(
-                id="call_1",
-                name="update_state",
-                arguments={
+        await runtime.execute(
+            make_tool_invocation(
+                "update_state",
+                {
                     "field_name": "task_goal",
                     "value": "mutated",
                 },
@@ -286,7 +297,8 @@ def test_security_policy_denies_context_tools_before_state_mutation() -> None:
     assert context.state.working_state == {}
 
 
-def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None:
+@async_test
+async def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None:
     context = ContextRuntime()
     context.declare_schema(
         [
@@ -302,11 +314,10 @@ def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None
         context_runtime=context,
     )
 
-    result = runtime.execute_tool_call(
-        ProviderToolCall(
-            id="call_1",
-            name="update_state",
-            arguments={
+    result = await runtime.execute(
+        make_tool_invocation(
+            "update_state",
+            {
                 "field_name": "task_goal",
                 "value": "Run a small agent.",
             },
@@ -317,7 +328,8 @@ def test_tool_call_router_routes_context_tool_calls_to_context_runtime() -> None
     assert context.state.working_state["task_goal"] == "Run a small agent."
 
 
-def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
+@async_test
+async def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
     context = ContextRuntime()
     messages = MessageRuntime()
     original_user = messages.append_user("Original detail")
@@ -343,15 +355,10 @@ def test_tool_call_router_routes_recall_context_to_recall_runtime() -> None:
         ),
     )
 
-    result = runtime.execute_tool_call(
-        ProviderToolCall(
-            id="call_recall",
-            name="recall_context",
-            arguments={"handle": "seg_1"},
-        ),
-    )
+    invocation = make_tool_invocation("recall_context", {"handle": "seg_1"})
+    result = await runtime.execute(invocation)
 
-    assert result.tool_call_id == "call_recall"
+    assert result.tool_call_id == invocation.context.tool_call_id
     assert '<recalled-context source="compressed_history" handle="seg_1">' in result.content
     assert '<message role="user"' in result.content
     assert "Original detail" in result.content
@@ -383,12 +390,8 @@ async def test_tool_call_router_routes_load_attachment_namespace() -> None:
         registry.register(tool)
     runtime = ToolCallRouter(tool_registry=registry)
 
-    result = await runtime.async_execute_tool_call(
-        ProviderToolCall(
-            id="call_load_attachment",
-            name="load_attachment",
-            arguments={"handle": artifact.id},
-        ),
+    result = await runtime.execute(
+        make_tool_invocation("load_attachment", {"handle": artifact.id}),
     )
 
     assert result.tool_call_id == "call_load_attachment"
@@ -398,22 +401,23 @@ async def test_tool_call_router_routes_load_attachment_namespace() -> None:
     )
 
 
-def test_tool_call_router_does_not_route_attachment_handles_through_recall_context() -> None:
+@async_test
+async def test_tool_call_router_does_not_route_attachment_handles_through_recall_context() -> None:
     runtime = ToolCallRouter(tool_registry=ToolRegistry())
 
     with pytest.raises(RuntimeError, match="recall runtime is required"):
-        runtime.execute_tool_call(
-            ProviderToolCall(
-                id="call_recall",
-                name="recall_context",
-                arguments={
+        await runtime.execute(
+            make_tool_invocation(
+                "recall_context",
+                {
                     "handle": "art_12345678-1234-4234-9234-123456789abc"
                 },
             ),
         )
 
 
-def test_update_state_tool_accepts_nested_json_value() -> None:
+@async_test
+async def test_update_state_tool_accepts_nested_json_value() -> None:
     context = ContextRuntime()
     context.declare_schema(
         [
@@ -430,11 +434,10 @@ def test_update_state_tool_accepts_nested_json_value() -> None:
     )
     nested_value = {"theme": "dark", "limits": [1, 2, 3]}
 
-    result = runtime.execute_tool_call(
-        ProviderToolCall(
-            id="call_nested",
-            name="update_state",
-            arguments={
+    result = await runtime.execute(
+        make_tool_invocation(
+            "update_state",
+            {
                 "field_name": "config",
                 "value": nested_value,
             },
@@ -446,7 +449,8 @@ def test_update_state_tool_accepts_nested_json_value() -> None:
     assert restored == {"theme": "dark", "limits": [1, 2, 3]}
 
 
-def test_tool_call_router_routes_query_recall_context_to_segment_repository() -> None:
+@async_test
+async def test_tool_call_router_routes_query_recall_context_to_segment_repository() -> None:
     messages = MessageRuntime()
     durable_store = InMemoryDurableSessionStore()
     segment_repository = SegmentRepository(
@@ -483,15 +487,13 @@ def test_tool_call_router_routes_query_recall_context_to_segment_repository() ->
         ),
     )
 
-    result = runtime.execute_tool_call(
-        ProviderToolCall(
-            id="call_recall",
-            name="recall_context",
-            arguments={"query": "pyproject 项目名", "limit": 1},
-        ),
+    invocation = make_tool_invocation(
+        "recall_context",
+        {"query": "pyproject 项目名", "limit": 1},
     )
+    result = await runtime.execute(invocation)
 
-    assert result.tool_call_id == "call_recall"
+    assert result.tool_call_id == invocation.context.tool_call_id
     assert '<recalled-context source="semantic_recall"' in result.content
     assert "pyproject.toml" in result.content
     assert [message.content for message in messages.materialize_active()] == [

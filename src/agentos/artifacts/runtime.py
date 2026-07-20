@@ -167,6 +167,12 @@ class ArtifactRuntime:
             "附件内容将在下一次模型请求中作为当前轮次的工具结果数据提供。"
         )
 
+    async def _restore_tool_result_mount(self, handle: str) -> None:
+        """Restore only the ephemeral mount after a completed Tool replay."""
+
+        validate_artifact_id(handle)
+        await self._mount(handle, "tool_result")
+
     async def mount_user_upload(self, handle: str) -> ContextMount:
         """把已存储 Artifact 挂载为当前 Turn 的用户上传。"""
 

@@ -1,7 +1,7 @@
 import asyncio
 
 from agentos import AgentBuilder
-from agentos.capabilities import RegisteredTool
+from agentos.capabilities import RegisteredTool, SideEffectPolicy
 from agentos.events import EventBus, ToolResultCappedEvent
 from agentos.policies import ToolResultBudget
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
@@ -13,7 +13,8 @@ def oversized_tool() -> RegisteredTool:
         name="read_large_file",
         description="Read a large file.",
         parameters={"type": "object", "properties": {}},
-        handler=lambda arguments: "x" * 100,
+        handler=lambda _invocation: "x" * 100,
+        side_effect_policy=SideEffectPolicy.PURE,
     )
 
 

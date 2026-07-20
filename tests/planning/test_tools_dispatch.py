@@ -18,6 +18,7 @@ from agentos.planning import (
 
 from tests.planning._async import async_test
 from tests.planning._tool_fixtures import FakePlanStepDispatcher, ManualClock
+from tests.tool_invocation import call_tool
 
 
 @async_test
@@ -44,10 +45,12 @@ async def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> No
         owner_agent_id="leader",
         authorization_policy=AllowAllPlannerToolAuthorizationPolicy(),
     ).register(registry)
-    await registry.get("plan_create").handler(
+    await call_tool(
+        registry.get("plan_create"),
         {"objective": "Review planner dispatch."},
     )
-    await registry.get("plan_add_step").handler(
+    await call_tool(
+        registry.get("plan_add_step"),
         {
             "plan_id": "plan_1",
             "instruction": "Review ready dispatch.",
@@ -56,7 +59,8 @@ async def test_planner_tools_dispatch_ready_steps_handler_returns_report() -> No
     )
 
     report = json.loads(
-        await registry.get("plan_dispatch_ready_steps").handler(
+        await call_tool(
+            registry.get("plan_dispatch_ready_steps"),
             {
                 "plan_id": "plan_1",
                 "default_template_id": "reviewer",
@@ -147,7 +151,8 @@ async def test_planner_tools_scheduler_tick_handler_returns_retry_and_dispatch_r
     ).register(registry)
 
     report = json.loads(
-        await registry.get("plan_scheduler_tick").handler(
+        await call_tool(
+            registry.get("plan_scheduler_tick"),
             {
                 "plan_id": "plan_1",
                 "default_template_id": "reviewer",
@@ -198,4 +203,7 @@ async def test_planner_tools_scheduler_tick_cannot_mutate_another_owner_plan() -
     ).register(registry)
 
     with pytest.raises(PlanNotFoundError):
-        await registry.get("plan_scheduler_tick").handler({"plan_id": "other_plan"})
+        await call_tool(
+            registry.get("plan_scheduler_tick"),
+            {"plan_id": "other_plan"},
+        )

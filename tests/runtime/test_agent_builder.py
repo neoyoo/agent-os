@@ -5,7 +5,13 @@ import pytest
 
 from agentos import Agent, AgentBuilder
 from agentos.artifacts import ArtifactRuntime
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.compression import CompressionRuntime, RuleBasedCompressor
 from agentos.context import ContextRenderer, ContextRuntime
 from agentos.context.models import (
@@ -27,6 +33,7 @@ from agentos.providers import provider_tool_spec_to_dict
 from agentos.recall import InMemoryRecallIndex, SegmentRepository
 from agentos.runtime import EventBus, QueryLoop, TurnStartedEvent
 from agentos.runtime.run import UserTurnInput
+from tests.tool_invocation import make_tool_invocation
 
 
 class StructuralContextRendererStub:
@@ -229,7 +236,8 @@ def test_agent_builder_tools_are_available_only_through_provider_tools() -> None
         name="lookup_status",
         description="Lookup task status.",
         parameters={"type": "object", "properties": {}},
-        handler=lambda arguments: "tool status: green",
+        handler=lambda _invocation: "tool status: green",
+        side_effect_policy=SideEffectPolicy.PURE,
     )
     provider = FakeProvider(
         [
@@ -266,7 +274,8 @@ def test_agent_builder_default_system_owns_only_required_sections() -> None:
         name="tool_metadata_marker",
         description="Available metadata must remain outside SystemEnvelope.",
         parameters={"type": "object", "properties": {}},
-        handler=lambda arguments: "unused",
+        handler=lambda _invocation: "unused",
+        side_effect_policy=SideEffectPolicy.PURE,
     )
     provider = FakeProvider(["ok"])
 
@@ -289,7 +298,7 @@ def test_agent_builder_default_system_owns_only_required_sections() -> None:
 
 
 def test_agent_builder_runs_async_tool_handler() -> None:
-    async def async_lookup(arguments: dict[str, object]) -> str:
+    async def async_lookup(_invocation: ToolInvocation) -> str:
         await asyncio.sleep(0)
         return "async tool status: green"
 
@@ -298,6 +307,7 @@ def test_agent_builder_runs_async_tool_handler() -> None:
         description="Lookup task status asynchronously.",
         parameters={"type": "object", "properties": {}},
         handler=async_lookup,
+        side_effect_policy=SideEffectPolicy.PURE,
     )
     provider = FakeProvider(
         [
@@ -599,7 +609,8 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
                 name="router_tool",
                 description="Tool from router override.",
                 parameters={"type": "object", "properties": {}},
-                handler=lambda arguments: "router tool result",
+                handler=lambda _invocation: "router tool result",
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
@@ -636,11 +647,10 @@ def test_agent_builder_accepts_tool_call_router_override() -> None:
             filename="drawing.png",
             media_type="image/png",
         )
-        artifact_result = await router.async_execute_tool_call(
-            ProviderToolCall(
-                id="call_artifact",
-                name="load_attachment",
-                arguments={"handle": record.id},
+        artifact_result = await router.execute(
+            make_tool_invocation(
+                "load_attachment",
+                {"handle": record.id},
             ),
         )
 

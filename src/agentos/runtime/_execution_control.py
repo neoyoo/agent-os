@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentos._waiting import WaitReason
-from agentos.providers import ProviderToolCall
 from agentos.runtime.execution import RunExecutionCursor
+from agentos.runtime.side_effect_types import WaitingToolCompletion
+from agentos.runtime.tool_invocations import ToolInvocationPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,9 +19,11 @@ class RunningCheckpointRequest:
 class PendingToolsCheckpointRequest:
     """在任何 Tool handler 启动前保护并提交 Provider tool batch。"""
 
-    provider_call_index: int
-    assistant_message_id: str
-    calls: tuple[ProviderToolCall, ...]
+    plan: ToolInvocationPlan
+
+    def __post_init__(self) -> None:
+        if type(self.plan) is not ToolInvocationPlan:
+            raise TypeError("plan must be ToolInvocationPlan")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +33,11 @@ class WaitingCheckpointRequest:
     reason: WaitReason
     active_refs: tuple[str, ...]
     remove_active_refs: tuple[str, ...]
+    completion: WaitingToolCompletion | None = None
+
+    def __post_init__(self) -> None:
+        if self.completion is not None and type(self.completion) is not WaitingToolCompletion:
+            raise TypeError("completion must be WaitingToolCompletion or None")
 
 
 ExecutionControl = (

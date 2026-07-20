@@ -35,6 +35,10 @@ from agentos.durable.sqlite_records import (
     select_run,
     update_run,
 )
+from agentos.durable.sqlite_side_effects import (
+    SQLiteSideEffectLedger,
+    _complete_wait_control_in_transaction,
+)
 from agentos.runtime.checkpoint import (
     RunCheckpoint,
     SessionCheckpoint,
@@ -49,6 +53,7 @@ from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunAlreadyExistsError, RunState, RunStatus
 from agentos.runtime.run_commit import RunTerminalStatus
 from agentos.runtime.session import SessionState
+from agentos.runtime.side_effect_types import WaitingToolCompletion
 
 
 _NON_TERMINAL = ("created", "queued", "running", "waiting")
@@ -66,6 +71,16 @@ class SQLiteDurableStore:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock = asyncio.Lock()
         self._connection: aiosqlite.Connection | None = connection
+        self._side_effect_store = SQLiteSideEffectLedger(
+            self._transaction,
+            self._read_connection,
+        )
+
+    @property
+    def side_effect_store(self) -> SQLiteSideEffectLedger:
+        """返回与 Run/Checkpoint 共用 SQLite 事务 Owner 的 Ledger。"""
+
+        return self._side_effect_store
 
     @classmethod
     async def open(
@@ -224,6 +239,7 @@ class SQLiteDurableStore:
         turn_id: str,
         reason: WaitReason,
         guard: RunWriteGuard,
+        completion: WaitingToolCompletion | None = None,
     ) -> RunCheckpoint:
         """原子提交恢复状态、checkpoint 与 RUNNING 到 WAITING 转换。"""
 
@@ -236,6 +252,16 @@ class SQLiteDurableStore:
                 run_id=run_id,
                 guard=guard,
             )
+            if completion is not None:
+                await _complete_wait_control_in_transaction(
+                    connection,
+                    completion=completion,
+                    session_id=checkpoint.session_id,
+                    run_id=run_id,
+                    turn_id=turn_id,
+                    reason=reason,
+                    guard=guard,
+                )
             updated = current.transition(RunStatus.WAITING, wait_reason=reason)
             committed = await self._write_checkpoint_state(
                 connection,
@@ -383,6 +409,11 @@ class SQLiteDurableStore:
         snapshot: SessionCheckpoint,
     ) -> None:
         await write_context_state(connection, snapshot)
+
+    @asynccontextmanager
+    async def _read_connection(self) -> AsyncIterator[aiosqlite.Connection]:
+        async with self._lock:
+            yield self._ensure_open()
 
     @asynccontextmanager
     async def _transaction(self) -> AsyncIterator[aiosqlite.Connection]:

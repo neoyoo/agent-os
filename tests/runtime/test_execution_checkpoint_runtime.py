@@ -8,7 +8,7 @@ from agentos.messages import MessageRuntime, ToolCall
 from agentos.providers import ProviderToolCall
 from agentos.runtime.checkpoint import RuntimeCheckpointSource
 from agentos.runtime.errors import PayloadProtectorRequiredError
-from agentos.runtime.execution import PendingToolInvocation
+from agentos.runtime.execution import PendingToolInvocation, RunExecutionCursor
 from agentos.runtime.payloads import PayloadProtectionContext
 from agentos.runtime.tool_payloads import ToolPayloadRuntime
 from agentos.runtime.session import SessionState
@@ -40,13 +40,14 @@ def test_pending_cursor_and_checkpoint_reuse_one_protected_reference() -> None:
         "",
         [ToolCall(call.id, call.name, call.arguments) for call in calls],
     )
-    cursor = payloads.pending_cursor(
+    plan = payloads.build_plan(
         run_id="run_1",
         turn_id="turn_1",
         provider_call_index=0,
         assistant_message_id=assistant.id,
         calls=calls,
     )
+    cursor = payloads.pending_cursor(plan)
     checkpoint = RuntimeCheckpointSource(
         session,
         messages,
@@ -61,6 +62,43 @@ def test_pending_cursor_and_checkpoint_reuse_one_protected_reference() -> None:
     assert restored[1].tool_calls[0].arguments == calls[0].arguments
 
 
+def test_after_tools_cursor_rebuilds_completed_plan_from_protected_messages() -> None:
+    payloads = _payload_runtime()
+    messages = MessageRuntime()
+    assistant = messages.append_assistant(
+        "",
+        [ToolCall("call_1", "load_attachment", {"handle": "art_1"})],
+    )
+    original = payloads.build_plan(
+        run_id="run_1",
+        turn_id="turn_1",
+        provider_call_index=2,
+        assistant_message_id=assistant.id,
+        calls=(
+            ProviderToolCall(
+                "call_1",
+                "load_attachment",
+                {"handle": "art_1"},
+            ),
+        ),
+    )
+    cursor = payloads.pending_cursor(original)
+    after_tools = RunExecutionCursor(
+        turn_id=cursor.turn_id,
+        stage="after_tools",
+        provider_call_index=cursor.provider_call_index,
+        assistant_message_id=cursor.assistant_message_id,
+    )
+
+    restored = payloads.restore_completed_plan(
+        run_id="run_1",
+        cursor=after_tools,
+        messages=messages,
+    )
+
+    assert restored == original
+
+
 def test_persistent_tool_checkpoint_requires_payload_protector() -> None:
     payloads = ToolPayloadRuntime(
         protector=None,
@@ -68,13 +106,14 @@ def test_persistent_tool_checkpoint_requires_payload_protector() -> None:
     )
 
     try:
-        payloads.pending_cursor(
+        plan = payloads.build_plan(
             run_id="run_1",
             turn_id="turn_1",
             provider_call_index=0,
             assistant_message_id="message_1",
             calls=(ProviderToolCall("call_1", "lookup", {}),),
         )
+        payloads.pending_cursor(plan)
     except PayloadProtectorRequiredError as error:
         assert str(error) == "persistent tool execution requires a payload protector"
     else:
@@ -98,8 +137,12 @@ def test_pending_cursor_reentry_reuses_the_same_protected_reference() -> None:
         "calls": calls,
     }
 
-    first = payloads.pending_cursor(**kwargs)  # type: ignore[arg-type]
-    second = payloads.pending_cursor(**kwargs)  # type: ignore[arg-type]
+    first = payloads.pending_cursor(
+        payloads.build_plan(**kwargs),  # type: ignore[arg-type]
+    )
+    second = payloads.pending_cursor(
+        payloads.build_plan(**kwargs),  # type: ignore[arg-type]
+    )
 
     assert second.pending_tools[0].invocation_ref is (
         first.pending_tools[0].invocation_ref
@@ -114,13 +157,13 @@ def test_pending_cursor_reentry_rejects_changed_arguments() -> None:
         "provider_call_index": 2,
         "assistant_message_id": "message_1",
     }
-    payloads.pending_cursor(
+    payloads.build_plan(
         **kwargs,  # type: ignore[arg-type]
         calls=(ProviderToolCall("call_1", "lookup", {"value": 1}),),
     )
 
     with pytest.raises(ValueError, match="protected tool invocation changed"):
-        payloads.pending_cursor(
+        payloads.build_plan(
             **kwargs,  # type: ignore[arg-type]
             calls=(ProviderToolCall("call_1", "lookup", {"value": 2}),),
         )
@@ -134,13 +177,14 @@ def test_invocation_identity_distinguishes_absent_and_literal_local_tenant() -> 
             protector,
             PayloadProtectionContext(tenant_id, "session_1"),
         )
-        cursor = runtime.pending_cursor(
+        plan = runtime.build_plan(
             run_id="run_1",
             turn_id="turn_1",
             provider_call_index=0,
             assistant_message_id="message_1",
             calls=(ProviderToolCall("call_1", "lookup", {}),),
         )
+        cursor = runtime.pending_cursor(plan)
         values.append(cursor.pending_tools[0].invocation_id)
 
     assert values[0] != values[1]
@@ -150,20 +194,22 @@ def test_invocation_identity_does_not_depend_on_assistant_message_id() -> None:
     payloads = _payload_runtime()
     call = ProviderToolCall("call_1", "lookup", {"query": "drawing"})
 
-    first = payloads.pending_cursor(
+    first_plan = payloads.build_plan(
         run_id="run_1",
         turn_id="turn_1",
         provider_call_index=2,
         assistant_message_id="message_before_crash",
         calls=(call,),
     )
-    recovered = payloads.pending_cursor(
+    recovered_plan = payloads.build_plan(
         run_id="run_1",
         turn_id="turn_1",
         provider_call_index=2,
         assistant_message_id="message_after_crash",
         calls=(call,),
     )
+    first = payloads.pending_cursor(first_plan)
+    recovered = payloads.pending_cursor(recovered_plan)
 
     assert recovered.pending_tools[0].invocation_id == (
         first.pending_tools[0].invocation_id
@@ -181,13 +227,14 @@ def test_pending_cursor_must_match_checkpoint_assistant_tool_calls() -> None:
         "",
         [ToolCall(call.id, call.name, call.arguments) for call in calls],
     )
-    cursor = payloads.pending_cursor(
+    plan = payloads.build_plan(
         run_id="run_1",
         turn_id="turn_1",
         provider_call_index=0,
         assistant_message_id=assistant.id,
         calls=calls,
     )
+    cursor = payloads.pending_cursor(plan)
     checkpoint = RuntimeCheckpointSource(
         session,
         messages,

@@ -24,7 +24,7 @@
     },
     {
       "path": "src/agentos/multi/team.py",
-      "lines": 1985,
+      "lines": 2000,
       "gate": "no_new_responsibility"
     },
     {
@@ -108,6 +108,11 @@
       "gate": "split_or_exception"
     },
     {
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 499,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/planning/runtime.py",
       "lines": 498,
       "gate": "responsibility_review"
@@ -118,13 +123,23 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/run_driver.py",
+      "lines": 492,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/artifacts/sqlite_filesystem.py",
       "lines": 488,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/run_driver.py",
-      "lines": 483,
+      "path": "src/agentos/runtime/side_effect_memory.py",
+      "lines": 487,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/planning/tools.py",
+      "lines": 480,
       "gate": "responsibility_review"
     },
     {
@@ -148,18 +163,23 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/side_effect_types.py",
+      "lines": 456,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/state_plane.py",
       "lines": 455,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/query_loop.py",
+      "path": "src/agentos/durable/sqlite_side_effects.py",
       "lines": 450,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/planning/tools.py",
-      "lines": 442,
+      "path": "src/agentos/durable/sqlite_store.py",
+      "lines": 428,
       "gate": "responsibility_review"
     },
     {
@@ -178,23 +198,23 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/runtime/tool_payloads.py",
+      "lines": 403,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/durable/serialization.py",
       "lines": 397,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/durable/sqlite_store.py",
-      "lines": 397,
+      "path": "src/agentos/artifacts/runtime.py",
+      "lines": 389,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/capabilities/skill_sources.py",
       "lines": 387,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/artifacts/runtime.py",
-      "lines": 383,
       "gate": "responsibility_review"
     },
     {
@@ -263,8 +283,8 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/tool_payloads.py",
-      "lines": 303,
+      "path": "src/agentos/runtime/tool_side_effect_runtime.py",
+      "lines": 305,
       "gate": "responsibility_review"
     }
   ]

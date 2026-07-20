@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from agentos.capabilities.executor import ToolExecutionResult
 from agentos.hooks import HookManager, HookResult
 from agentos.providers import ProviderRequest, ProviderResponse, ProviderToolCall
+from agentos.runtime.completed_result_projection import (
+    COMPLETED_RESULT_PROJECTION_TOOL_NAMES,
+)
 
 
 @dataclass(slots=True)
@@ -44,6 +47,10 @@ class QueryLoopHooks:
             {"tool_call": call, "tool_name": call.name, "tool_call_id": call.id},
         )
         if result.action == "deny":
+            if call.name in COMPLETED_RESULT_PROJECTION_TOOL_NAMES:
+                raise RuntimeError(
+                    f"projection tool denied by hook: {result.reason or 'denied'}",
+                )
             return ToolExecutionResult(
                 call.id,
                 f"tool call denied by hook: {result.reason or 'denied'}",

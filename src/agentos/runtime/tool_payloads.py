@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import json
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
-from agentos.messages import StoredMessage, ToolCall
+from agentos.capabilities.invocation import ToolInvocation, ToolInvocationContext
+from agentos.capabilities.tools import ToolExecutionContract
+from agentos.messages import MessageRuntime, StoredMessage, ToolCall
 from agentos.providers import ProviderToolCall
 from agentos.runtime.checkpoint import (
     CheckpointStoredMessage,
@@ -20,6 +21,14 @@ from agentos.runtime.payloads import (
     PayloadProtector,
     protect_payload,
     unprotect_payload,
+)
+from agentos.runtime.tool_identity import invocation_id, operation_id
+from agentos.runtime.tool_invocations import (
+    PreparedToolInvocationBatch,
+    ToolInvocationPlan,
+    ToolInvocationPlanEntry,
+    build_tool_invocation_plan,
+    prepare_tool_invocation_batch,
 )
 
 
@@ -39,7 +48,7 @@ class ToolPayloadRuntime:
     def for_session(cls, session_id: str) -> ToolPayloadRuntime:
         return cls(None, PayloadProtectionContext(None, session_id))
 
-    def pending_cursor(
+    def build_plan(
         self,
         *,
         run_id: str,
@@ -47,26 +56,62 @@ class ToolPayloadRuntime:
         provider_call_index: int,
         assistant_message_id: str,
         calls: tuple[ProviderToolCall, ...],
-    ) -> RunExecutionCursor:
-        protector = self._require_protector()
-        pending = []
-        for tool_index, call in enumerate(calls):
-            invocation_id = _invocation_id(
-                self.context,
-                run_id=run_id,
-                turn_id=turn_id,
-                provider_call_index=provider_call_index,
-                tool_index=tool_index,
-            )
+    ) -> ToolInvocationPlan:
+        plan = build_tool_invocation_plan(
+            tenant_id=self.context.tenant_id,
+            session_id=self.context.session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_call_index=provider_call_index,
+            assistant_message_id=assistant_message_id,
+            calls=calls,
+        )
+        return self.protect_plan(plan)
+
+    def prepare_batch(
+        self,
+        *,
+        run_id: str,
+        turn_id: str,
+        provider_call_index: int,
+        assistant_message_id: str,
+        calls: tuple[ProviderToolCall, ...],
+        contract_for: Callable[[ToolInvocation], ToolExecutionContract],
+    ) -> PreparedToolInvocationBatch:
+        plan = build_tool_invocation_plan(
+            tenant_id=self.context.tenant_id,
+            session_id=self.context.session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_call_index=provider_call_index,
+            assistant_message_id=assistant_message_id,
+            calls=calls,
+        )
+        batch = prepare_tool_invocation_batch(plan, contract_for)
+        protected = self.protect_plan(plan)
+        return PreparedToolInvocationBatch(protected, batch.contracts)
+
+    def protect_plan(self, plan: ToolInvocationPlan) -> ToolInvocationPlan:
+        if type(plan) is not ToolInvocationPlan:
+            raise TypeError("plan must be ToolInvocationPlan")
+        protector = self.protector
+        if protector is None:
+            return plan
+        entries = []
+        protected_calls: dict[tuple[str, str], CheckpointToolCall] = {}
+        for entry in plan.entries:
+            invocation = entry.invocation
+            context = invocation.context
+            call = entry.provider_call()
             protection = self._execution_context(
-                run_id=run_id,
-                turn_id=turn_id,
-                invocation_id=invocation_id,
-                message_id=assistant_message_id,
-                tool_call_id=call.id,
-                tool_name=call.name,
+                run_id=context.run_id,
+                turn_id=context.turn_id,
+                invocation_id=context.invocation_id,
+                message_id=plan.assistant_message_id,
+                tool_call_id=context.tool_call_id,
+                tool_name=invocation.tool_name,
             )
-            key = (assistant_message_id, call.id)
+            key = (plan.assistant_message_id, call.id)
             checkpoint_call = self._calls.get(key)
             if checkpoint_call is None:
                 reference = protect_payload(
@@ -77,35 +122,49 @@ class ToolPayloadRuntime:
                 checkpoint_call = CheckpointToolCall(
                     id=call.id,
                     name=call.name,
-                    run_id=run_id,
-                    turn_id=turn_id,
-                    invocation_id=invocation_id,
+                    run_id=context.run_id,
+                    turn_id=context.turn_id,
+                    invocation_id=context.invocation_id,
                     invocation_ref=reference,
                 )
-                self._calls[key] = checkpoint_call
+                protected_calls[key] = checkpoint_call
             else:
                 self._validate_existing_call(
                     checkpoint_call,
-                    message_id=assistant_message_id,
+                    message_id=plan.assistant_message_id,
                     call=call,
-                    run_id=run_id,
-                    turn_id=turn_id,
-                    invocation_id=invocation_id,
+                    run_id=context.run_id,
+                    turn_id=context.turn_id,
+                    invocation_id=context.invocation_id,
                 )
                 reference = checkpoint_call.invocation_ref
+            entries.append(replace(entry, invocation_ref=reference))
+        self._calls.update(protected_calls)
+        return replace(plan, entries=tuple(entries))
+
+    def pending_cursor(self, plan: ToolInvocationPlan) -> RunExecutionCursor:
+        self._require_protector()
+        pending = []
+        for entry in plan.entries:
+            context = entry.invocation.context
+            reference = entry.invocation_ref
+            if reference is None:
+                raise PayloadProtectorRequiredError(
+                    "persistent tool execution requires a payload protector",
+                )
             pending.append(
                 PendingToolInvocation(
-                    invocation_id=invocation_id,
-                    provider_tool_call_id=call.id,
-                    tool_name=call.name,
+                    invocation_id=context.invocation_id,
+                    provider_tool_call_id=context.tool_call_id,
+                    tool_name=entry.invocation.tool_name,
                     invocation_ref=reference,
-                ),
+                )
             )
         return RunExecutionCursor(
-            turn_id=turn_id,
+            turn_id=plan.entries[0].invocation.context.turn_id,
             stage="pending_tools",
-            provider_call_index=provider_call_index,
-            assistant_message_id=assistant_message_id,
+            provider_call_index=plan.provider_call_index,
+            assistant_message_id=plan.assistant_message_id,
             pending_tools=tuple(pending),
         )
 
@@ -161,16 +220,26 @@ class ToolPayloadRuntime:
             )
         return tuple(restored)
 
-    def restore_pending_calls(
+    def restore_pending_plan(
         self,
         *,
         run_id: str,
         cursor: RunExecutionCursor,
-    ) -> tuple[ProviderToolCall, ...]:
+    ) -> ToolInvocationPlan:
         if cursor.stage != "pending_tools" or cursor.assistant_message_id is None:
-            return ()
-        calls = []
-        for pending in cursor.pending_tools:
+            raise ValueError("pending tool recovery requires a pending_tools cursor")
+        entries = []
+        for tool_index, pending in enumerate(cursor.pending_tools):
+            expected_invocation_id = invocation_id(
+                tenant_id=self.context.tenant_id,
+                session_id=self.context.session_id,
+                run_id=run_id,
+                turn_id=cursor.turn_id,
+                provider_call_index=cursor.provider_call_index,
+                tool_index=tool_index,
+            )
+            if pending.invocation_id != expected_invocation_id:
+                raise ValueError("pending tool invocation identity is invalid")
             checkpoint_call = CheckpointToolCall(
                 id=pending.provider_tool_call_id,
                 name=pending.tool_name,
@@ -178,6 +247,9 @@ class ToolPayloadRuntime:
                 turn_id=cursor.turn_id,
                 invocation_id=pending.invocation_id,
                 invocation_ref=pending.invocation_ref,
+            )
+            self._calls[(cursor.assistant_message_id, pending.provider_tool_call_id)] = (
+                checkpoint_call
             )
             payload = unprotect_payload(
                 self._require_protector(),
@@ -187,14 +259,67 @@ class ToolPayloadRuntime:
                     checkpoint_call,
                 ),
             )
-            calls.append(
-                ProviderToolCall(
-                    pending.provider_tool_call_id,
-                    pending.tool_name,
-                    payload,
+            stable_operation_id = operation_id(
+                tenant_id=self.context.tenant_id,
+                session_id=self.context.session_id,
+                run_id=run_id,
+                turn_id=cursor.turn_id,
+                invocation_id=pending.invocation_id,
+            )
+            entries.append(
+                ToolInvocationPlanEntry(
+                    ToolInvocation(
+                        pending.tool_name,
+                        payload,
+                        ToolInvocationContext(
+                            invocation_id=pending.invocation_id,
+                            operation_id=stable_operation_id,
+                            tenant_id=self.context.tenant_id,
+                            session_id=self.context.session_id,
+                            run_id=run_id,
+                            turn_id=cursor.turn_id,
+                            tool_call_id=pending.provider_tool_call_id,
+                            attempt=1,
+                        ),
+                    ),
+                    pending.invocation_ref,
                 ),
             )
-        return tuple(calls)
+        return ToolInvocationPlan(
+            cursor.provider_call_index,
+            cursor.assistant_message_id,
+            tuple(entries),
+        )
+
+    def restore_completed_plan(
+        self,
+        *,
+        run_id: str,
+        cursor: RunExecutionCursor,
+        messages: MessageRuntime,
+    ) -> ToolInvocationPlan | None:
+        """Rebuild an after_tools batch for ephemeral result projection only."""
+
+        if cursor.stage != "after_tools" or cursor.assistant_message_id is None:
+            raise ValueError("completed tool recovery requires an after_tools cursor")
+        try:
+            assistant = messages.store.get(cursor.assistant_message_id)
+        except KeyError:
+            raise ValueError("completed tool assistant message is missing") from None
+        if assistant.role != "assistant" or not assistant.tool_calls:
+            raise ValueError("completed tool assistant message is invalid")
+        if all(call.name != "load_attachment" for call in assistant.tool_calls):
+            return None
+        return self.build_plan(
+            run_id=run_id,
+            turn_id=cursor.turn_id,
+            provider_call_index=cursor.provider_call_index,
+            assistant_message_id=assistant.id,
+            calls=tuple(
+                ProviderToolCall(call.id, call.name, call.arguments)
+                for call in assistant.tool_calls
+            ),
+        )
 
     def current_run_id(self, cursor: RunExecutionCursor) -> str | None:
         if cursor.stage != "pending_tools" or cursor.assistant_message_id is None:
@@ -273,31 +398,6 @@ class ToolPayloadRuntime:
                 "persistent tool execution requires a payload protector",
             )
         return self.protector
-
-
-def _invocation_id(
-    context: PayloadProtectionContext,
-    *,
-    run_id: str,
-    turn_id: str,
-    provider_call_index: int,
-    tool_index: int,
-) -> str:
-    identity = json.dumps(
-        {
-            "provider_call_index": provider_call_index,
-            "run_id": run_id,
-            "session_id": context.session_id,
-            "tenant_id": context.tenant_id,
-            "tool_index": tool_index,
-            "turn_id": turn_id,
-            "version": 1,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return f"invocation_{hashlib.sha256(identity).hexdigest()[:32]}"
 
 
 __all__ = ["ToolPayloadRuntime"]

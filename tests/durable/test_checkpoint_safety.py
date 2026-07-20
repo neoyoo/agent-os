@@ -54,13 +54,14 @@ def test_tool_call_arguments_are_redacted_from_sqlite_checkpoint(tmp_path) -> No
         "calling tool",
         [ToolCall(call.id, call.name, call.arguments) for call in calls],
     )
-    payloads.pending_cursor(
+    plan = payloads.build_plan(
         run_id="run_1",
         turn_id="turn_1",
         provider_call_index=0,
         assistant_message_id=assistant.id,
         calls=calls,
     )
+    payloads.pending_cursor(plan)
     source.messages.append_tool_result("call_1", "bounded result")
     run(store.commit_waiting(
         checkpoint=source.capture(),

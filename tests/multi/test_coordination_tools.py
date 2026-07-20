@@ -1,7 +1,8 @@
 import json
 
-from agentos.capabilities import ToolRegistry
+from agentos.capabilities import SideEffectPolicy, ToolRegistry
 from agentos.multi import AgentCoordinationTools, TaskHandle, TaskResult
+from tests.tool_invocation import call_sync_tool
 
 
 class FakeCoordinator:
@@ -70,6 +71,10 @@ def test_coordination_tools_register_external_tools() -> None:
         "check_agent_tasks",
         "cancel_agent_task",
     ]
+    assert all(
+        registry.get(name).side_effect_policy is SideEffectPolicy.NON_RETRYABLE
+        for name in names
+    )
 
 
 def test_coordination_tool_handlers_call_coordinator_and_return_json() -> None:
@@ -81,7 +86,8 @@ def test_coordination_tool_handlers_call_coordinator_and_return_json() -> None:
     ).register(registry)
 
     spawn_result = json.loads(
-        registry.get("spawn_subagent").handler(
+        call_sync_tool(
+            registry.get("spawn_subagent"),
             {
                 "instruction": "Review this",
                 "allowed_tool_names": ["read_file"],
@@ -90,7 +96,8 @@ def test_coordination_tool_handlers_call_coordinator_and_return_json() -> None:
         ),
     )
     dispatch_result = json.loads(
-        registry.get("dispatch_to_expert").handler(
+        call_sync_tool(
+            registry.get("dispatch_to_expert"),
             {
                 "instruction": "Review Python",
                 "required_capabilities": ["python"],
@@ -98,10 +105,13 @@ def test_coordination_tool_handlers_call_coordinator_and_return_json() -> None:
         ),
     )
     status_result = json.loads(
-        registry.get("check_agent_tasks").handler({}),
+        call_sync_tool(registry.get("check_agent_tasks"), {}),
     )
     cancel_result = json.loads(
-        registry.get("cancel_agent_task").handler({"task_id": "task_active"}),
+        call_sync_tool(
+            registry.get("cancel_agent_task"),
+            {"task_id": "task_active"},
+        ),
     )
 
     assert spawn_result == {

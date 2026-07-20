@@ -33,10 +33,17 @@ from agentos.runtime.stream_events import FinalResult, StatusUpdate, TurnStreamE
 from agentos.runtime.turn import TurnState
 from agentos.runtime.turn_lifecycle import TurnLifecycle
 from agentos.runtime.tool_payloads import ToolPayloadRuntime
+from agentos.runtime.side_effect_types import WaitingToolCompletion
 
 
 ProviderToolEvents = Callable[
-    [str, TurnState | None, object, RunExecutionCursor | None],
+    [
+        str,
+        TurnState | None,
+        object,
+        RunExecutionCursor | None,
+        Callable[[], RunWriteGuard],
+    ],
     AsyncIterator[TurnStreamEvent | _FinalContent | ExecutionControl | WaitRequest],
 ]
 
@@ -192,6 +199,7 @@ class RunDriver:
                     turn,
                     request.options,
                     recovery_cursor,
+                    lambda: execution_guard,
                 )
             ) as provider_events:
                 async for event in provider_events:
@@ -214,13 +222,11 @@ class RunDriver:
                                 )
                             try:
                                 payloads = self._require_tool_payloads()
-                                cursor = payloads.pending_cursor(
-                                    run_id=run_id,
-                                    turn_id=turn.id,
-                                    provider_call_index=event.provider_call_index,
-                                    assistant_message_id=event.assistant_message_id,
-                                    calls=event.calls,
-                                )
+                                cursor = payloads.pending_cursor(event.plan)
+                                if cursor.turn_id != turn.id:
+                                    raise RunProtocolError(
+                                        "pending tool plan does not match the prepared turn",
+                                    )
                                 execution_guard = await self._commit_running(
                                     run_id=run_id,
                                     turn_id=turn.id,
@@ -254,6 +260,7 @@ class RunDriver:
                             reason=event.reason,
                             guard=execution_guard,
                             active_refs=event.active_refs,
+                            completion=event.completion,
                         )
                         self._execution_guards[run_id] = execution_guard
                         try:
@@ -390,6 +397,7 @@ class RunDriver:
         reason: WaitReason,
         guard: RunWriteGuard,
         active_refs: tuple[str, ...] | None = None,
+        completion: WaitingToolCompletion | None = None,
     ) -> RunWriteGuard:
         try:
             return await self.commits.commit_waiting(
@@ -398,6 +406,7 @@ class RunDriver:
                 reason=reason,
                 guard=guard,
                 active_refs=active_refs,
+                completion=completion,
             )
         except BaseException:
             self._uncertain_commits.add(run_id)

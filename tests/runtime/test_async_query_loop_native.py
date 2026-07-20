@@ -4,7 +4,13 @@ from threading import Event as ThreadEvent
 
 import pytest
 
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.context import ContextRuntime
 from agentos.messages import MessageRuntime
 from agentos.providers import (
@@ -23,6 +29,7 @@ from agentos.runtime import (
     ProviderRequestBuilder,
     QueryLoop,
     RetryPolicy,
+    SessionState,
     TurnStreamCompleted,
 )
 from tests._context_protocol_fixtures import default_context_renderer
@@ -40,7 +47,7 @@ def _request_builder(
 
 
 def test_async_handler_awaited_not_returned_as_coroutine() -> None:
-    async def lookup(arguments: dict[str, object]) -> str:
+    async def lookup(_invocation: ToolInvocation) -> str:
         await asyncio.sleep(0)
         return "async-ok"
 
@@ -53,7 +60,8 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
                 name="lookup",
                 description="Lookup.",
                 parameters={"type": "object", "properties": {}},
-                handler=lookup,  # type: ignore[arg-type]
+                handler=lookup,
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
@@ -63,6 +71,7 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
             request_builder=_request_builder(messages, router),
             provider=_TwoStepProvider("lookup"),
             tool_call_router=router,
+            session_state=SessionState(id="session_async_handler"),
         )
         outcome = await Agent(loop).run("hello")
         return outcome.content, messages.materialize_active()
@@ -77,8 +86,8 @@ def test_async_handler_awaited_not_returned_as_coroutine() -> None:
 def test_sync_handler_still_works_in_unified_query_loop() -> None:
     calls: list[dict[str, object]] = []
 
-    def lookup(arguments: dict[str, object]) -> str:
-        calls.append(arguments)
+    def lookup(invocation: ToolInvocation) -> str:
+        calls.append(dict(invocation.arguments))
         return "sync-ok"
 
     async def run() -> str:
@@ -91,6 +100,7 @@ def test_sync_handler_still_works_in_unified_query_loop() -> None:
                 description="Lookup.",
                 parameters={"type": "object", "properties": {}},
                 handler=lookup,
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
@@ -100,6 +110,7 @@ def test_sync_handler_still_works_in_unified_query_loop() -> None:
             request_builder=_request_builder(messages, router),
             provider=_TwoStepProvider("lookup"),
             tool_call_router=router,
+            session_state=SessionState(id="session_sync_handler"),
         )
         outcome = await Agent(loop).run("hello")
         return outcome.content
@@ -340,11 +351,11 @@ def test_agent_stream_uses_unified_query_loop() -> None:
     assert events[-1] == TurnStreamCompleted(content="async complete")
 
 
-def test_duplicate_tool_call_suppression_uses_unified_query_loop() -> None:
+def test_same_arguments_execute_as_distinct_tool_invocations() -> None:
     calls: list[dict[str, object]] = []
 
-    def lookup(arguments: dict[str, object]) -> str:
-        calls.append(arguments)
+    def lookup(invocation: ToolInvocation) -> str:
+        calls.append(dict(invocation.arguments))
         return "sync-ok"
 
     async def run() -> list[dict[str, object]]:
@@ -357,6 +368,7 @@ def test_duplicate_tool_call_suppression_uses_unified_query_loop() -> None:
                 description="Lookup.",
                 parameters={"type": "object", "properties": {}},
                 handler=lookup,
+                side_effect_policy=SideEffectPolicy.DEDUPLICATED,
             ),
         )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
@@ -366,14 +378,17 @@ def test_duplicate_tool_call_suppression_uses_unified_query_loop() -> None:
             request_builder=_request_builder(messages, router),
             provider=_DuplicateToolProvider(),
             tool_call_router=router,
+            session_state=SessionState(id="session_duplicate_tool_call"),
         )
         await Agent(loop).run("hello")
         return messages.materialize_active()
 
     provider_messages = asyncio.run(run())
 
-    assert calls == [{"value": "same"}]
-    assert "duplicate tool call ignored" in provider_messages[-2].content
+    assert calls == [{"value": "same"}, {"value": "same"}]
+    assert [
+        message.content for message in provider_messages if message.role == "tool"
+    ] == ["sync-ok", "sync-ok"]
 
 
 def test_native_provider_cancellation_propagates_and_closes_stream() -> None:

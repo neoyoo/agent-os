@@ -4,7 +4,14 @@ from contextlib import aclosing
 import pytest
 
 from agentos import Agent
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos._json_values import FrozenJsonObject
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.context import ContextRuntime
 from agentos.durable import SQLiteDurableStore
 from agentos.messages import MessageRuntime, ToolCall
@@ -16,9 +23,14 @@ from agentos.runtime._execution_control import (
 )
 from agentos.runtime.checkpoint import RuntimeCheckpointSource
 from agentos.runtime.execution import RunExecutionCursor
-from agentos.runtime.payloads import PayloadProtectionContext
+from agentos.runtime.errors import PayloadProtectionError
+from agentos.runtime.payloads import (
+    PayloadProtectionContext,
+    ProtectedPayloadRef,
+)
 from agentos.runtime.run import RunOptions
 from agentos.runtime.run_runtime import RunRuntime
+from agentos.runtime.run_state import RunStatus
 from agentos.runtime.session import SessionState
 from agentos.runtime.tool_payloads import ToolPayloadRuntime
 from agentos.security import FernetPayloadProtector
@@ -50,6 +62,35 @@ class RecoveryProvider:
         return response
 
 
+class FailSecondPayloadProtector:
+    def __init__(self) -> None:
+        self._delegate = FernetPayloadProtector(
+            FernetPayloadProtector.generate_key(),
+        )
+        self.protection_calls = 0
+        self.run_id: str | None = None
+
+    def protect(
+        self,
+        payload: FrozenJsonObject,
+        *,
+        context: PayloadProtectionContext,
+    ) -> ProtectedPayloadRef:
+        self.protection_calls += 1
+        self.run_id = context.run_id
+        if self.protection_calls == 2:
+            raise RuntimeError("injected second protection failure")
+        return self._delegate.protect(payload, context=context)
+
+    def unprotect(
+        self,
+        reference: ProtectedPayloadRef,
+        *,
+        context: PayloadProtectionContext,
+    ) -> FrozenJsonObject:
+        return self._delegate.unprotect(reference, context=context)
+
+
 def _recovery_loop(
     responses: list[ProviderResponse],
 ) -> tuple[QueryLoop, RecoveryProvider, ToolPayloadRuntime, list[dict[str, object]]]:
@@ -62,12 +103,20 @@ def _recovery_loop(
     )
     observed_arguments: list[dict[str, object]] = []
 
-    async def lookup(arguments):  # type: ignore[no-untyped-def]
-        observed_arguments.append(dict(arguments))
+    async def lookup(invocation: ToolInvocation) -> str:
+        observed_arguments.append(dict(invocation.arguments))
         return "found"
 
     registry = ToolRegistry()
-    registry.register(RegisteredTool("lookup", "Lookup.", {"type": "object"}, lookup))
+    registry.register(
+        RegisteredTool(
+            "lookup",
+            "Lookup.",
+            {"type": "object"},
+            lookup,
+            SideEffectPolicy.PURE,
+        ),
+    )
     router = ToolCallRouter(tool_registry=registry, context_runtime=context)
     provider = RecoveryProvider(responses)
     loop = QueryLoop(
@@ -122,13 +171,21 @@ def test_running_checkpoints_are_execution_barriers(tmp_path, monkeypatch) -> No
         monkeypatch.setattr(store, "commit_running", blocked_commit)
         tool_calls = 0
 
-        async def lookup(_arguments):  # type: ignore[no-untyped-def]
+        async def lookup(_invocation: ToolInvocation) -> str:
             nonlocal tool_calls
             tool_calls += 1
             return "found"
 
         registry = ToolRegistry()
-        registry.register(RegisteredTool("lookup", "Lookup.", {"type": "object"}, lookup))
+        registry.register(
+            RegisteredTool(
+                "lookup",
+                "Lookup.",
+                {"type": "object"},
+                lookup,
+                SideEffectPolicy.PURE,
+            ),
+        )
         router = ToolCallRouter(tool_registry=registry, context_runtime=context)
         provider = BarrierProvider()
         loop = QueryLoop(
@@ -176,6 +233,73 @@ def test_running_checkpoints_are_execution_barriers(tmp_path, monkeypatch) -> No
     asyncio.run(scenario())
 
 
+def test_partial_payload_protection_commits_failed_terminal(tmp_path) -> None:
+    async def scenario() -> None:
+        async with await SQLiteDurableStore.open(
+            database_path(tmp_path),
+            clock=lambda: NOW,
+        ) as store:
+            session = SessionState("session_partial_payload")
+            messages = MessageRuntime()
+            context = ContextRuntime(session_id=session.id)
+            protector = FailSecondPayloadProtector()
+            payloads = ToolPayloadRuntime(
+                protector,
+                PayloadProtectionContext(None, session.id),
+            )
+            source = RuntimeCheckpointSource(session, messages, context, payloads)
+            await store.initialize_session(session)
+            registry = ToolRegistry()
+            registry.register(
+                RegisteredTool(
+                    "lookup",
+                    "Lookup.",
+                    {"type": "object"},
+                    lambda _invocation: "found",
+                    SideEffectPolicy.PURE,
+                ),
+            )
+            router = ToolCallRouter(
+                tool_registry=registry,
+                context_runtime=context,
+            )
+            provider = RecoveryProvider([
+                ProviderResponse(tool_calls=(
+                    ProviderToolCall("call_1", "lookup", {"query": "first"}),
+                    ProviderToolCall("call_2", "lookup", {"query": "second"}),
+                )),
+            ])
+            loop = QueryLoop(
+                context_runtime=context,
+                message_runtime=messages,
+                request_builder=ProviderRequestBuilder(
+                    context_renderer=default_context_renderer(),
+                    message_runtime=messages,
+                    tools=router.tool_specs(),
+                ),
+                provider=provider,
+                tool_call_router=router,
+                session_state=session,
+                run_runtime=RunRuntime(session_id=session.id, store=store),
+                checkpoint_source=source,
+                checkpoint_store=store,
+                tool_payload_runtime=payloads,
+            )
+
+            with pytest.raises(PayloadProtectionError):
+                await Agent(loop).run("hello")
+
+            assert protector.run_id is not None
+            run = await store.get(session_id=session.id, run_id=protector.run_id)
+            checkpoint = await store.load_checkpoint(session.id)
+            assert run is not None
+            assert run.status is RunStatus.FAILED
+            assert checkpoint is not None
+            assert [message.role for message in checkpoint.messages] == ["user"]
+
+    asyncio.run(scenario())
+
+
 def test_before_provider_recovery_calls_provider_at_the_saved_index() -> None:
     async def scenario() -> None:
         loop, provider, _payloads, observed = _recovery_loop(
@@ -201,7 +325,7 @@ def test_before_provider_recovery_calls_provider_at_the_saved_index() -> None:
                     break
 
         assert checkpoint is not None
-        assert checkpoint.provider_call_index == 4
+        assert checkpoint.plan.provider_call_index == 4
         assert provider.calls == 1
         assert observed == []
 
@@ -220,13 +344,14 @@ def test_pending_tools_recovery_replays_the_saved_batch_before_next_provider() -
             "",
             [ToolCall(call.id, call.name, call.arguments)],
         )
-        cursor = payloads.pending_cursor(
+        plan = payloads.build_plan(
             run_id="run_1",
             turn_id=turn.id,
             provider_call_index=4,
             assistant_message_id=assistant.id,
             calls=(call,),
         )
+        cursor = payloads.pending_cursor(plan)
 
         events = [
             event
@@ -286,14 +411,14 @@ def test_after_tools_recovery_skips_tool_batch_and_advances_provider_index() -> 
                     break
 
         assert checkpoint is not None
-        assert checkpoint.provider_call_index == 5
+        assert checkpoint.plan.provider_call_index == 5
         assert provider.calls == 1
         assert observed == []
 
     asyncio.run(scenario())
 
 
-def test_after_tools_recovery_suppresses_repeated_completed_invocation() -> None:
+def test_after_tools_recovery_executes_same_arguments_as_a_new_operation() -> None:
     async def scenario() -> None:
         repeated = ProviderToolCall(
             "call_repeated",
@@ -331,7 +456,7 @@ def test_after_tools_recovery_suppresses_repeated_completed_invocation() -> None
         ]
 
         assert provider.calls == 2
-        assert observed == []
+        assert observed == [{"query": "same"}]
 
     asyncio.run(scenario())
 

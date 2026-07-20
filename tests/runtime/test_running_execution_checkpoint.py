@@ -19,7 +19,7 @@ def test_protected_payload_reference_redacts_its_token() -> None:
 
 def test_pending_tools_cursor_preserves_provider_pairing_and_sdk_identity() -> None:
     pending = PendingToolInvocation(
-        invocation_id="invocation_1",
+        invocation_id="invocation_00000000000000000000000000000001",
         provider_tool_call_id="provider_call_9",
         tool_name="lookup",
         invocation_ref=ProtectedPayloadRef(
@@ -36,7 +36,9 @@ def test_pending_tools_cursor_preserves_provider_pairing_and_sdk_identity() -> N
         pending_tools=(pending,),
     )
 
-    assert cursor.pending_tools[0].invocation_id == "invocation_1"
+    assert cursor.pending_tools[0].invocation_id == (
+        "invocation_00000000000000000000000000000001"
+    )
     assert cursor.pending_tools[0].provider_tool_call_id == "provider_call_9"
 
 
@@ -64,7 +66,12 @@ def test_non_pending_cursor_stages_have_no_pending_invocations(
 
 def test_cursor_rejects_duplicate_invocation_identity() -> None:
     reference = ProtectedPayloadRef(token="encrypted", digest="sha256:digest")
-    pending = PendingToolInvocation("inv_1", "call_1", "lookup", reference)
+    pending = PendingToolInvocation(
+        "invocation_00000000000000000000000000000001",
+        "call_1",
+        "lookup",
+        reference,
+    )
 
     with pytest.raises(ValueError, match="unique"):
         RunExecutionCursor(
@@ -73,4 +80,39 @@ def test_cursor_rejects_duplicate_invocation_identity() -> None:
             provider_call_index=1,
             assistant_message_id="message_1",
             pending_tools=(pending, pending),
+        )
+
+
+def test_cursor_rejects_duplicate_provider_call_identity() -> None:
+    reference = ProtectedPayloadRef(token="encrypted", digest="sha256:digest")
+    first = PendingToolInvocation(
+        "invocation_00000000000000000000000000000001",
+        "call_1",
+        "lookup",
+        reference,
+    )
+    second = PendingToolInvocation(
+        "invocation_00000000000000000000000000000002",
+        "call_1",
+        "lookup",
+        reference,
+    )
+
+    with pytest.raises(ValueError, match="provider tool call ids"):
+        RunExecutionCursor(
+            turn_id="turn_1",
+            stage="pending_tools",
+            provider_call_index=1,
+            assistant_message_id="message_1",
+            pending_tools=(first, second),
+        )
+
+
+def test_pending_tool_invocation_rejects_noncanonical_invocation_id() -> None:
+    with pytest.raises(ValueError, match="invocation_id"):
+        PendingToolInvocation(
+            "invocation_1",
+            "call_1",
+            "lookup",
+            ProtectedPayloadRef(token="encrypted", digest="sha256:digest"),
         )

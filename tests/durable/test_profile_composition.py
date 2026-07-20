@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from agentos import AgentBuilder
-from agentos.capabilities import RegisteredTool, WaitRequest
+from agentos.capabilities import RegisteredTool, SideEffectPolicy, WaitRequest
 from agentos.capabilities.skills import (
     BuiltinSkillSource,
     SkillDefinition,
@@ -206,7 +206,9 @@ def test_profile_uses_one_live_agent_and_checkpoint_source_per_session(
         name="wait_here",
         description="Pause this run.",
         parameters={"type": "object", "properties": {}},
-        handler=lambda _arguments: WaitRequest(reason),
+        handler=lambda _invocation: WaitRequest(reason),
+        side_effect_policy=SideEffectPolicy.PURE,
+        wait_capable=True,
     )
     provider = FakeProvider(
         [
@@ -300,7 +302,9 @@ def test_stream_keeps_checkpoint_source_alive_until_wait_is_committed(
             name="wait_here",
             description="Pause this run.",
             parameters={"type": "object", "properties": {}},
-            handler=lambda _arguments: WaitRequest(reason),
+            handler=lambda _invocation: WaitRequest(reason),
+            side_effect_policy=SideEffectPolicy.PURE,
+            wait_capable=True,
         )
         provider = FakeProvider(
             [

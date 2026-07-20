@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol, cast
 
-from agentos.capabilities import RegisteredTool, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolInvocation,
+    ToolRegistry,
+)
 from agentos.planning.decomposition import (
     PlanDecomposition,
     PlanDecompositionGatePolicy,
@@ -27,6 +32,17 @@ from agentos.planning.tool_serialization import (
     plan_to_dict,
     scheduler_tick_report_to_dict,
     step_to_dict,
+)
+
+
+_PURE_PLANNER_TOOL_NAMES = frozenset(
+    {
+        "plan_gate_decomposition_proposal",
+        "plan_ready_steps",
+        "plan_retryable_steps",
+        "plan_schedulable_plans",
+        "plan_status",
+    },
 )
 
 
@@ -124,10 +140,16 @@ class PlannerTools:
                     description=description,
                     parameters=parameters,
                     handler=handlers[name],
+                    side_effect_policy=(
+                        SideEffectPolicy.PURE
+                        if name in _PURE_PLANNER_TOOL_NAMES
+                        else SideEffectPolicy.NON_RETRYABLE
+                    ),
                 ),
             )
 
-    async def _plan_create(self, arguments: dict[str, object]) -> str:
+    async def _plan_create(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         self._authorize("plan_create", None)
         return json_result(
             plan_to_dict(
@@ -141,8 +163,9 @@ class PlannerTools:
 
     async def _plan_create_from_decomposition(
         self,
-        arguments: dict[str, object],
+        invocation: ToolInvocation,
     ) -> str:
+        arguments = invocation.arguments
         self._authorize("plan_create_from_decomposition", None)
         plan = await self.runtime.create_plan_from_decomposition(
             PlanDecomposition(
@@ -154,7 +177,8 @@ class PlannerTools:
         )
         return json_result(plan_to_dict(plan))
 
-    def _plan_gate_proposal(self, arguments: dict[str, object]) -> str:
+    def _plan_gate_proposal(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         self._authorize("plan_gate_decomposition_proposal", None)
         proposal = arguments.get("proposal")
         if not isinstance(proposal, Mapping):
@@ -166,7 +190,8 @@ class PlannerTools:
         )
         return json_result(report.as_dict())
 
-    async def _plan_add_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_add_step(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_add_step", plan_id)
         updated = await self.runtime.add_step(
@@ -179,7 +204,8 @@ class PlannerTools:
         )
         return json_result(plan_to_dict(updated))
 
-    async def _plan_status(self, arguments: dict[str, object]) -> str:
+    async def _plan_status(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         if arguments.get("plan_id") is not None:
             plan_id = str(arguments["plan_id"])
             self._authorize("plan_status", plan_id)
@@ -194,7 +220,8 @@ class PlannerTools:
             },
         )
 
-    async def _plan_assign_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_assign_step(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_assign_step", plan_id)
         updated = await self.runtime.assign_step(
@@ -204,7 +231,8 @@ class PlannerTools:
         )
         return json_result(plan_to_dict(updated))
 
-    async def _plan_ready_steps(self, arguments: dict[str, object]) -> str:
+    async def _plan_ready_steps(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_ready_steps", plan_id)
         return json_result(
@@ -216,7 +244,8 @@ class PlannerTools:
             },
         )
 
-    async def _plan_dispatch_ready_steps(self, arguments: dict[str, object]) -> str:
+    async def _plan_dispatch_ready_steps(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_dispatch_ready_steps", plan_id)
         report = await self.runtime.dispatch_ready_steps(
@@ -226,7 +255,8 @@ class PlannerTools:
         )
         return json_result(dispatch_report_to_dict(report))
 
-    async def _plan_schedulable_plans(self, arguments: dict[str, object]) -> str:
+    async def _plan_schedulable_plans(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         self._authorize("plan_schedulable_plans", None)
         summaries = await self.runtime.schedulable_plans(
             owner_agent_id=self.owner_agent_id,
@@ -239,8 +269,9 @@ class PlannerTools:
 
     async def _plan_claim_schedulable_plans(
         self,
-        arguments: dict[str, object],
+        invocation: ToolInvocation,
     ) -> str:
+        arguments = invocation.arguments
         self._authorize("plan_claim_schedulable_plans", None)
         claims = await self.runtime.claim_schedulable_plans(
             owner_agent_id=self.owner_agent_id,
@@ -255,8 +286,9 @@ class PlannerTools:
 
     async def _plan_claimed_scheduler_tick(
         self,
-        arguments: dict[str, object],
+        invocation: ToolInvocation,
     ) -> str:
+        arguments = invocation.arguments
         self._authorize("plan_claimed_scheduler_tick", None)
         report = await self.runtime.claimed_scheduler_tick(
             owner_agent_id=self.owner_agent_id,
@@ -273,7 +305,8 @@ class PlannerTools:
         )
         return json_result(claimed_scheduler_tick_report_to_dict(report))
 
-    async def _plan_scheduler_tick(self, arguments: dict[str, object]) -> str:
+    async def _plan_scheduler_tick(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_scheduler_tick", plan_id)
         report = await self.runtime.scheduler_tick(
@@ -284,7 +317,8 @@ class PlannerTools:
         )
         return json_result(scheduler_tick_report_to_dict(report))
 
-    async def _plan_fail_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_fail_step(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_fail_step", plan_id)
         updated = await self.runtime.fail_step(
@@ -294,7 +328,8 @@ class PlannerTools:
         )
         return json_result(plan_to_dict(updated))
 
-    async def _plan_retryable_steps(self, arguments: dict[str, object]) -> str:
+    async def _plan_retryable_steps(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_retryable_steps", plan_id)
         return json_result(
@@ -307,13 +342,15 @@ class PlannerTools:
             },
         )
 
-    async def _plan_retry_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_retry_step(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_retry_step", plan_id)
         updated = await self.runtime.retry_step(plan_id, str(arguments["step_id"]))
         return json_result(plan_to_dict(updated))
 
-    async def _plan_record_evidence(self, arguments: dict[str, object]) -> str:
+    async def _plan_record_evidence(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_record_evidence", plan_id)
         evidence = await self.runtime.record_evidence(
@@ -327,7 +364,8 @@ class PlannerTools:
         )
         return json_result(evidence_to_dict(evidence))
 
-    async def _plan_complete_step(self, arguments: dict[str, object]) -> str:
+    async def _plan_complete_step(self, invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         plan_id = str(arguments["plan_id"])
         await self._authorize_owned("plan_complete_step", plan_id)
         updated = await self.runtime.complete_step(
@@ -376,7 +414,7 @@ def _string_tuple(value: object) -> tuple[str, ...]:
 def _string_mapping(value: object) -> dict[str, str] | None:
     if value is None:
         return None
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ValueError("expected object with string values")
     return {str(key): str(item) for key, item in value.items()}
 
@@ -384,7 +422,7 @@ def _string_mapping(value: object) -> dict[str, str] | None:
 def _object_mapping(value: object) -> dict[str, object] | None:
     if value is None:
         return None
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ValueError("expected object")
     return {str(key): item for key, item in value.items()}
 
@@ -392,7 +430,7 @@ def _object_mapping(value: object) -> dict[str, object] | None:
 def _decomposition_gate_policy(value: object) -> PlanDecompositionGatePolicy:
     if value is None:
         return PlanDecompositionGatePolicy()
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ValueError("policy must be an object")
     max_steps = value.get("max_steps")
     return PlanDecompositionGatePolicy(
@@ -426,7 +464,7 @@ def _plan_step_specs(value: object) -> tuple[PlanStepSpec, ...]:
         raise ValueError("expected list of plan step specs")
     specs: list[PlanStepSpec] = []
     for item in value:
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             raise ValueError("expected object plan step spec")
         specs.append(
             PlanStepSpec(

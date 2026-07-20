@@ -35,7 +35,7 @@
                                                                 "SQLiteSkillActivationStore"
                                                             ],
                                                  "experimental":  [
-                                                                      "AsyncToolHandler",
+                                                                      "ArtifactToolResultRef",
                                                                       "BuiltinSkillSource",
                                                                       "BuiltinToolError",
                                                                       "ChainedSkillSource",
@@ -54,6 +54,10 @@
                                                                       "SkillRegistry",
                                                                       "SkillResourceLoadResult",
                                                                       "SkillResourceRef",
+                                                                      "SideEffectPolicy",
+                                                                      "ToolCompensationContext",
+                                                                      "ToolCompensationHandler",
+                                                                      "ToolCompensationInvocation",
                                                                       "ToolCallRouter",
                                                                       "ToolConcurrencyPolicy",
                                                                       "ToolExecutionError",
@@ -61,8 +65,12 @@
                                                                       "ToolExecutionResult",
                                                                       "ToolHandler",
                                                                       "ToolHandlerResult",
+                                                                      "ToolInvocation",
+                                                                      "ToolInvocationContext",
                                                                       "ToolPathSandboxRule",
                                                                       "ToolRegistry",
+                                                                      "ToolResultRef",
+                                                                      "InlineToolResultRef",
                                                                       "ToolSandboxError",
                                                                       "ToolSandboxPolicy",
                                                                       "WaitRequest",
@@ -687,8 +695,11 @@
                                                                  "RecallContextRequestedEvent",
                                                                  "RetryPolicy",
                                                                  "RuntimeCompositionProfile",
-                                                                 "SessionState",
-                                                                 "SnapshotLoadedEvent",
+                         "SessionState",
+                         "SideEffectResolution",
+                         "SideEffectResolutionKind",
+                         "SideEffectResume",
+                         "SnapshotLoadedEvent",
                                                                  "SnapshotSavedEvent",
                                                                  "SubagentSpawnedEvent",
                                                                  "ToolCallRequestedEvent",
@@ -713,8 +724,10 @@
                                                                  "WorkerProcessLifecycleDeploymentProfile",
                                                                  "WorkingStateSchemaDeclaredEvent",
                                                                  "WorkingStateSchemaExtendedEvent",
-                                                                 "WorkingStateUpdatedEvent"
-                                                             ]
+                         "WorkingStateUpdatedEvent",
+                         "side_effect_resolution_from_payload",
+                         "side_effect_resolution_to_payload"
+                     ]
                                         },
                     "agentos.sync":  {
                                          "stable":  [

@@ -5,6 +5,15 @@ here.
 
 ## Unreleased
 
+### Phase 6: Explicit Tool Side Effects
+
+- Breaking: replaced `AsyncToolHandler` and bare argument handlers with one
+  `ToolHandler(ToolInvocation)` contract; synchronous handlers are adapted only
+  inside the asynchronous execution backend.
+- Added explicit `SideEffectPolicy`, stable invocation/operation identity,
+  typed compensation inputs, and inline/artifact Tool Result references as
+  experimental `agentos.capabilities` APIs.
+
 ### Phase 5: Durable Runtime Profile
 
 - Added stable module-level Durable command and profile APIs together with the

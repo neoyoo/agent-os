@@ -10,6 +10,9 @@
 > `2026-07-10-agentos-context-protocol-v1-design.md`、
 > `2026-07-12-agentos-single-async-query-loop-design.md`、
 > `2026-07-17-agentos-phase5-durable-profile-contract.md`
+>
+> Task 6 补充合同：
+> `2026-07-20-agentos-phase6-task6-side-effect-contract-addendum.md`
 
 ## 1. 目的
 
@@ -696,6 +699,11 @@ Worker 必须提供 `start()`、`drain(timeout)` 和 `close()` 的异步生命�
 禁止批量释放其他 Worker 的 Lease，禁止在进程退出时无条件失败所有 RUNNING Run。
 
 ## 9. Side Effect Policy
+
+本节的稳定 identity、attempt、handler error、result ref、WAITING 原子载荷、resolution resume
+和 compensation handler 细节由
+`2026-07-20-agentos-phase6-task6-side-effect-contract-addendum.md` 精化。Task 6 实现必须同时
+满足两份合同，不得在代码中自行补充未冻结语义。
 
 `ToolConcurrencyPolicy` 只决定同一批次是否可并行；它不能表达重试安全性。
 `RegisteredTool` 必须增加独立的 `SideEffectPolicy`：

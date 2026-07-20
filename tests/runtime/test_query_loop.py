@@ -1,10 +1,17 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from agentos.artifacts import ArtifactRuntime, InMemoryArtifactStore
 from agentos.artifacts.projection import ArtifactMountProjectionProvider
-from agentos.capabilities import RegisteredTool, ToolCallRouter, ToolRegistry
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolCallRouter,
+    ToolRegistry,
+    WorkspaceToolSandboxPolicy,
+)
 from agentos.compression import CompressionRuntime
 from agentos.context import ContextRuntime, WorkingStateField
 from agentos.messages import MessageRuntime
@@ -21,8 +28,17 @@ from agentos.runtime import (
     AgentResult,
     ProviderRequestBuilder,
     QueryLoop,
+    SessionState,
     UserTurnInput,
 )
+from agentos.runtime.run_runtime import RunWriteGuard
+from agentos.runtime.side_effect_memory import InMemorySideEffectStore
+from agentos.runtime.tool_identity import invocation_digest
+from agentos.runtime.payloads import PayloadProtectionContext, unprotect_payload
+from agentos.runtime.errors import PayloadProtectionError
+from agentos.runtime.tool_payloads import ToolPayloadRuntime
+from agentos.security import FernetPayloadProtector
+from agentos.workspace import WorkspaceHandle
 from tests._context_protocol_fixtures import default_context_renderer
 
 
@@ -145,7 +161,8 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
                 name="noop",
                 description="No-op.",
                 parameters={"type": "object", "properties": {}},
-                handler=lambda arguments: "ok",
+                handler=lambda _invocation: "ok",
+                side_effect_policy=SideEffectPolicy.PURE,
             ),
         )
         router = ToolCallRouter(
@@ -174,6 +191,7 @@ def test_uploaded_attachment_stays_available_after_first_tool_iteration() -> Non
             provider=provider,
             tool_call_router=router,
             artifact_runtime=artifacts,
+            session_state=SessionState(id="session_attachment_tool_iteration"),
         )
 
         result = await _run_async(
@@ -201,7 +219,9 @@ def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
             name="record_value",
             description="Record a value.",
             parameters={"type": "object", "properties": {}},
-            handler=lambda arguments: calls.append(arguments) or "recorded",
+            handler=lambda invocation: calls.append(dict(invocation.arguments))
+            or "recorded",
+            side_effect_policy=SideEffectPolicy.PURE,
         ),
     )
     router = ToolCallRouter(tool_registry=registry, context_runtime=context)
@@ -234,12 +254,185 @@ def test_distinct_tool_arguments_still_execute_in_same_turn() -> None:
         ),
         provider=provider,
         tool_call_router=router,
+        session_state=SessionState(id="session_distinct_tool_arguments"),
     )
 
     result = _run(loop, "record")
 
     assert result == "done"
     assert calls == [{"value": "first"}, {"value": "second"}]
+
+
+def test_query_loop_uses_sandbox_canonical_arguments_for_ledger_and_handler(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        context = ContextRuntime(session_id="session_canonical_tool")
+        messages = MessageRuntime()
+        observed = []
+        ledger = InMemorySideEffectStore()
+        protector = FernetPayloadProtector(FernetPayloadProtector.generate_key())
+        payloads = ToolPayloadRuntime(
+            protector,
+            PayloadProtectionContext(None, "session_canonical_tool"),
+        )
+        registry = ToolRegistry()
+        registry.register(
+            RegisteredTool(
+                name="read_file",
+                description="Read a file.",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+                handler=lambda invocation: observed.append(invocation) or "read",
+                side_effect_policy=SideEffectPolicy.PURE,
+            ),
+        )
+        router = ToolCallRouter(
+            tool_registry=registry,
+            context_runtime=context,
+            sandbox_policy=WorkspaceToolSandboxPolicy(
+                workspace=WorkspaceHandle(
+                    workspace_id="session:canonical-tool",
+                    scope="session",
+                    root=str(tmp_path),
+                ),
+                path_rules={"read_file": ("path",)},
+            ),
+        )
+        provider = FakeProvider(
+            [
+                ProviderResponse(
+                    tool_calls=(
+                        ProviderToolCall(
+                            "call_1",
+                            "read_file",
+                            {"path": "notes/drawing.txt"},
+                        ),
+                    ),
+                ),
+                ProviderResponse(content="done"),
+            ],
+        )
+        loop = QueryLoop(
+            context_runtime=context,
+            message_runtime=messages,
+            request_builder=ProviderRequestBuilder(
+                context_renderer=default_context_renderer(),
+                message_runtime=messages,
+                tools=router.tool_specs(),
+            ),
+            provider=provider,
+            tool_call_router=router,
+            session_state=SessionState(id="session_canonical_tool"),
+            side_effect_store=ledger,
+            tool_payload_runtime=payloads,
+        )
+
+        result = await _run_async(loop, "read")
+
+        assert result == "done"
+        assert len(observed) == 1
+        invocation = observed[0]
+        expected_path = str((tmp_path / "notes" / "drawing.txt").resolve())
+        assert invocation.arguments["path"] == expected_path
+        assistant = next(
+            message
+            for message in messages.store.all()
+            if message.role == "assistant" and message.tool_calls
+        )
+        assert assistant.tool_calls[0].arguments == invocation.arguments
+        assert loop.run_runtime is not None
+        run = await loop.run_runtime.get_run(invocation.context.run_id)
+        record = await ledger.get(
+            tenant_id=None,
+            session_id="session_canonical_tool",
+            operation_id=invocation.context.operation_id,
+            attempt=None,
+            guard=RunWriteGuard(run.aggregate_version),
+        )
+        assert record is not None
+        assert record.invocation_digest == invocation_digest(invocation)
+        assert record.invocation_ref is not None
+        assert unprotect_payload(
+            protector,
+            record.invocation_ref,
+            context=PayloadProtectionContext(
+                tenant_id=None,
+                session_id="session_canonical_tool",
+                run_id=invocation.context.run_id,
+                turn_id=invocation.context.turn_id,
+                invocation_id=invocation.context.invocation_id,
+                message_id=assistant.id,
+                tool_call_id=invocation.context.tool_call_id,
+                tool_name=invocation.tool_name,
+            ),
+        ) == invocation.arguments
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fail_protection", [False, True])
+def test_tool_plan_failure_rolls_back_assistant_message(
+    fail_protection: bool,
+) -> None:
+    class FailingProtector:
+        def protect(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("injected protection failure")
+
+        def unprotect(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("failed protection must not be restored")
+
+    context = ContextRuntime(session_id="session_plan_failure")
+    messages = MessageRuntime()
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredTool(
+            name="lookup",
+            description="Lookup.",
+            parameters={"type": "object"},
+            handler=lambda _invocation: "found",
+            side_effect_policy=SideEffectPolicy.PURE,
+        ),
+    )
+    router = ToolCallRouter(tool_registry=registry, context_runtime=context)
+    calls = (
+        (ProviderToolCall("call_1", "lookup", {}),)
+        if fail_protection
+        else (
+            ProviderToolCall("call_1", "lookup", {}),
+            ProviderToolCall("call_1", "lookup", {}),
+        )
+    )
+    payloads = (
+        ToolPayloadRuntime(
+            FailingProtector(),  # type: ignore[arg-type]
+            PayloadProtectionContext(None, "session_plan_failure"),
+        )
+        if fail_protection
+        else None
+    )
+    loop = QueryLoop(
+        context_runtime=context,
+        message_runtime=messages,
+        request_builder=ProviderRequestBuilder(
+            context_renderer=default_context_renderer(),
+            message_runtime=messages,
+            tools=router.tool_specs(),
+        ),
+        provider=FakeProvider([ProviderResponse(tool_calls=calls)]),
+        tool_call_router=router,
+        session_state=SessionState(id="session_plan_failure"),
+        tool_payload_runtime=payloads,
+    )
+    expected_error = PayloadProtectionError if fail_protection else ValueError
+
+    with pytest.raises(expected_error):
+        _run(loop, "lookup")
+
+    assert [message.role for message in messages.materialize_active()] == ["user"]
 
 
 def test_query_loop_rejects_truncated_provider_final_response() -> None:

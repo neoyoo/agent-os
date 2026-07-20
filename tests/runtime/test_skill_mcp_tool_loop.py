@@ -29,7 +29,7 @@ from agentos.providers import (
     ProviderResponse,
     ProviderToolCall,
 )
-from agentos.runtime import ProviderRequestBuilder, QueryLoop
+from agentos.runtime import ProviderRequestBuilder, QueryLoop, SessionState
 from agentos.runtime.errors import AgentBusyError
 from tests._context_protocol_fixtures import default_context_renderer
 
@@ -109,6 +109,7 @@ def test_query_loop_loads_skill_body_through_tool_result(tmp_path: Path) -> None
         ),
         provider=provider,
         tool_call_router=router,
+        session_state=SessionState(id="session-1"),
     )
 
     response = asyncio.run(Agent(loop).run("Review this code"))
@@ -243,6 +244,7 @@ def _assert_agent_close_waits_for_filesystem_skill_worker(
                 ),
                 provider=provider,
                 tool_call_router=router,
+                session_state=SessionState(id="session-1"),
             ),
         )
         stream = await agent.run("first", stream=True)
@@ -349,6 +351,7 @@ def test_query_loop_executes_mcp_tool_call() -> None:
         ),
         provider=provider,
         tool_call_router=router,
+        session_state=SessionState(id="session_mcp_tool_loop"),
     )
 
     response = asyncio.run(Agent(loop).run("Lookup docs"))

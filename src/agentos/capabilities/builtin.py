@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from agentos.capabilities.tools import RegisteredTool
+from agentos.capabilities.invocation import ToolInvocation
+from agentos.capabilities.tools import RegisteredTool, SideEffectPolicy
 
 
 class BuiltinToolError(RuntimeError):
@@ -12,7 +13,8 @@ def read_file_tool(root: str | Path = ".") -> RegisteredTool:
 
     root_path = Path(root).resolve()
 
-    def _read_file(arguments: dict[str, object]) -> str:
+    def _read_file(invocation: ToolInvocation) -> str:
+        arguments = invocation.arguments
         raw_path = arguments.get("path")
         if not isinstance(raw_path, str) or not raw_path:
             raise BuiltinToolError("read_file requires a non-empty path")
@@ -38,4 +40,5 @@ def read_file_tool(root: str | Path = ".") -> RegisteredTool:
             "required": ["path"],
         },
         handler=_read_file,
+        side_effect_policy=SideEffectPolicy.PURE,
     )

@@ -15,6 +15,7 @@ from agentos.planning import (
 
 from tests.planning._async import async_test
 from tests.planning._tool_fixtures import FakePlanStepDispatcher, ManualClock
+from tests.tool_invocation import call_tool
 
 
 @async_test
@@ -28,14 +29,16 @@ async def test_planner_tools_create_add_and_status_handlers() -> None:
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     created = json.loads(
-        await registry.get("plan_create").handler(
+        await call_tool(
+            registry.get("plan_create"),
             {
                 "objective": "Review agent-os planner tools.",
             },
         ),
     )
     updated = json.loads(
-        await registry.get("plan_add_step").handler(
+        await call_tool(
+            registry.get("plan_add_step"),
             {
                 "plan_id": "plan_1",
                 "instruction": "Review tool registration.",
@@ -44,10 +47,10 @@ async def test_planner_tools_create_add_and_status_handlers() -> None:
         ),
     )
     one_plan = json.loads(
-        await registry.get("plan_status").handler({"plan_id": "plan_1"}),
+        await call_tool(registry.get("plan_status"), {"plan_id": "plan_1"}),
     )
     owner_plans = json.loads(
-        await registry.get("plan_status").handler({}),
+        await call_tool(registry.get("plan_status"), {}),
     )
 
     assert created["plan_id"] == "plan_1"
@@ -83,7 +86,8 @@ async def test_planner_tools_create_from_decomposition_handler() -> None:
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     created = json.loads(
-        await registry.get("plan_create_from_decomposition").handler(
+        await call_tool(
+            registry.get("plan_create_from_decomposition"),
             {
                 "objective": "Review AgentOS planner architecture.",
                 "plan_id": "plan_decomposed",
@@ -130,7 +134,8 @@ async def test_planner_tools_gate_decomposition_proposal_handler_is_read_only() 
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     report = json.loads(
-        registry.get("plan_gate_decomposition_proposal").handler(
+        await call_tool(
+            registry.get("plan_gate_decomposition_proposal"),
             {
                 "proposal": {
                     "objective": "Review AgentOS planner architecture.",
@@ -183,7 +188,8 @@ async def test_planner_tools_gate_decomposition_proposal_handler_reports_policy_
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     report = json.loads(
-        registry.get("plan_gate_decomposition_proposal").handler(
+        await call_tool(
+            registry.get("plan_gate_decomposition_proposal"),
             {
                 "proposal": {
                     "objective": "Review AgentOS planner architecture.",
@@ -254,7 +260,7 @@ async def test_planner_tools_ready_steps_handler_respects_dependencies() -> None
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
 
     ready = json.loads(
-        await registry.get("plan_ready_steps").handler({"plan_id": "plan_1"}),
+        await call_tool(registry.get("plan_ready_steps"), {"plan_id": "plan_1"}),
     )
 
     assert [step["step_id"] for step in ready["ready_steps"]] == ["step_2"]
@@ -282,8 +288,12 @@ async def test_planner_tools_assign_record_evidence_and_complete_handlers() -> N
         id_factory=lambda prefix: f"{prefix}_1",
     )
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
-    await registry.get("plan_create").handler({"objective": "Review planner tools."})
-    await registry.get("plan_add_step").handler(
+    await call_tool(
+        registry.get("plan_create"),
+        {"objective": "Review planner tools."},
+    )
+    await call_tool(
+        registry.get("plan_add_step"),
         {
             "plan_id": "plan_1",
             "instruction": "Review implementation.",
@@ -292,7 +302,8 @@ async def test_planner_tools_assign_record_evidence_and_complete_handlers() -> N
     )
 
     assigned = json.loads(
-        await registry.get("plan_assign_step").handler(
+        await call_tool(
+            registry.get("plan_assign_step"),
             {
                 "plan_id": "plan_1",
                 "step_id": "step_1",
@@ -301,7 +312,8 @@ async def test_planner_tools_assign_record_evidence_and_complete_handlers() -> N
         ),
     )
     evidence = json.loads(
-        await registry.get("plan_record_evidence").handler(
+        await call_tool(
+            registry.get("plan_record_evidence"),
             {
                 "plan_id": "plan_1",
                 "step_ids": ["step_1"],
@@ -314,7 +326,8 @@ async def test_planner_tools_assign_record_evidence_and_complete_handlers() -> N
         ),
     )
     completed = json.loads(
-        await registry.get("plan_complete_step").handler(
+        await call_tool(
+            registry.get("plan_complete_step"),
             {
                 "plan_id": "plan_1",
                 "step_id": "step_1",
@@ -344,13 +357,15 @@ async def test_planner_tools_fail_retryable_and_retry_handlers() -> None:
         id_factory=lambda prefix: f"{prefix}_1",
     )
     PlannerTools(runtime=runtime, owner_agent_id="leader").register(registry)
-    await registry.get("plan_create").handler(
+    await call_tool(
+        registry.get("plan_create"),
         {
             "objective": "Review planner recovery tools.",
             "plan_id": "plan_1",
         },
     )
-    await registry.get("plan_add_step").handler(
+    await call_tool(
+        registry.get("plan_add_step"),
         {
             "plan_id": "plan_1",
             "instruction": "Run worker.",
@@ -359,7 +374,8 @@ async def test_planner_tools_fail_retryable_and_retry_handlers() -> None:
 
     clock.value = 20.0
     failed = json.loads(
-        await registry.get("plan_fail_step").handler(
+        await call_tool(
+            registry.get("plan_fail_step"),
             {
                 "plan_id": "plan_1",
                 "step_id": "step_1",
@@ -369,10 +385,14 @@ async def test_planner_tools_fail_retryable_and_retry_handlers() -> None:
     )
     clock.value = 25.0
     retryable = json.loads(
-        await registry.get("plan_retryable_steps").handler({"plan_id": "plan_1"}),
+        await call_tool(
+            registry.get("plan_retryable_steps"),
+            {"plan_id": "plan_1"},
+        ),
     )
     retried = json.loads(
-        await registry.get("plan_retry_step").handler(
+        await call_tool(
+            registry.get("plan_retry_step"),
             {
                 "plan_id": "plan_1",
                 "step_id": "step_1",

@@ -3,7 +3,12 @@ import asyncio
 import pytest
 
 from agentos import AgentBuilder
-from agentos.capabilities import RegisteredTool, WaitRequest
+from agentos.capabilities import (
+    RegisteredTool,
+    SideEffectPolicy,
+    ToolInvocation,
+    WaitRequest,
+)
 from agentos.durable import DurableRuntimeProfile
 from agentos.providers import FakeProvider, ProviderResponse, ProviderToolCall
 from agentos.runtime import (
@@ -26,7 +31,7 @@ _PAYLOAD_PROTECTOR = FernetPayloadProtector(
 
 
 def _wait_tool() -> RegisteredTool:
-    async def wait_for_answer(_arguments: dict[str, object]) -> WaitRequest:
+    async def wait_for_answer(_invocation: ToolInvocation) -> WaitRequest:
         return WaitRequest(WaitReason("human_input", "approval_1"))
 
     return RegisteredTool(
@@ -34,6 +39,8 @@ def _wait_tool() -> RegisteredTool:
         "Wait for a human answer.",
         {"type": "object"},
         wait_for_answer,
+        side_effect_policy=SideEffectPolicy.PURE,
+        wait_capable=True,
     )
 
 

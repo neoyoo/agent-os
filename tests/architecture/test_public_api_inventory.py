@@ -147,6 +147,15 @@ _RUNTIME_STABLE_PHASE5_ADDITIONS = frozenset(
         "DurableRunCommand",
     }
 )
+_RUNTIME_EXPERIMENTAL_TASK6_ADDITIONS = frozenset(
+    {
+        "SideEffectResolution",
+        "SideEffectResolutionKind",
+        "SideEffectResume",
+        "side_effect_resolution_from_payload",
+        "side_effect_resolution_to_payload",
+    }
+)
 _DURABLE_STABLE_PHASE5_EXPORTS = frozenset(
     {
         "DurableRuntimeProfile",
@@ -457,6 +466,7 @@ def test_phase5_policy_keeps_root_level1_and_adds_durable_api() -> None:
     assert set(modules["agentos.runtime"]["experimental"]) == (
         _RUNTIME_EXPERIMENTAL_BEFORE_SINGLE_ASYNC_CUTOVER
         - {"AgentResult", "RunOptions"}
+        | _RUNTIME_EXPERIMENTAL_TASK6_ADDITIONS
     )
     assert set(modules["agentos.durable"]["stable"]) == (
         _DURABLE_STABLE_PHASE5_EXPORTS
