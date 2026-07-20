@@ -9,6 +9,7 @@ from agentos.distributed.errors import (
     DeliveryUnavailableError,
     DistributedBackendUnavailableError,
 )
+from agentos.distributed.models import QueueDelivery
 from agentos.distributed.worker.runner import WorkerRunner
 from agentos.distributed.worker.supervisor import DistributedWorker
 from agentos.runtime.stream_events import TurnStreamCompleted
@@ -229,6 +230,76 @@ def test_delivery_failure_stops_receive_and_fails_readiness() -> None:
             await worker.close()
         assert worker.state.status == "closed"
         assert queue.closed
+
+    asyncio.run(scenario())
+
+
+def test_delivery_failure_does_not_start_delivery_returned_by_racing_receive() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        first = QueueDelivery("1-0", "outbox_1", 1)
+        second = QueueDelivery("2-0", "outbox_2", 1)
+
+        class RacingQueue(FakeQueue):
+            def __init__(self) -> None:
+                super().__init__(trace)
+                self.receive_calls = 0
+                self.second_receive_started = asyncio.Event()
+                self.release_second_receive = asyncio.Event()
+
+            async def receive(
+                self,
+                *,
+                topic: str,
+                consumer_id: str,
+                limit: int,
+            ) -> tuple[QueueDelivery, ...]:
+                self.receive_calls += 1
+                if self.receive_calls == 1:
+                    return (first,)
+                if self.receive_calls == 2:
+                    self.second_receive_started.set()
+                    await self.release_second_receive.wait()
+                    return (second,)
+                await asyncio.Event().wait()
+                return ()
+
+        class RacingRunner:
+            claim_ttl = timedelta(minutes=1)
+
+            def __init__(self, queue: RacingQueue) -> None:
+                self.queue = queue
+                self.started: list[QueueDelivery] = []
+
+            async def run_delivery(self, delivery: QueueDelivery) -> bool:
+                self.started.append(delivery)
+                if delivery == first:
+                    await self.queue.second_receive_started.wait()
+                    self.queue.release_second_receive.set()
+                    raise DistributedBackendUnavailableError()
+                await asyncio.Event().wait()
+                return False
+
+        queue = RacingQueue()
+        runner = RacingRunner(queue)
+        worker = DistributedWorker(
+            runner=runner,  # type: ignore[arg-type]
+            queue=queue,
+            worker_id="worker_1",
+            topic="runs",
+            max_concurrency=2,
+            clock=lambda: NOW,
+        )
+
+        await worker.start()
+        await asyncio.wait_for(_wait_until_not_accepting(worker), timeout=1)
+        await asyncio.sleep(0)
+
+        assert runner.started == [first]
+        assert worker.state.active_claim_count == 0
+        with pytest.raises(DistributedBackendUnavailableError):
+            await worker.close()
+        assert worker.state.status == "closed"
 
     asyncio.run(scenario())
 
