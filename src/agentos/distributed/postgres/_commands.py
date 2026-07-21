@@ -8,6 +8,7 @@ from agentos._json_values import thaw_json_value
 from agentos.distributed.errors import (
     CheckpointConflictError,
     CommandConflictError,
+    CommandNotDueError,
     CommandStateError,
     ClaimConflictError,
 )
@@ -19,7 +20,11 @@ from agentos.distributed.postgres._artifact_references import (
     require_active_artifact_result,
 )
 from agentos.distributed.postgres._guards import lock_run_with_session
-from agentos.distributed.postgres._outbox_records import EXECUTION_TOPIC, insert_outbox
+from agentos.distributed.postgres._outbox_records import (
+    EXECUTION_TOPIC,
+    STATUS_TOPIC,
+    insert_outbox,
+)
 from agentos.distributed.postgres._records import run_state_from_row
 from agentos.distributed.postgres._reconciliation_sources import (
     validate_reconciliation_command_source,
@@ -151,6 +156,19 @@ async def _commit_continuation(
         topic=EXECUTION_TOPIC,
         payload={"command_kind": command.kind},
     )
+    await insert_outbox(
+        connection,
+        scope=scope,
+        session_id=current.session_id,
+        run_id=current.run_id,
+        source_kind="queued",
+        source_id=f"{current.run_id}:{updated.aggregate_version}",
+        topic=STATUS_TOPIC,
+        payload={
+            "status": "queued",
+            "status_sequence": updated.aggregate_version,
+        },
+    )
     return DurableCommandReceipt(
         current.run_id,
         command.command_id,
@@ -178,7 +196,7 @@ def _validate_continuation(
     if reason.kind not in allowed[command.kind]:
         raise CommandStateError()
     if reason.not_before is not None and database_now < reason.not_before:
-        raise CommandStateError()
+        raise CommandNotDueError()
 
 
 async def _validate_resolution(

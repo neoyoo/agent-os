@@ -31,6 +31,10 @@
           "signature": "unavailable",
           "stability": "experimental"
         },
+        "ArtifactMediaTypeUnsupportedError": {
+          "signature": "() -> 'None'",
+          "stability": "experimental"
+        },
         "ArtifactNotFoundError": {
           "signature": "() -> 'None'",
           "stability": "experimental"
@@ -61,6 +65,10 @@
             "read": "(self, session_id: str, artifact_id: str) -> bytes"
           },
           "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "ArtifactTooLargeError": {
+          "signature": "() -> 'None'",
           "stability": "experimental"
         },
         "ArtifactValidationError": {
@@ -148,7 +156,7 @@
           "stability": "stable"
         },
         "SideEffectPolicy": {
-          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+          "signature": "(value)",
           "stability": "experimental"
         },
         "SkillContentSource": {
@@ -192,7 +200,7 @@
           "stability": "experimental"
         },
         "ToolConcurrencyPolicy": {
-          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+          "signature": "(value)",
           "stability": "experimental"
         },
         "ToolExecutionError": {
@@ -2774,7 +2782,7 @@
           "stability": "experimental"
         },
         "SideEffectResolutionKind": {
-          "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+          "signature": "(value)",
           "stability": "experimental"
         },
         "SideEffectResume": {

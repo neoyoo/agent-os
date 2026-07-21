@@ -50,6 +50,55 @@ class CommandStateError(DistributedError):
     message = "command is invalid for the current run state"
 
 
+class CommandNotDueError(DistributedError):
+    """定时 Durable Command 尚未到权威数据库时间。"""
+
+    code = "command_not_due"
+    message = "command is not due"
+
+
+class A2ATaskNotFoundError(DistributedError):
+    """当前 tenant 中不存在指定 A2A task binding。"""
+
+    code = "a2a_task_not_found"
+    message = "a2a task not found"
+
+
+class A2ATaskConflictError(DistributedError):
+    """A2A task identity 已绑定到其他 Run。"""
+
+    code = "a2a_task_conflict"
+    message = "a2a task conflicts with an existing binding"
+
+
+class A2APushConfigNotFoundError(DistributedError):
+    """当前 tenant/task 中不存在指定 push config。"""
+
+    code = "a2a_push_config_not_found"
+    message = "a2a push config not found"
+
+
+class A2APushConflictError(DistributedError):
+    """Push operation identity 与已有 immutable input 冲突。"""
+
+    code = "a2a_push_conflict"
+    message = "a2a push config conflicts with an existing request"
+
+
+class A2APushAttemptFencedError(DistributedError):
+    """Push delivery attempt 已被其他 Worker 或 Delete fencing。"""
+
+    code = "a2a_push_attempt_fenced"
+    message = "a2a push delivery attempt is stale"
+
+
+class A2APushDeliveryDeferredError(DistributedError):
+    """Push delivery 尚未到重试时间或必须等待顺序前驱。"""
+
+    code = "a2a_push_delivery_deferred"
+    message = "a2a push delivery is deferred"
+
+
 class ClaimConflictError(DistributedError):
     """Claim 与当前 PostgreSQL 状态冲突。"""
 
@@ -114,12 +163,19 @@ class DistributedBackendUnavailableError(DistributedError):
 
 
 __all__ = [
+    "A2APushAttemptFencedError",
+    "A2APushConfigNotFoundError",
+    "A2APushConflictError",
+    "A2APushDeliveryDeferredError",
+    "A2ATaskConflictError",
+    "A2ATaskNotFoundError",
     "ActiveRunConflictError",
     "ArtifactInUseError",
     "CheckpointConflictError",
     "ClaimConflictError",
     "ClaimExpiredError",
     "CommandConflictError",
+    "CommandNotDueError",
     "CommandStateError",
     "DeliveryUnavailableError",
     "DistributedBackendUnavailableError",

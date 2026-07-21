@@ -116,6 +116,35 @@ class RedisEventReplayAdapter:
         )
         return ReplayBatch(items, items[-1].cursor if items else after)
 
+    async def high_water(
+        self,
+        *,
+        scope: RequestScope,
+        session_id: str,
+        run_id: str,
+    ) -> str | None:
+        """Capture the latest stream cursor without consuming an event."""
+
+        self._validate_query(session_id, run_id, None, 1)
+        rows = await self._redis.call(
+            "xrevrange",
+            self._stream_key(scope, session_id, run_id),
+            max="+",
+            min="-",
+            count=1,
+        )
+        if not isinstance(rows, (list, tuple)):
+            raise DeliveryUnavailableError()
+        if not rows:
+            return None
+        row = rows[0]
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise DeliveryUnavailableError()
+        cursor = decode_text(row[0])
+        if cursor is None:
+            raise DeliveryUnavailableError()
+        return cursor
+
     def follow(
         self,
         *,

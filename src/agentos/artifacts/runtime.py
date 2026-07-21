@@ -5,10 +5,12 @@ from typing import Protocol
 
 from agentos.artifacts.store import ArtifactStore
 from agentos.artifacts.types import (
+    ArtifactMediaTypeUnsupportedError,
     ArtifactMountReason,
     ArtifactPage,
     ArtifactRecord,
     ArtifactRef,
+    ArtifactTooLargeError,
     ArtifactValidationError,
     ContextMount,
     validate_artifact_media_type,
@@ -114,9 +116,9 @@ class ArtifactRuntime:
             raise ArtifactValidationError("artifact data must be bytes")
         validate_artifact_media_type(media_type)
         if media_type not in self._policy.allowed_media_types:
-            raise ArtifactValidationError("unsupported artifact media type")
+            raise ArtifactMediaTypeUnsupportedError()
         if len(data) > self._policy.max_size_bytes:
-            raise ArtifactValidationError("artifact exceeds maximum size")
+            raise ArtifactTooLargeError()
         record = await self._store.put(
             session_id=self._session_id,
             data=data,

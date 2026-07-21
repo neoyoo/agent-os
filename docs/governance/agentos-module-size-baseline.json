@@ -138,6 +138,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/postgres/schema.py",
+      "lines": 485,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/planning/tools.py",
       "lines": 480,
       "gate": "responsibility_review"
@@ -178,6 +183,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/adapters/a2a/client.py",
+      "lines": 448,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/durable/sqlite_store.py",
       "lines": 428,
       "gate": "responsibility_review"
@@ -193,18 +203,23 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/artifacts/runtime.py",
+      "lines": 412,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/planning/decomposition.py",
       "lines": 411,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/artifacts/runtime.py",
-      "lines": 410,
+      "path": "src/agentos/channels/__init__.py",
+      "lines": 407,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/channels/__init__.py",
-      "lines": 407,
+      "path": "src/agentos/distributed/a2a_models.py",
+      "lines": 403,
       "gate": "responsibility_review"
     },
     {
@@ -215,6 +230,11 @@
     {
       "path": "src/agentos/durable/serialization.py",
       "lines": 397,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/postgres/_a2a_push_support.py",
+      "lines": 393,
       "gate": "responsibility_review"
     },
     {
@@ -230,6 +250,11 @@
     {
       "path": "src/agentos/service.py",
       "lines": 371,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/channels/asgi_app.py",
+      "lines": 369,
       "gate": "responsibility_review"
     },
     {
@@ -250,11 +275,6 @@
     {
       "path": "src/agentos/planning/tool_schemas.py",
       "lines": 361,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/distributed/postgres/schema.py",
-      "lines": 354,
       "gate": "responsibility_review"
     },
     {
@@ -289,7 +309,12 @@
     },
     {
       "path": "src/agentos/distributed/postgres/_checkpoints.py",
-      "lines": 321,
+      "lines": 328,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/a2a_services.py",
+      "lines": 324,
       "gate": "responsibility_review"
     },
     {
@@ -303,6 +328,16 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/postgres/state.py",
+      "lines": 312,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/services.py",
+      "lines": 312,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/probes.py",
       "lines": 312,
       "gate": "responsibility_review"
@@ -310,6 +345,16 @@
     {
       "path": "src/agentos/persistence/serializers.py",
       "lines": 308,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/redis/replay.py",
+      "lines": 306,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/postgres/_a2a_delivery_attempt.py",
+      "lines": 305,
       "gate": "responsibility_review"
     },
     {

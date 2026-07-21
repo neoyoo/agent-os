@@ -1,13 +1,34 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：已确认，进入 Wave 0
+> 状态：Wave 0-4 已完成，下一阶段进入 Wave 5
 >
 > 日期：2026-07-17
 >
 > 对应 Contract：
 > `docs/superpowers/specs/2026-07-17-agentos-phase6-distributed-runtime-transport-contract.md`
 >
+> Wave 4 Transport Addendum：
+> `docs/superpowers/specs/2026-07-21-agentos-phase6-wave4-transport-contract-addendum.md`
+>
 > 基线提交：`35b3090 feat: complete phase5 durable runtime profile`
+
+## 0. 执行状态（2026-07-21）
+
+- Wave 0：Contract、breaking map 和 red gates 已完成；
+- Wave 1：唯一 Async Kernel 与 Durable 回归已完成；
+- Wave 2：Distributed Shared Contract 已冻结并完成；
+- Wave 3：PostgreSQL、Redis、Worker/Relay 与 Distributed Profile 已完成；
+- Wave 4：HTTP/SSE/Artifact、A2A wire、A2A durable push 和 Channel Integration 已完成；
+- 下一阶段：Wave 5 WebSocket、CLI 和 Team 拆分；OCR 仍明确排除。
+
+Wave 4 收口证据：
+
+- 全量测试：`3722 passed, 24 skipped`；
+- Architecture：`144 passed`；
+- Ruff、`compileall`、`git diff --check` 全部通过；
+- Spec Compliance Review：`P0=0, P1=0, P2=0`；
+- Code Quality/Security Review：`P0=0, P1=0`；剩余 P2 为 ASGI 限流与 SSE 连接并发准入
+  尚未冻结具体合同，登记到 Wave 6D 发布门禁。
 
 ## 1. 完成标准
 
@@ -538,6 +559,9 @@ Profile 中 fail closed，直到独立的 claim-scoped projection factory 合同
 
 ### Workstream D：HTTP/SSE
 
+前置条件：完整遵守 Wave 4 Transport Addendum，先冻结 JSON/header/multipart、scoped cursor、
+golden frame 和稳定错误映射。
+
 目标文件：
 
 - `transports/http/request_types.py`；
@@ -558,6 +582,9 @@ terminal、gap、Contract HTTP status/error matrix、tenant-scoped cursor 和 go
 
 ### Workstream E：A2A Wire/Mapping
 
+前置条件：完整遵守 Wave 4 Transport Addendum，只实现 A2A 1.0 canonical wire；不迁移 legacy
+payload fallback。
+
 目标文件：
 
 - `transports/a2a/message_types.py`；
@@ -571,8 +598,9 @@ terminal、gap、Contract HTTP status/error matrix、tenant-scoped cursor 和 go
 - `tests/transports/a2a/**`。
 
 覆盖 JSON round-trip、保留字段、版本/extension negotiation、domain mapping、RunStatus 到
-A2A state、send/stream/get/cancel/resubscribe matrix 和 A2A golden payload。TaskStore、push
-Store、HTTP Client 和 Worker 不进入 Transport。
+A2A state、全部 11 个官方 PascalCase operation matrix 和 A2A golden payload。TaskStore、push
+Store、HTTP Client 和 Worker 不进入 Transport；禁止 legacy `message/send`、`message/stream`、
+`tasks/get`、`tasks/cancel` 或 `tasks/resubscribe` alias。
 
 提交：`refactor: extract a2a wire protocols`
 
@@ -581,11 +609,29 @@ Store、HTTP Client 和 Worker 不进入 Transport。
 在 Workstream E 稳定后启动：
 
 - `policies/a2a_auth.py`、`a2a_trust.py`、`a2a_egress.py`；
-- `adapters/a2a/client.py`、`push_memory.py`、`push_postgres.py`；
+- `adapters/a2a/client.py`；
+- `distributed/postgres/a2a.py`（task binding 与 push config/operation 唯一 truth owner）；
+- `distributed/postgres/a2a_catalog.py`（tenant-scoped ListTasks join 与 keyset pagination）；
+- `distributed/postgres/a2a_delivery.py`（status transaction fanout、顺序、重试和 delivery 终态唯一 truth）；
+- `distributed/worker/a2a_push.py`（复用已有 Outbox/Queue/ACK 生命周期）；
 - `testing/a2a_conformance/**`；
 - 独占测试。
 
-Push PostgreSQL Adapter 必须复用 Phase 6 Outbox/Fencing 语义，不复制 Worker retry。
+禁止新增第二个 push PostgreSQL Store、push retry Daemon 或同步 urllib client。Push delivery
+必须复用 Phase 6 Outbox/Fencing/ACK 语义。实现前按 Addendum 冻结以下红测矩阵：
+
+- Create 与当前 Run 状态事务对账，覆盖 terminal-before-create 与 transition-after-create；
+- queued/running/human-wait/other-wait/三个 terminal 的完整状态映射；
+- 同 task/config 按 status sequence 串行，重试不得让终态越过前驱；
+- Delete-before-attempt、attempt-before-Delete、claim 后暂停、send gate、webhook 内同步 Delete 与
+  成功后零 POST 的线性化；
+- send gate 默认 2 秒/hard max 5 秒，drain backpressure/timeout/cancel 后 transaction 与行锁释放；
+- 2xx/非 2xx/网络失败/取消/事务失败/崩溃窗口的 ACK 顺序；
+- attempt lease fencing/takeover、8 次失败预算、指数退避、abandoned 终态与 typed failure category；
+- direct StreamResponse body、`application/a2a+json`、token/auth header 的 CRLF/control/size/scheme
+  门禁、跨 origin redirect strip；
+- secret 解密失败 fail closed 与 historical key rotation invariant；
+- PostgreSQL 为真值、Redis 只负责 pending/reclaim/ACK 的架构门禁。
 
 提交：`refactor: isolate a2a policy adapters and conformance`
 
@@ -595,15 +641,23 @@ Push PostgreSQL Adapter 必须复用 Phase 6 Outbox/Fencing 语义，不复制 W
 
 - `channels/asgi_app.py`；
 - `channels/asgi_router.py`；
-- `channels/session_wiring.py`；
+- `channels/service_wiring.py`；
+- `channels/run_endpoint.py`；
 - `channels/sse_endpoint.py`；
 - `channels/artifact_endpoint.py`；
 - `channels/a2a_endpoint.py`。
 
-Channel 只调用 `RunSubmissionService`、`RunCommandService`、`RunQueryService`、
-`RunEventStream` 和 `ArtifactService` 五个 Application boundary。完成 HTTP/SSE/Artifact
-测试后再集成 A2A；每次集成后
-运行 architecture import gate。
+HTTP/SSE/Artifact Channel 只调用 `RunSubmissionService`、`RunCommandService`、
+`RunQueryService`、`RunEventStream` 和 `ArtifactService` 五个 Application boundary。A2A
+Channel 可以额外调用增补冻结的 `A2ATaskService`、`A2ATaskCatalogService`、`A2APushService` 和
+immutable `A2AAgentCardProvider`，但不得直连其 Port/Adapter。主线先增加 scope-producing
+authenticator 和 task/push shared contract，再完成
+HTTP/SSE/Artifact，最后集成 A2A；每次集成后运行 architecture import gate。
+
+`channels/a2a_endpoint.py` 必须对 11 个官方 operation 逐项增加 success/error contract tests，并覆盖：
+version/extension negotiation、鉴权先于 JSON-RPC dispatch、Send inline config identity、Task binding、
+ListTasks、push CRUD、snapshot-first stream、terminal preflight、disconnect/aclose 与错误脱敏。Channel
+不得保留旧 `A2AMessagePart`、legacy method alias、私有错误码或第二套 wire DTO。
 
 提交：`refactor: compose channels over distributed services`
 
@@ -683,6 +737,10 @@ CLI 不直接写 SQL 或构建 Redis Client；migrate 调用 Distributed Migrati
 逐个迁移 `readiness.py`、`release.py`、`state_plane.py` 和 reference example 消费者。
 报告 leaf 不反向依赖 runner/profile。Readiness 覆盖 migration、outbox lag、queue pending、
 claim/heartbeat、drain、stream gap 和 ambiguous effect。
+
+Wave 6D 必须冻结 ASGI ingress 限流与 SSE 连接并发准入合同：明确由内置 Channel 还是外层
+ASGI middleware/API Gateway 承担，定义 tenant/principal 维度、稳定 `429` 映射和分布式部署
+状态模型，并在 release readiness 中验证配置与生效证据。
 
 提交：`refactor: split deployment evidence boundaries`
 

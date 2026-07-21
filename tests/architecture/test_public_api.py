@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from scripts.generate_public_api_inventory import normalize_signature
+from scripts.generate_public_api_inventory import (
+    normalize_signature,
+    public_signature,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -104,10 +107,7 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
             assert export_payload["stability"] in {"stable", "experimental"}
             exported = getattr(module, export_name)
             if callable(exported):
-                try:
-                    signature = str(inspect.signature(exported))
-                except (TypeError, ValueError):
-                    signature = "unavailable"
+                signature = public_signature(exported)
                 assert _normalize_signature_text(export_payload["signature"]) == (
                     _normalize_signature_text(signature)
                 )

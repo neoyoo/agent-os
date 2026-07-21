@@ -125,6 +125,35 @@ def test_event_replay_round_trips_history_and_detects_trimmed_cursor_gap() -> No
     asyncio.run(scenario())
 
 
+def test_event_replay_captures_current_high_water_without_consuming() -> None:
+    async def scenario() -> None:
+        replay = RedisEventReplayAdapter(client=FakeAsyncRedis())
+
+        assert await replay.high_water(
+            scope=SCOPE,
+            session_id="session_1",
+            run_id="run_1",
+        ) is None
+        first = await replay.append(scope=SCOPE, event=_event(0, "first"))
+        second = await replay.append(scope=SCOPE, event=_event(1, "second"))
+
+        assert await replay.high_water(
+            scope=SCOPE,
+            session_id="session_1",
+            run_id="run_1",
+        ) == second.cursor
+        batch = await replay.replay(
+            scope=SCOPE,
+            session_id="session_1",
+            run_id="run_1",
+            after=first.cursor,
+            limit=10,
+        )
+        assert batch == ReplayBatch((second,), second.cursor)
+
+    asyncio.run(scenario())
+
+
 def test_event_replay_detects_trim_between_oldest_check_and_range() -> None:
     async def scenario() -> None:
         redis = TrimAfterOldestReadRedis()

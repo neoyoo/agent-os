@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from enum import Enum
 import importlib
 import inspect
 import json
@@ -117,9 +118,11 @@ def classify_exports(
     }
 
 
-def _signature_of(value: object) -> str:
+def public_signature(value: object) -> str:
     if not callable(value):
         return "non-callable"
+    if inspect.isclass(value) and issubclass(value, Enum):
+        return "(value)"
     try:
         signature = inspect.signature(value, eval_str=False)
     except (TypeError, ValueError):
@@ -131,7 +134,7 @@ def _protocol_methods(value: object) -> dict[str, str] | None:
     if not getattr(value, "_is_protocol", False):
         return None
     methods = {
-        name: _signature_of(method)
+        name: public_signature(method)
         for name, method in inspect.getmembers(value, predicate=inspect.isfunction)
         if not name.startswith("_")
     }
@@ -204,7 +207,7 @@ def build_inventory(
         for export_name in sorted(public_names):
             exported = getattr(module, export_name)
             export_payload: dict[str, object] = {
-                "signature": _signature_of(exported),
+                "signature": public_signature(exported),
                 "stability": classifications[export_name],
             }
             methods = _protocol_methods(exported)

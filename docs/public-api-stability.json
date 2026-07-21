@@ -18,14 +18,16 @@
                                               "stable":  [
                                                              "SqliteFilesystemArtifactStore"
                                                          ],
-                                              "experimental":  [
+                                               "experimental":  [
                                                                    "ArtifactError",
+                                                                   "ArtifactMediaTypeUnsupportedError",
                                                                    "ArtifactNotFoundError",
                                                                    "ArtifactPolicy",
                                                                    "ArtifactRecord",
                                                                    "ArtifactRef",
                                                                    "ArtifactRuntime",
                                                                    "ArtifactStore",
+                                                                   "ArtifactTooLargeError",
                                                                    "ArtifactValidationError",
                                                                    "InMemoryArtifactStore"
                                                                ]

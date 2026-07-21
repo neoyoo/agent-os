@@ -28,7 +28,7 @@ PROTOCOL_METHODS = {
     OutboxPort: ("claim_batch", "mark_published", "release_claim"),
     QueuePort: ("publish", "receive", "reclaim", "ack", "close"),
     LeasePort: ("acquire", "renew", "ensure_owned", "release"),
-    EventReplayPort: ("append", "replay", "follow", "close"),
+    EventReplayPort: ("append", "replay", "high_water", "follow", "close"),
     DistributedArtifactPort: ("upload", "list", "read", "delete"),
 }
 
@@ -81,6 +81,7 @@ def test_application_and_tenant_ports_require_explicit_scope() -> None:
         (LeasePort, "release"),
         (EventReplayPort, "append"),
         (EventReplayPort, "replay"),
+        (EventReplayPort, "high_water"),
         (EventReplayPort, "follow"),
         (DistributedArtifactPort, "upload"),
         (DistributedArtifactPort, "list"),

@@ -142,7 +142,10 @@ async def commit_cancel(
         source_kind="cancel",
         source_id=command.command_id,
         topic=STATUS_TOPIC,
-        payload={"status": "cancelled"},
+        payload={
+            "status": "cancelled",
+            "status_sequence": updated.aggregate_version,
+        },
     )
     return DurableCommandReceipt(
         current.run_id,

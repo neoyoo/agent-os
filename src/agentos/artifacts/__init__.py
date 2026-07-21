@@ -7,9 +7,11 @@ from agentos.artifacts.runtime import ArtifactPolicy, ArtifactRuntime
 from agentos.artifacts.store import ArtifactStore
 from agentos.artifacts.types import (
     ArtifactError,
+    ArtifactMediaTypeUnsupportedError,
     ArtifactNotFoundError,
     ArtifactRecord,
     ArtifactRef,
+    ArtifactTooLargeError,
     ArtifactValidationError,
 )
 
@@ -30,10 +32,12 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "ArtifactError",
+    "ArtifactMediaTypeUnsupportedError",
     "ArtifactNotFoundError",
     "ArtifactPolicy",
     "ArtifactRecord",
     "ArtifactRef",
+    "ArtifactTooLargeError",
     "ArtifactRuntime",
     "ArtifactStore",
     "ArtifactValidationError",

@@ -242,6 +242,18 @@ class FakeAsyncRedis:
     ) -> list[tuple[str, dict[str, object]]]:
         return await script_xrange(self, name, min, count)
 
+    async def xrevrange(
+        self,
+        name: str,
+        max: str = "+",
+        min: str = "-",
+        *,
+        count: int | None = None,
+    ) -> list[tuple[str, dict[str, object]]]:
+        del max, min
+        rows = list(reversed(self.streams.get(name, [])))
+        return rows if count is None else rows[:count]
+
     async def xread(
         self,
         streams: Mapping[str, str],

@@ -500,6 +500,15 @@ def test_signature_normalization_is_cross_minor_deterministic(
     assert inventory_generator.normalize_signature(signature) == expected
 
 
+def test_public_signature_normalizes_enum_classes() -> None:
+    from enum import Enum
+
+    class PublicState(str, Enum):
+        READY = "ready"
+
+    assert inventory_generator.public_signature(PublicState) == "(value)"
+
+
 def test_signature_normalization_preserves_private_type_identity() -> None:
     first = "(value: package._one.Widget)"
     second = "(value: package._two.Widget)"

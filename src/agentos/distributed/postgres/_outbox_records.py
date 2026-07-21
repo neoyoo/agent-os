@@ -4,7 +4,9 @@ from collections.abc import Mapping
 import json
 
 from agentos.distributed.models import RequestScope
+from agentos.distributed.postgres.a2a_delivery import fanout_status_push_deliveries
 from agentos.distributed.postgres._database import AsyncConnection
+from agentos.distributed.postgres._database import fetchone
 from agentos.distributed.postgres._identities import outbox_id
 
 
@@ -32,12 +34,14 @@ async def insert_outbox(
         "version": 1,
         **payload,
     }
-    await connection.execute(
+    inserted = await fetchone(
+        connection,
         """
         INSERT INTO agentos_distributed_outbox
             (outbox_id, tenant_id, principal_id, session_id, run_id, topic, payload)
         VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
         ON CONFLICT (outbox_id) DO NOTHING
+        RETURNING outbox_id
         """,
         (
             identifier,
@@ -49,6 +53,15 @@ async def insert_outbox(
             _canonical_json(frozen_payload),
         ),
     )
+    if inserted is not None and topic == STATUS_TOPIC:
+        await fanout_status_push_deliveries(
+            connection,
+            scope=scope,
+            session_id=session_id,
+            run_id=run_id,
+            event_id=identifier,
+            payload=payload,
+        )
     return identifier
 
 

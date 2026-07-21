@@ -219,6 +219,14 @@ class EventReplayPort(Protocol):
         limit: int,
     ) -> ReplayBatch | StreamGap: ...
 
+    async def high_water(
+        self,
+        *,
+        scope: RequestScope,
+        session_id: str,
+        run_id: str,
+    ) -> str | None: ...
+
     def follow(
         self,
         *,

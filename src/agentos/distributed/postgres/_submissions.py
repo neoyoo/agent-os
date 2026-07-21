@@ -8,7 +8,11 @@ from agentos.distributed.models import (
 )
 from agentos.distributed.postgres._database import PostgresPool, fetchone
 from agentos.distributed.postgres._identities import stable_id
-from agentos.distributed.postgres._outbox_records import EXECUTION_TOPIC, insert_outbox
+from agentos.distributed.postgres._outbox_records import (
+    EXECUTION_TOPIC,
+    STATUS_TOPIC,
+    insert_outbox,
+)
 from agentos.distributed.postgres._state_records import (
     advisory_lock,
     allocate_turn_number,
@@ -127,6 +131,16 @@ async def submit(
             source_id=submission.submission_id,
             topic=EXECUTION_TOPIC,
             payload={},
+        )
+        await insert_outbox(
+            connection,
+            scope=scope,
+            session_id=submission.session_id,
+            run_id=run_id,
+            source_kind="queued",
+            source_id=f"{run_id}:1",
+            topic=STATUS_TOPIC,
+            payload={"status": "queued", "status_sequence": 1},
         )
     return RunSubmissionReceipt(
         submission.session_id,

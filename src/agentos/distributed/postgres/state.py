@@ -18,6 +18,7 @@ from agentos.distributed.postgres._checkpoints import (
 )
 from agentos.distributed.postgres._commands import submit_command as _submit_command
 from agentos.distributed.postgres._guards import lock_fenced_run
+from agentos.distributed.postgres._outbox_records import STATUS_TOPIC, insert_outbox
 from agentos.distributed.postgres._records import run_state_from_row
 from agentos.distributed.postgres._state_records import (
     active_run,
@@ -287,6 +288,19 @@ class PostgresStateStore:
             if claimed is None:
                 raise CheckpointConflictError()
             await update_run(connection, scope.tenant_id, updated)
+            await insert_outbox(
+                connection,
+                scope=scope,
+                session_id=session_id,
+                run_id=run_id,
+                source_kind="running",
+                source_id=f"{run_id}:{updated.aggregate_version}",
+                topic=STATUS_TOPIC,
+                payload={
+                    "status": "running",
+                    "status_sequence": updated.aggregate_version,
+                },
+            )
         return updated
 
     def _require_bound_scope(self) -> RequestScope:

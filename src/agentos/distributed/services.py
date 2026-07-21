@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from agentos.artifacts.runtime import ArtifactPolicy
 from agentos.artifacts.types import (
+    ArtifactMediaTypeUnsupportedError,
     ArtifactPage,
     ArtifactRecord,
+    ArtifactTooLargeError,
     validate_artifact_filename,
     validate_artifact_id,
     validate_artifact_media_type,
@@ -131,6 +134,39 @@ class RunEventStream:
         if cursor is not None:
             require_identifier(cursor, "cursor")
         await get_run(self.query_port, scope, session_id, run_id)
+        return await self.follow_after(scope, session_id, run_id, cursor)
+
+    async def capture_high_water(
+        self,
+        scope: RequestScope,
+        session_id: str,
+        run_id: str,
+    ) -> str | None:
+        """Capture a Redis stream barrier before a PostgreSQL snapshot read."""
+
+        _require_scope(scope)
+        require_identifier(session_id, "session_id")
+        require_identifier(run_id, "run_id")
+        return await self.replay_port.high_water(
+            scope=scope,
+            session_id=session_id,
+            run_id=run_id,
+        )
+
+    async def follow_after(
+        self,
+        scope: RequestScope,
+        session_id: str,
+        run_id: str,
+        cursor: str | None,
+    ) -> EventSubscription:
+        """Follow a previously captured barrier without another snapshot read."""
+
+        _require_scope(scope)
+        require_identifier(session_id, "session_id")
+        require_identifier(run_id, "run_id")
+        if cursor is not None:
+            require_identifier(cursor, "cursor")
         events = self.replay_port.follow(
             scope=scope,
             session_id=session_id,
@@ -151,6 +187,7 @@ class ArtifactService:
     """Shared Artifact 的 tenant-scoped Application Service。"""
 
     port: DistributedArtifactPort
+    policy: ArtifactPolicy = field(default_factory=ArtifactPolicy)
 
     async def upload(
         self,
@@ -170,6 +207,10 @@ class ArtifactService:
             raise TypeError("data must be bytes")
         validate_artifact_filename(filename)
         validate_artifact_media_type(media_type)
+        if media_type not in self.policy.allowed_media_types:
+            raise ArtifactMediaTypeUnsupportedError()
+        if len(data) > self.policy.max_size_bytes:
+            raise ArtifactTooLargeError()
         record = await self.port.upload(
             scope=scope,
             session_id=session_id,

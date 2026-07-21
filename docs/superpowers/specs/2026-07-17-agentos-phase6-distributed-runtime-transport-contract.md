@@ -16,6 +16,9 @@
 >
 > Wave 3 Profile 补充合同：
 > `2026-07-20-agentos-phase6-wave3-profile-contract-addendum.md`
+>
+> Wave 4 Transport 补充合同：
+> `2026-07-21-agentos-phase6-wave4-transport-contract-addendum.md`
 
 ## 1. 目的
 
@@ -926,13 +929,19 @@ Transport 不执行网络 I/O。HTTP/A2A Client 属于 Adapter，连接生命周
 
 ### 12.2 Channel
 
-Channel 可以拥有连接、鉴权、限流、路由、heartbeat 和 disconnect 生命周期，但只调用：
+Channel 可以拥有连接、鉴权、限流、路由、heartbeat 和 disconnect 生命周期。HTTP/SSE/
+Artifact Channel 只调用：
 
 - `RunSubmissionService`；
 - `RunCommandService`；
 - `RunQueryService`；
 - `RunEventStream`；
 - `ArtifactService`。
+
+A2A Channel 还可以调用 Wave 4 增补冻结的 `A2ATaskService`、`A2ATaskCatalogService`、
+`A2APushService` 和 immutable `A2AAgentCardProvider`，用于持久 task/run binding、tenant-scoped
+catalog、push config 与静态 card projection；它们不拥有 Run 状态写权限。Channel 不得直接调用其
+Port 或 PostgreSQL Adapter。该列表是 A2A Channel 的完整 Application/Provider 白名单。
 
 Channel 不创建或更新 Run 状态，不持有 Retry 真值，不调用 Tool。
 
@@ -988,16 +997,17 @@ cursor replay，gap 行为与 SSE 相同。
 
 | A2A operation | AgentOS mapping | Idempotency / stream |
 |---|---|---|
-| `message/send`（无 task） | `RunSubmissionService.submit` | message id -> submission_id；返回 A2A task read model |
-| `message/send`（WAITING human_input） | `RunCommandService.submit(hitl_answer)` | message id -> command_id；文本/parts 映射为非空 answer payload |
-| `message/send`（WAITING remote_result/resource_availability） | `RunCommandService.submit(wakeup)` | message id -> command_id；A2A result metadata 进入有界 payload |
-| `message/send`（WAITING timer/retry_backoff） | 拒绝 | 返回稳定 `command_not_due`/`command_state`，不隐式提前唤醒 |
-| `message/send`（WAITING side_effect_reconciliation） | 拒绝 | 普通 A2A message 无权构造 resolution；使用受权 `resolve_side_effect` API |
-| `message/stream` | 与 `message/send` 相同后订阅 `RunEventStream` | A2A event ID 承载 AgentOS cursor |
-| `tasks/get` | `RunQueryService.get` | tenant-scoped task/run mapping |
-| `tasks/cancel` | `RunCommandService.submit(cancel)` | request/message id -> command_id |
-| `tasks/resubscribe` | `RunEventStream.subscribe` | cursor replay/gap 与 SSE 相同 |
-| push config operations | A2A Push Application Service | PostgreSQL truth + Outbox，不进入 Transport |
+| `SendMessage`（无 task） | `RunSubmissionService.submit` | messageId -> submission_id；返回 A2A Task read model |
+| `SendMessage`（WAITING human_input） | `RunCommandService.submit(hitl_answer)` | messageId -> command_id；文本/parts 映射为非空 answer payload |
+| `SendMessage`（WAITING remote_result/resource_availability） | `RunCommandService.submit(wakeup)` | messageId -> command_id；A2A result metadata 进入有界 payload |
+| `SendMessage`（WAITING timer/retry_backoff） | 拒绝 | 返回稳定 not-due/state mapping，不隐式提前唤醒 |
+| `SendMessage`（WAITING side_effect_reconciliation） | 拒绝 | 普通 A2A Message 无权构造 resolution；使用受权 `resolve_side_effect` API |
+| `SendStreamingMessage` | 与 `SendMessage` 相同后订阅 `RunEventStream` | snapshot-first；scoped cursor 只通过协商扩展恢复 |
+| `GetTask` / `ListTasks` | `RunQueryService` / `A2ATaskCatalogService` | tenant-scoped binding 与 keyset page |
+| `CancelTask` | `RunCommandService.submit(cancel)` | 派生 operation identity -> command_id |
+| `SubscribeToTask` | `RunEventStream.subscribe` | snapshot-first replay/gap 与 SSE 相同 |
+| `Create/Get/List/DeleteTaskPushNotificationConfig` | `A2APushService` | PostgreSQL truth + Outbox，不进入 Transport |
+| `GetExtendedAgentCard` | immutable `A2AAgentCardProvider` | 不读取 Task/Store metadata |
 
 Run 状态映射固定：CREATED/QUEUED -> `submitted`，RUNNING -> `working`，WAITING human
 input -> `input-required`，其他 WAITING -> `working`，COMPLETED -> `completed`，FAILED ->

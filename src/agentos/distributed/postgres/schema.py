@@ -76,6 +76,63 @@ SCHEMA_STATEMENTS = (
     WHERE status IN ('created', 'queued', 'running', 'waiting')
     """,
     """
+    CREATE TABLE IF NOT EXISTS agentos_distributed_a2a_tasks (
+        tenant_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (tenant_id, task_id),
+        UNIQUE (tenant_id, run_id),
+        FOREIGN KEY (tenant_id, session_id, run_id)
+            REFERENCES agentos_distributed_runs(tenant_id, session_id, run_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agentos_distributed_a2a_push_configs (
+        tenant_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        config_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        authentication_scheme TEXT,
+        secret_token TEXT,
+        secret_digest TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (tenant_id, task_id, config_id),
+        FOREIGN KEY (tenant_id, task_id)
+            REFERENCES agentos_distributed_a2a_tasks(tenant_id, task_id),
+        CHECK ((secret_token IS NULL) = (secret_digest IS NULL))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agentos_distributed_a2a_push_operations (
+        tenant_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        operation_kind TEXT NOT NULL CHECK (operation_kind IN ('create', 'delete')),
+        task_id TEXT NOT NULL,
+        config_id TEXT NOT NULL,
+        input_digest TEXT NOT NULL,
+        result_url TEXT,
+        result_authentication_scheme TEXT,
+        result_secret_token TEXT,
+        result_secret_digest TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (tenant_id, operation_id),
+        FOREIGN KEY (tenant_id, task_id)
+            REFERENCES agentos_distributed_a2a_tasks(tenant_id, task_id),
+        CHECK (
+            (operation_kind = 'create' AND result_url IS NOT NULL)
+            OR
+            (operation_kind = 'delete' AND result_url IS NULL
+                AND result_authentication_scheme IS NULL
+                AND result_secret_token IS NULL
+                AND result_secret_digest IS NULL)
+        ),
+        CHECK ((result_secret_token IS NULL) = (result_secret_digest IS NULL))
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agentos_distributed_artifacts (
         tenant_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
@@ -306,6 +363,80 @@ SCHEMA_STATEMENTS = (
                 AND claim_expires_at IS NOT NULL)
         )
     )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agentos_distributed_a2a_push_deliveries (
+        tenant_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        delivery_id TEXT NOT NULL,
+        outbox_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        context_id TEXT NOT NULL,
+        config_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        authentication_scheme TEXT,
+        secret_token TEXT,
+        secret_digest TEXT,
+        event_id TEXT NOT NULL,
+        protocol_version TEXT NOT NULL CHECK (protocol_version = '1.0'),
+        status_sequence BIGINT NOT NULL CHECK (status_sequence > 0),
+        task_state TEXT NOT NULL CHECK (
+            task_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING',
+                           'TASK_STATE_COMPLETED', 'TASK_STATE_FAILED',
+                           'TASK_STATE_CANCELED', 'TASK_STATE_INPUT_REQUIRED')
+        ),
+        failure_count INTEGER NOT NULL DEFAULT 0 CHECK (
+            failure_count BETWEEN 0 AND 8
+        ),
+        next_attempt_at TIMESTAMPTZ,
+        last_failure_category TEXT CHECK (
+            last_failure_category IS NULL OR last_failure_category IN (
+                'http_rejected', 'network', 'security', 'response_too_large',
+                'secret_unavailable', 'protocol_encode'
+            )
+        ),
+        attempt_id TEXT,
+        attempt_owner_id TEXT,
+        attempt_expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        delivered_at TIMESTAMPTZ,
+        suppressed_at TIMESTAMPTZ,
+        abandoned_at TIMESTAMPTZ,
+        PRIMARY KEY (tenant_id, delivery_id),
+        UNIQUE (outbox_id),
+        UNIQUE (tenant_id, task_id, config_id, event_id),
+        FOREIGN KEY (tenant_id, task_id)
+            REFERENCES agentos_distributed_a2a_tasks(tenant_id, task_id),
+        FOREIGN KEY (outbox_id)
+            REFERENCES agentos_distributed_outbox(outbox_id),
+        CHECK ((secret_token IS NULL) = (secret_digest IS NULL)),
+        CHECK (
+            (attempt_id IS NULL AND attempt_owner_id IS NULL
+                AND attempt_expires_at IS NULL)
+            OR
+            (attempt_id IS NOT NULL AND attempt_owner_id IS NOT NULL
+                AND attempt_expires_at IS NOT NULL)
+        ),
+        CHECK (
+            (delivered_at IS NOT NULL)::INTEGER
+            + (suppressed_at IS NOT NULL)::INTEGER
+            + (abandoned_at IS NOT NULL)::INTEGER <= 1
+        ),
+        CHECK (
+            (delivered_at IS NULL AND suppressed_at IS NULL
+                AND abandoned_at IS NULL)
+            OR
+            (attempt_id IS NULL AND attempt_owner_id IS NULL
+                AND attempt_expires_at IS NULL AND next_attempt_at IS NULL)
+        )
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS agentos_distributed_a2a_push_order
+    ON agentos_distributed_a2a_push_deliveries
+        (tenant_id, task_id, config_id, status_sequence, created_at, delivery_id)
+    WHERE delivered_at IS NULL AND suppressed_at IS NULL
+      AND abandoned_at IS NULL
     """,
     """
     CREATE INDEX IF NOT EXISTS agentos_distributed_outbox_pending

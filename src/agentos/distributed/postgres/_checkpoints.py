@@ -176,7 +176,11 @@ async def commit_waiting(
             source_kind="waiting",
             source_id=f"{run_id}:{updated.aggregate_version}",
             topic=STATUS_TOPIC,
-            payload={"status": "waiting"},
+            payload={
+                "status": "waiting",
+                "status_sequence": updated.aggregate_version,
+                "wait_kind": reason.kind,
+            },
         )
         return committed
 
@@ -262,7 +266,10 @@ async def commit_terminal(
             source_kind="terminal",
             source_id=f"{run_id}:{updated.aggregate_version}:{status}",
             topic=STATUS_TOPIC,
-            payload={"status": status},
+            payload={
+                "status": status,
+                "status_sequence": updated.aggregate_version,
+            },
         )
         return committed
 

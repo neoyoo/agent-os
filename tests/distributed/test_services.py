@@ -75,6 +75,16 @@ class RecordingPort:
             result=None,
         )
 
+    async def high_water(
+        self,
+        *,
+        scope: RequestScope,
+        session_id: str,
+        run_id: str,
+    ) -> str | None:
+        self.calls.append(("high_water", (scope, session_id, run_id)))
+        return "7-0"
+
     def follow(
         self,
         *,
@@ -226,6 +236,32 @@ def test_event_stream_rejects_missing_run_before_opening_replay() -> None:
             )
 
         assert port.calls == [("get_run", (scope, "session_1", "missing"))]
+
+    asyncio.run(scenario())
+
+
+def test_event_stream_exposes_snapshot_barrier_without_hidden_query() -> None:
+    async def scenario() -> None:
+        port = RecordingPort()
+        scope = RequestScope("tenant_1", "user_1")
+        stream = RunEventStream(port, port)
+
+        barrier = await stream.capture_high_water(scope, "session_1", "run_1")
+        snapshot = await RunQueryService(port).get(scope, "session_1", "run_1")
+        events = await stream.follow_after(
+            scope,
+            "session_1",
+            "run_1",
+            barrier,
+        )
+
+        assert snapshot.run_id == "run_1"
+        assert hasattr(events, "__aiter__")
+        assert port.calls == [
+            ("high_water", (scope, "session_1", "run_1")),
+            ("get_run", (scope, "session_1", "run_1")),
+            ("follow", (scope, "session_1", "run_1", "7-0")),
+        ]
 
     asyncio.run(scenario())
 

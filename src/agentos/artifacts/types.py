@@ -34,6 +34,20 @@ class ArtifactValidationError(ArtifactError):
     """Artifact 输入或领域值不合法。"""
 
 
+class ArtifactTooLargeError(ArtifactValidationError):
+    """Artifact 超过当前上传策略允许的大小。"""
+
+    def __init__(self) -> None:
+        super().__init__("artifact exceeds maximum size")
+
+
+class ArtifactMediaTypeUnsupportedError(ArtifactValidationError):
+    """Artifact media type 不在当前上传策略 allowlist 中。"""
+
+    def __init__(self) -> None:
+        super().__init__("unsupported artifact media type")
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactRecord:
     """ArtifactStore 保存的内容元数据，不包含原始 bytes。"""
