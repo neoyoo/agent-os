@@ -10,6 +10,9 @@
 > Wave 4 Transport Addendum：
 > `docs/superpowers/specs/2026-07-21-agentos-phase6-wave4-transport-contract-addendum.md`
 >
+> Wave 5 WebSocket / CLI / Team Addendum：
+> `docs/superpowers/specs/2026-07-21-agentos-phase6-wave5-websocket-cli-team-contract-addendum.md`
+>
 > 基线提交：`35b3090 feat: complete phase5 durable runtime profile`
 
 ## 0. 执行状态（2026-07-21）
@@ -663,17 +666,26 @@ ListTasks、push CRUD、snapshot-first stream、terminal preflight、disconnect/
 
 ## 11. Wave 5：6C WebSocket / CLI / Team
 
+Wave 5 完整遵守对应 Addendum，按 5A Shared Run Stream/WebSocket、5B Migration/CLI、
+5C Team Domain、5D Team Distributed Delivery、5E breaking cutover 顺序执行。共享 Contract、
+Migration authority 和 internal Team start 由主线 Owner 修改；支线不得自行扩展。
+
 ### Workstream G：WebSocket
 
 新增：
 
+- `transports/run_stream.py`，并原子迁移 SSE/A2A cursor/event projection；
 - `transports/websocket/frames.py`；
 - `transports/websocket/serialization.py`；
+- `channels/websocket_buffer.py`；
+- `channels/websocket_session.py`；
+- `channels/asgi_websocket.py`；
 - `tests/transports/websocket/**`。
 
-主线随后新增 `channels/websocket_endpoint.py`。覆盖 submit/receipt、subscribe、multi-run
-subscription、cursor resume、gap、disconnect 不取消 Run、显式 cancel 和 backpressure。
-慢消费者缓冲必须有界并以稳定 code 断开，重连依赖最后 cursor。
+主线随后新增 `channels/websocket_endpoint.py` 并薄接入 `asgi_app.py`。冻结 `/v1/ws`、
+`agentos.run.v1`、request ID 幂等身份、逐资源 auth、multi-run subscription、cursor resume、
+gap、disconnect 不取消 Run、显式 cancel 和双重 bytes/count backpressure。slow consumer 只使用
+已经成功发送的 cursor，发送稳定 error 后以 `4408` 关闭并 exactly-once 释放 subscription。
 
 提交：`feat: add websocket command and event channel`
 
@@ -685,17 +697,22 @@ subscription、cursor resume、gap、disconnect 不取消 Run、显式 cancel �
 - `multi/team_ports.py`；
 - `multi/team_runtime.py`；
 - `multi/team_tools.py`；
+- `multi/team_identity.py`；
 - `multi/team_in_memory.py`；
 - 对应测试。
 
 Team Domain Owner 先冻结上述 type/port。随后 PostgreSQL Owner 在其独占目录实现
 `distributed/postgres/team.py`，Worker Owner 在其独占目录实现
-`distributed/worker/team.py`；两者不得反向修改 `multi/team_*`，也不得互相修改对方目录。
+`distributed/worker/team.py`，Redis Owner 实现 typed Team event replay；三者不得反向修改
+`multi/team_*`，也不得互相修改对方目录。
 
 规则：
 
 - Team delivery 使用稳定 source ID：匹配 WAITING Run 时生成 wakeup，否则通过 Submission
   创建新 Run；其他非终态拒绝；
+- 新 Run 使用 internal continuation start，不写入伪 user StoredMessage；
+- WAITING 只匹配 `remote_result/resource_availability` 且 correlation 等于 wait handle；
+- Wave 5 TeamMessage 禁止跨 Session Artifact handles；
 - 不直接运行 LocalContinuation；
 - 不保留独立 retry/daemon；
 - PostgreSQL 保存 Team truth；Redis 只 delivery/replay；
@@ -703,23 +720,74 @@ Team Domain Owner 先冻结上述 type/port。随后 PostgreSQL Owner 在其独�
 
 提交：`refactor: run team continuations through distributed runtime`
 
-### Workstream I：CLI Application Commands
+在 PostgreSQL/Worker 支线前，主线必须先完成 `distributed/internal_models.py`、
+`internal_errors.py`、`internal_protocols.py`、`internal_services.py`、accepted internal-start
+Kernel/schema/restore 合同、active-run-by-session query、Team identity helper 和 claim-scoped
+`TeamAccessContext`，并通过以下红测：
+
+- apply/restore 从同一 canonical payload 重建字节等价的 ephemeral projection，只有 apply 发布首次
+  Turn/stream event，二者都不产生 StoredMessage 或 `UserMessageAppendedEvent`；
+- expired、released、stale-fence InternalSubmissionAuthority 在提交事务内 fail closed 且 Run 不存在；
+- internal-start apply/restore/wakeup 每次 Run Worker claim 都从 PostgreSQL active binding 重建
+  `TeamAccessContext`，禁止 payload/Redis/delivery claim 提供 owner；
+- Team message/delivery/submission/command/outbox 固定 identity 测试向量跨 Owner 完全一致；
+- sender 与 direct/broadcast 任一语义变化产生 identity conflict；broadcast retry 遇 membership 变化仍
+  复用首次 recipient snapshot，不增补 delivery；
+- 两个并发相同 operation 的 `team_say` 在唯一键竞争后返回同一 duplicate，不泄漏数据库异常；
+- active Run 阻止 binding/team 删除，pending delivery 遇 binding 撤销稳定 REJECTED 并 ACK；
+- claim 自然过期但尚未 takeover 时 result commit 零写入且不 ACK；
+- 第二次 route evaluation 再次冲突时 release claim、保持可 takeover 且不 ACK。
+
+### Workstream I：Migration Authority（主线串行）
+
+新增：
+
+- `distributed/migrations/models.py`；
+- `distributed/migrations/protocols.py`；
+- `distributed/migrations/service.py`；
+- `distributed/postgres/migrations.py`；
+- `distributed/errors.py`：migration-required/legacy/checksum 稳定错误；
+- `distributed/profile.py`：open 只做 compatibility check；
+- `distributed/postgres/state.py`、`distributed/postgres/schema.py`：删除自动 DDL authority；
+- `docs/migrations/2026-07-20-postgres-distributed-runtime.sql` 及 packaged 镜像：删除 legacy marker；
+- `docs/migrations/2026-07-21-postgres-team-delivery.sql` 及 packaged 镜像；
+- 对应 migration contract/adapter/profile no-DDL tests。
+
+在 CLI migrate 前冻结显式 catalog、checksum policy 和 plan；PostgreSQL Port 在一次 apply 中拥有
+advisory lock、ledger 和全序列 transaction。`DistributedRuntimeProfile.open()` 只执行 read-only
+exact target compatibility check，不再自动执行 DDL。`migrate --check` 只验证，普通 `migrate`
+应用缺失版本；两者都不按目录 glob 猜测 migration。
+
+提交：`refactor: make migration service the schema authority`
+
+### Workstream J：CLI Application Commands
 
 新增/修改：
 
 - `cli/parser.py`；
+- `cli/application.py`；
+- `cli/auth.py`；
+- `cli/output.py`；
 - `cli/commands/init.py`；
 - `cli/commands/serve.py`；
 - `cli/commands/migrate.py`；
 - `cli/commands/run.py`：submit/command/get/watch；
 - `cli/commands/artifact.py`：upload/list/read/delete；
-- `cli/commands/worker.py`：start/drain；
+- `cli/commands/worker.py`：start，并在进程信号后 drain/close；
+- `cli/commands/relay.py`：start；
+- `distributed/worker/supervisor.py`：增加可观察 `wait()`，不增加同步 wrapper；
 - `cli/main.py` 收窄为约 40 行 dispatch；
 - `tests/cli/**`。
 
 CLI 不直接写 SQL 或构建 Redis Client；migrate 调用 Distributed Migration Service。
 测试通过 Fake Application Services 断言每个 subcommand 的 RequestScope、DTO、receipt/event
 输出、错误 code 和 Ctrl+C/drain 生命周期，不连接真实后端。
+
+CLI 通过唯一 `--factory module:callable`/`AGENTOS_CLI_FACTORY` 注入无 I/O `CliHostFactory`，
+再按 command 打开最窄 async host；migrate 不打开 Runtime Profile/Redis/Worker。tenant 只是经
+`CliScopeResolver` 鉴权和授权的 route hint。删除旧 `run APP`、`--dsn`、`--dry-run` 和
+同步 psycopg。`serve`、`worker start`、`relay start` 进程职责分离；没有 WorkerControlPort，
+因此不实现跨进程 `worker drain` 子命令。
 
 提交：`refactor: route cli through application services`
 
