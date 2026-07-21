@@ -9,6 +9,10 @@ from agentos.distributed.errors import (
     DistributedStoreClosedError,
 )
 from agentos.distributed.models import (
+    LiveTurnCancelled,
+    LiveTurnCompleted,
+    LiveTurnFailed,
+    LiveTurnWaiting,
     ReplayBatch,
     ReplayItem,
     RequestScope,
@@ -25,6 +29,16 @@ from agentos.distributed.redis._event_codec import (
     encode_envelope,
 )
 from agentos.distributed.redis._replay_snapshot import read_replay_snapshot
+from agentos.distributed.redis._terminal_replay import ensure_terminal
+from agentos.distributed._stream_models import TERMINAL_EVENT_SEQUENCE
+
+
+_TERMINAL_EVENT_TYPES = {
+    LiveTurnCancelled,
+    LiveTurnCompleted,
+    LiveTurnFailed,
+    LiveTurnWaiting,
+}
 
 
 class RedisEventReplayAdapter:
@@ -78,6 +92,28 @@ class RedisEventReplayAdapter:
         if cursor is None:
             raise DeliveryUnavailableError()
         return ReplayItem(cursor, event)
+
+    async def ensure_terminal(
+        self,
+        *,
+        scope: RequestScope,
+        event: RunEventEnvelope,
+    ) -> ReplayItem:
+        self._ensure_open()
+        if type(event) is not RunEventEnvelope:
+            raise TypeError("event must be RunEventEnvelope")
+        if event.tenant_id != scope.tenant_id:
+            raise ValueError("event tenant does not match request scope")
+        if event.event_sequence != TERMINAL_EVENT_SEQUENCE:
+            raise ValueError("terminal event must use the reserved sequence")
+        if type(event.event) not in _TERMINAL_EVENT_TYPES:
+            raise ValueError("event must be terminal or waiting")
+        return await ensure_terminal(
+            self._redis,
+            stream=self._stream_key(scope, event.session_id, event.run_id),
+            event=event,
+            max_events=self._max_events,
+        )
 
     async def replay(
         self,

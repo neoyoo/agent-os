@@ -25,7 +25,7 @@ from agentos.transports.a2a.protocol import (
     A2AExtensionNegotiationError,
     A2AProtocolVersionError,
 )
-from agentos.transports.sse.cursors import SseCursorError
+from agentos.transports.run_stream import RunStreamCursorError
 
 
 class A2AChannelOperationError(RuntimeError):
@@ -77,7 +77,7 @@ def map_a2a_operation_error(
             CommandNotDueError,
             CommandStateError,
             RunSubmissionConflictError,
-            SseCursorError,
+            RunStreamCursorError,
         ),
     ):
         return A2AOperationError(-32602)

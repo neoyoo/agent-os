@@ -134,6 +134,13 @@ class DeliveryUnavailableError(DistributedError):
     message = "delivery backend is unavailable"
 
 
+class RunEventTooLargeError(DistributedError):
+    """A live event cannot be represented within the frozen wire limit."""
+
+    code = "run_event_too_large"
+    message = "run event exceeds protocol size limit"
+
+
 class SideEffectAmbiguousError(DistributedError):
     """外部副作用结果无法安全确定。"""
 
@@ -183,6 +190,7 @@ __all__ = [
     "DistributedStoreClosedError",
     "RunSubmissionConflictError",
     "RunNotFoundError",
+    "RunEventTooLargeError",
     "SideEffectAmbiguousError",
     "SideEffectInFlightError",
     "StaleFenceError",

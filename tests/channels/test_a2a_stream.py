@@ -25,7 +25,7 @@ from agentos.transports.a2a import (
     A2ATaskStatus,
     decode_stream_operation_response,
 )
-from agentos.transports.sse import decode_cursor
+from agentos.transports.run_stream import decode_cursor
 from tests.planning._async import async_test
 
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from agentos.channels.a2a_endpoint import A2AEndpoint
 from agentos.channels.artifact_endpoint import ArtifactEndpoint
+from agentos.channels.asgi_headers import headers_from_asgi_scope
 from agentos.channels.asgi_router import AsgiRouter, RouteMatch
 from agentos.channels.run_endpoint import RunEndpoint
 from agentos.channels.service_wiring import (
@@ -17,6 +18,8 @@ from agentos.channels.service_wiring import (
 )
 from agentos.channels.sse_endpoint import RunSseEndpoint
 from agentos.channels.stream_response import CloseableSseResponse
+from agentos.channels.websocket_buffer import WebSocketBufferLimits
+from agentos.channels.websocket_endpoint import WebSocketEndpoint
 from agentos.transports.a2a import MAX_A2A_JSON_BYTES
 from agentos.transports.http.errors import HttpValidationError, RequestTooLargeError
 from agentos.transports.http.request_decoder import (
@@ -48,6 +51,8 @@ class DistributedAsgiApp:
         max_request_bytes: int = MAX_MULTIPART_BODY_BYTES,
         heartbeat_interval: float = 15.0,
         a2a_interface_tenant: str | None = None,
+        websocket_buffer_limits: WebSocketBufferLimits | None = None,
+        websocket_max_subscriptions: int = 32,
     ) -> None:
         if type(services) is not ChannelServices:
             raise TypeError("services must be ChannelServices")
@@ -71,6 +76,12 @@ class DistributedAsgiApp:
             selected_authenticator,
             heartbeat_interval,
         )
+        self._websocket = WebSocketEndpoint(
+            services,
+            selected_authenticator,
+            buffer_limits=websocket_buffer_limits,
+            max_subscriptions=websocket_max_subscriptions,
+        )
         self._max_request_bytes = max_request_bytes
 
     async def __call__(
@@ -83,12 +94,15 @@ class DistributedAsgiApp:
         if scope_type == "lifespan":
             await _lifespan(receive, send)
             return
+        if scope_type == "websocket":
+            await self._websocket(scope, receive, send)
+            return
         if scope_type != "http":
             return
         fallback_request_id = uuid4().hex
         request_id = fallback_request_id
         try:
-            headers = _headers(scope.get("headers"))
+            headers = headers_from_asgi_scope(scope.get("headers"))
             request_id = _request_id(headers, fallback_request_id)
             route = self._router.match(scope.get("method"), scope.get("path"))
             if route is None:
@@ -186,19 +200,6 @@ class DistributedAsgiApp:
                 request_id=request_id,
             )
         raise RuntimeError("router returned an unknown operation")
-
-
-def _headers(value: object) -> HttpHeaders:
-    if not isinstance(value, (list, tuple)):
-        raise HttpValidationError()
-    try:
-        items = tuple(
-            (name.decode("ascii"), header_value.decode("utf-8"))
-            for name, header_value in value
-        )
-    except (AttributeError, UnicodeDecodeError, ValueError):
-        raise HttpValidationError() from None
-    return HttpHeaders(items)
 
 
 def _request_id(headers: HttpHeaders, fallback: str) -> str:

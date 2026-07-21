@@ -21,6 +21,7 @@ from tests.distributed.worker._fakes import (
     HeartbeatGate,
     ScriptedStream,
     claimed_execution,
+    committed_outcome,
     delivery_target,
 )
 
@@ -114,7 +115,7 @@ def test_unclaimable_delivery_is_acked_after_terminal_truth_refresh() -> None:
         trace: list[str] = []
         target = delivery_target()
         claims = FakeClaims(trace, target=target, claimed=None)
-        claims.target_after_claim = delivery_target(RunStatus.COMPLETED)
+        claims.outcome_after_claim = committed_outcome(RunStatus.COMPLETED)
         leases = FakeLeases(trace)
         queue = FakeQueue(trace)
         stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
@@ -129,7 +130,9 @@ def test_unclaimable_delivery_is_acked_after_terminal_truth_refresh() -> None:
 
         assert await runner.run_delivery(DELIVERY) is True
         assert queue.acked == [DELIVERY]
-        assert claims.resolve_calls == 2
+        assert claims.resolve_calls == 1
+        assert claims.resolve_outcome_calls == 2
         assert factory.claimed == []
+        assert trace.index("event.ensure_terminal") < trace.index("queue.ack")
 
     asyncio.run(scenario())

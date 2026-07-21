@@ -100,3 +100,19 @@ def test_terminal_and_interrupted_events_close_current_stream() -> None:
     assert is_a2a_terminal_event(_envelope(LiveTurnCompleted()))
     assert is_a2a_terminal_event(_envelope(LiveTurnWaiting("human_input", "wait_1")))
     assert not is_a2a_terminal_event(_envelope(LiveContentDelta(0, "x")))
+
+
+def test_waiting_event_keeps_existing_datetime_wire_format() -> None:
+    frame = encode_a2a_event(
+        "rpc_1",
+        "opaque-scoped-cursor",
+        _envelope(
+            LiveTurnWaiting(
+                "timer",
+                "timer_1",
+                datetime(2026, 7, 21, 12, 30, tzinfo=UTC),
+            ),
+        ),
+    )
+
+    assert '"not_before":"2026-07-21T12:30:00+00:00"' in frame

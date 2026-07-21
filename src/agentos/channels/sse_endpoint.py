@@ -18,7 +18,7 @@ from agentos.transports.sse.codec import (
     encode_replay_event,
     is_terminal_event,
 )
-from agentos.transports.sse.cursors import decode_cursor
+from agentos.transports.run_stream import decode_cursor
 
 
 class RunSseResponse:

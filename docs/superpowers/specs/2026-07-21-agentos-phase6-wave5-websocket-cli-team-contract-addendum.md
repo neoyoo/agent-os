@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Wave 5 WebSocket / CLI / Team Contract Addendum
 
-> 状态：已冻结，可进入实现
+> 状态：合同已冻结；5A 已完成，5B-5E 待实现
 >
 > 日期：2026-07-21
 >
@@ -80,6 +80,51 @@ Read Model 获取完整结果。其他在 terminal commit 前产生的超限 eve
 failure 失败。不得写入任何 Transport 无法消费的 event。必须覆盖“超大 final result 仍 COMPLETED、
 Redis 无超限 item、terminal 可观察、read model 内容完整”。SSE/A2A golden、cursor token 和既有
 wire 必须在迁移前后 byte-for-byte 不变。
+
+pre-terminal event 超限由 Worker 在 Redis append 前拒绝，并通过 `AgentStream` 创建时注入的内部
+failure control 回到当前 `RunDriver`。该 control 不是 stable Public API，不得导出，也不得由
+Channel、Transport 或普通 SDK consumer 调用。它只允许当前唯一 stream consumer 在一次 event 已经
+返回、下一次 event 尚未推进时提交一个 `Exception`；`RunDriver` 使用当前 execution guard 提交
+FAILED checkpoint/Run，再返回同一异常对象的唯一 `TurnStreamFailed`。projection、observability 和
+sync-work wrapper 不得通过跨层 async-generator `athrow` 转发失败。Run 已由外部命令终结或当前
+fence 已失效时不得覆盖权威状态，也不得伪造 `turn_failed`。
+
+RunDriver terminal commit 清除 claim 后，到 Worker 成功 append terminal event 前允许 heartbeat 与
+执行短暂竞态。heartbeat 失败时 Worker 必须重新解析该 outbox 的 PostgreSQL 权威 Run：若 Run 已为
+WAITING/COMPLETED/FAILED/CANCELLED，则允许当前 execution 仅完成已提交 outcome 的 event 投影、stream
+cleanup 和 Event Sink append；全部成功后才 ACK。此路径不得启动新的 Provider/Tool 工作。若权威
+Run 仍为非终态，则按真正 claim/fence 丢失处理，立即关闭 stream 且不 ACK。Event Sink、stream
+cleanup 或权威复核失败仍不 ACK，不能用已提交终态掩盖观察面失败。
+cleanup 自身抛出的 `CancelledError` 属于 cleanup 未完成，不得与 Worker 主动停止 execution 的取消混同；
+严格 recovery 路径必须将其作为可观察失败处理并保留原始异常链。
+
+上述复核不能只读取 Run 当前状态。`ExecutionClaimPort` 必须按原 execution `outbox_id` 查询内部 typed
+`CommittedExecutionOutcome`，将该 delivery 确定性关联到已 committed accepted input、它的 checkpoint
+和当前 Run。checkpoint 的 `turn_id`、`fencing_token`、`aggregate_version` 与 `created_at` 分别提供
+terminal envelope 的 turn、execution attempt、commit version 与稳定发生时间。若 committed version
+等于当前 Run version，Worker 必须发布该 outcome；若它小于当前 version，说明该 delivery 已被后续
+execution 覆盖，只 ACK，不得用旧 outbox claim 当前 accepted input。不存在关联 outcome、关联损坏或
+版本倒退时 fail closed 且不 ACK。
+
+Worker 产生的 terminal live event 固定使用保留 `event_sequence=9007199254740991`（`2^53-1`，JSON
+safe integer 最大值）；普通 live event 必须使用更小的 sequence。正常 terminal 发布与 recovery 都从
+同一个 committed outcome 构造完全相同的 envelope。Redis Event Sink 必须以
+`(tenant_id, run_id, execution_attempt, event_sequence)` 为稳定 identity，在单个 Lua 原子边界内查找
+或 `XADD`；已存在且 envelope 不同必须 fail closed，已被 stream trim 的 terminal 可以重新追加。
+幂等索引不得使用脱离 replay retention 的无界旁路 key。外部 CANCELLED 产生的新 fence 不属于旧
+execution：旧 stream 必须立即关闭，不得继续 Provider/Tool 或发布旧 attempt terminal；Worker 可以从
+新 fence 的 committed outcome 发布 `turn_cancelled`，成功 cleanup/append 后才 ACK。
+
+terminal recovery 不得绕过 Session Lease。初次 resolve 或 claim-none 发现 current committed outcome
+时，Worker 必须先取得并确认该 Session Lease，避免旧 Worker 在 recovery terminal 之后继续追加旧
+attempt event；无法取得 Lease 时 no-ACK。任何 heartbeat 失败都先取消 execution 并等待 stream cleanup，
+不得因为同 fence terminal 已提交而继续消费 generator；随后只有在 committed outcome 可验证且当前
+Lease 仍归本 Worker 所有时才能 ensure canonical terminal。superseded outcome 不发布旧 terminal。
+
+expired-claim `recover` outbox 必须在 payload 中持久化 accepted `turn_id`、recovery 前置
+`fencing_token` 和可复核的 recovery identity。claim 时在 Session/Run 锁内同时校验 turn、当前
+recovery fence 与 outbox identity；committed outcome query 也按该 turn binding 关联 checkpoint。
+submission/command outbox 继续按原 source identity 关联，不能用同一哈希规则误拒绝 recover delivery。
 
 ## 3. WebSocket Contract
 
@@ -542,6 +587,9 @@ backpressure、transaction、fence 和 crash window 拆分，禁止用 sleep 构
 - WebSocket exact JSON/golden（覆盖全部 `LiveRunEvent` kind，并断言顶层 `event_kind` 与
   `data` 来自同一次 Shared Run Stream projection）、auth、multi-run、gap、terminal、disconnect、
   cancel、overflow、close；
+- pre-terminal event 超限必须由内部 failure control 提交 FAILED 并发布 `turn_failed`；observability
+  wrapper 不改变原始异常且确定性关闭内层 generator；terminal commit 后 heartbeat 失败不得吞掉
+  terminal event，非终态 stale fence 仍 no-ACK，竞态测试必须使用 Event/Barrier；
 - CLI parser/scope/DTO/output/error/signal lifecycle/import boundary；
 - migration advisory lock、checksum、version gap、check/apply、profile no-DDL；
 - Team scope/membership/idempotency/fanout、sender 与 direct/broadcast identity 冲突、broadcast retry

@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Protocol
 
 from agentos.artifacts.types import ArtifactPage, ArtifactRecord
+from agentos.distributed._execution_outcomes import CommittedExecutionOutcome
 from agentos.distributed.models import (
     ArtifactContent,
     ClaimedExecution,
@@ -68,6 +69,12 @@ class ExecutionClaimPort(Protocol):
         *,
         outbox_id: str,
     ) -> RunDeliveryTarget | None: ...
+
+    async def resolve_committed_outcome(
+        self,
+        *,
+        outbox_id: str,
+    ) -> CommittedExecutionOutcome | None: ...
 
     async def claim_pending_turn(
         self,
@@ -203,6 +210,13 @@ class EventReplayPort(Protocol):
     """Typed live event 的短期 Replay + Tail 边界。"""
 
     async def append(
+        self,
+        *,
+        scope: RequestScope,
+        event: RunEventEnvelope,
+    ) -> ReplayItem: ...
+
+    async def ensure_terminal(
         self,
         *,
         scope: RequestScope,

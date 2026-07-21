@@ -108,13 +108,13 @@
       "gate": "split_or_exception"
     },
     {
-      "path": "src/agentos/planning/runtime.py",
-      "lines": 498,
+      "path": "src/agentos/runtime/query_loop.py",
+      "lines": 499,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/query_loop.py",
-      "lines": 497,
+      "path": "src/agentos/planning/runtime.py",
+      "lines": 498,
       "gate": "responsibility_review"
     },
     {
@@ -124,7 +124,7 @@
     },
     {
       "path": "src/agentos/runtime/run_driver.py",
-      "lines": 495,
+      "lines": 490,
       "gate": "responsibility_review"
     },
     {
@@ -243,6 +243,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/worker/runner.py",
+      "lines": 386,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/distributed/profile.py",
       "lines": 379,
       "gate": "responsibility_review"
@@ -254,7 +259,7 @@
     },
     {
       "path": "src/agentos/channels/asgi_app.py",
-      "lines": 369,
+      "lines": 370,
       "gate": "responsibility_review"
     },
     {
@@ -295,6 +300,16 @@
     {
       "path": "src/agentos/testing/contracts/plan_store.py",
       "lines": 343,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/redis/replay.py",
+      "lines": 342,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/channels/websocket_session.py",
+      "lines": 340,
       "gate": "responsibility_review"
     },
     {
@@ -343,13 +358,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/persistence/serializers.py",
+      "path": "src/agentos/distributed/protocols.py",
       "lines": 308,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/redis/replay.py",
-      "lines": 306,
+      "path": "src/agentos/persistence/serializers.py",
+      "lines": 308,
       "gate": "responsibility_review"
     },
     {

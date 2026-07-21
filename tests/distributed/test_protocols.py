@@ -20,6 +20,7 @@ PROTOCOL_METHODS = {
     RunQueryPort: ("get_run",),
     ExecutionClaimPort: (
         "resolve_delivery",
+        "resolve_committed_outcome",
         "claim_pending_turn",
         "heartbeat",
         "release",
@@ -28,7 +29,14 @@ PROTOCOL_METHODS = {
     OutboxPort: ("claim_batch", "mark_published", "release_claim"),
     QueuePort: ("publish", "receive", "reclaim", "ack", "close"),
     LeasePort: ("acquire", "renew", "ensure_owned", "release"),
-    EventReplayPort: ("append", "replay", "high_water", "follow", "close"),
+    EventReplayPort: (
+        "append",
+        "ensure_terminal",
+        "replay",
+        "high_water",
+        "follow",
+        "close",
+    ),
     DistributedArtifactPort: ("upload", "list", "read", "delete"),
 }
 
@@ -80,6 +88,7 @@ def test_application_and_tenant_ports_require_explicit_scope() -> None:
         (LeasePort, "ensure_owned"),
         (LeasePort, "release"),
         (EventReplayPort, "append"),
+        (EventReplayPort, "ensure_terminal"),
         (EventReplayPort, "replay"),
         (EventReplayPort, "high_water"),
         (EventReplayPort, "follow"),
@@ -93,6 +102,9 @@ def test_application_and_tenant_ports_require_explicit_scope() -> None:
 
     assert "scope" not in inspect.signature(
         ExecutionClaimPort.resolve_delivery,
+    ).parameters
+    assert "scope" not in inspect.signature(
+        ExecutionClaimPort.resolve_committed_outcome,
     ).parameters
     assert "scope" not in inspect.signature(OutboxPort.claim_batch).parameters
     assert "scope" not in inspect.signature(QueuePort.receive).parameters

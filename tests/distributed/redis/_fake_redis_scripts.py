@@ -15,6 +15,16 @@ class ScriptRedis(Protocol):
 
     async def xack(self, name: str, groupname: str, *ids: str) -> int: ...
 
+    async def xadd(
+        self,
+        name: str,
+        fields: Mapping[str, object],
+        id: str = "*",
+        *,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> str: ...
+
     async def before_atomic_trim(self, name: str) -> None: ...
 
     async def before_atomic_replay(self, name: str) -> None: ...
@@ -71,6 +81,31 @@ async def evaluate_agentos_script(
             str(args[1]),
             int(args[2]),
         )
+
+    if "agentos:replay:ensure-terminal:v1" in script:
+        assert numkeys == 1 and len(args) >= 6 and (len(args) - 4) % 2 == 0
+        stream, attempt, sequence, max_events = map(str, args[:4])
+        expected = {
+            str(name): str(value)
+            for name, value in zip(args[4::2], args[5::2], strict=True)
+        }
+        for cursor, fields in redis.streams.get(stream, []):
+            current = {str(name): str(value) for name, value in fields.items()}
+            if (
+                current.get("execution_attempt") == attempt
+                and current.get("event_sequence") == sequence
+            ):
+                if current != expected:
+                    return ["conflict", ""]
+                return ["existing", cursor]
+        cursor = await redis.xadd(
+            stream,
+            expected,
+            id="*",
+            maxlen=int(max_events),
+            approximate=False,
+        )
+        return ["appended", cursor]
 
     return UNHANDLED
 

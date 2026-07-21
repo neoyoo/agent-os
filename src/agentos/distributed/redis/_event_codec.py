@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import fields
 from datetime import datetime
 import json
 
@@ -23,6 +22,10 @@ from agentos.distributed.models import (
     live_event_kind,
 )
 from agentos.distributed.redis._client import field_text
+from agentos.distributed.run_event_limits import (
+    canonical_run_event_payload,
+    require_run_event_size,
+)
 
 
 _EVENT_TYPES = {
@@ -44,25 +47,24 @@ _EVENT_TYPES = {
 
 
 def encode_envelope(envelope: RunEventEnvelope) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    for field in fields(envelope.event):
-        value = getattr(envelope.event, field.name)
-        payload[field.name] = value.isoformat() if isinstance(value, datetime) else value
+    require_run_event_size(envelope)
+    canonical = canonical_run_event_payload(envelope)
     return {
-        "tenant_id": envelope.tenant_id,
-        "session_id": envelope.session_id,
-        "run_id": envelope.run_id,
-        "turn_id": envelope.turn_id,
-        "execution_attempt": str(envelope.execution_attempt),
-        "event_sequence": str(envelope.event_sequence),
-        "event_kind": envelope.event_kind,
+        "tenant_id": canonical["tenant_id"],
+        "session_id": canonical["session_id"],
+        "run_id": canonical["run_id"],
+        "turn_id": canonical["turn_id"],
+        "execution_attempt": str(canonical["execution_attempt"]),
+        "event_sequence": str(canonical["event_sequence"]),
+        "event_kind": canonical["event_kind"],
         "event_payload": json.dumps(
-            payload,
+            canonical["event"],
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
+            allow_nan=False,
         ),
-        "occurred_at": envelope.occurred_at.isoformat(),
+        "occurred_at": canonical["occurred_at"],
     }
 
 

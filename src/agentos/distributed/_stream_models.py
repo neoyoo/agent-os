@@ -19,6 +19,7 @@ WorkerStatus: TypeAlias = Literal["created", "running", "draining", "closed"]
 
 _STREAM_GAP_REASONS = frozenset({"trimmed", "unavailable"})
 _WORKER_STATUSES = frozenset({"created", "running", "draining", "closed"})
+TERMINAL_EVENT_SEQUENCE = 9_007_199_254_740_991
 
 
 @dataclass(frozen=True, slots=True)

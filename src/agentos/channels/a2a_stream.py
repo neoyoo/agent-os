@@ -17,7 +17,7 @@ from agentos.transports.a2a.sse import (
     encode_a2a_initial_response,
     is_a2a_terminal_event,
 )
-from agentos.transports.sse.cursors import encode_cursor
+from agentos.transports.run_stream import encode_cursor
 
 
 _TERMINAL_TASK_STATES = frozenset(

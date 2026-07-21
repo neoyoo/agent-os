@@ -19,6 +19,7 @@ class StreamCleanupTarget(Protocol):
     _events: AsyncIterator[TurnStreamEvent]
     _cleanup: CleanupCallback
     _pending_sync_work: PendingSyncWork | None
+    _cleanup_error: BaseException | None
     _state: StreamState
     _state_lock: RLock
     _consumer_task: asyncio.Task[object] | None
@@ -102,6 +103,7 @@ async def finish_stream_close(
     except BaseException as error:
         cleanup_error = cleanup_error or error
     with target._state_lock:
+        target._cleanup_error = cancellation or cleanup_error
         published_error = cleanup_error if original_error is None else None
         target._close_coordinator.publish(published_error)
 
@@ -109,3 +111,14 @@ async def finish_stream_close(
         raise cancellation
     if cleanup_error is not None and original_error is None:
         raise cleanup_error
+
+
+def raise_stream_cleanup_failure(target: StreamCleanupTarget) -> None:
+    """向严格内部消费者暴露被原始执行异常遮蔽的 cleanup 失败。"""
+
+    with target._state_lock:
+        error = target._cleanup_error
+    if isinstance(error, asyncio.CancelledError):
+        raise RuntimeError("agent stream cleanup was cancelled") from error
+    if error is not None:
+        raise error

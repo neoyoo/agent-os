@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 
 from agentos.distributed.models import RequestScope
 from agentos.distributed.postgres._claim_recovery import recover_expired
@@ -76,3 +77,8 @@ async def test_recovery_preserves_the_accepted_input_principal() -> None:
     assert recovered[0].scope == RequestScope("tenant_1", "principal_original")
     assert database.connection.outbox_params is not None
     assert database.connection.outbox_params[2] == "principal_original"
+    payload = json.loads(str(database.connection.outbox_params[6]))
+    assert payload["kind"] == "recover"
+    assert payload["turn_id"] == "turn_1"
+    assert payload["fencing_token"] == 8
+    assert payload["recovery_id"] == "run_1:8"

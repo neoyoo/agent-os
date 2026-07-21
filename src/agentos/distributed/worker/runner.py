@@ -6,8 +6,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
+from agentos.distributed._execution_outcomes import CommittedExecutionOutcome
 from agentos.distributed.models import (
     ClaimedExecution,
+    LiveFinalResult,
+    LiveRunEvent,
     QueueDelivery,
     ReplayItem,
     RequestScope,
@@ -15,8 +18,15 @@ from agentos.distributed.models import (
     SessionLease,
     project_live_event,
 )
+from agentos.distributed.errors import RunEventTooLargeError
 from agentos.distributed.protocols import ExecutionClaimPort, LeasePort, QueuePort
+from agentos.distributed.run_event_limits import require_run_event_size
+from agentos.distributed.worker._terminal_publication import (
+    terminal_envelope,
+    terminal_event,
+)
 from agentos.runtime.agent_stream import AgentStream
+from agentos.runtime._agent_stream_cleanup import raise_stream_cleanup_failure
 from agentos.runtime.execution import AcceptedTurnExecution
 from agentos.runtime.run_state import RunStatus
 from agentos.runtime.stream_events import (
@@ -68,6 +78,13 @@ class WorkerEventSink(Protocol):
         event: RunEventEnvelope,
     ) -> ReplayItem: ...
 
+    async def ensure_terminal(
+        self,
+        *,
+        scope: RequestScope,
+        event: RunEventEnvelope,
+    ) -> ReplayItem: ...
+
 
 @dataclass(frozen=True, slots=True)
 class WorkerRunner:
@@ -109,9 +126,16 @@ class WorkerRunner:
         target = await self.claims.resolve_delivery(outbox_id=delivery.outbox_id)
         if target is None:
             return False
+        committed = await self.claims.resolve_committed_outcome(
+            outbox_id=delivery.outbox_id,
+        )
+        if committed is not None:
+            if not committed.is_current:
+                await self._ack(delivery)
+                return True
+            return await self._recover_committed_delivery(delivery, committed)
         if target.run.status in _ACKABLE_STATUSES:
-            await self._ack(delivery)
-            return True
+            return False
         if target.run.status not in _EXECUTABLE_STATUSES:
             return False
 
@@ -137,11 +161,17 @@ class WorkerRunner:
                 ttl=self.claim_ttl,
             )
             if claimed is None:
-                refreshed = await self.claims.resolve_delivery(
+                committed = await self.claims.resolve_committed_outcome(
                     outbox_id=delivery.outbox_id,
                 )
-                if refreshed is None or refreshed.run.status not in _ACKABLE_STATUSES:
+                if committed is None:
                     return False
+                if committed.is_current:
+                    await self.leases.ensure_owned(
+                        scope=committed.target.scope,
+                        lease=lease,
+                    )
+                    await self._ensure_committed_outcome(committed)
                 await self._ack(delivery)
                 return True
             if claimed.target != target:
@@ -151,6 +181,34 @@ class WorkerRunner:
                 claimed=claimed,
                 lease=lease,
             )
+            await self._ack(delivery)
+            return True
+        finally:
+            await self.leases.release(scope=target.scope, lease=lease)
+
+    async def _recover_committed_delivery(
+        self,
+        delivery: QueueDelivery,
+        outcome: CommittedExecutionOutcome,
+    ) -> bool:
+        target = outcome.target
+        lease = await self.leases.acquire(
+            scope=target.scope,
+            session_id=target.session_id,
+            owner_id=self.worker_id,
+            ttl=self.lease_ttl,
+        )
+        if lease is None:
+            return False
+        if (
+            lease.scope != target.scope
+            or lease.session_id != target.session_id
+            or lease.owner_id != self.worker_id
+        ):
+            raise RuntimeError("lease does not match the committed outcome")
+        try:
+            await self.leases.ensure_owned(scope=target.scope, lease=lease)
+            await self._ensure_committed_outcome(outcome)
             await self._ack(delivery)
             return True
         finally:
@@ -172,7 +230,22 @@ class WorkerRunner:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if heartbeat in done:
-                await heartbeat
+                try:
+                    await heartbeat
+                except BaseException:
+                    await _cancel_and_wait_strict(execution)
+                    committed = await self.claims.resolve_committed_outcome(
+                        outbox_id=claimed.target.outbox_id,
+                    )
+                    if committed is not None:
+                        if committed.is_current:
+                            await self.leases.ensure_owned(
+                                scope=committed.target.scope,
+                                lease=lease,
+                            )
+                            await self._ensure_committed_outcome(committed)
+                        return
+                    raise
                 raise RuntimeError("claim heartbeat stopped before execution")
             await execution
         except BaseException:
@@ -186,43 +259,83 @@ class WorkerRunner:
         try:
             agent = await self.agent_factory.hydrate(claimed=claimed)
             stream = await agent.run(claimed.execution, stream=True)
-            await self._consume_events(claimed, stream)
+            async with stream:
+                committed = await self._consume_events(claimed, stream)
+            await self._ensure_committed_outcome(committed)
         except BaseException:
             if stream is not None:
                 await stream.aclose()
+                if isinstance(stream, AgentStream):
+                    raise_stream_cleanup_failure(stream)
             raise
 
     async def _consume_events(
         self,
         claimed: ClaimedExecution,
         stream: AgentStream,
-    ) -> None:
+    ) -> CommittedExecutionOutcome:
         sequence = 0
-        terminal_seen = False
-        async with stream:
-            async for event in stream:
-                projected = project_live_event(event)
-                if projected is not None:
-                    envelope = RunEventEnvelope(
-                        tenant_id=claimed.target.scope.tenant_id,
-                        session_id=claimed.target.session_id,
-                        run_id=claimed.target.run.run_id,
-                        turn_id=claimed.execution.input.turn_id,
-                        execution_attempt=claimed.claim.fencing_token,
-                        event_sequence=sequence,
-                        event=projected,
-                        occurred_at=self.clock(),
-                    )
+        async for event in stream:
+            projected = project_live_event(event)
+            if projected is not None and not isinstance(event, _TERMINAL_EVENTS):
+                envelope = self._event_envelope(claimed, sequence, projected)
+                try:
+                    require_run_event_size(envelope)
+                except RunEventTooLargeError as error:
+                    if type(projected) is LiveFinalResult:
+                        continue
+                    event = await stream._fail_active(error)
+                    projected = project_live_event(event)
+                    if projected is None:
+                        raise RuntimeError("run failure event is not observable")
+                else:
                     await self.event_sink.append(
                         scope=claimed.target.scope,
                         event=envelope,
                     )
                     sequence += 1
-                if isinstance(event, _TERMINAL_EVENTS):
-                    terminal_seen = True
-                    break
-        if not terminal_seen:
-            raise RuntimeError("agent stream ended without an authoritative outcome")
+                    continue
+            if isinstance(event, _TERMINAL_EVENTS):
+                committed = await self.claims.resolve_committed_outcome(
+                    outbox_id=claimed.target.outbox_id,
+                )
+                if (
+                    committed is None
+                    or not committed.is_current
+                    or committed.execution_attempt != claimed.claim.fencing_token
+                    or projected != terminal_event(committed)
+                ):
+                    raise RuntimeError("stream terminal does not match committed outcome")
+                return committed
+        raise RuntimeError("agent stream ended without an authoritative outcome")
+
+    async def _ensure_committed_outcome(
+        self,
+        outcome: CommittedExecutionOutcome,
+    ) -> None:
+        envelope = terminal_envelope(outcome)
+        require_run_event_size(envelope)
+        await self.event_sink.ensure_terminal(
+            scope=outcome.target.scope,
+            event=envelope,
+        )
+
+    def _event_envelope(
+        self,
+        claimed: ClaimedExecution,
+        sequence: int,
+        event: LiveRunEvent,
+    ) -> RunEventEnvelope:
+        return RunEventEnvelope(
+            tenant_id=claimed.target.scope.tenant_id,
+            session_id=claimed.target.session_id,
+            run_id=claimed.target.run.run_id,
+            turn_id=claimed.execution.input.turn_id,
+            execution_attempt=claimed.claim.fencing_token,
+            event_sequence=sequence,
+            event=event,
+            occurred_at=self.clock(),
+        )
 
     async def _heartbeat(
         self,
@@ -252,6 +365,17 @@ async def _cancel_and_wait(task: asyncio.Task[object]) -> None:
     if not task.done():
         task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+async def _cancel_and_wait_strict(task: asyncio.Task[object]) -> None:
+    if not task.done():
+        task.cancel()
+    result = (await asyncio.gather(task, return_exceptions=True))[0]
+    if isinstance(result, BaseException) and not isinstance(
+        result,
+        asyncio.CancelledError,
+    ):
+        raise result
 
 
 __all__ = [

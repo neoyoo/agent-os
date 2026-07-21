@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields
-from datetime import datetime
-
+from agentos._json_values import thaw_json_value
 from agentos.distributed.models import (
     LiveTurnCancelled,
     LiveTurnCompleted,
@@ -11,6 +9,7 @@ from agentos.distributed.models import (
     RunEventEnvelope,
     StreamGap,
 )
+from agentos.transports.run_stream import is_terminal_event, project_live_event
 from agentos.transports.a2a._json_codec import compact_json_bytes
 from agentos.transports.a2a.message_types import (
     A2ATaskState,
@@ -24,11 +23,6 @@ from agentos.transports.a2a.operation_types import (
     A2AStreamResponse,
 )
 from agentos.transports.a2a.serialization import operation_response_to_dict
-
-
-_CLOSING_EVENT_TYPES = frozenset(
-    {LiveTurnCompleted, LiveTurnWaiting, LiveTurnFailed, LiveTurnCancelled},
-)
 
 
 def encode_a2a_initial_response(
@@ -79,12 +73,13 @@ def encode_a2a_heartbeat() -> str:
 
 
 def is_a2a_terminal_event(envelope: RunEventEnvelope) -> bool:
-    return type(envelope.event) in _CLOSING_EVENT_TYPES
+    return is_terminal_event(envelope.event)
 
 
 def _status_update(envelope: RunEventEnvelope) -> A2ATaskStatusUpdateEvent:
     event = envelope.event
     event_type = type(event)
+    projection = project_live_event(event)
     state = A2ATaskState.TASK_STATE_WORKING
     if event_type is LiveTurnWaiting:
         state = (
@@ -103,20 +98,10 @@ def _status_update(envelope: RunEventEnvelope) -> A2ATaskStatusUpdateEvent:
         context_id=envelope.session_id,
         status=A2ATaskStatus(state),
         metadata={
-            "agentosEventKind": envelope.event_kind,
-            "agentosEvent": _event_payload(event),
+            "agentosEventKind": projection.kind,
+            "agentosEvent": thaw_json_value(projection.data),
         },
     )
-
-
-def _event_payload(event: object) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    for field in fields(event):
-        value = getattr(event, field.name)
-        payload[field.name] = (
-            value.isoformat() if isinstance(value, datetime) else value
-        )
-    return payload
 
 
 def _frame(data: dict[str, object], *, event_id: str | None = None) -> str:

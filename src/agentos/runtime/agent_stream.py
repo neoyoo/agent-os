@@ -6,6 +6,10 @@ from threading import RLock
 from types import TracebackType
 from typing import Self, TypeAlias
 
+from agentos.runtime._agent_stream_failure import (
+    FailureControl,
+    StreamFailureController,
+)
 from agentos.runtime._agent_stream_coordination import (
     CancelReservation,
     CleanupCallback,
@@ -13,9 +17,7 @@ from agentos.runtime._agent_stream_coordination import (
     InterruptController,
     OneShotSignal,
     PendingSyncWork,
-    PendingTerminalFailure,
     StreamState,
-    TaskIdentity,
 )
 from agentos.runtime._agent_stream_cleanup import (
     finish_stream_close,
@@ -51,12 +53,15 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
         cleanup: CleanupCallback,
         pending_sync_work: PendingSyncWork | None,
         created_loop: asyncio.AbstractEventLoop,
+        failure_control: FailureControl | None = None,
     ) -> Self:
         self = cls.__new__(cls)
         self._release = release
         self._events = events
         self._cleanup = cleanup
         self._pending_sync_work = pending_sync_work
+        self._cleanup_error: BaseException | None = None
+        self._failure = StreamFailureController(failure_control)
         self._state = StreamState.CREATED
         self._state_lock = RLock()
         self._consumer_task: asyncio.Task[object] | None = None
@@ -69,7 +74,6 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
             close=self._close_coordinator,
             created_loop=created_loop,
         )
-        self._terminal_failure: PendingTerminalFailure | None = None
         return self
 
     @property
@@ -113,15 +117,7 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
                 suppress_failure=True,
             )
             with self._state_lock:
-                terminal_failure = self._terminal_failure
-                if terminal_failure is not None and terminal_failure.belongs_to(
-                    current_task,
-                    current_loop,
-                ):
-                    self._terminal_failure = None
-                    terminal_error = terminal_failure.error
-                else:
-                    terminal_error = None
+                terminal_error = self._failure.pop_for(current_task, current_loop)
             if terminal_error is not None:
                 raise terminal_error
             raise StopAsyncIteration
@@ -141,10 +137,7 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
         if isinstance(event, TurnStreamFailed):
             assert current_task is not None
             with self._state_lock:
-                self._terminal_failure = PendingTerminalFailure(
-                    error=event.error,
-                    consumer=TaskIdentity(current_task, current_loop),
-                )
+                self._failure.capture(event.error, current_task, current_loop)
             await self._finish_close(close_events=True, original_error=event.error)
         elif isinstance(
             event,
@@ -170,6 +163,10 @@ class AgentStream(AsyncIterator[TurnStreamEvent]):
     async def aclose(self) -> None:
         """幂等关闭流并等待 cleanup 完成。"""
         await self._close(original_error=None)
+
+    async def _fail_active(self, error: Exception) -> TurnStreamFailed:
+        """通过 runtime 内部控制口拒绝当前 event 并终结执行。"""
+        return await self._failure.fail_active(self, error)
 
     def _transform_events(self, transform: _EventTransform) -> None:
         """在首次消费前替换事件投影，同时保留当前 Stream 句柄。"""

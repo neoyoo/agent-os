@@ -494,3 +494,126 @@ def test_normal_source_exhaustion_still_closes_source_before_cleanup() -> None:
         assert stream.closed
 
     asyncio.run(scenario())
+
+
+def test_failure_control_rejects_base_exception() -> None:
+    async def scenario() -> None:
+        async def events():
+            yield TurnStreamStarted("hello")
+
+        stream = ExecutionLease().open_stream(
+            events(),
+            cleanup=lambda: None,
+            failure_control=lambda error: _failed_event(error),
+        )
+
+        with pytest.raises(TypeError, match="error must be Exception"):
+            await stream._fail_active(KeyboardInterrupt())  # type: ignore[arg-type]
+        await stream.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_failure_control_requires_the_active_consumer() -> None:
+    async def scenario() -> None:
+        async def events():
+            yield TurnStreamStarted("hello")
+            await asyncio.Event().wait()
+
+        stream = ExecutionLease().open_stream(
+            events(),
+            cleanup=lambda: None,
+            failure_control=lambda error: _failed_event(error),
+        )
+        await anext(stream)
+
+        async def fail_from_another_task() -> None:
+            with pytest.raises(AgentStreamConsumerError):
+                await stream._fail_active(RuntimeError("rejected"))
+
+        await asyncio.create_task(fail_from_another_task())
+        await stream.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_failure_control_can_only_terminalize_once() -> None:
+    async def scenario() -> None:
+        calls = 0
+
+        async def events():
+            yield TurnStreamStarted("hello")
+            await asyncio.Event().wait()
+
+        async def fail(error: Exception) -> TurnStreamFailed:
+            nonlocal calls
+            calls += 1
+            return TurnStreamFailed(error)
+
+        stream = ExecutionLease().open_stream(
+            events(),
+            cleanup=lambda: None,
+            failure_control=fail,
+        )
+        await anext(stream)
+        error = RuntimeError("rejected")
+
+        assert (await stream._fail_active(error)).error is error
+        with pytest.raises(AgentStreamConsumerError):
+            await stream._fail_active(RuntimeError("duplicate"))
+        with pytest.raises(RuntimeError) as raised:
+            await anext(stream)
+
+        assert raised.value is error
+        assert calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_failure_control_close_race_closes_without_terminal_duplication() -> None:
+    async def scenario() -> None:
+        control_started = asyncio.Event()
+        never_return = asyncio.Event()
+        cleanup_calls = 0
+        control_calls = 0
+
+        async def events():
+            yield TurnStreamStarted("hello")
+            await asyncio.Event().wait()
+
+        async def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+
+        async def fail(error: Exception) -> TurnStreamFailed:
+            nonlocal control_calls
+            control_calls += 1
+            control_started.set()
+            await never_return.wait()
+            return TurnStreamFailed(error)
+
+        stream = ExecutionLease().open_stream(
+            events(),
+            cleanup=cleanup,
+            failure_control=fail,
+        )
+
+        async def consume_and_fail() -> TurnStreamFailed:
+            await anext(stream)
+            return await stream._fail_active(RuntimeError("rejected"))
+
+        consumer = asyncio.create_task(consume_and_fail())
+        await control_started.wait()
+        await asyncio.wait_for(stream.aclose(), timeout=1)
+        result = (await asyncio.gather(consumer, return_exceptions=True))[0]
+
+        assert isinstance(result, asyncio.CancelledError)
+        assert stream.closed
+        assert control_calls == 1
+        assert cleanup_calls == 1
+
+    asyncio.run(scenario())
+
+
+async def _failed_event(error: Exception) -> TurnStreamFailed:
+    return TurnStreamFailed(error)

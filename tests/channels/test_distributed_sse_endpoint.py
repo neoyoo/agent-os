@@ -26,7 +26,7 @@ from agentos.distributed.services import (
 )
 from agentos.runtime.run_state import RunStatus
 from agentos.transports.http.request_types import HttpHeaders
-from agentos.transports.sse.cursors import encode_cursor
+from agentos.transports.run_stream import encode_cursor
 from tests.planning._async import async_test
 
 

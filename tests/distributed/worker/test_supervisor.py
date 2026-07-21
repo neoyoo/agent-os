@@ -91,8 +91,8 @@ def test_worker_runs_full_receive_to_ack_path_and_drains_receive() -> None:
             "agent.hydrate",
             "agent.run:True",
             "run_driver.commit",
-            "event.append",
             "stream.aclose",
+            "event.ensure_terminal",
             "queue.ack",
             "lease.release",
         ]

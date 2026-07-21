@@ -1,11 +1,12 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from agentos.distributed.errors import (
     DeliveryUnavailableError,
     DistributedStoreClosedError,
+    RunEventTooLargeError,
 )
 from agentos.distributed.models import (
     LiveContentDelta,
@@ -26,8 +27,23 @@ from agentos.distributed.models import (
     StreamGap,
 )
 from agentos.distributed.redis.replay import RedisEventReplayAdapter
+from agentos.distributed.run_event_limits import MAX_RUN_EVENT_JSON_BYTES
+from agentos.distributed.postgres._state_records import run_read_model
+from agentos.distributed.worker.runner import WorkerRunner
+from agentos.runtime.run_state import RunStatus
+from agentos.runtime.stream_events import FinalResult, TurnStreamCompleted
 
 from _fake_redis import FakeAsyncRedis
+from tests.distributed.worker._fakes import (
+    DELIVERY,
+    FakeAgent,
+    FakeAgentFactory,
+    FakeClaims,
+    FakeLeases,
+    FakeQueue,
+    ScriptedStream,
+    claimed_execution,
+)
 
 
 SCOPE = RequestScope("tenant_1", "user_1")
@@ -85,6 +101,19 @@ def _event(sequence: int, text: str) -> RunEventEnvelope:
     )
 
 
+def _terminal() -> RunEventEnvelope:
+    return RunEventEnvelope(
+        tenant_id=SCOPE.tenant_id,
+        session_id="session_1",
+        run_id="run_1",
+        turn_id="turn_1",
+        execution_attempt=7,
+        event_sequence=9_007_199_254_740_991,
+        event=LiveTurnCompleted(),
+        occurred_at=NOW,
+    )
+
+
 def test_event_replay_round_trips_history_and_detects_trimmed_cursor_gap() -> None:
     async def scenario() -> None:
         redis = FakeAsyncRedis()
@@ -121,6 +150,168 @@ def test_event_replay_round_trips_history_and_detects_trimmed_cursor_gap() -> No
             oldest_available_cursor=second.cursor,
             reason="trimmed",
         )
+
+    asyncio.run(scenario())
+
+
+def test_event_replay_rejects_oversized_event_before_redis_write() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(client=redis)
+
+        with pytest.raises(RunEventTooLargeError):
+            await replay.append(
+                scope=SCOPE,
+                event=_event(0, "x" * MAX_RUN_EVENT_JSON_BYTES),
+            )
+
+        assert redis.streams == {}
+
+    asyncio.run(scenario())
+
+
+def test_oversized_result_keeps_completed_read_model_and_replay_terminal() -> None:
+    async def scenario() -> None:
+        content = "结果" * MAX_RUN_EVENT_JSON_BYTES
+        trace: list[str] = []
+        claimed = claimed_execution()
+        claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
+        queue = FakeQueue(trace)
+        leases = FakeLeases(trace)
+        stream = ScriptedStream(
+            trace,
+            (FinalResult(content), TurnStreamCompleted(content)),
+        )
+        factory = FakeAgentFactory(trace, FakeAgent(trace, stream))
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(client=redis)
+        runner = WorkerRunner(
+            claims=claims,
+            queue=queue,
+            leases=leases,
+            agent_factory=factory,
+            event_sink=replay,
+            worker_id="worker_1",
+            topic="runs",
+            claim_ttl=timedelta(minutes=1),
+            lease_ttl=timedelta(seconds=30),
+            heartbeat_interval=timedelta(seconds=10),
+        )
+
+        assert await runner.run_delivery(DELIVERY) is True
+        assert claims.outcome is not None
+        assert claims.outcome.target.run.status is RunStatus.COMPLETED
+
+        batch = await replay.replay(
+            scope=claimed.target.scope,
+            session_id=claimed.target.session_id,
+            run_id=claimed.target.run.run_id,
+            after=None,
+            limit=10,
+        )
+        assert isinstance(batch, ReplayBatch)
+        assert [item.event.event_kind for item in batch.items] == ["turn_completed"]
+
+        read_model = run_read_model(
+            {
+                "tenant_id": claimed.target.scope.tenant_id,
+                "session_id": claimed.target.session_id,
+                "run_id": claimed.target.run.run_id,
+                "status": RunStatus.COMPLETED.value,
+                "wait_kind": None,
+                "wait_handle": None,
+                "wait_detail": None,
+                "wait_not_before": None,
+                "aggregate_version": claims.outcome.committed_version,
+                "result_content": content,
+            },
+        )
+        assert read_model.result is not None
+        assert read_model.result.content == content
+        assert queue.acked == [DELIVERY]
+
+    asyncio.run(scenario())
+
+
+def test_terminal_ensure_is_atomic_and_idempotent() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(client=redis)
+        terminal = _terminal()
+
+        first = await replay.ensure_terminal(scope=SCOPE, event=terminal)
+        duplicate = await replay.ensure_terminal(scope=SCOPE, event=terminal)
+
+        assert duplicate == first
+        assert len(redis.streams["agentos:events:tenant_1:session_1:run_1"]) == 1
+        script, numkeys, args = redis.eval_calls[-1]
+        assert script.splitlines()[1] == "-- agentos:replay:ensure-terminal:v1"
+        assert numkeys == 1
+        assert args[1:3] == (
+            str(terminal.execution_attempt),
+            str(terminal.event_sequence),
+        )
+
+    asyncio.run(scenario())
+
+
+def test_terminal_ensure_rejects_identity_collision() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(client=redis)
+        terminal = _terminal()
+        await replay.ensure_terminal(scope=SCOPE, event=terminal)
+        conflicting = RunEventEnvelope(
+            tenant_id=terminal.tenant_id,
+            session_id=terminal.session_id,
+            run_id=terminal.run_id,
+            turn_id=terminal.turn_id,
+            execution_attempt=terminal.execution_attempt,
+            event_sequence=terminal.event_sequence,
+            event=LiveTurnFailed(),
+            occurred_at=terminal.occurred_at,
+        )
+
+        with pytest.raises(DeliveryUnavailableError):
+            await replay.ensure_terminal(scope=SCOPE, event=conflicting)
+        assert len(redis.streams["agentos:events:tenant_1:session_1:run_1"]) == 1
+
+    asyncio.run(scenario())
+
+
+def test_terminal_ensure_rejects_nonterminal_sentinel_event() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(client=redis)
+        event = _event(9_007_199_254_740_991, "not terminal")
+
+        with pytest.raises(ValueError, match="terminal or waiting"):
+            await replay.ensure_terminal(scope=SCOPE, event=event)
+        assert redis.streams == {}
+
+    asyncio.run(scenario())
+
+
+def test_terminal_ensure_reappends_after_replay_trim() -> None:
+    async def scenario() -> None:
+        redis = FakeAsyncRedis()
+        replay = RedisEventReplayAdapter(client=redis, max_events=1)
+        terminal = _terminal()
+        first = await replay.ensure_terminal(scope=SCOPE, event=terminal)
+        await replay.append(scope=SCOPE, event=_event(0, "later"))
+
+        restored = await replay.ensure_terminal(scope=SCOPE, event=terminal)
+
+        assert restored.cursor != first.cursor
+        assert restored.event == terminal
+        batch = await replay.replay(
+            scope=SCOPE,
+            session_id="session_1",
+            run_id="run_1",
+            after=None,
+            limit=1,
+        )
+        assert batch == ReplayBatch((restored,), restored.cursor)
 
     asyncio.run(scenario())
 

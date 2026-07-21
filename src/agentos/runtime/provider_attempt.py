@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from agentos._sync_work import run_sync
 from agentos.providers import (
     Provider,
+    ProviderContentDelta,
     ProviderRequest,
     ProviderResponse,
     ProviderStreamEvent,
     ProviderStreamOptions,
     complete_response_to_stream_events,
 )
+from agentos.providers.stream import split_provider_content_delta
 from agentos.runtime._async_bridge import (
     _await_cleanup_preserving_cancellation,
     iterate_sync_in_executor,
@@ -124,7 +126,11 @@ class ProviderAttemptRunner:
                 try:
                     async for event in stream:
                         if state.accept_stream_event(event):
-                            yield event
+                            if type(event) is ProviderContentDelta:
+                                for chunk in split_provider_content_delta(event):
+                                    yield chunk
+                            else:
+                                yield event
                 finally:
                     close = getattr(stream, "aclose", None)
                     if callable(close):

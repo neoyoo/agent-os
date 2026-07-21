@@ -337,6 +337,58 @@ def test_agent_executes_accepted_start_with_the_claim_guard() -> None:
     asyncio.run(run())
 
 
+def test_consumer_protocol_failure_reenters_authoritative_run_driver() -> None:
+    async def run() -> None:
+        store = InMemoryRunStore()
+        runs = RunRuntime(
+            session_id="session_1",
+            store=store,
+            id_factory=lambda: "run_1",
+        )
+        loop = make_query_loop(run_runtime=runs)
+        stream = await loop.execute(RunRequest(UserTurnInput("hello")))
+        await anext(stream)
+        error = RunProtocolError("run event exceeds protocol size limit")
+
+        failed = await stream._fail_active(error)
+
+        assert type(failed) is TurnStreamFailed
+        assert failed.error is error
+        assert (await runs.get_run("run_1")).status is RunStatus.FAILED
+        assert stream.closed
+
+    asyncio.run(run())
+
+
+def test_consumer_failure_cannot_override_an_external_terminal_commit() -> None:
+    async def run() -> None:
+        store = InMemoryRunStore()
+        runs = RunRuntime(
+            session_id="session_1",
+            store=store,
+            id_factory=lambda: "run_1",
+        )
+        loop = make_query_loop(run_runtime=runs)
+        stream = await loop.execute(RunRequest(UserTurnInput("hello")))
+        await anext(stream)
+        current = await runs.get_run("run_1")
+        await runs.cancel(
+            "run_1",
+            guard=RunWriteGuard(current.aggregate_version),
+            turn_id=None,
+        )
+        error = RunProtocolError("run event exceeds protocol size limit")
+
+        with pytest.raises(RunProtocolError) as caught:
+            await stream._fail_active(error)
+
+        assert caught.value is error
+        assert (await runs.get_run("run_1")).status is RunStatus.CANCELLED
+        assert stream.closed
+
+    asyncio.run(run())
+
+
 def test_accepted_start_recovery_is_idempotent_after_checkpoint_hydration() -> None:
     async def run() -> None:
         artifact_id = "art_12345678-1234-4234-9234-123456789abc"

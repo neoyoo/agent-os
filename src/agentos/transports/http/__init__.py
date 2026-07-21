@@ -9,6 +9,7 @@ from agentos.transports.http.errors import (
     RequestTooLargeError,
     UnsupportedMediaTypeError,
 )
+from agentos.transports.http._error_mapping import map_http_error
 from agentos.transports.http.request_decoder import (
     decode_artifact_list_request,
     decode_artifact_upload,
@@ -41,4 +42,5 @@ __all__ = [
     "decode_last_event_id",
     "decode_run_command",
     "decode_run_submission",
+    "map_http_error",
 ]

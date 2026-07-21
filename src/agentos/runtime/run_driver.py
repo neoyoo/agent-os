@@ -13,6 +13,7 @@ from agentos.runtime._execution_control import (
     TerminalFailureRequest,
     WaitingCheckpointRequest,
 )
+from agentos.runtime._run_failure_control import align_terminal_turn
 from agentos.runtime.query_loop_support import _FinalContent
 from agentos.runtime.errors import (
     CommandStateError,
@@ -68,6 +69,7 @@ class RunDriver:
     _preparations: dict[str, AcceptedTurnPreparation] = field(default_factory=dict, init=False)
     _local_run_ids: set[str] = field(default_factory=set, init=False)
     _turn_ids: dict[str, str] = field(default_factory=dict, init=False)
+    _turns: dict[str, TurnState | None] = field(default_factory=dict, init=False)
     _uncertain_commits: set[str] = field(default_factory=set, init=False)
 
     async def prepare(
@@ -171,6 +173,7 @@ class RunDriver:
                 input=turn_input,
                 preparation=preparation,
             )
+            self._turns[run_id] = turn
             if turn is not None:
                 self._turn_ids[run_id] = turn.id
 
@@ -320,7 +323,7 @@ class RunDriver:
             yield self.turns.complete(turn, final_content)
         except asyncio.CancelledError as error:
             final_status = await self._cancel_preserving(run_id, error)
-            _align_cancelled_turn(turn, final_status)
+            align_terminal_turn(turn, final_status)
             raise
         except Exception as error:
             if run_id in self._uncertain_commits:
@@ -335,13 +338,15 @@ class RunDriver:
                 yield self.turns.fail(turn, error, mark_turn=False)
                 return
             state = await self.runs.get_run(run_id)
-            if state.status is RunStatus.RUNNING:
-                await self._commit_terminal(
-                    run_id=run_id,
-                    guard=self._require_guard(run_id),
-                    status="failed",
-                    turn_id=None if turn is None else turn.id,
-                )
+            if state.status is not RunStatus.RUNNING:
+                align_terminal_turn(turn, state.status)
+                raise
+            await self._commit_terminal(
+                run_id=run_id,
+                guard=self._require_guard(run_id),
+                status="failed",
+                turn_id=None if turn is None else turn.id,
+            )
             for prepared_event in pending:
                 yield prepared_event
             yield self.turns.fail(turn, error)
@@ -473,6 +478,7 @@ class RunDriver:
         self._preparations.pop(run_id, None)
         self._local_run_ids.discard(run_id)
         self._turn_ids.pop(run_id, None)
+        self._turns.pop(run_id, None)
         self._uncertain_commits.discard(run_id)
 
 
@@ -482,14 +488,3 @@ def _next_guard(guard: RunWriteGuard, expected_version: int) -> RunWriteGuard:
         claim_id=guard.claim_id,
         fencing_token=guard.fencing_token,
     )
-
-
-def _align_cancelled_turn(turn: TurnState | None, status: RunStatus | None) -> None:
-    if turn is None or turn.status != "running":
-        return
-    if status is RunStatus.WAITING:
-        turn.mark_waiting()
-    elif status is RunStatus.COMPLETED:
-        turn.complete()
-    elif status is RunStatus.CANCELLED:
-        turn.cancel()

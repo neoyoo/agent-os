@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import cast
 from uuid import uuid4
 
+from agentos.distributed._execution_outcomes import CommittedExecutionOutcome
 from agentos.distributed.errors import ClaimConflictError
 from agentos.distributed.models import (
     ClaimedExecution,
@@ -12,6 +13,10 @@ from agentos.distributed.models import (
     RunDeliveryTarget,
 )
 from agentos.distributed.postgres._claim_records import accepted_input, target_from_row
+from agentos.distributed.postgres._committed_outcomes import (
+    input_matches_outbox,
+    resolve_committed_outcome,
+)
 from agentos.distributed.postgres._claim_preparation import (
     classify_accepted_turn_preparation,
 )
@@ -40,6 +45,10 @@ async def _delivery_target_row(
 ) -> Row | None:
     query = """
         SELECT o.outbox_id, o.tenant_id, o.principal_id, o.session_id,
+               o.payload ->> 'kind' AS outbox_kind,
+               o.payload ->> 'turn_id' AS outbox_turn_id,
+               o.payload ->> 'fencing_token' AS outbox_fencing_token,
+               o.payload ->> 'recovery_id' AS outbox_recovery_id,
                r.run_id, r.status, r.wait_kind, r.wait_handle,
                r.wait_detail, r.wait_not_before, r.aggregate_version
         FROM agentos_distributed_outbox AS o
@@ -48,6 +57,7 @@ async def _delivery_target_row(
          AND r.session_id = o.session_id
          AND r.run_id = o.run_id
         WHERE o.outbox_id = %s
+          AND o.topic = 'agentos.run.execution'
     """
     if for_update:
         query += " FOR UPDATE OF o, r"
@@ -62,22 +72,22 @@ class PostgresClaimStore:
 
     async def resolve_delivery(self, *, outbox_id: str) -> RunDeliveryTarget | None:
         async with self._database.connection() as connection:
-            row = await fetchone(
+            row = await _delivery_target_row(
                 connection,
-                """
-                SELECT o.outbox_id, o.tenant_id, o.principal_id, o.session_id,
-                       r.run_id, r.status, r.wait_kind, r.wait_handle,
-                       r.wait_detail, r.wait_not_before, r.aggregate_version
-                FROM agentos_distributed_outbox AS o
-                JOIN agentos_distributed_runs AS r
-                  ON r.tenant_id = o.tenant_id
-                 AND r.session_id = o.session_id
-                 AND r.run_id = o.run_id
-                WHERE o.outbox_id = %s
-                """,
-                (outbox_id,),
+                outbox_id,
+                for_update=False,
             )
         return None if row is None else target_from_row(row)
+
+    async def resolve_committed_outcome(
+        self,
+        *,
+        outbox_id: str,
+    ) -> CommittedExecutionOutcome | None:
+        return await resolve_committed_outcome(
+            self._database,
+            outbox_id=outbox_id,
+        )
 
     async def claim_pending_turn(
         self,
@@ -139,6 +149,14 @@ class PostgresClaimStore:
                 (scope.tenant_id, target.session_id, target.run.run_id),
             )
             if input_row is None:
+                return None
+            if not input_matches_outbox(
+                input_row,
+                target_row,
+                tenant_id=scope.tenant_id,
+                outbox_id=outbox_id,
+                current_fencing_token=cast(int, session["fencing_token"]),
+            ):
                 return None
             if input_row["principal_id"] != scope.principal_id:
                 raise ClaimConflictError()

@@ -37,6 +37,7 @@ from agentos.runtime import (
     QueryLoop,
     RunRequest,
     SessionState,
+    StatusUpdate,
     TurnStreamCompleted,
     TurnStreamFailed,
     TurnStreamWaiting,
@@ -45,7 +46,11 @@ from agentos.runtime import (
 )
 from agentos.runtime._execution_lease import ExecutionLease
 from agentos.runtime.continuation import ContinuationRuntime
+from agentos.runtime.errors import RunProtocolError
+from agentos.runtime.run_runtime import InMemoryRunStore, RunRuntime
+from agentos.runtime.run_state import RunStatus
 from tests._context_protocol_fixtures import default_context_renderer
+from tests.runtime._query_loop_contract_fixtures import make_query_loop
 
 
 class NoOpCompressionRuntime:
@@ -124,6 +129,33 @@ def _run_turn(
     user_message: str,
 ) -> list[object]:
     return asyncio.run(_collect_turn(instrumented, user_message))
+
+
+def test_instrumented_stream_preserves_authoritative_consumer_failure() -> None:
+    async def run() -> None:
+        runs = RunRuntime(
+            session_id="session_1",
+            store=InMemoryRunStore(),
+            id_factory=lambda: "run_1",
+        )
+        instrumented = instrument_query_loop(
+            make_query_loop(run_runtime=runs),
+            ObservabilityConfig(
+                tracer=InMemoryTracer(),
+                capture_policy=CapturePolicy.metadata_only(),
+            ),
+        )
+        stream = await instrumented.execute(RunRequest(UserTurnInput("hello")))
+        await anext(stream)
+        error = RunProtocolError("run event exceeds protocol size limit")
+
+        failed = await stream._fail_active(error)
+
+        assert type(failed) is TurnStreamFailed
+        assert failed.error is error
+        assert (await runs.get_run("run_1")).status is RunStatus.FAILED
+
+    asyncio.run(run())
 
 
 def test_instrument_query_loop_records_full_turn_span_tree(tmp_path: Path) -> None:
@@ -611,6 +643,170 @@ def test_instrumented_query_loop_unconsumed_close_releases_inner_lease(
         await replacement.aclose()
         assert stream.closed
         assert replacement.closed
+
+    asyncio.run(run())
+
+
+def test_instrumented_stream_close_closes_active_inner_generator() -> None:
+    async def run() -> None:
+        inner_closed = asyncio.Event()
+
+        async def events():
+            try:
+                yield StatusUpdate("provider", "working")
+                await asyncio.Event().wait()
+            finally:
+                inner_closed.set()
+
+        lease = ExecutionLease()
+        stream = lease.open_stream(events(), cleanup=lambda: None)
+        inner = SimpleNamespace(
+            execute=lambda request: _return_stream(stream),
+            max_tool_iterations=8,
+            request_builder=SimpleNamespace(latest_request_snapshot=None),
+            session_state=None,
+        )
+        instrumented = InstrumentedQueryLoop(
+            inner,  # type: ignore[arg-type]
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        )
+        returned = await instrumented.execute(RunRequest(UserTurnInput("close")))
+
+        await anext(returned)
+        await returned.aclose()
+
+        assert inner_closed.is_set()
+        assert returned.closed
+
+    asyncio.run(run())
+
+
+def test_instrumented_stream_preserves_inner_iterator_task_identity() -> None:
+    async def run() -> None:
+        inner_closed = asyncio.Event()
+
+        async def events():
+            owner = asyncio.current_task()
+            try:
+                yield StatusUpdate("provider", "working")
+                assert asyncio.current_task() is owner
+                yield TurnStreamCompleted("done")
+            finally:
+                assert asyncio.current_task() is owner
+                inner_closed.set()
+
+        lease = ExecutionLease()
+        stream = lease.open_stream(events(), cleanup=lambda: None)
+        inner = SimpleNamespace(
+            execute=lambda request: _return_stream(stream),
+            max_tool_iterations=8,
+            request_builder=SimpleNamespace(latest_request_snapshot=None),
+            session_state=None,
+        )
+        instrumented = InstrumentedQueryLoop(
+            inner,  # type: ignore[arg-type]
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        )
+        returned = await instrumented.execute(RunRequest(UserTurnInput("same-task")))
+
+        async with returned:
+            events_seen = [event async for event in returned]
+
+        assert [type(event) for event in events_seen] == [
+            StatusUpdate,
+            TurnStreamCompleted,
+        ]
+        assert inner_closed.is_set()
+
+    asyncio.run(run())
+
+
+def test_instrumented_stream_does_not_prefetch_inner_events() -> None:
+    async def run() -> None:
+        second_requested = asyncio.Event()
+
+        async def events():
+            yield StatusUpdate("provider", "working")
+            second_requested.set()
+            yield TurnStreamCompleted("done")
+
+        stream = ExecutionLease().open_stream(events(), cleanup=lambda: None)
+        inner = SimpleNamespace(
+            execute=lambda request: _return_stream(stream),
+            max_tool_iterations=8,
+            request_builder=SimpleNamespace(latest_request_snapshot=None),
+            session_state=None,
+        )
+        instrumented = InstrumentedQueryLoop(
+            inner,  # type: ignore[arg-type]
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        )
+        returned = await instrumented.execute(RunRequest(UserTurnInput("demand")))
+
+        assert type(await anext(returned)) is StatusUpdate
+        await asyncio.sleep(0)
+        assert not second_requested.is_set()
+
+        assert type(await anext(returned)) is TurnStreamCompleted
+        assert second_requested.is_set()
+
+    asyncio.run(run())
+
+
+def test_instrumented_stream_cross_task_close_preserves_trace_context() -> None:
+    async def run() -> None:
+        inner_closed = asyncio.Event()
+        event_received = asyncio.Event()
+        keep_consumer_alive = asyncio.Event()
+        cleanup_errors: list[dict[str, object]] = []
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(
+            lambda _loop, context: cleanup_errors.append(context),
+        )
+
+        async def events():
+            try:
+                yield StatusUpdate("provider", "working")
+                await asyncio.Event().wait()
+            finally:
+                inner_closed.set()
+
+        lease = ExecutionLease()
+        stream = lease.open_stream(events(), cleanup=lambda: None)
+        inner = SimpleNamespace(
+            execute=lambda request: _return_stream(stream),
+            max_tool_iterations=8,
+            request_builder=SimpleNamespace(latest_request_snapshot=None),
+            session_state=None,
+        )
+        instrumented = InstrumentedQueryLoop(
+            inner,  # type: ignore[arg-type]
+            tracer=InMemoryTracer(),
+            capture_policy=CapturePolicy.metadata_only(),
+        )
+        returned = await instrumented.execute(RunRequest(UserTurnInput("close")))
+
+        async def consume_one() -> None:
+            await anext(returned)
+            event_received.set()
+            await keep_consumer_alive.wait()
+
+        consumer = asyncio.create_task(consume_one())
+        try:
+            await event_received.wait()
+            await asyncio.create_task(returned.aclose())
+            await asyncio.gather(consumer, return_exceptions=True)
+        finally:
+            keep_consumer_alive.set()
+            loop.set_exception_handler(previous_handler)
+
+        assert inner_closed.is_set()
+        assert returned.closed
+        assert cleanup_errors == []
 
     asyncio.run(run())
 

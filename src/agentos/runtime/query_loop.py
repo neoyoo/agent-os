@@ -21,6 +21,7 @@ from agentos.providers import (
     ProviderThinkingDelta,
 )
 from agentos.runtime._execution_lease import ExecutionLease
+from agentos.runtime._run_failure_control import fail_open_run
 from agentos.runtime.agent_stream import AgentStream
 from agentos.runtime.event_bus import (
     AgentEvent,
@@ -247,6 +248,7 @@ class QueryLoop:
                     events,
                     cleanup=lambda: self._run_driver.cleanup_open(run_id),
                     pending_sync_work=tracker,
+                    failure_control=partial(fail_open_run, self._run_driver, run_id),
                 )
             except BaseException:
                 await self._run_driver.cancel_open(run_id)

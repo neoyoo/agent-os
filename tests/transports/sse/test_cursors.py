@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from agentos.transports.sse.cursors import (
-    SseCursorError,
+from agentos.transports.run_stream import (
+    RunStreamCursorError,
     decode_cursor,
     encode_cursor,
 )
@@ -66,7 +66,7 @@ def test_cursor_cannot_cross_authenticated_scope(
         position="123-0",
     )
 
-    with pytest.raises(SseCursorError, match="^invalid SSE cursor$"):
+    with pytest.raises(RunStreamCursorError, match="^invalid run stream cursor$"):
         decode_cursor(
             token,
             tenant_id=tenant_id,
@@ -85,7 +85,7 @@ def test_cursor_cannot_cross_authenticated_scope(
     ],
 )
 def test_cursor_rejects_invalid_or_oversized_token(token: str) -> None:
-    with pytest.raises(SseCursorError, match="^invalid SSE cursor$"):
+    with pytest.raises(RunStreamCursorError, match="^invalid run stream cursor$"):
         decode_cursor(
             token,
             tenant_id="tenant_1",
@@ -107,7 +107,7 @@ def test_cursor_rejects_noncanonical_json_version_and_position() -> None:
     ]
 
     for value in values:
-        with pytest.raises(SseCursorError, match="^invalid SSE cursor$"):
+        with pytest.raises(RunStreamCursorError, match="^invalid run stream cursor$"):
             decode_cursor(
                 token(value),
                 tenant_id="tenant_1",
@@ -118,7 +118,7 @@ def test_cursor_rejects_noncanonical_json_version_and_position() -> None:
 
 @pytest.mark.parametrize("scope_part", ["scope part", "scope\x00part", "s" * 256])
 def test_cursor_rejects_invalid_scope_identifier(scope_part: str) -> None:
-    with pytest.raises(SseCursorError, match="^invalid SSE cursor$"):
+    with pytest.raises(RunStreamCursorError, match="^invalid run stream cursor$"):
         encode_cursor(
             tenant_id=scope_part,
             session_id="session_1",

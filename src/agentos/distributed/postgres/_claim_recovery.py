@@ -84,7 +84,11 @@ async def recover_expired(
                 source_kind="recover",
                 source_id=source_id,
                 topic=EXECUTION_TOPIC,
-                payload={"fencing_token": token},
+                payload={
+                    "fencing_token": token,
+                    "recovery_id": source_id,
+                    "turn_id": cast(str, accepted["turn_id"]),
+                },
             )
             target_row = dict(row)
             target_row.update(

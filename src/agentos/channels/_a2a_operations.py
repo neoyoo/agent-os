@@ -35,7 +35,7 @@ from agentos.transports.a2a.operation_types import (
     A2AStreamResponse,
     A2ASubscribeToTaskParams,
 )
-from agentos.transports.sse.cursors import decode_cursor
+from agentos.transports.run_stream import decode_cursor
 
 
 _TERMINAL = frozenset(

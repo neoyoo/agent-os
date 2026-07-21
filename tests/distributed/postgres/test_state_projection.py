@@ -71,6 +71,18 @@ def test_completed_result_is_only_the_terminal_assistant_content() -> None:
     assert result.content == "final answer"
 
 
+def test_completed_result_preserves_content_larger_than_live_event_limit() -> None:
+    content = "x" * (256 * 1024)
+    checkpoint = _checkpoint(
+        CheckpointStoredMessage("message_1", "assistant", content),
+    )
+
+    result = terminal_result_from_checkpoint(checkpoint, RunStatus.COMPLETED)
+
+    assert result is not None
+    assert result.content == content
+
+
 @pytest.mark.parametrize("status", [RunStatus.FAILED, RunStatus.CANCELLED])
 def test_non_completed_terminal_does_not_project_result(status: RunStatus) -> None:
     checkpoint = _checkpoint(

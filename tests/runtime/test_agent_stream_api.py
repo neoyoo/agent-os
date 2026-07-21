@@ -28,6 +28,7 @@ def test_agent_stream_constructor_is_owned_by_the_runtime() -> None:
     signature = str(inspect.signature(AgentStream))
 
     assert signature == "() -> 'None'"
+    assert not hasattr(AgentStream, "fail")
     with pytest.raises(TypeError, match="created by the agent runtime"):
         AgentStream()
 

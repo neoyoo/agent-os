@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from agentos._waiting import WaitReason
+from agentos.distributed._execution_outcomes import CommittedExecutionOutcome
 from agentos.distributed.models import (
     ClaimedExecution,
     ExecutionClaim,
@@ -25,7 +28,7 @@ from agentos.runtime.execution import (
 from agentos.runtime.run import UserTurnInput
 from agentos.runtime.run_runtime import RunWriteGuard
 from agentos.runtime.run_state import RunState, RunStatus
-from agentos.runtime.stream_events import TurnStreamEvent
+from agentos.runtime.stream_events import TurnStreamEvent, TurnStreamFailed
 
 
 NOW = datetime(2026, 7, 20, 12, tzinfo=UTC)
@@ -33,7 +36,12 @@ SCOPE = RequestScope("tenant_1", "principal_1")
 DELIVERY = QueueDelivery("1-0", "outbox_1", 1)
 
 
-def delivery_target(status: RunStatus = RunStatus.QUEUED) -> RunDeliveryTarget:
+def delivery_target(
+    status: RunStatus = RunStatus.QUEUED,
+    *,
+    aggregate_version: int = 3,
+    wait_reason: WaitReason | None = None,
+) -> RunDeliveryTarget:
     return RunDeliveryTarget(
         scope=SCOPE,
         outbox_id=DELIVERY.outbox_id,
@@ -42,8 +50,34 @@ def delivery_target(status: RunStatus = RunStatus.QUEUED) -> RunDeliveryTarget:
             run_id="run_1",
             session_id="session_1",
             status=status,
-            aggregate_version=3,
+            wait_reason=wait_reason,
+            aggregate_version=aggregate_version,
         ),
+    )
+
+
+def committed_outcome(
+    status: RunStatus = RunStatus.COMPLETED,
+    *,
+    execution_attempt: int = 7,
+    committed_version: int = 4,
+    current_version: int | None = None,
+    wait_reason: WaitReason | None = None,
+    turn_id: str = "turn_1",
+) -> CommittedExecutionOutcome:
+    target = delivery_target(
+        status,
+        aggregate_version=(
+            committed_version if current_version is None else current_version
+        ),
+        wait_reason=wait_reason,
+    )
+    return CommittedExecutionOutcome(
+        target=target,
+        turn_id=turn_id,
+        execution_attempt=execution_attempt,
+        committed_version=committed_version,
+        committed_at=NOW,
     )
 
 
@@ -174,18 +208,59 @@ class FakeClaims:
         self.target = target
         self.claimed = claimed
         self.target_after_claim: RunDeliveryTarget | None = None
+        self.outcome_after_claim: CommittedExecutionOutcome | None = None
+        self.outcome: CommittedExecutionOutcome | None = None
+        self.pending_outcome: CommittedExecutionOutcome | None = None
+        if claimed is not None:
+            self.pending_outcome = committed_outcome(
+                execution_attempt=claimed.claim.fencing_token,
+                committed_version=claimed.target.run.aggregate_version + 1,
+                turn_id=claimed.execution.input.turn_id,
+            )
         self.resolve_error: BaseException | None = None
+        self.resolve_outcome_error: BaseException | None = None
         self.resolve_calls = 0
+        self.resolve_outcome_calls = 0
         self.claim_error: BaseException | None = None
         self.heartbeat_error: BaseException | None = None
         self.release_calls = 0
+        self.terminal_rechecked = asyncio.Event()
 
     async def resolve_delivery(self, *, outbox_id: str) -> RunDeliveryTarget | None:
         self.trace.append("postgres.resolve")
         self.resolve_calls += 1
         if self.resolve_error is not None:
             raise self.resolve_error
+        if self.resolve_calls > 1:
+            self.terminal_rechecked.set()
         return self.target
+
+    async def resolve_committed_outcome(
+        self,
+        *,
+        outbox_id: str,
+    ) -> CommittedExecutionOutcome | None:
+        del outbox_id
+        self.trace.append("postgres.resolve_outcome")
+        self.resolve_outcome_calls += 1
+        if self.resolve_outcome_error is not None:
+            raise self.resolve_outcome_error
+        if self.resolve_outcome_calls > 1:
+            self.terminal_rechecked.set()
+        if self.outcome is None and self.pending_outcome is not None:
+            if "run_driver.commit_failed" in self.trace:
+                pending = self.pending_outcome
+                self.outcome = committed_outcome(
+                    RunStatus.FAILED,
+                    execution_attempt=pending.execution_attempt,
+                    committed_version=pending.committed_version,
+                    turn_id=pending.turn_id,
+                )
+            elif "run_driver.commit" in self.trace:
+                self.outcome = self.pending_outcome
+            if self.outcome is not None:
+                self.target = self.outcome.target
+        return self.outcome
 
     async def claim_pending_turn(
         self,
@@ -200,6 +275,9 @@ class FakeClaims:
             raise self.claim_error
         if self.target_after_claim is not None:
             self.target = self.target_after_claim
+        if self.outcome_after_claim is not None:
+            self.outcome = self.outcome_after_claim
+            self.target = self.outcome.target
         return self.claimed
 
     async def heartbeat(
@@ -293,6 +371,7 @@ class FakeEventSink:
         self.trace = trace
         self.events: list[RunEventEnvelope] = []
         self.appended = asyncio.Event()
+        self.ensure_error: BaseException | None = None
 
     async def append(
         self,
@@ -305,6 +384,21 @@ class FakeEventSink:
         self.appended.set()
         return ReplayItem(f"cursor_{len(self.events)}", event)
 
+    async def ensure_terminal(
+        self,
+        *,
+        scope: RequestScope,
+        event: RunEventEnvelope,
+    ) -> ReplayItem:
+        del scope
+        self.trace.append("event.ensure_terminal")
+        if self.ensure_error is not None:
+            raise self.ensure_error
+        if event not in self.events:
+            self.events.append(event)
+        self.appended.set()
+        return ReplayItem(f"cursor_{self.events.index(event) + 1}", event)
+
 
 class ScriptedStream:
     def __init__(
@@ -313,10 +407,16 @@ class ScriptedStream:
         events: tuple[TurnStreamEvent, ...],
         *,
         terminal_gate: asyncio.Event | None = None,
+        terminal_return_gate: asyncio.Event | None = None,
+        on_terminal_commit: Callable[[], None] | None = None,
+        close_error: BaseException | None = None,
     ) -> None:
         self.trace = trace
         self.events = events
         self.terminal_gate = terminal_gate
+        self.terminal_return_gate = terminal_return_gate
+        self.on_terminal_commit = on_terminal_commit
+        self.close_error = close_error
         self.started = asyncio.Event()
         self.cleanup_finished = asyncio.Event()
         self.closed = False
@@ -334,6 +434,10 @@ class ScriptedStream:
             if self.terminal_gate is not None:
                 await self.terminal_gate.wait()
             self.trace.append("run_driver.commit")
+            if self.on_terminal_commit is not None:
+                self.on_terminal_commit()
+            if self.terminal_return_gate is not None:
+                await self.terminal_return_gate.wait()
         self._index += 1
         return event
 
@@ -348,6 +452,13 @@ class ScriptedStream:
             self.trace.append("stream.aclose")
             self.closed = True
             self.cleanup_finished.set()
+            if self.close_error is not None:
+                raise self.close_error
+
+    async def _fail_active(self, error: Exception) -> TurnStreamFailed:
+        self.trace.append("run_driver.commit_failed")
+        await self.aclose()
+        return TurnStreamFailed(error)
 
 
 class FakeAgent:

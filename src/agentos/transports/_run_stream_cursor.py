@@ -18,11 +18,11 @@ _POSITION = re.compile(r"(?:0|[1-9][0-9]*)-(?:0|[1-9][0-9]*)")
 _SCOPE = re.compile(r"[0-9a-f]{64}")
 
 
-class SseCursorError(ValueError):
-    """公开 SSE cursor 不满足 canonical scoped contract。"""
+class RunStreamCursorError(ValueError):
+    """Public cursor does not satisfy the canonical scoped contract."""
 
     def __init__(self) -> None:
-        super().__init__("invalid SSE cursor")
+        super().__init__("invalid run stream cursor")
 
 
 def encode_cursor(
@@ -32,7 +32,7 @@ def encode_cursor(
     run_id: str,
     position: str,
 ) -> str:
-    """把 Redis position 编码为 tenant/session/run-scoped cursor。"""
+    """Encode a raw replay position as a scoped public cursor."""
 
     _validate_scope_parts(tenant_id, session_id, run_id)
     _validate_position(position)
@@ -50,7 +50,7 @@ def encode_cursor(
     ).encode("ascii")
     token = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
     if len(token.encode("ascii")) > MAX_CURSOR_BYTES:
-        raise SseCursorError()
+        raise RunStreamCursorError()
     return token
 
 
@@ -61,7 +61,7 @@ def decode_cursor(
     session_id: str,
     run_id: str,
 ) -> str:
-    """校验 canonical cursor 与当前已鉴权 scope，并返回 Redis position。"""
+    """Validate a public cursor against the authorized run scope."""
 
     _validate_scope_parts(tenant_id, session_id, run_id)
     if (
@@ -71,7 +71,7 @@ def decode_cursor(
         or len(token.encode("ascii")) > MAX_CURSOR_BYTES
         or _TOKEN.fullmatch(token) is None
     ):
-        raise SseCursorError()
+        raise RunStreamCursorError()
     try:
         padded = token + "=" * (-len(token) % 4)
         raw = base64.b64decode(padded, altchars=b"-_", validate=True)
@@ -81,9 +81,9 @@ def decode_cursor(
             parse_constant=_reject_constant,
         )
     except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        raise SseCursorError() from None
+        raise RunStreamCursorError() from None
     if type(payload) is not dict or set(payload) != {"position", "scope", "version"}:
-        raise SseCursorError()
+        raise RunStreamCursorError()
     position = payload["position"]
     scope = payload["scope"]
     version = payload["version"]
@@ -94,18 +94,18 @@ def decode_cursor(
         or version != CURSOR_VERSION
         or _SCOPE.fullmatch(scope) is None
     ):
-        raise SseCursorError()
+        raise RunStreamCursorError()
     _validate_position(position)
     expected_scope = _scope_digest(tenant_id, session_id, run_id)
     if not hmac.compare_digest(scope, expected_scope):
-        raise SseCursorError()
+        raise RunStreamCursorError()
     if encode_cursor(
         tenant_id=tenant_id,
         session_id=session_id,
         run_id=run_id,
         position=position,
     ) != token:
-        raise SseCursorError()
+        raise RunStreamCursorError()
     return position
 
 
@@ -124,12 +124,12 @@ def _validate_scope_parts(tenant_id: str, session_id: str, run_id: str) -> None:
         )
         for value in (tenant_id, session_id, run_id)
     ):
-        raise SseCursorError()
+        raise RunStreamCursorError()
 
 
 def _validate_position(position: str) -> None:
     if type(position) is not str or _POSITION.fullmatch(position) is None:
-        raise SseCursorError()
+        raise RunStreamCursorError()
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -148,7 +148,7 @@ def _reject_constant(_value: str) -> None:
 __all__ = [
     "CURSOR_VERSION",
     "MAX_CURSOR_BYTES",
-    "SseCursorError",
+    "RunStreamCursorError",
     "decode_cursor",
     "encode_cursor",
 ]

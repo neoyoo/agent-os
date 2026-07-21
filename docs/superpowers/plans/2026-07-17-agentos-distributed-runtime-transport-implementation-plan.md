@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：Wave 0-4 已完成，下一阶段进入 Wave 5
+> 状态：Wave 0-4 与 Wave 5A 已完成，下一阶段进入 Wave 5B
 >
 > 日期：2026-07-17
 >
@@ -22,7 +22,8 @@
 - Wave 2：Distributed Shared Contract 已冻结并完成；
 - Wave 3：PostgreSQL、Redis、Worker/Relay 与 Distributed Profile 已完成；
 - Wave 4：HTTP/SSE/Artifact、A2A wire、A2A durable push 和 Channel Integration 已完成；
-- 下一阶段：Wave 5 WebSocket、CLI 和 Team 拆分；OCR 仍明确排除。
+- Wave 5A：Shared Run Stream、WebSocket wire/channel/ASGI 与 terminal publication recovery 已完成；
+- 下一阶段：Wave 5B Migration authority 与 CLI；OCR 仍明确排除。
 
 Wave 4 收口证据：
 
@@ -32,6 +33,15 @@ Wave 4 收口证据：
 - Spec Compliance Review：`P0=0, P1=0, P2=0`；
 - Code Quality/Security Review：`P0=0, P1=0`；剩余 P2 为 ASGI 限流与 SSE 连接并发准入
   尚未冻结具体合同，登记到 Wave 6D 发布门禁。
+
+Wave 5A 收口证据：
+
+- 全量测试：`3850 passed, 22 skipped`；
+- Architecture：`144 passed`；Ruff、`compileall`、`git diff --check` 全部通过；
+- `AgentStream`、`QueryLoop`、`RunDriver` 分别为 246、499、490 行，未上调硬阈值；
+- Contract Compliance Review：`P0=0, P1=0`；Code Quality Review：`P0=0, P1=0`；
+- 非阻断 P2：WebSocket 输入适配防御增强、committed outcome 长 Run 查询优化、gap 双 API
+  收敛，保留为后续质量优化，不改变 Wave 5A 协议正确性与持久真相。
 
 ## 1. 完成标准
 
@@ -686,6 +696,23 @@ Migration authority 和 internal Team start 由主线 Owner 修改；支线不�
 `agentos.run.v1`、request ID 幂等身份、逐资源 auth、multi-run subscription、cursor resume、
 gap、disconnect 不取消 Run、显式 cancel 和双重 bytes/count backpressure。slow consumer 只使用
 已经成功发送的 cursor，发送稳定 error 后以 `4408` 关闭并 exactly-once 释放 subscription。
+
+Shared Run Stream hard max 的主线集成必须同时完成：Provider UTF-8 delta 预分片；超限 final result
+省略但保留 COMPLETED/read model/`turn_completed`；超限 pre-terminal event 通过非 Public 的
+AgentStream failure control 返回 RunDriver 权威 FAILED，不使用跨 observability/sync-work generator
+的 `athrow`；observability wrapper 确定性关闭内层 generator。另以 Event/Barrier 覆盖 terminal
+commit 清 claim 后 heartbeat 失败的竞态：PostgreSQL 已终态时完成 terminal append 后 ACK，仍为
+非终态的 stale fence 关闭 stream 且 no-ACK。
+
+terminal publication recovery 由主线补齐：新增 internal `CommittedExecutionOutcome` 与按 execution
+`outbox_id` 的 PostgreSQL 查询；Worker 使用保留 `event_sequence=2^53-1` 从 committed checkpoint
+稳定重建 terminal envelope；Redis 使用单个 Lua 原子 ensure，按稳定 event identity 去重且不维护
+无界旁路索引。初次 resolve 已终态、claim-none 后复核已终态、heartbeat 复核同 execution 已终态三条
+路径统一进入 recovery。superseded delivery 只 ACK，不得 claim 后续 input；外部 cancel 的新 fence
+先关闭旧 stream，再按新 committed outcome 发布。任一查询、校验、stream cleanup 或 Redis ensure
+失败均 no-ACK，recovery 不 hydrate Agent、不调用 Provider/Tool。
+current outcome 的 recovery 必须先 acquire/ensure Session Lease；heartbeat failure 一律先取消并回收
+execution，再在 Lease 仍归当前 Worker 时补发 canonical terminal，不再等待失权 generator 继续产出。
 
 提交：`feat: add websocket command and event channel`
 

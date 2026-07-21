@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from threading import Condition, Lock
 from typing import TYPE_CHECKING
 
@@ -10,7 +10,7 @@ from agentos.runtime._agent_stream_coordination import (
     PendingSyncWork,
 )
 from agentos.runtime.errors import AgentBusyError
-from agentos.runtime.stream_events import TurnStreamEvent
+from agentos.runtime.stream_events import TurnStreamEvent, TurnStreamFailed
 
 if TYPE_CHECKING:
     from agentos.runtime.agent_stream import AgentStream
@@ -58,6 +58,7 @@ class ExecutionLease:
         *,
         cleanup: CleanupCallback,
         pending_sync_work: PendingSyncWork | None = None,
+        failure_control: Callable[[Exception], Awaitable[TurnStreamFailed]] | None = None,
     ) -> AgentStream:
         """立即获取 lease 并创建惰性的异步事件流。"""
         reservation = self.reserve()
@@ -67,6 +68,7 @@ class ExecutionLease:
                 events,
                 cleanup=cleanup,
                 pending_sync_work=pending_sync_work,
+                failure_control=failure_control,
             )
         finally:
             self.cancel_reservation(reservation)
@@ -78,6 +80,7 @@ class ExecutionLease:
         *,
         cleanup: CleanupCallback,
         pending_sync_work: PendingSyncWork | None = None,
+        failure_control: Callable[[Exception], Awaitable[TurnStreamFailed]] | None = None,
     ) -> AgentStream:
         """把 prepare 前的 reservation 原子转换为活跃 Stream。"""
         from agentos.runtime.agent_stream import AgentStream
@@ -96,6 +99,7 @@ class ExecutionLease:
                     cleanup=cleanup,
                     pending_sync_work=pending_sync_work,
                     created_loop=loop,
+                    failure_control=failure_control,
                 )
             finally:
                 self._reservation = None

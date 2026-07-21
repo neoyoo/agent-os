@@ -7,6 +7,9 @@ from typing import Protocol, TypeAlias
 from agentos.providers.base import Provider, ProviderRequest, ProviderResponse
 
 
+MAX_PROVIDER_CONTENT_DELTA_BYTES = 32 * 1024
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderStreamOptions:
     """控制 provider streaming 的单次请求选项。"""
@@ -139,13 +142,39 @@ def complete_response_to_stream_events(
             text=thinking_text,
         )
     if response.content:
-        yield ProviderContentDelta(
-            request_id=request_id,
-            index=1,
-            text=response.content,
+        yield from split_provider_content_delta(
+            ProviderContentDelta(
+                request_id=request_id,
+                index=1,
+                text=response.content,
+            ),
         )
     yield ProviderStreamCompleted(
         request_id=request_id,
         response=response,
         stop_reason=response.stop_reason,
     )
+
+
+def split_provider_content_delta(
+    event: ProviderContentDelta,
+) -> Iterator[ProviderContentDelta]:
+    """Split content before runtime live-event projection using a UTF-8 budget."""
+
+    if type(event) is not ProviderContentDelta:
+        raise TypeError("event must be ProviderContentDelta")
+    if not event.text:
+        yield event
+        return
+    chunk: list[str] = []
+    chunk_bytes = 0
+    for character in event.text:
+        character_bytes = len(character.encode("utf-8"))
+        if chunk and chunk_bytes + character_bytes > MAX_PROVIDER_CONTENT_DELTA_BYTES:
+            yield ProviderContentDelta(event.request_id, event.index, "".join(chunk))
+            chunk = []
+            chunk_bytes = 0
+        chunk.append(character)
+        chunk_bytes += character_bytes
+    if chunk:
+        yield ProviderContentDelta(event.request_id, event.index, "".join(chunk))
