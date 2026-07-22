@@ -19,7 +19,7 @@ from agentos.multi.team_types import (
     TeamRecord,
 )
 from agentos.runtime.run_state import RunStatus
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 def team_from_row(row: Row, workspace: WorkspaceHandle | None) -> TeamRecord:

@@ -23,7 +23,7 @@ from agentos.multi.types import (
     TaskResult,
     TaskStatus,
 )
-from agentos.workspace import WorkspaceHandle, WorkspaceScope
+from agentos.workspace.models import WorkspaceHandle, WorkspaceScope
 
 
 JsonDict = dict[str, Any]

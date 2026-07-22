@@ -15,6 +15,59 @@ from agentos.workspace import (
 )
 
 
+def test_workspace_leaf_modules_share_canonical_public_identity() -> None:
+    import agentos.workspace as workspace
+    from agentos.workspace.local import (
+        LocalWorkspaceExecutionBackend,
+        LocalWorkspaceProvider as LeafLocalWorkspaceProvider,
+    )
+    from agentos.workspace.models import (
+        SandboxBackend,
+        WORKSPACE_SCOPES,
+        WorkspaceExecutionBackend,
+        WorkspaceExecutionRequest,
+        WorkspaceExecutionResult,
+        WorkspaceHandle as LeafWorkspaceHandle,
+        WorkspaceProvider,
+        WorkspaceRequest as LeafWorkspaceRequest,
+        WorkspaceScope,
+    )
+    from agentos.workspace.policies import (
+        WORKSPACE_EXECUTION_ISOLATION_REQUIRED_COMPONENTS,
+        WorkspaceExecutionError,
+        WorkspaceExecutionIsolationProfile,
+        WorkspaceExecutionPolicy,
+        WorkspacePolicy as LeafWorkspacePolicy,
+        WorkspacePolicyError as LeafWorkspacePolicyError,
+    )
+
+    assert Path(workspace.__file__).name == "__init__.py"
+    assert not (Path(workspace.__file__).parents[1] / "workspace.py").exists()
+    assert workspace.WORKSPACE_SCOPES is WORKSPACE_SCOPES
+    assert workspace.WorkspaceScope is WorkspaceScope
+    assert (
+        workspace.WORKSPACE_EXECUTION_ISOLATION_REQUIRED_COMPONENTS
+        is WORKSPACE_EXECUTION_ISOLATION_REQUIRED_COMPONENTS
+    )
+    assert workspace.WorkspaceHandle is LeafWorkspaceHandle
+    assert workspace.WorkspaceRequest is LeafWorkspaceRequest
+    assert workspace.WorkspaceProvider is WorkspaceProvider
+    assert workspace.WorkspaceExecutionRequest is WorkspaceExecutionRequest
+    assert workspace.WorkspaceExecutionResult is WorkspaceExecutionResult
+    assert workspace.WorkspaceExecutionBackend is WorkspaceExecutionBackend
+    assert workspace.SandboxBackend is SandboxBackend
+    assert workspace.WorkspaceExecutionError is WorkspaceExecutionError
+    assert workspace.WorkspacePolicy is LeafWorkspacePolicy
+    assert workspace.WorkspacePolicyError is LeafWorkspacePolicyError
+    assert workspace.WorkspaceExecutionPolicy is WorkspaceExecutionPolicy
+    assert (
+        workspace.WorkspaceExecutionIsolationProfile
+        is WorkspaceExecutionIsolationProfile
+    )
+    assert workspace.LocalWorkspaceProvider is LeafLocalWorkspaceProvider
+    assert workspace.LocalWorkspaceExecutionBackend is LocalWorkspaceExecutionBackend
+
+
 def test_workspace_handle_rejects_unknown_scope() -> None:
     with pytest.raises(ValueError, match="invalid workspace scope"):
         WorkspaceHandle("workspace_1", "unknown")  # type: ignore[arg-type]

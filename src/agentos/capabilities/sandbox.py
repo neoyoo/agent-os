@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from agentos.capabilities.tools import RegisteredTool
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 class ToolSandboxError(PermissionError):

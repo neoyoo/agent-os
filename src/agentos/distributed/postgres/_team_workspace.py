@@ -3,11 +3,8 @@ from __future__ import annotations
 from agentos.distributed.models import RequestScope
 from agentos.multi.team_errors import TeamBoundaryError
 from agentos.multi.team_ports import TeamWorkspaceAuthorityPort
-from agentos.workspace import (
-    WorkspaceHandle,
-    WorkspacePolicy,
-    WorkspacePolicyError,
-)
+from agentos.workspace.models import WorkspaceHandle
+from agentos.workspace.policies import WorkspacePolicy, WorkspacePolicyError
 
 
 async def validate_workspace_binding(

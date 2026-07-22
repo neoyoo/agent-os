@@ -26,7 +26,7 @@ from agentos.multi.team_types import (
     TeamMessageRequest,
     TeamRecord,
 )
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 class TeamApplicationPort(Protocol):

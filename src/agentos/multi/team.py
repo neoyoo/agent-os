@@ -21,7 +21,8 @@ from agentos.multi.types import AgentEnvelope
 from agentos.runtime.agent import Agent
 from agentos.runtime.run import LocalContinuationInput
 from agentos.multi.team_notices import TeamNoticeStore
-from agentos.workspace import WorkspaceHandle, WorkspacePolicy, WorkspacePolicyError
+from agentos.workspace.models import WorkspaceHandle
+from agentos.workspace.policies import WorkspacePolicy, WorkspacePolicyError
 
 
 TeamStatus = Literal["active", "deleted"]

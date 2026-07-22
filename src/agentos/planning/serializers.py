@@ -18,7 +18,7 @@ from agentos.planning.models import (
     PlanStepRetryStatus,
     PlanStepStatus,
 )
-from agentos.workspace import WorkspaceHandle, WorkspaceScope
+from agentos.workspace.models import WorkspaceHandle, WorkspaceScope
 
 
 JsonDict = dict[str, Any]

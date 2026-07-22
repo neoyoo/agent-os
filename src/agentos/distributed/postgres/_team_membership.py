@@ -31,7 +31,7 @@ from agentos.multi.team_types import (
     TeamMemberRecord,
     TeamRecord,
 )
-from agentos.workspace import WorkspacePolicy
+from agentos.workspace.policies import WorkspacePolicy
 
 
 async def create_team(

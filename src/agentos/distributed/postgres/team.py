@@ -35,7 +35,7 @@ from agentos.multi.team_types import (
     TeamMessageRequest,
     TeamRecord,
 )
-from agentos.workspace import WorkspacePolicy
+from agentos.workspace.policies import WorkspacePolicy
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
 
 

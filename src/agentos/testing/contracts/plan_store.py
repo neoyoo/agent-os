@@ -18,7 +18,7 @@ from agentos.testing.contracts._checks import (
     require_callable,
     require_not_none,
 )
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 def contract_plan(

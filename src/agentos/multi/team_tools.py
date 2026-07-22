@@ -31,7 +31,7 @@ from agentos.multi.team_types import (
     TeamAccessContext,
     TeamAddressingKind,
 )
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 _MANAGEMENT_TOOLS = frozenset({"team_create", "agent_create", "team_delete"})

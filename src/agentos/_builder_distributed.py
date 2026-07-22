@@ -46,7 +46,7 @@ from agentos.runtime.side_effect_resume_validator import SideEffectResumeValidat
 from agentos.runtime.side_effect_store import SideEffectStore
 from agentos.runtime.tool_payloads import ToolPayloadRuntime
 from agentos.tokens import TokenCounter
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 from typing import TYPE_CHECKING
 

@@ -9,7 +9,7 @@ from agentos.distributed._model_validation import (
     normalize_utc,
     require_identifier,
 )
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 TeamStatus: TypeAlias = Literal["active", "deleted"]

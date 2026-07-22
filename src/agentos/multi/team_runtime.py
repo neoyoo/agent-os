@@ -23,7 +23,8 @@ from agentos.multi.team_types import (
     TeamMessageRequest,
     TeamRecord,
 )
-from agentos.workspace import WorkspaceHandle, WorkspacePolicy, WorkspacePolicyError
+from agentos.workspace.models import WorkspaceHandle
+from agentos.workspace.policies import WorkspacePolicy, WorkspacePolicyError
 
 
 class TeamRuntime:

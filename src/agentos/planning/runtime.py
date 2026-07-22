@@ -78,7 +78,7 @@ from agentos.planning.transitions import (
     record_evidence as _record_evidence,
     retry_step as _retry_step,
 )
-from agentos.workspace import WorkspaceHandle
+from agentos.workspace.models import WorkspaceHandle
 
 
 class PlannerRuntime:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal, Mapping
 
-from agentos.workspace import WorkspaceHandle, WorkspaceScope
+from agentos.workspace.models import WorkspaceHandle, WorkspaceScope
 
 
 PlanStatus = Literal["draft", "running", "completed", "failed", "cancelled"]

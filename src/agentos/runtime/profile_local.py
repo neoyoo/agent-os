@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from agentos.runtime.agent import Agent
-from agentos.workspace import WorkspaceHandle, WorkspaceProvider, WorkspaceRequest
+from agentos.workspace.models import WorkspaceHandle, WorkspaceProvider, WorkspaceRequest
 
 
 class AgentBuilderLike(Protocol):

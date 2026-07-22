@@ -133,26 +133,52 @@ def test_planning_domain_foundation_exists_without_multi_dependency() -> None:
                     segment.startswith(forbidden_infrastructure_prefixes)
                     for segment in segments
                 )
-                imports_workspace_module = imported.startswith("agentos.workspace")
                 if (
                     imported.startswith("agentos.multi")
                     or imports_forbidden_infrastructure
-                    or (isinstance(node, ast.Import) and imports_workspace_module)
                     or (
-                        isinstance(node, ast.ImportFrom)
-                        and imported != "agentos.workspace"
-                        and imports_workspace_module
+                        imported.startswith("agentos.workspace")
+                        and (
+                            isinstance(node, ast.Import)
+                            or imported != "agentos.workspace.models"
+                        )
                     )
                 ):
                     matches.append(
                         f"{path.relative_to(PROJECT_ROOT)} imports {imported}",
                     )
-            if isinstance(node, ast.ImportFrom) and node.module == "agentos.workspace":
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "agentos.workspace.models"
+            ):
                 for alias in node.names:
                     if alias.name not in allowed_workspace_names:
                         matches.append(
                             f"{path.relative_to(PROJECT_ROOT)} imports "
-                            f"agentos.workspace.{alias.name}",
+                            f"agentos.workspace.models.{alias.name}",
+                        )
+
+    assert matches == []
+
+
+def test_runtime_and_multi_do_not_depend_on_workspace_facade_or_local_adapter() -> None:
+    matches: list[str] = []
+    for package_name in ("runtime", "multi"):
+        package_root = PROJECT_ROOT / "src" / "agentos" / package_name
+        for path in package_root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                imports: tuple[str, ...] = ()
+                if isinstance(node, ast.ImportFrom) and node.module is not None:
+                    imports = (node.module,)
+                elif isinstance(node, ast.Import):
+                    imports = tuple(alias.name for alias in node.names)
+                for imported in imports:
+                    if imported == "agentos.workspace" or imported.startswith(
+                        "agentos.workspace.local",
+                    ):
+                        matches.append(
+                            f"{path.relative_to(PROJECT_ROOT)} imports {imported}",
                         )
 
     assert matches == []
