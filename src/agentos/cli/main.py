@@ -1,106 +1,51 @@
 from __future__ import annotations
 
-import argparse
-from importlib.resources import files
-from pathlib import Path
+import asyncio
+import os
 import sys
 
-
-def main(argv: list[str] | None = None) -> int:
-    """agent-os CLI 入口。"""
-
-    parser = argparse.ArgumentParser(prog="agent-os")
-    subcommands = parser.add_subparsers(dest="command", required=True)
-
-    init_parser = subcommands.add_parser("init")
-    init_parser.add_argument("path")
-
-    run_parser = subcommands.add_parser("run")
-    run_parser.add_argument("app", nargs="?", default="agentos_app:app")
-    run_parser.add_argument("--host", default="127.0.0.1")
-    run_parser.add_argument("--port", type=int, default=8000)
-
-    migrate_parser = subcommands.add_parser("migrate")
-    migrate_parser.add_argument("--dsn")
-    migrate_parser.add_argument("--dry-run", action="store_true")
-
-    args = parser.parse_args(argv)
-    if args.command == "init":
-        return _init_project(Path(args.path))
-    if args.command == "run":
-        return _run_asgi(args.app, host=args.host, port=args.port)
-    if args.command == "migrate":
-        return _migrate(dsn=args.dsn, dry_run=args.dry_run)
-    return 2
+from agentos.cli.application import (
+    CliHostFactory,
+    CliInterruptedError,
+    load_cli_host_factory,
+    run_cli_command,
+)
+from agentos.cli.commands.init import run_init
+from agentos.cli.errors import map_cli_error
+from agentos.cli.output import write_error
+from agentos.cli.parser import build_parser
 
 
-def _init_project(path: Path) -> int:
-    path.mkdir(parents=True, exist_ok=True)
-    (path / "pyproject.toml").write_text(
-        "\n".join(
-            [
-                "[project]",
-                'name = "agentos-app"',
-                'version = "0.1.0"',
-                'requires-python = ">=3.11"',
-                'dependencies = ["agent-os"]',
-                "",
-            ],
-        ),
-    )
-    (path / "agentos.toml").write_text(
-        "\n".join(
-            [
-                "[agent]",
-                'provider = "openai-compatible"',
-                'model = "gpt-4.1-mini"',
-                "",
-            ],
-        ),
-    )
-    return 0
+def main(
+    argv: list[str] | None = None,
+    *,
+    host_factory: CliHostFactory | None = None,
+) -> int:
+    """解析并执行一次 CLI 调用，返回稳定的进程退出码。"""
 
-
-def _run_asgi(app: str, *, host: str, port: int) -> int:
     try:
-        import uvicorn
-    except ImportError as error:
-        raise RuntimeError("agent-os run requires installing uvicorn") from error
-    uvicorn.run(app, host=host, port=port)
-    return 0
-
-
-def _migrate(*, dsn: str | None, dry_run: bool) -> int:
-    migrations = _migration_paths()
-    if dry_run or not dsn:
-        for migration in migrations:
-            print(migration)
+        args = build_parser().parse_args(argv)
+        if args.command == "init":
+            run_init(args.path, stdout=sys.stdout)
+            return 0
+        factory = (
+            host_factory
+            if host_factory is not None
+            else load_cli_host_factory(args.factory, os.environ)
+        )
+        asyncio.run(run_cli_command(args, factory))
         return 0
-    try:
-        import psycopg
-    except ImportError as error:
-        raise RuntimeError("agent-os migrate requires agentos[postgres]") from error
-    with psycopg.connect(dsn) as connection:
-        for migration in migrations:
-            sql = migration.read_text()
-            up_sql = sql.split("-- migrate:down", 1)[0].replace("-- migrate:up", "")
-            connection.execute(up_sql)
-        connection.commit()
-    return 0
-
-
-def _migration_paths() -> list[object]:
-    """返回随 package 发布的 Postgres migrations。"""
-
-    return sorted(
-        (
-            item
-            for item in files("agentos.migrations").iterdir()
-            if item.name.endswith(".sql")
-        ),
-        key=lambda item: item.name,
-    )
+    except (KeyboardInterrupt, asyncio.CancelledError, CliInterruptedError):
+        write_error("interrupted", "operation interrupted")
+        return 130
+    except Exception as error:
+        mapped = map_cli_error(error)
+        write_error(mapped.code, mapped.message)
+        return mapped.exit_code
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+
+
+__all__ = ["main"]

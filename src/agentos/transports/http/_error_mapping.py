@@ -10,6 +10,7 @@ from agentos.distributed.errors import (
     A2ATaskConflictError,
     A2ATaskNotFoundError,
     ActiveRunConflictError,
+    ArtifactConflictError,
     ArtifactInUseError,
     CommandConflictError,
     CommandNotDueError,
@@ -52,6 +53,11 @@ _ERROR_RESPONSES: dict[type[BaseException], tuple[int, str, str]] = {
         409,
         "active_run_conflict",
         "session already has an active run",
+    ),
+    ArtifactConflictError: (
+        409,
+        "artifact_conflict",
+        "artifact operation conflicts with an existing request",
     ),
     CommandConflictError: (
         409,

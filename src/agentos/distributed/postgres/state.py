@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from agentos._waiting import WaitReason
 from agentos.distributed.errors import CheckpointConflictError
+from agentos.distributed.migrations.service import (
+    DistributedMigrationService,
+    canonical_migration_plan,
+)
 from agentos.distributed.models import (
     RequestScope,
     RunReadModel,
@@ -27,7 +31,7 @@ from agentos.distributed.postgres._state_records import (
     update_run,
 )
 from agentos.distributed.postgres._submissions import submit as _submit
-from agentos.distributed.postgres.schema import initialize_postgres_schema
+from agentos.distributed.postgres.migrations import PostgresMigrationPort
 from agentos.runtime.checkpoint import RunCheckpoint, SessionCheckpoint
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
 from agentos.runtime.run_commit import RunTerminalStatus
@@ -37,7 +41,7 @@ from agentos.runtime.side_effect_types import WaitingToolCompletion
 
 
 class PostgresStateStore:
-    """Tenant-scoped PostgreSQL owner for Run submission and aggregate truth."""
+    """管理租户范围内的 Run 提交和 PostgreSQL 聚合真值。"""
 
     def __init__(
         self,
@@ -65,7 +69,10 @@ class PostgresStateStore:
         )
         store = cls(database, owns_database=True)
         try:
-            await store.initialize()
+            await DistributedMigrationService(
+                port=PostgresMigrationPort(database),
+                plan=canonical_migration_plan(),
+            ).check()
         except BaseException:
             await database.close()
             raise
@@ -76,10 +83,6 @@ class PostgresStateStore:
 
     async def __aexit__(self, *args: object) -> None:
         await self.close()
-
-    async def initialize(self) -> None:
-        async with self._database.transaction() as connection:
-            await initialize_postgres_schema(connection)
 
     async def close(self) -> None:
         if self._owns_database:

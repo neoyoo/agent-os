@@ -5,12 +5,11 @@ from datetime import datetime
 import json
 from typing import cast
 
-from agentos.artifacts.types import (
-    ArtifactRecord,
-    ArtifactValidationError,
-    validate_artifact_id,
+from agentos.artifacts.types import ArtifactRecord, ArtifactValidationError, validate_artifact_id
+from agentos.distributed.errors import (
+    ArtifactConflictError,
+    DistributedBackendUnavailableError,
 )
-from agentos.distributed.errors import DistributedBackendUnavailableError
 from agentos.distributed.postgres._database import AsyncConnection, Row
 
 
@@ -47,7 +46,7 @@ def validate_upload_retry(
         or row["content_digest"] != digest
         or row["blob_key"] != record.id
     ):
-        raise ArtifactValidationError("artifact upload conflicts with existing request")
+        raise ArtifactConflictError()
     return record
 
 

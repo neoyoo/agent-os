@@ -13,10 +13,15 @@ from agentos.capabilities.result_refs import ArtifactToolResultRef
 from agentos.capabilities.tools import SideEffectPolicy
 from agentos.distributed.errors import ArtifactInUseError
 from agentos.distributed.models import RequestScope, RunSubmission
+from agentos.distributed.migrations.service import (
+    DistributedMigrationService,
+    canonical_migration_plan,
+)
 from agentos.distributed.postgres._checkpoint_records import write_checkpoint
 from agentos.distributed.postgres._database import PostgresPool
 from agentos.distributed.postgres._side_effect_codec import side_effect_record_to_json
 from agentos.distributed.postgres.artifacts import PostgresArtifactStore
+from agentos.distributed.postgres.migrations import PostgresMigrationPort
 from agentos.distributed.postgres.state import PostgresStateStore
 from agentos.durable.serialization import dump_json
 from agentos.runtime.payloads import ProtectedPayloadRef
@@ -73,7 +78,10 @@ async def _verify_live_durable_pins(dsn: str) -> None:
     artifacts = PostgresArtifactStore(database, blobs)
     try:
         state = PostgresStateStore(database)
-        await state.initialize()
+        await DistributedMigrationService(
+            port=PostgresMigrationPort(database),
+            plan=canonical_migration_plan(),
+        ).apply()
         artifact = await artifacts.upload(
             scope=scope,
             session_id=session_id,

@@ -8,7 +8,10 @@ from hashlib import sha256
 import pytest
 
 from agentos.artifacts import ArtifactNotFoundError, ArtifactValidationError
-from agentos.distributed.errors import DistributedBackendUnavailableError
+from agentos.distributed.errors import (
+    ArtifactConflictError,
+    DistributedBackendUnavailableError,
+)
 from agentos.distributed.models import RequestScope
 from agentos.distributed.postgres._artifact_records import (
     decode_cursor,
@@ -180,7 +183,10 @@ async def test_conflicting_upload_id_fails_before_blob_io_and_database_writes() 
     replayed = await _upload(store)
     mutations = list(database.mutations)
 
-    with pytest.raises(ArtifactValidationError, match="conflicts"):
+    with pytest.raises(
+        ArtifactConflictError,
+        match="^artifact operation conflicts with an existing request$",
+    ):
         await _upload(store, data=b"different")
 
     assert replayed == record

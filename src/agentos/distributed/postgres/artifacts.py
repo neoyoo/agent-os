@@ -18,7 +18,10 @@ from agentos.artifacts.types import (
     new_artifact_id,
 )
 from agentos.distributed.blobs.protocol import BlobStore
-from agentos.distributed.errors import DistributedBackendUnavailableError
+from agentos.distributed.errors import (
+    ArtifactConflictError,
+    DistributedBackendUnavailableError,
+)
 from agentos.distributed.models import ArtifactContent, RequestScope
 from agentos.distributed._model_validation import require_identifier
 from agentos.distributed.postgres._artifact_blobs import put_upload_candidate
@@ -277,9 +280,7 @@ class PostgresArtifactStore:
                 deletion["session_id"] != session_id
                 or deletion["artifact_id"] != artifact_id
             ):
-                raise ArtifactValidationError(
-                    "artifact deletion conflicts with existing request",
-                )
+                raise ArtifactConflictError()
             await connection.execute(
                 """
                 SELECT session_id FROM agentos_distributed_sessions
@@ -317,9 +318,7 @@ class PostgresArtifactStore:
                     (scope.tenant_id, deletion_id, session_id, artifact_id),
                 )
             elif row["deletion_id"] not in {None, deletion_id}:
-                raise ArtifactValidationError(
-                    "artifact deletion conflicts with existing request",
-                )
+                raise ArtifactConflictError()
             if row["lifecycle"] == "active":
                 await connection.execute(
                     """

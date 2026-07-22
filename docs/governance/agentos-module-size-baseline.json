@@ -138,11 +138,6 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/postgres/schema.py",
-      "lines": 485,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/planning/tools.py",
       "lines": 480,
       "gate": "responsibility_review"
@@ -243,13 +238,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/worker/runner.py",
-      "lines": 386,
+      "path": "src/agentos/distributed/profile.py",
+      "lines": 387,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/profile.py",
-      "lines": 379,
+      "path": "src/agentos/distributed/worker/runner.py",
+      "lines": 386,
       "gate": "responsibility_review"
     },
     {
@@ -294,7 +289,7 @@
     },
     {
       "path": "src/agentos/distributed/postgres/artifacts.py",
-      "lines": 344,
+      "lines": 343,
       "gate": "responsibility_review"
     },
     {
@@ -338,13 +333,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/providers/openai_compatible_parsing.py",
-      "lines": 313,
+      "path": "src/agentos/distributed/postgres/state.py",
+      "lines": 315,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/postgres/state.py",
-      "lines": 312,
+      "path": "src/agentos/providers/openai_compatible_parsing.py",
+      "lines": 313,
       "gate": "responsibility_review"
     },
     {

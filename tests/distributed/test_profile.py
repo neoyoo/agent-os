@@ -34,16 +34,23 @@ class _OpeningPool:
 
 class _StateStore:
     instances: list[_StateStore] = []
-    initialize_error: BaseException | None = None
 
     def __init__(self, pool: _Pool) -> None:
         self.pool = pool
         self.instances.append(self)
 
-    async def initialize(self) -> None:
-        self.pool.trace.append("postgres.initialize")
-        if self.initialize_error is not None:
-            raise self.initialize_error
+
+class _MigrationPort:
+    check_error: BaseException | None = None
+
+    def __init__(self, pool: _Pool) -> None:
+        self.pool = pool
+
+    async def check(self, plan: object) -> None:
+        del plan
+        self.pool.trace.append("postgres.migration.check")
+        if self.check_error is not None:
+            raise self.check_error
 
 
 class _OwnedArtifactStore:
@@ -132,13 +139,14 @@ def _patch_adapters(
     _OpeningPool.trace = trace
     _OpeningPool.pool = pool
     _StateStore.instances = []
-    _StateStore.initialize_error = None
+    _MigrationPort.check_error = None
     _Queue.instances = []
     _Queue.trace = trace
     _ClosableRedis.instances = []
     _ClosableRedis.trace = trace
     blob = _BlobStore(trace)
     monkeypatch.setattr(profile_module, "PostgresPool", _OpeningPool)
+    monkeypatch.setattr(profile_module, "PostgresMigrationPort", _MigrationPort)
     monkeypatch.setattr(profile_module, "PostgresStateStore", _StateStore)
     monkeypatch.setattr(profile_module, "PostgresArtifactStore", _OwnedArtifactStore)
     monkeypatch.setattr(profile_module, "PostgresClaimStore", _Adapter)
@@ -181,7 +189,7 @@ async def test_profile_constructor_is_io_free_and_worker_start_is_explicit(
     services = await profile.open()
 
     assert services is profile
-    assert trace == ["postgres.open", "postgres.initialize"]
+    assert trace == ["postgres.open", "postgres.migration.check"]
     assert profile.worker.state.status == "created"
     assert len(_Queue.instances) == 2
     assert profile.worker._queue is not profile.relay.queue
@@ -224,12 +232,12 @@ async def test_worker_only_starts_when_the_deployment_host_requests_it(
 
 
 @async_test
-async def test_profile_open_failure_closes_acquired_postgres_pool(
+async def test_profile_schema_check_failure_closes_acquired_postgres_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace: list[str] = []
     _, blob = _patch_adapters(monkeypatch, trace)
-    _StateStore.initialize_error = RuntimeError("schema unavailable")
+    _MigrationPort.check_error = RuntimeError("schema unavailable")
     profile = _profile(blob)
 
     with pytest.raises(RuntimeError, match="schema unavailable"):
@@ -237,7 +245,7 @@ async def test_profile_open_failure_closes_acquired_postgres_pool(
 
     assert trace == [
         "postgres.open",
-        "postgres.initialize",
+        "postgres.migration.check",
         "postgres.close",
     ]
     assert not profile.is_open

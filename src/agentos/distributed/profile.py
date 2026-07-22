@@ -12,10 +12,15 @@ from agentos._builder_distributed import (
 )
 from agentos.distributed.blobs.protocol import BlobStore
 from agentos.distributed.errors import DistributedStoreClosedError
+from agentos.distributed.migrations.service import (
+    DistributedMigrationService,
+    canonical_migration_plan,
+)
 from agentos.distributed.postgres._database import PostgresPool
 from agentos.distributed.postgres._outbox_records import EXECUTION_TOPIC
 from agentos.distributed.postgres.artifacts import PostgresArtifactStore
 from agentos.distributed.postgres.claims import PostgresClaimStore
+from agentos.distributed.postgres.migrations import PostgresMigrationPort
 from agentos.distributed.postgres.outbox import PostgresOutboxStore
 from agentos.distributed.postgres.resume_validation import (
     PostgresSideEffectResumeValidator,
@@ -66,7 +71,7 @@ class _ProfileResources:
 
 
 class DistributedRuntimeProfile:
-    """Own distributed adapters while keeping execution claim-driven."""
+    """组合分布式 Adapter，并保持执行过程由权威 Claim 驱动。"""
 
     name = "distributed"
 
@@ -220,8 +225,11 @@ class DistributedRuntimeProfile:
             min_size=self._postgres_min_size,
             max_size=self._postgres_max_size,
         )
+        await DistributedMigrationService(
+            port=PostgresMigrationPort(resources.pool),
+            plan=canonical_migration_plan(),
+        ).check()
         resources.state = PostgresStateStore(resources.pool)
-        await resources.state.initialize()
         claims = PostgresClaimStore(resources.pool)
         outbox = PostgresOutboxStore(resources.pool)
         side_effects = PostgresSideEffectStore(resources.pool)

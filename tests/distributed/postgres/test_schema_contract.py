@@ -1,21 +1,11 @@
-import asyncio
-from collections.abc import Sequence
-import os
 from pathlib import Path
-from uuid import uuid4
 
-import pytest
-
-from agentos.distributed.postgres._database import PostgresPool
-from agentos.distributed.postgres.schema import (
-    SCHEMA_STATEMENTS,
-    initialize_postgres_schema,
-)
-from tests.planning._async import async_test
+from agentos.distributed.postgres.schema import SCHEMA_STATEMENTS
 
 
 _ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_NAME = "2026-07-20-postgres-distributed-runtime.sql"
+_V1_MIGRATION = "2026-07-20-postgres-distributed-runtime.sql"
+_V2_MIGRATION = "2026-07-21-postgres-team-delivery.sql"
 
 
 def test_schema_has_tenant_scoped_active_run_truth_constraint() -> None:
@@ -79,99 +69,18 @@ def test_checkpoint_latest_query_has_matching_partial_index() -> None:
     ) in schema
 
 
-@async_test
-async def test_schema_initialization_locks_before_reading_or_writing_schema() -> None:
-    queries: list[str] = []
-
-    class _Cursor:
-        async def fetchall(self) -> list[dict[str, object]]:
-            return []
-
-    class _Connection:
-        async def execute(
-            self,
-            query: str,
-            params: Sequence[object] = (),
-        ) -> _Cursor:
-            del params
-            queries.append(" ".join(query.split()))
-            return _Cursor()
-
-    await initialize_postgres_schema(_Connection())  # type: ignore[arg-type]
-
-    assert queries[0].startswith("SELECT pg_advisory_xact_lock")
-    version_read = queries.index(
-        "SELECT version FROM agentos_distributed_schema FOR UPDATE",
-    )
-    version_insert = queries.index(
-        "INSERT INTO agentos_distributed_schema (version) VALUES (%s)",
-    )
-    assert version_read < version_insert
-
-
-@pytest.mark.integration
-def test_live_concurrent_schema_initialization_is_serialized() -> None:
-    if not os.environ.get("AGENTOS_RUN_INTEGRATION"):
-        pytest.skip("set AGENTOS_RUN_INTEGRATION=1 with a PostgreSQL test service")
-    dsn = os.environ.get("AGENTOS_TEST_POSTGRES_DSN")
-    if not dsn:
-        pytest.skip("set AGENTOS_TEST_POSTGRES_DSN")
-    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
-        runner.run(_verify_live_concurrent_initialization(dsn))
-
-
-async def _verify_live_concurrent_initialization(dsn: str) -> None:
-    schema_name = f"agentos_init_{uuid4().hex}"
-    database = await PostgresPool.open(dsn, min_size=0, max_size=2)
-    try:
-        async with database.transaction() as connection:
-            await connection.execute(f'CREATE SCHEMA "{schema_name}"')
-
-        async def initialize() -> None:
-            async with database.transaction() as connection:
-                await connection.execute(
-                    f'SET LOCAL search_path TO "{schema_name}"',
-                )
-                await initialize_postgres_schema(connection)
-
-        await asyncio.gather(initialize(), initialize())
-        async with database.transaction() as connection:
-            await connection.execute(
-                f'SET LOCAL search_path TO "{schema_name}"',
-            )
-            versions = await (
-                await connection.execute(
-                    "SELECT version FROM agentos_distributed_schema",
-                )
-            ).fetchall()
-            indexes = await (
-                await connection.execute(
-                    """
-                    SELECT indexname FROM pg_indexes
-                    WHERE schemaname = %s AND indexname = %s
-                    """,
-                    (schema_name, "agentos_distributed_checkpoint_latest"),
-                )
-            ).fetchall()
-        assert versions == [{"version": 1}]
-        assert indexes == [{"indexname": "agentos_distributed_checkpoint_latest"}]
-    finally:
-        async with database.transaction() as connection:
-            await connection.execute(f'DROP SCHEMA "{schema_name}" CASCADE')
-        await database.close()
-
-
 def test_phase6_migration_is_packaged_without_drift() -> None:
-    documented = (_ROOT / "docs" / "migrations" / _MIGRATION_NAME).read_text(
+    documented = (_ROOT / "docs" / "migrations" / _V1_MIGRATION).read_text(
         encoding="utf-8",
     )
-    packaged = (_ROOT / "src" / "agentos" / "migrations" / _MIGRATION_NAME).read_text(
+    packaged = (_ROOT / "src" / "agentos" / "migrations" / _V1_MIGRATION).read_text(
         encoding="utf-8",
     )
 
     assert documented == packaged
     assert "-- migrate:up" in documented
     assert "-- migrate:down" in documented
+    assert "agentos_distributed_schema" not in documented
     for table in (
         "agentos_distributed_sessions",
         "agentos_distributed_runs",
@@ -189,7 +98,7 @@ def test_phase6_migration_is_packaged_without_drift() -> None:
 
 
 def test_phase6_migration_create_statements_match_runtime_schema() -> None:
-    migration = (_ROOT / "docs" / "migrations" / _MIGRATION_NAME).read_text(
+    migration = (_ROOT / "docs" / "migrations" / _V1_MIGRATION).read_text(
         encoding="utf-8",
     )
     up = migration.split("-- migrate:up", 1)[1].split("-- migrate:down", 1)[0]
@@ -199,13 +108,154 @@ def test_phase6_migration_create_statements_match_runtime_schema() -> None:
         if statement.strip()
     )
 
-    assert len(statements) == len(SCHEMA_STATEMENTS) + 1
-    for deployed, runtime in zip(
-        statements[:len(SCHEMA_STATEMENTS)],
-        SCHEMA_STATEMENTS,
-        strict=True,
-    ):
+    assert len(statements) == len(SCHEMA_STATEMENTS)
+    for deployed, runtime in zip(statements, SCHEMA_STATEMENTS, strict=True):
         assert " ".join(deployed.split()) == " ".join(runtime.split())
-    assert statements[-1].startswith(
-        "INSERT INTO agentos_distributed_schema (version)",
+
+
+def test_team_delivery_migration_is_packaged_without_drift() -> None:
+    documented = (_ROOT / "docs" / "migrations" / _V2_MIGRATION).read_text(
+        encoding="utf-8",
     )
+    packaged = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+
+    assert documented == packaged
+    for table in (
+        "agentos_teams",
+        "agentos_team_members",
+        "agentos_team_messages",
+        "agentos_team_deliveries",
+        "agentos_team_events",
+    ):
+        assert f"CREATE TABLE {table}" in documented
+    assert "target_session_id TEXT NOT NULL" in documented
+    assert "fencing_token BIGINT NOT NULL" in documented
+
+
+def test_team_migration_extends_accepted_input_for_internal_start() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    up = " ".join(
+        migration.split("-- migrate:up", 1)[1]
+        .split("-- migrate:down", 1)[0]
+        .lower()
+        .split()
+    )
+
+    assert "alter table agentos_distributed_submissions" in up
+    assert "source_kind text" in up
+    assert "source_payload_json text" in up
+    assert "team_delivery_id text" in up
+    assert "input_kind text generated always as" in up
+    assert "alter table agentos_distributed_accepted_inputs" in up
+    assert "when 'team_message' then 'internal_start'" in up
+    assert "source_kind in ('submission', 'command', 'team_message')" in up
+    assert "octet_length(payload_json) <= 4096" in up
+
+
+def test_v1_names_accepted_input_constraints_for_v2_evolution() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V1_MIGRATION
+    ).read_text(encoding="utf-8")
+    up = " ".join(
+        migration.split("-- migrate:up", 1)[1]
+        .split("-- migrate:down", 1)[0]
+        .lower()
+        .split()
+    )
+
+    accepted = up.split(
+        "create table if not exists agentos_distributed_accepted_inputs",
+        1,
+    )[1].split(
+        "create unique index if not exists agentos_distributed_one_pending_input",
+        1,
+    )[0]
+    assert "agentos_distributed_accepted_inputs_claim_check" in accepted
+    assert "agentos_distributed_accepted_inputs_shape_check" in accepted
+
+    push_deliveries = up.split(
+        "create table if not exists agentos_distributed_a2a_push_deliveries",
+        1,
+    )[1].split(
+        "create index if not exists agentos_distributed_a2a_push_order",
+        1,
+    )[0]
+    assert "agentos_distributed_a2a_push_deliveries_claim_check" in push_deliveries
+    assert "agentos_distributed_a2a_push_deliveries_terminal_check" in push_deliveries
+    assert "agentos_distributed_accepted_inputs_shape_check" not in push_deliveries
+
+
+def test_team_migration_allows_team_outbox_before_run_exists() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    up = " ".join(
+        migration.split("-- migrate:up", 1)[1]
+        .split("-- migrate:down", 1)[0]
+        .lower()
+        .split()
+    )
+
+    assert "alter table agentos_distributed_outbox" in up
+    assert "alter column run_id drop not null" in up
+    assert "team_delivery_id text" in up
+    assert "foreign key (tenant_id, team_delivery_id, session_id)" in up
+    assert "run_id is null and team_delivery_id is not null" in up
+
+
+def test_team_migration_enforces_complete_delivery_scope() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    up = " ".join(
+        migration.split("-- migrate:up", 1)[1]
+        .split("-- migrate:down", 1)[0]
+        .lower()
+        .split()
+    )
+    compact = up.replace("( ", "(").replace(" )", ")").replace(", ", ",")
+
+    assert "unique (tenant_id,team_id,message_id)" in compact
+    assert (
+        "unique (tenant_id,team_id,recipient_agent_id,target_session_id)"
+        in compact
+    )
+    assert "unique (tenant_id,delivery_id,target_session_id)" in compact
+    assert (
+        "foreign key (tenant_id,team_id,message_id) references "
+        "agentos_team_messages(tenant_id,team_id,message_id)"
+    ) in compact
+    assert (
+        "foreign key (tenant_id,team_id,recipient_agent_id,target_session_id) "
+        "references agentos_team_members(tenant_id,team_id,recipient_agent_id,"
+        "target_session_id)"
+    ) in compact
+    assert compact.count(
+        "foreign key (tenant_id,team_delivery_id,session_id) references "
+        "agentos_team_deliveries(tenant_id,delivery_id,target_session_id)"
+    ) == 2
+
+
+def test_team_delivery_records_complete_observed_run_evidence() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    up = " ".join(
+        migration.split("-- migrate:up", 1)[1]
+        .split("-- migrate:down", 1)[0]
+        .lower()
+        .split()
+    )
+
+    assert "observed_run_id text" in up
+    assert "observed_aggregate_version bigint" in up
+    assert "observed_run_status text" in up
+    assert (
+        "observed_run_status in ( 'created', 'queued', 'running', 'waiting', "
+        "'completed', 'failed', 'cancelled' )"
+    ) in up
+    assert "state = 'applied'" in up

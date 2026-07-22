@@ -10,12 +10,16 @@ from uuid import uuid4
 import pytest
 
 from agentos.capabilities.tools import SideEffectPolicy
+from agentos.distributed.migrations.service import (
+    DistributedMigrationService,
+    canonical_migration_plan,
+)
 from agentos.distributed.postgres._database import PostgresPool
 from agentos.distributed.postgres._guards import lock_fenced_run
 from agentos.distributed.postgres._side_effect_codec import side_effect_record_to_json
 from agentos.distributed.postgres._side_effect_composite import apply_cancel_safe_stop
 from agentos.distributed.postgres._side_effect_records import require_current
-from agentos.distributed.postgres.schema import initialize_postgres_schema
+from agentos.distributed.postgres.migrations import PostgresMigrationPort
 from agentos.distributed.postgres.side_effects import PostgresSideEffectStore
 from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.run_runtime import RunWriteGuard
@@ -259,8 +263,11 @@ async def _verify_live_cancel_lock_order(action: str) -> None:
     database = await PostgresPool.open(dsn, min_size=1, max_size=3)
     access: asyncio.Task[SideEffectRecord | None] | None = None
     try:
+        await DistributedMigrationService(
+            port=PostgresMigrationPort(database),
+            plan=canonical_migration_plan(),
+        ).apply()
         async with database.transaction() as setup:
-            await initialize_postgres_schema(setup)
             await setup.execute(
                 """
                 INSERT INTO agentos_distributed_sessions

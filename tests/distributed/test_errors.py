@@ -2,6 +2,7 @@ import pytest
 
 from agentos.distributed.errors import (
     ActiveRunConflictError,
+    ArtifactConflictError,
     ArtifactInUseError,
     CheckpointConflictError,
     ClaimConflictError,
@@ -23,6 +24,11 @@ ERRORS = (
     (RunNotFoundError, "run_not_found", "run not found"),
     (RunSubmissionConflictError, "run_submission_conflict", "run submission conflicts with an existing request"),
     (ActiveRunConflictError, "active_run_conflict", "session already has an active run"),
+    (
+        ArtifactConflictError,
+        "artifact_conflict",
+        "artifact operation conflicts with an existing request",
+    ),
     (
         ArtifactInUseError,
         "artifact_in_use",

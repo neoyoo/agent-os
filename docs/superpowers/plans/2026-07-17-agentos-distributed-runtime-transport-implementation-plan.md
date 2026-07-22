@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：Wave 0-4 与 Wave 5A 已完成，下一阶段进入 Wave 5B
+> 状态：Wave 0-4 与 Wave 5A-5B 已完成，下一阶段进入 Wave 5C
 >
 > 日期：2026-07-17
 >
@@ -15,7 +15,7 @@
 >
 > 基线提交：`35b3090 feat: complete phase5 durable runtime profile`
 
-## 0. 执行状态（2026-07-21）
+## 0. 执行状态（2026-07-22）
 
 - Wave 0：Contract、breaking map 和 red gates 已完成；
 - Wave 1：唯一 Async Kernel 与 Durable 回归已完成；
@@ -23,7 +23,8 @@
 - Wave 3：PostgreSQL、Redis、Worker/Relay 与 Distributed Profile 已完成；
 - Wave 4：HTTP/SSE/Artifact、A2A wire、A2A durable push 和 Channel Integration 已完成；
 - Wave 5A：Shared Run Stream、WebSocket wire/channel/ASGI 与 terminal publication recovery 已完成；
-- 下一阶段：Wave 5B Migration authority 与 CLI；OCR 仍明确排除。
+- Wave 5B：Migration authority、PostgreSQL migration adapter 与 CLI Application Commands 已完成；
+- 下一阶段：Wave 5C Team Domain；OCR 仍明确排除。
 
 Wave 4 收口证据：
 
@@ -42,6 +43,24 @@ Wave 5A 收口证据：
 - Contract Compliance Review：`P0=0, P1=0`；Code Quality Review：`P0=0, P1=0`；
 - 非阻断 P2：WebSocket 输入适配防御增强、committed outcome 长 Run 查询优化、gap 双 API
   收敛，保留为后续质量优化，不改变 Wave 5A 协议正确性与持久真相。
+
+Wave 5B 收口证据：
+
+- CLI + Distributed：`470 passed, 9 skipped`；Architecture：`162 passed`；
+- 全量测试：`4029 passed, 21 skipped`；
+- Ruff、`compileall`、`git diff --check` 全部通过；
+- PostgreSQL 17 实库验证覆盖 v1 -> v2、v2 -> v1 -> v2、复合外键隔离、合法
+  delivery/submission/outbox、数据态 downgrade 和 active member 软删除后重绑；
+- Migration 独立 Review：`P0=0, P1=0, P2=0`；最终 Contract Review：
+  `P0=0, P1=0, P2=0`；Code Quality/Security Review：`P0=0, P1=0`；
+- 非阻断 P2：CLI `--content-file`、`--stdin` 与 `--payload-file` 的 hard max 尚未冻结，留待
+  后续安全预算合同定义；本轮不引入任意限制值；
+- `cli/commands/run.py` 297 行、`cli/application.py` 251 行、
+  `distributed/postgres/migrations.py` 133 行；`distributed/profile.py` 与
+  `distributed/postgres/state.py` 已完成职责审查，仍分别保持资源组合/生命周期与 Store facade
+  单一职责，不做机械拆分；
+- CLI conflict 分类覆盖 side-effect-in-flight 与 Artifact 幂等冲突；基础 import 不加载
+  `psycopg`、`redis`、`uvicorn`，Distributed 路径不存在同步 I/O wrapper。
 
 ## 1. 完成标准
 

@@ -36,6 +36,13 @@ class ArtifactInUseError(DistributedError):
     message = "artifact is referenced by durable session state"
 
 
+class ArtifactConflictError(DistributedError):
+    """表示 Artifact 操作标识与既有请求冲突。"""
+
+    code = "artifact_conflict"
+    message = "artifact operation conflicts with an existing request"
+
+
 class CommandConflictError(DistributedError):
     """同一 command_id 对应不同的不可变命令。"""
 
@@ -169,6 +176,34 @@ class DistributedBackendUnavailableError(DistributedError):
     message = "distributed backend is unavailable"
 
 
+class SchemaMigrationRequiredError(DistributedError):
+    """表示数据库尚未达到 SDK 要求的精确 schema 版本。"""
+
+    code = "schema_migration_required"
+    message = "database schema migration is required"
+
+
+class LegacyDistributedSchemaError(DistributedError):
+    """表示数据库仍包含不受支持的旧分布式 schema 标记。"""
+
+    code = "legacy_distributed_schema"
+    message = "legacy distributed schema must be rebuilt"
+
+
+class MigrationChecksumMismatchError(DistributedError):
+    """表示已记录迁移与 SDK canonical resource 的 checksum 不一致。"""
+
+    code = "migration_checksum_mismatch"
+    message = "database migration checksum does not match the SDK"
+
+
+class MigrationVersionError(DistributedError):
+    """表示迁移账本存在缺口、名称偏移或未来版本。"""
+
+    code = "migration_version_invalid"
+    message = "database migration history is invalid"
+
+
 __all__ = [
     "A2APushAttemptFencedError",
     "A2APushConfigNotFoundError",
@@ -177,6 +212,7 @@ __all__ = [
     "A2ATaskConflictError",
     "A2ATaskNotFoundError",
     "ActiveRunConflictError",
+    "ArtifactConflictError",
     "ArtifactInUseError",
     "CheckpointConflictError",
     "ClaimConflictError",
@@ -188,10 +224,14 @@ __all__ = [
     "DistributedBackendUnavailableError",
     "DistributedError",
     "DistributedStoreClosedError",
+    "LegacyDistributedSchemaError",
+    "MigrationChecksumMismatchError",
+    "MigrationVersionError",
     "RunSubmissionConflictError",
     "RunNotFoundError",
     "RunEventTooLargeError",
     "SideEffectAmbiguousError",
     "SideEffectInFlightError",
+    "SchemaMigrationRequiredError",
     "StaleFenceError",
 ]

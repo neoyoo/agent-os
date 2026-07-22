@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Wave 5 WebSocket / CLI / Team Contract Addendum
 
-> 状态：合同已冻结；5A 已完成，5B-5E 待实现
+> 状态：合同已冻结；5A-5B 已完成，5C-5E 待实现
 >
 > 日期：2026-07-21
 >

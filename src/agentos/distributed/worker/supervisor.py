@@ -41,6 +41,7 @@ class DistributedWorker:
         self._last_heartbeat_at: datetime | None = None
         self._drain_started_at: datetime | None = None
         self._receiver: asyncio.Task[None] | None = None
+        self._receiver_stopped = asyncio.Event()
         self._failure: BaseException | None = None
         self._active: set[asyncio.Task[bool]] = set()
         self._capacity = asyncio.Event()
@@ -74,6 +75,15 @@ class DistributedWorker:
             self._last_heartbeat_at = self._clock()
             self._receiver = asyncio.create_task(self._receive_loop())
             self._receiver.add_done_callback(self._receiver_done)
+
+    async def wait(self) -> None:
+        """等待 receiver 停止，并传播其原始失败。"""
+
+        if self._status == "created":
+            raise RuntimeError("worker has not been started")
+        await self._receiver_stopped.wait()
+        if self._failure is not None:
+            raise self._failure
 
     async def drain(self, timeout: float) -> None:
         """停止新 claim，等待活动执行，超时后关闭其 AgentStream。"""
@@ -182,13 +192,20 @@ class DistributedWorker:
 
     def _receiver_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
-            return
-        error = task.exception()
-        if error is not None:
-            if self._failure is None:
-                self._failure = error
-        elif self._status == "running" and self._failure is None:
-            self._failure = RuntimeError("worker receive loop stopped")
+            if self._status == "running" and self._failure is None:
+                self._failure = RuntimeError(
+                    "worker receive loop stopped unexpectedly"
+                )
+        else:
+            error = task.exception()
+            if error is not None:
+                if self._failure is None:
+                    self._failure = error
+            elif self._status == "running" and self._failure is None:
+                self._failure = RuntimeError(
+                    "worker receive loop stopped unexpectedly"
+                )
+        self._receiver_stopped.set()
 
     async def _finish_active(self, timeout: float) -> None:
         active = tuple(self._active)

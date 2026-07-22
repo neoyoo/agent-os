@@ -1,9 +1,5 @@
 -- migrate:up
 
-CREATE TABLE IF NOT EXISTS agentos_distributed_schema (
-    version INTEGER PRIMARY KEY
-);
-
 CREATE TABLE IF NOT EXISTS agentos_distributed_sessions (
     tenant_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -198,7 +194,9 @@ CREATE TABLE IF NOT EXISTS agentos_distributed_accepted_inputs (
     session_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
     turn_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('submission', 'command')),
+    source_kind TEXT NOT NULL
+        CONSTRAINT agentos_distributed_accepted_inputs_source_kind_check
+        CHECK (source_kind IN ('submission', 'command')),
     source_id TEXT NOT NULL,
     continuation_kind TEXT,
     payload_json TEXT,
@@ -214,12 +212,12 @@ CREATE TABLE IF NOT EXISTS agentos_distributed_accepted_inputs (
     UNIQUE (tenant_id, source_kind, source_id),
     FOREIGN KEY (tenant_id, session_id, run_id)
         REFERENCES agentos_distributed_runs(tenant_id, session_id, run_id),
-    CHECK (
+    CONSTRAINT agentos_distributed_accepted_inputs_claim_check CHECK (
         (status = 'claimed' AND claim_id IS NOT NULL AND fencing_token IS NOT NULL)
         OR
         (status <> 'claimed' AND claim_id IS NULL AND fencing_token IS NULL)
     ),
-    CHECK (
+    CONSTRAINT agentos_distributed_accepted_inputs_shape_check CHECK (
         (source_kind = 'submission' AND content IS NOT NULL
             AND artifact_handles IS NOT NULL AND user_message_id IS NOT NULL
             AND continuation_kind IS NULL AND payload_json IS NULL)
@@ -382,14 +380,14 @@ CREATE TABLE IF NOT EXISTS agentos_distributed_a2a_push_deliveries (
     FOREIGN KEY (outbox_id)
         REFERENCES agentos_distributed_outbox(outbox_id),
     CHECK ((secret_token IS NULL) = (secret_digest IS NULL)),
-    CHECK (
+    CONSTRAINT agentos_distributed_a2a_push_deliveries_claim_check CHECK (
         (attempt_id IS NULL AND attempt_owner_id IS NULL
             AND attempt_expires_at IS NULL)
         OR
         (attempt_id IS NOT NULL AND attempt_owner_id IS NOT NULL
             AND attempt_expires_at IS NOT NULL)
     ),
-    CHECK (
+    CONSTRAINT agentos_distributed_a2a_push_deliveries_terminal_check CHECK (
         (delivered_at IS NOT NULL)::INTEGER
         + (suppressed_at IS NOT NULL)::INTEGER
         + (abandoned_at IS NOT NULL)::INTEGER <= 1
@@ -426,10 +424,6 @@ CREATE TABLE IF NOT EXISTS agentos_distributed_side_effects (
         REFERENCES agentos_distributed_runs(tenant_id, session_id, run_id)
 );
 
-INSERT INTO agentos_distributed_schema (version)
-SELECT 1
-WHERE NOT EXISTS (SELECT 1 FROM agentos_distributed_schema);
-
 -- migrate:down
 
 DROP TABLE IF EXISTS agentos_distributed_side_effects;
@@ -453,4 +447,3 @@ DROP INDEX IF EXISTS agentos_distributed_one_active_run;
 DROP TABLE IF EXISTS agentos_distributed_a2a_tasks;
 DROP TABLE IF EXISTS agentos_distributed_runs;
 DROP TABLE IF EXISTS agentos_distributed_sessions;
-DROP TABLE IF EXISTS agentos_distributed_schema;

@@ -237,6 +237,72 @@ def test_receive_failure_stops_accepting_claims_and_surfaces_on_drain() -> None:
     asyncio.run(scenario())
 
 
+def test_wait_surfaces_the_original_receiver_failure() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        failure = DeliveryUnavailableError()
+        queue = FakeQueue(trace)
+        queue.receive_error = failure
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        worker, _, _ = build_worker(trace=trace, queue=queue, stream=stream)
+
+        await worker.start()
+
+        with pytest.raises(DeliveryUnavailableError) as raised:
+            await worker.wait()
+
+        assert raised.value is failure
+        with pytest.raises(DeliveryUnavailableError):
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_wait_reports_an_unexpected_normal_receiver_stop() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        worker, _, _ = build_worker(trace=trace, queue=queue, stream=stream)
+
+        async def stop_normally() -> None:
+            return None
+
+        worker._receive_loop = stop_normally  # type: ignore[method-assign]
+        await worker.start()
+
+        with pytest.raises(
+            RuntimeError,
+            match="worker receive loop stopped unexpectedly",
+        ):
+            await worker.wait()
+        with pytest.raises(RuntimeError):
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_cancelling_wait_observer_does_not_cancel_receiver() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        worker, _, _ = build_worker(trace=trace, queue=queue, stream=stream)
+
+        await worker.start()
+        await queue.receive_started.wait()
+        observer = asyncio.create_task(worker.wait())
+        observer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await observer
+
+        assert worker.state.accepting_claims
+        await worker.drain(timeout=0)
+        await worker.close()
+
+    asyncio.run(scenario())
+
+
 def test_worker_processes_reclaimed_pending_delivery_before_new_receive() -> None:
     async def scenario() -> None:
         trace: list[str] = []

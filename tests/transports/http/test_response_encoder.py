@@ -17,6 +17,7 @@ from agentos.distributed.errors import (
     A2ATaskConflictError,
     A2ATaskNotFoundError,
     ActiveRunConflictError,
+    ArtifactConflictError,
     ArtifactInUseError,
     CommandConflictError,
     CommandNotDueError,
@@ -189,6 +190,12 @@ def test_encode_artifact_operations_never_expose_storage_identity() -> None:
             "run submission conflicts with an existing request",
         ),
         (ActiveRunConflictError(), 409, "active_run_conflict", "session already has an active run"),
+        (
+            ArtifactConflictError(),
+            409,
+            "artifact_conflict",
+            "artifact operation conflicts with an existing request",
+        ),
         (
             CommandConflictError(),
             409,

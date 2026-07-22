@@ -9,6 +9,10 @@ from uuid import uuid4
 import pytest
 
 from agentos.distributed.models import ClaimedExecution, RequestScope, RunSubmission
+from agentos.distributed.migrations.service import (
+    DistributedMigrationService,
+    canonical_migration_plan,
+)
 from agentos.distributed.postgres._database import (
     AsyncConnection,
     PostgresPool,
@@ -16,6 +20,7 @@ from agentos.distributed.postgres._database import (
 )
 from agentos.distributed.postgres._submissions import submit
 from agentos.distributed.postgres.claims import PostgresClaimStore
+from agentos.distributed.postgres.migrations import PostgresMigrationPort
 from agentos.distributed.postgres.state import PostgresStateStore
 from tests.planning._async import async_test
 
@@ -163,7 +168,10 @@ async def _assert_live_claim_succeeds(dsn: str) -> None:
     database = await PostgresPool.open(dsn, min_size=0, max_size=3)
     try:
         state = PostgresStateStore(database)
-        await state.initialize()
+        await DistributedMigrationService(
+            port=PostgresMigrationPort(database),
+            plan=canonical_migration_plan(),
+        ).apply()
         receipt = await state.submit(
             scope=scope,
             submission=RunSubmission(session_id, f"submission_{suffix}", "question"),
