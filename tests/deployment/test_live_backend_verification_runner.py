@@ -3,10 +3,21 @@ from __future__ import annotations
 import json
 import sys
 
+from agentos.deployment_constants import (
+    LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
+    LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+)
+from agentos.deployment_reports import (
+    BackendVerificationReportImporter,
+    DeploymentLiveBackendVerificationRunResult,
+)
+from agentos.deployment_validation import (
+    BackendVerificationCliRunner,
+    BackendVerificationInvocationPlan,
+)
+
 
 def _passed_record_payload(name: str) -> dict[str, object]:
-    from agentos.deployment import LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS
-
     return {
         "backend_name": name,
         "backend_kind": LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS[name],
@@ -19,8 +30,6 @@ def _passed_record_payload(name: str) -> dict[str, object]:
 
 
 def test_backend_verification_report_importer_parses_canonical_json() -> None:
-    from agentos.deployment import BackendVerificationReportImporter
-
     payload = {
         "records": [
             {
@@ -58,13 +67,6 @@ def test_backend_verification_report_importer_parses_canonical_json() -> None:
 
 
 def test_backend_verification_cli_runner_imports_report_path(tmp_path) -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-        DeploymentLiveBackendVerificationRunResult,
-        LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
-    )
-
     report_path = tmp_path / "live-backend-report.json"
     report_payload = {
         "records": [
@@ -111,11 +113,6 @@ def test_backend_verification_cli_runner_imports_report_path(tmp_path) -> None:
 
 
 def test_backend_verification_cli_runner_imports_stdout_json() -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     report_payload = {
         "records": [
             _passed_record_payload("agent_registry"),
@@ -135,11 +132,6 @@ def test_backend_verification_cli_runner_imports_stdout_json() -> None:
 
 
 def test_backend_verification_cli_runner_blocks_backend_kind_mismatch() -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     report_payload = {
         "records": [
             {
@@ -162,11 +154,6 @@ def test_backend_verification_cli_runner_blocks_backend_kind_mismatch() -> None:
 
 
 def test_backend_verification_cli_runner_records_timeout_as_blocking_evidence() -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     plan = BackendVerificationInvocationPlan(
         command=(
             sys.executable,
@@ -189,11 +176,6 @@ def test_backend_verification_cli_runner_records_timeout_as_blocking_evidence() 
 
 
 def test_backend_verification_cli_runner_records_nonzero_exit_and_env_keys() -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     plan = BackendVerificationInvocationPlan(
         command=(
             sys.executable,
@@ -220,11 +202,6 @@ def test_backend_verification_cli_runner_records_nonzero_exit_and_env_keys() -> 
 
 
 def test_backend_verification_evidence_redacts_secret_command_arguments() -> None:
-    from agentos.deployment import (
-        BackendVerificationInvocationPlan,
-        DeploymentLiveBackendVerificationRunResult,
-    )
-
     plan = BackendVerificationInvocationPlan(
         command=(
             "backend-check",
@@ -265,11 +242,6 @@ def test_backend_verification_evidence_redacts_secret_command_arguments() -> Non
 def test_backend_verification_cli_runner_does_not_inherit_host_environment(
     monkeypatch,
 ) -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     monkeypatch.setenv("AGENTOS_BACKEND_HOST_SECRET", "parent-secret")
     plan = BackendVerificationInvocationPlan(
         command=(
@@ -289,11 +261,6 @@ def test_backend_verification_cli_runner_does_not_inherit_host_environment(
 def test_backend_verification_cli_runner_env_is_explicit_allowlist(
     monkeypatch,
 ) -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     monkeypatch.setenv("AGENTOS_BACKEND_HOST_SECRET", "parent-secret")
     plan = BackendVerificationInvocationPlan(
         command=(
@@ -316,11 +283,6 @@ def test_backend_verification_cli_runner_env_is_explicit_allowlist(
 
 
 def test_backend_verification_cli_runner_records_report_import_error(tmp_path) -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     report_path = tmp_path / "malformed-report.json"
     report_path.write_text("{not-json", encoding="utf-8")
     plan = BackendVerificationInvocationPlan(
@@ -339,11 +301,6 @@ def test_backend_verification_cli_runner_records_report_import_error(tmp_path) -
 
 
 def test_backend_verification_cli_runner_bounds_output_summaries() -> None:
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
-
     plan = BackendVerificationInvocationPlan(
         command=(
             sys.executable,
@@ -364,11 +321,6 @@ def test_backend_verification_cli_runner_bounds_output_summaries() -> None:
 
 def test_backend_verification_cli_runner_rejects_invalid_settings() -> None:
     import pytest
-
-    from agentos.deployment import (
-        BackendVerificationCliRunner,
-        BackendVerificationInvocationPlan,
-    )
 
     with pytest.raises(ValueError, match="command"):
         BackendVerificationInvocationPlan(command=())
@@ -400,8 +352,6 @@ def test_backend_verification_cli_runner_rejects_invalid_settings() -> None:
 
 def test_backend_verification_run_result_rejects_secret_metadata() -> None:
     import pytest
-
-    from agentos.deployment import DeploymentLiveBackendVerificationRunResult
 
     with pytest.raises(ValueError, match="metadata contains restricted key"):
         DeploymentLiveBackendVerificationRunResult(

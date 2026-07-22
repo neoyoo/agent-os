@@ -2,7 +2,8 @@
 
 Phase 6 是一次 breaking cutover。它把 Local、Durable 和 Distributed Profile 收敛到同一套
 原生异步 Kernel Port，不保留同步 Store facade、旧分布式 Snapshot 路径或长期兼容
-re-export。实际删除在 Phase 6 Task 9 完成；本文先冻结目标 API 和迁移责任。
+re-export。legacy 模块按实施任务逐项原子删除，Phase 6 Task 9 完成整体 cutover；本文冻结
+目标 API 和迁移责任。
 
 上位契约：
 `docs/superpowers/specs/2026-07-17-agentos-phase6-distributed-runtime-transport-contract.md`。
@@ -41,7 +42,8 @@ re-export。实际删除在 Phase 6 Task 9 完成；本文先冻结目标 API �
 
 ## Removed Modules And Facades
 
-Task 9 完成时删除以下 legacy 模块或新路径组合，不保留兼容 wrapper：
+以下 legacy 模块或新路径组合按实施任务逐项删除，不保留兼容 wrapper；Task 7 已删除
+`agentos.deployment`，Task 9 负责其余入口并完成整体 cutover：
 
 - `agentos.channels.a2a`；
 - `agentos.channels.a2a_operations`；
@@ -57,6 +59,17 @@ Task 9 完成时删除以下 legacy 模块或新路径组合，不保留兼容 w
 替代入口分别位于 `agentos.transports.*`、`agentos.channels.*_endpoint`、
 `agentos.distributed.*`、`agentos.multi.team_*` 和 `agentos.deployment_*`。迁移提交必须先切换
 仓库调用方和 Public API inventory，再原子删除旧入口；不得在中间提交同时维护双写真值。
+
+`agentos.deployment` 的 canonical 替代入口明确为：
+
+- 常量与字面量类型：`agentos.deployment_constants`；
+- evidence/worker 值对象：`agentos.deployment_types`；
+- report import、gate 与 run-result：`agentos.deployment_reports`；
+- backend verification invocation/runner：`agentos.deployment_validation`；
+- readiness/profile 组合：`agentos.deployment_profiles`；
+- worker process lifecycle Port 与 reference adapter：`agentos.deployment_workers`。
+
+旧 facade 不保留 re-export；调用方必须直接选择所属职责 leaf。
 
 ## Cancel Safe-Stop Override
 

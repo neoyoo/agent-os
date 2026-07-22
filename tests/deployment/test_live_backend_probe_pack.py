@@ -6,6 +6,17 @@ from pathlib import Path
 import subprocess
 import sys
 
+from agentos.deployment_constants import (
+    LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
+    LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+)
+from agentos.deployment_reports import (
+    BackendVerificationReportImporter,
+    DeploymentLiveBackendVerificationRunResult,
+)
+from agentos.deployment_types import BackendVerificationRecord
+from agentos.deployment_validation import BackendVerificationInvocationPlan
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,12 +58,6 @@ def _run_live_backend_probe(
 
 
 def _passed_run_result(backend_name: str):
-    from agentos.deployment import (
-        BackendVerificationRecord,
-        DeploymentLiveBackendVerificationRunResult,
-        LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
-    )
-
     return DeploymentLiveBackendVerificationRunResult(
         command=("python", "-m", "checks.live_backend", backend_name),
         exit_code=0,
@@ -77,7 +82,6 @@ def _passed_run_result(backend_name: str):
 
 
 def test_reference_probe_pack_declares_state_plane_backend_probes() -> None:
-    from agentos.deployment import LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     from agentos.probes import (
         REFERENCE_LIVE_BACKEND_PROBE_PACK_NAME,
         ReferenceLiveBackendProbePack,
@@ -111,7 +115,6 @@ def test_reference_probe_pack_declares_state_plane_backend_probes() -> None:
 
 
 def test_reference_probe_pack_builds_argv_only_invocation_plan() -> None:
-    from agentos.deployment import BackendVerificationInvocationPlan
     from agentos.probes import ReferenceLiveBackendProbePack
 
     pack = ReferenceLiveBackendProbePack(
@@ -168,8 +171,6 @@ def test_reference_live_backend_probe_subprocess_has_isolated_import(
 
 
 def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> None:
-    from agentos.deployment import BackendVerificationReportImporter
-
     completed = _run_live_backend_probe(
         "agent_registry",
         "--status",
@@ -194,8 +195,6 @@ def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> 
 
 
 def test_reference_live_backend_probe_example_does_not_certify_passed_status() -> None:
-    from agentos.deployment import BackendVerificationReportImporter
-
     completed = _run_live_backend_probe(
         "agent_registry",
         "--status",
@@ -222,8 +221,6 @@ def test_reference_live_backend_probe_example_does_not_certify_passed_status() -
 
 
 def test_reference_live_backend_probe_example_defaults_to_non_certifying_unknown() -> None:
-    from agentos.deployment import BackendVerificationReportImporter
-
     completed = _run_live_backend_probe("agent_registry")
 
     assert completed.returncode == 0, completed.stderr
@@ -290,8 +287,6 @@ def test_reference_probe_pack_builds_readiness_bundle_from_run_results() -> None
 
 
 def test_backend_verification_run_result_redacts_secret_patterns_in_output() -> None:
-    from agentos.deployment import DeploymentLiveBackendVerificationRunResult
-
     result = DeploymentLiveBackendVerificationRunResult(
         command=("python", "-m", "checks.live_backend", "--api-key", "sk-command"),
         exit_code=1,

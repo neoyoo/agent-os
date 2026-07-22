@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 
-from agentos.deployment import (
-    BackendVerificationRecord,
-    DeploymentLiveBackendVerificationProfile,
+from agentos.deployment_constants import (
     LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
     PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS,
+)
+from agentos.deployment_profiles import (
+    DeploymentLiveBackendVerificationProfile,
     ProductionStatePlaneDeploymentProfile,
 )
+from agentos.deployment_types import BackendVerificationRecord
 
 
 class NacosAgentRegistryAdapter:

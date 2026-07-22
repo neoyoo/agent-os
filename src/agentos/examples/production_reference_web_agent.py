@@ -11,14 +11,16 @@ from agentos.channels import (
     AsgiAgentApp,
     InMemorySessionLeaseStore,
 )
-from agentos.deployment import (
-    BackendVerificationRecord,
-    DeploymentLiveBackendVerificationProfile,
+from agentos.deployment_constants import (
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
-    LocalSubprocessWorkerSupervisor,
     PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS,
+)
+from agentos.deployment_profiles import (
+    DeploymentLiveBackendVerificationProfile,
     ProductionStatePlaneDeploymentProfile,
 )
+from agentos.deployment_types import BackendVerificationRecord
+from agentos.deployment_workers import LocalSubprocessWorkerSupervisor
 from agentos.examples.planner_patterns import build_plan_and_execute_example
 from agentos.examples._production_reference_fixtures import (
     ReferenceNacosClient as ReferenceNacosClient,

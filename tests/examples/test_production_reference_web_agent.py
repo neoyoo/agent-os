@@ -8,11 +8,11 @@ from typing import Any
 
 from agentos.channels import AsgiAgentApp
 from agentos.channels.auth import ChannelAuthError
-from agentos.deployment import (
-    BackendVerificationRecord,
-    DeploymentLiveBackendVerificationProfile,
+from agentos.deployment_constants import (
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
 )
+from agentos.deployment_profiles import DeploymentLiveBackendVerificationProfile
+from agentos.deployment_types import BackendVerificationRecord
 from agentos.probes import ReferenceLiveBackendProbePack
 from agentos.readiness import ProductionReadinessEvidenceBundle
 from agentos.runtime import DistributedWebRuntimeProfile

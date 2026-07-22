@@ -8,10 +8,8 @@ from agentos.channels import (
     RedisSseEventBuffer,
     RedisSseTurnControlStore,
 )
-from agentos.deployment import (
-    BackendVerificationRecord,
-    DeploymentLiveBackendVerificationProfile,
-)
+from agentos.deployment_profiles import DeploymentLiveBackendVerificationProfile
+from agentos.deployment_types import BackendVerificationRecord
 from agentos.multi import AgentCard
 
 

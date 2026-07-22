@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from agentos.deployment import (
-    BackendVerificationInvocationPlan,
-    DeploymentLiveBackendVerificationRunResult,
+from agentos.deployment_constants import (
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
 )
+from agentos.deployment_reports import DeploymentLiveBackendVerificationRunResult
+from agentos.deployment_validation import BackendVerificationInvocationPlan
 from agentos.readiness import ProductionReadinessEvidenceBundle
 
 

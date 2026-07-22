@@ -33,11 +33,6 @@
       "gate": "no_new_responsibility"
     },
     {
-      "path": "src/agentos/deployment.py",
-      "lines": 1460,
-      "gate": "no_new_responsibility"
-    },
-    {
       "path": "src/agentos/readiness.py",
       "lines": 1125,
       "gate": "no_new_responsibility"
@@ -69,7 +64,7 @@
     },
     {
       "path": "src/agentos/examples/production_reference_web_agent.py",
-      "lines": 712,
+      "lines": 714,
       "gate": "split_or_exception"
     },
     {
@@ -164,7 +159,7 @@
     },
     {
       "path": "src/agentos/state_plane.py",
-      "lines": 455,
+      "lines": 457,
       "gate": "responsibility_review"
     },
     {
@@ -180,6 +175,11 @@
     {
       "path": "src/agentos/multi/team_in_memory.py",
       "lines": 448,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/deployment_reports.py",
+      "lines": 439,
       "gate": "responsibility_review"
     },
     {
@@ -380,6 +380,11 @@
     {
       "path": "src/agentos/persistence/serializers.py",
       "lines": 308,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/deployment_validation.py",
+      "lines": 305,
       "gate": "responsibility_review"
     },
     {

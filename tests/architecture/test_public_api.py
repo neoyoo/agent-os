@@ -70,7 +70,12 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
         "agentos.runtime",
         "agentos.workspace",
         "agentos.registry",
-        "agentos.deployment",
+        "agentos.deployment_constants",
+        "agentos.deployment_profiles",
+        "agentos.deployment_reports",
+        "agentos.deployment_types",
+        "agentos.deployment_validation",
+        "agentos.deployment_workers",
         "agentos.readiness",
         "agentos.release",
         "agentos.sync",
@@ -1042,28 +1047,46 @@ def test_reference_live_backend_probe_pack_public_api_exports() -> None:
 
 def test_deployment_worker_process_supervisor_public_api_exports() -> None:
     agentos = importlib.import_module("agentos")
-    deployment = importlib.import_module("agentos.deployment")
+    expected_exports = {
+        "agentos.deployment_constants": {
+            "BackendVerificationStatus",
+            "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS",
+            "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
+            "PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS",
+            "WorkerProcessKind",
+            "WorkerProcessStatus",
+        },
+        "agentos.deployment_profiles": {
+            "DeploymentLiveBackendVerificationProfile",
+            "ProductionStatePlaneDeploymentProfile",
+        },
+        "agentos.deployment_reports": {
+            "BackendVerificationReportImportError",
+            "BackendVerificationReportImporter",
+            "DeploymentLiveBackendVerificationGateReport",
+            "DeploymentLiveBackendVerificationRunResult",
+        },
+        "agentos.deployment_types": {
+            "BackendVerificationRecord",
+            "WorkerProcessSpec",
+            "WorkerProcessState",
+        },
+        "agentos.deployment_validation": {
+            "BackendVerificationCliRunner",
+            "BackendVerificationInvocationPlan",
+            "BackendVerificationRunner",
+        },
+        "agentos.deployment_workers": {
+            "LocalSubprocessWorkerSupervisor",
+            "WorkerProcessSupervisor",
+        },
+    }
 
-    for name in [
-        "BackendVerificationCliRunner",
-        "BackendVerificationInvocationPlan",
-        "BackendVerificationReportImportError",
-        "BackendVerificationReportImporter",
-        "BackendVerificationRecord",
-        "BackendVerificationRunner",
-        "BackendVerificationStatus",
-        "DeploymentLiveBackendVerificationGateReport",
-        "DeploymentLiveBackendVerificationProfile",
-        "DeploymentLiveBackendVerificationRunResult",
-        "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS",
-        "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
-        "WorkerProcessSpec",
-        "WorkerProcessState",
-        "WorkerProcessSupervisor",
-        "LocalSubprocessWorkerSupervisor",
-    ]:
-        assert hasattr(deployment, name)
-        assert not hasattr(agentos, name)
+    for module_name, names in expected_exports.items():
+        module = importlib.import_module(module_name)
+        assert set(module.__all__) == names
+        for name in names:
+            assert not hasattr(agentos, name)
 
 
 def test_runtime_context_messages_do_not_import_channels() -> None:

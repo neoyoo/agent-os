@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from agentos.deployment import (
-    BackendVerificationRecord,
-    DeploymentLiveBackendVerificationGateReport,
-    DeploymentLiveBackendVerificationProfile,
+from agentos.deployment_constants import (
     LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS,
     LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
 )
+from agentos.deployment_profiles import DeploymentLiveBackendVerificationProfile
+from agentos.deployment_reports import DeploymentLiveBackendVerificationGateReport
+from agentos.deployment_types import BackendVerificationRecord
 
 
 def _passed_record(name: str) -> BackendVerificationRecord:

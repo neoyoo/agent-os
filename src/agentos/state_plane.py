@@ -4,9 +4,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agentos.deployment import (
-    DeploymentLiveBackendVerificationProfile,
+from agentos.deployment_constants import (
     PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS,
+)
+from agentos.deployment_profiles import (
+    DeploymentLiveBackendVerificationProfile,
     ProductionStatePlaneDeploymentProfile,
 )
 from agentos.readiness import ProductionReadinessEvidenceBundle

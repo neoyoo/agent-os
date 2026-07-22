@@ -5,11 +5,8 @@ import sys
 
 import pytest
 
-from agentos.deployment import (
-    LocalSubprocessWorkerSupervisor,
-    WorkerProcessSpec,
-    WorkerProcessState,
-)
+from agentos.deployment_types import WorkerProcessSpec, WorkerProcessState
+from agentos.deployment_workers import LocalSubprocessWorkerSupervisor
 
 
 def test_worker_process_spec_rejects_empty_identity_and_command() -> None:

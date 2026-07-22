@@ -1094,11 +1094,20 @@ agentos/
     team_ports.py
     team_runtime.py
     team_tools.py
+  deployment_constants.py
   deployment_types.py
   deployment_reports.py
   deployment_validation.py
   deployment_profiles.py
+  deployment_workers.py
 ```
+
+Deployment canonical leaf 的职责固定为：`deployment_constants.py` 承载部署常量与字面量类型，
+`deployment_types.py` 承载 evidence/worker 值对象，`deployment_reports.py` 承载 report import、
+gate 与 run-result，`deployment_validation.py` 承载 backend verification invocation/runner，
+`deployment_profiles.py` 承载 readiness/profile 组合，`deployment_workers.py` 承载本地 worker
+process lifecycle Port 与 reference adapter。worker lifecycle 不并入 validation，避免单文件同时拥有
+backend verification 与进程监管两项职责并越过 500 行硬门禁；该拆分不增加新的部署行为。
 
 最终删除：
 

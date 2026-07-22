@@ -277,33 +277,68 @@
                                                                   "UrllibA2ATransport"
                                                               ]
                                          },
-                    "agentos.deployment":  {
-                                               "stable":  [
+                    "agentos.deployment_constants":  {
+                                                         "stable":  [
 
-                                                          ],
-                                               "experimental":  [
-                                                                    "BackendVerificationCliRunner",
-                                                                    "BackendVerificationInvocationPlan",
-                                                                    "BackendVerificationRecord",
-                                                                    "BackendVerificationReportImporter",
-                                                                    "BackendVerificationReportImportError",
-                                                                    "BackendVerificationRunner",
-                                                                    "BackendVerificationStatus",
-                                                                    "DeploymentLiveBackendVerificationGateReport",
-                                                                    "DeploymentLiveBackendVerificationProfile",
-                                                                    "DeploymentLiveBackendVerificationRunResult",
-                                                                    "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS",
-                                                                    "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
-                                                                    "LocalSubprocessWorkerSupervisor",
-                                                                    "PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS",
-                                                                    "ProductionStatePlaneDeploymentProfile",
-                                                                    "WorkerProcessKind",
-                                                                    "WorkerProcessSpec",
-                                                                    "WorkerProcessState",
-                                                                    "WorkerProcessStatus",
-                                                                    "WorkerProcessSupervisor"
-                                                                ]
-                                           },
+                                                                    ],
+                                                         "experimental":  [
+                                                                              "BackendVerificationStatus",
+                                                                              "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS",
+                                                                              "LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS",
+                                                                              "PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS",
+                                                                              "WorkerProcessKind",
+                                                                              "WorkerProcessStatus"
+                                                                          ]
+                                                     },
+                    "agentos.deployment_profiles":  {
+                                                        "stable":  [
+
+                                                                   ],
+                                                        "experimental":  [
+                                                                             "DeploymentLiveBackendVerificationProfile",
+                                                                             "ProductionStatePlaneDeploymentProfile"
+                                                                         ]
+                                                    },
+                    "agentos.deployment_reports":  {
+                                                       "stable":  [
+
+                                                                  ],
+                                                       "experimental":  [
+                                                                            "BackendVerificationReportImportError",
+                                                                            "BackendVerificationReportImporter",
+                                                                            "DeploymentLiveBackendVerificationGateReport",
+                                                                            "DeploymentLiveBackendVerificationRunResult"
+                                                                        ]
+                                                   },
+                    "agentos.deployment_types":  {
+                                                     "stable":  [
+
+                                                                ],
+                                                     "experimental":  [
+                                                                          "BackendVerificationRecord",
+                                                                          "WorkerProcessSpec",
+                                                                          "WorkerProcessState"
+                                                                      ]
+                                                 },
+                    "agentos.deployment_validation":  {
+                                                          "stable":  [
+
+                                                                     ],
+                                                          "experimental":  [
+                                                                               "BackendVerificationCliRunner",
+                                                                               "BackendVerificationInvocationPlan",
+                                                                               "BackendVerificationRunner"
+                                                                           ]
+                                                      },
+                    "agentos.deployment_workers":  {
+                                                       "stable":  [
+
+                                                                  ],
+                                                       "experimental":  [
+                                                                            "LocalSubprocessWorkerSupervisor",
+                                                                            "WorkerProcessSupervisor"
+                                                                        ]
+                                                   },
                     "agentos.multi":  {
                                           "stable":  [
 

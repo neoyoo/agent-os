@@ -68,7 +68,12 @@ Every namespace listed here must be represented in
 - `agentos.sync`
 - `agentos.workspace`
 - `agentos.registry`
-- `agentos.deployment`
+- `agentos.deployment_constants`
+- `agentos.deployment_profiles`
+- `agentos.deployment_reports`
+- `agentos.deployment_types`
+- `agentos.deployment_validation`
+- `agentos.deployment_workers`
 - `agentos.readiness`
 - `agentos.release`
 - `agentos.testing`

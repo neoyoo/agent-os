@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：Wave 0-4 与 Wave 5A-5D 已完成；下一阶段为 Wave 5E breaking cutover
+> 状态：Wave 0-5D、Wave 6 Task 7 与 Task 8.5 已完成；下一阶段为 Task 8 live backend failure injection
 >
 > 日期：2026-07-17
 >
@@ -28,7 +28,9 @@
   已完成；
 - Wave 5D：Team PostgreSQL/Redis delivery、Worker、internal start、claim-scoped Team hydration 与
   trusted wakeup provenance 已完成并通过独立 Spec/Quality/Security Review；OCR 仍明确排除；
-- 下一阶段：Wave 5E facade/inventory/breaking cutover。
+- Wave 6 Task 7：Deployment canonical leaf、消费者迁移与旧模块物理删除已完成；
+- Wave 6 Task 8.5：Workspace 模块职责拆分已完成；
+- 下一阶段：Task 8 live backend failure injection；完成后进入 Task 9 breaking cutover。
 
 Wave 4 收口证据：
 
@@ -114,7 +116,7 @@ Wave 5D 实现证据：
   authority；`multi/team_tools.py` 423 行仍只拥有 Team Tool surface，schema/projection 已在独立 leaf；
   均低于 500 行强制拆分线，不做机械拆分；
 - Spec Compliance Review：`P0=0, P1=0, P2=0`；Code Quality/Security Review：
-  `P0=0, P1=0, P2=0`；Wave 5D 已关闭，下一阶段进入 Wave 5E。
+  `P0=0, P1=0, P2=0`；Wave 5D 已关闭，后续按 Wave 6 Task 7、Task 8.5、Task 8、Task 9 顺序收口。
 
 ## 1. 完成标准
 
@@ -904,7 +906,9 @@ CLI 通过唯一 `--factory module:callable`/`AGENTOS_CLI_FACTORY` 注入无 I/O
 - `deployment_types.py`；
 - `deployment_reports.py`；
 - `deployment_validation.py`；
-- `deployment_profiles.py`。
+- `deployment_profiles.py`；
+- `deployment_workers.py`，用于隔离 worker process lifecycle，避免 validation 同时承担
+  backend verification 与进程监管并越过 500 行硬门禁。
 
 逐个迁移 `readiness.py`、`release.py`、`state_plane.py` 和 reference example 消费者。
 报告 leaf 不反向依赖 runner/profile。Readiness 覆盖 migration、outbox lag、queue pending、
@@ -913,6 +917,13 @@ claim/heartbeat、drain、stream gap 和 ambiguous effect。
 Wave 6D 必须冻结 ASGI ingress 限流与 SSE 连接并发准入合同：明确由内置 Channel 还是外层
 ASGI middleware/API Gateway 承担，定义 tenant/principal 维度、稳定 `429` 映射和分布式部署
 状态模型，并在 release readiness 中验证配置与生效证据。
+
+完成证据（2026-07-22）：旧 `deployment.py` 已物理删除，生产与测试消费者全部迁移到
+canonical leaf；Public API inventory/stability 与 module-size baseline 已同步。报告模块 439 行，
+经职责审查仍只负责 evidence report/import/gate/run-result；validation 模块 305 行，只负责
+invocation/runner；worker lifecycle 独立为 230 行模块。Deployment、runtime profile、state
+plane、reference example 与 API inventory 联合门禁为 `182 passed`，Ruff、compileall 与
+`git diff --check` 通过。
 
 提交：`refactor: split deployment evidence boundaries`
 

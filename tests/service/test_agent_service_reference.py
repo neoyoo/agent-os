@@ -171,7 +171,7 @@ def test_agent_service_reference_builds_asgi_app_and_readiness_endpoint() -> Non
         AgentServiceReference,
         AgentServiceReferenceProfile,
     )
-    from agentos.deployment import ProductionStatePlaneDeploymentProfile
+    from agentos.deployment_profiles import ProductionStatePlaneDeploymentProfile
     from agentos.runtime import DistributedWebSessionOperationsProfile
     from agentos.workspace import WorkspaceExecutionIsolationProfile
 

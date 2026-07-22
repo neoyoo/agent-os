@@ -1162,49 +1162,10 @@
         }
       }
     },
-    "agentos.deployment": {
+    "agentos.deployment_constants": {
       "exports": {
-        "BackendVerificationCliRunner": {
-          "signature": "(timeout_seconds: 'float | None' = None, report_path: 'Path | str | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_limit: 'int' = 4000, stderr_limit: 'int' = 4000, env: 'Mapping[str, str] | None' = None, report_importer: 'BackendVerificationReportImporter' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "BackendVerificationInvocationPlan": {
-          "signature": "(command: 'tuple[str, ...]', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "BackendVerificationRecord": {
-          "signature": "(backend_name: 'str', backend_kind: 'str', status: 'BackendVerificationStatus', checked_at: 'float', evidence_ref: 'str', target_ref: 'str | None' = None, error: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
-          "stability": "experimental"
-        },
-        "BackendVerificationReportImportError": {
-          "signature": "unavailable",
-          "stability": "experimental"
-        },
-        "BackendVerificationReportImporter": {
-          "signature": "()",
-          "stability": "experimental"
-        },
-        "BackendVerificationRunner": {
-          "methods": {
-            "run": "(self, plan: 'BackendVerificationInvocationPlan') -> 'DeploymentLiveBackendVerificationRunResult'"
-          },
-          "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
         "BackendVerificationStatus": {
           "signature": "(*args, **kwargs)",
-          "stability": "experimental"
-        },
-        "DeploymentLiveBackendVerificationGateReport": {
-          "signature": "(required_backends: 'tuple[str, ...]', records: 'tuple[BackendVerificationRecord, ...]', missing_backends: 'tuple[str, ...]', failed_backends: 'tuple[str, ...]', skipped_backends: 'tuple[str, ...]', unknown_backends: 'tuple[str, ...]', invalid_backends: 'tuple[str, ...]', duplicate_backends: 'tuple[str, ...]', accepted: 'bool', block_production_readiness: 'bool') -> None",
-          "stability": "experimental"
-        },
-        "DeploymentLiveBackendVerificationProfile": {
-          "signature": "(records: 'tuple[BackendVerificationRecord, ...]' = (), required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), probe_name: 'str' = 'deployment_live_backend_verification') -> None",
-          "stability": "experimental"
-        },
-        "DeploymentLiveBackendVerificationRunResult": {
-          "signature": "(command: 'tuple[str, ...]', exit_code: 'int', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), records: 'tuple[BackendVerificationRecord, ...]' = (), started_at: 'float | None' = None, ended_at: 'float | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_summary: 'str' = '', stderr_summary: 'str' = '', metadata: 'Mapping[str, object]' = <factory>) -> None",
           "stability": "experimental"
         },
         "LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS": {
@@ -1215,20 +1176,56 @@
           "signature": "non-callable",
           "stability": "experimental"
         },
-        "LocalSubprocessWorkerSupervisor": {
-          "signature": "(*, clock: 'object | None' = None) -> 'None'",
-          "stability": "experimental"
-        },
         "PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS": {
           "signature": "non-callable",
+          "stability": "experimental"
+        },
+        "WorkerProcessKind": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        },
+        "WorkerProcessStatus": {
+          "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        }
+      }
+    },
+    "agentos.deployment_profiles": {
+      "exports": {
+        "DeploymentLiveBackendVerificationProfile": {
+          "signature": "(records: 'tuple[BackendVerificationRecord, ...]' = (), required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), probe_name: 'str' = 'deployment_live_backend_verification') -> None",
           "stability": "experimental"
         },
         "ProductionStatePlaneDeploymentProfile": {
           "signature": "(configured_components: 'tuple[str, ...]' = (), required_components: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence', 'state_plane_boundary_policy', 'live_backend_verification'), probe_name: 'str' = 'production_state_plane') -> None",
           "stability": "experimental"
+        }
+      }
+    },
+    "agentos.deployment_reports": {
+      "exports": {
+        "BackendVerificationReportImportError": {
+          "signature": "unavailable",
+          "stability": "experimental"
         },
-        "WorkerProcessKind": {
-          "signature": "(*args, **kwargs)",
+        "BackendVerificationReportImporter": {
+          "signature": "()",
+          "stability": "experimental"
+        },
+        "DeploymentLiveBackendVerificationGateReport": {
+          "signature": "(required_backends: 'tuple[str, ...]', records: 'tuple[BackendVerificationRecord, ...]', missing_backends: 'tuple[str, ...]', failed_backends: 'tuple[str, ...]', skipped_backends: 'tuple[str, ...]', unknown_backends: 'tuple[str, ...]', invalid_backends: 'tuple[str, ...]', duplicate_backends: 'tuple[str, ...]', accepted: 'bool', block_production_readiness: 'bool') -> None",
+          "stability": "experimental"
+        },
+        "DeploymentLiveBackendVerificationRunResult": {
+          "signature": "(command: 'tuple[str, ...]', exit_code: 'int', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), records: 'tuple[BackendVerificationRecord, ...]' = (), started_at: 'float | None' = None, ended_at: 'float | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_summary: 'str' = '', stderr_summary: 'str' = '', metadata: 'Mapping[str, object]' = <factory>) -> None",
+          "stability": "experimental"
+        }
+      }
+    },
+    "agentos.deployment_types": {
+      "exports": {
+        "BackendVerificationRecord": {
+          "signature": "(backend_name: 'str', backend_kind: 'str', status: 'BackendVerificationStatus', checked_at: 'float', evidence_ref: 'str', target_ref: 'str | None' = None, error: 'str | None' = None, metadata: 'Mapping[str, object]' = <factory>) -> None",
           "stability": "experimental"
         },
         "WorkerProcessSpec": {
@@ -1238,9 +1235,32 @@
         "WorkerProcessState": {
           "signature": "(worker_id: 'str', worker_kind: 'WorkerProcessKind', command: 'tuple[str, ...]', status: 'WorkerProcessStatus', cwd: 'str | None' = None, env_keys: 'tuple[str, ...]' = (), metadata: 'Mapping[str, object]' = <factory>, pid: 'int | None' = None, started_at: 'float | None' = None, last_heartbeat_at: 'float | None' = None, stop_requested_at: 'float | None' = None, stopped_at: 'float | None' = None, exit_code: 'int | None' = None, error: 'str | None' = None) -> None",
           "stability": "experimental"
+        }
+      }
+    },
+    "agentos.deployment_validation": {
+      "exports": {
+        "BackendVerificationCliRunner": {
+          "signature": "(timeout_seconds: 'float | None' = None, report_path: 'Path | str | None' = None, environment: 'str | None' = None, artifact_uri: 'str | None' = None, stdout_limit: 'int' = 4000, stderr_limit: 'int' = 4000, env: 'Mapping[str, str] | None' = None, report_importer: 'BackendVerificationReportImporter' = <factory>) -> None",
+          "stability": "experimental"
         },
-        "WorkerProcessStatus": {
+        "BackendVerificationInvocationPlan": {
+          "signature": "(command: 'tuple[str, ...]', required_backends: 'tuple[str, ...]' = ('agent_registry', 'message_queue', 'task_store', 'plan_store', 'worker_process_supervisor', 'session_snapshot_persistence'), metadata: 'Mapping[str, object]' = <factory>) -> None",
+          "stability": "experimental"
+        },
+        "BackendVerificationRunner": {
+          "methods": {
+            "run": "(self, plan: 'BackendVerificationInvocationPlan') -> 'DeploymentLiveBackendVerificationRunResult'"
+          },
           "signature": "(*args, **kwargs)",
+          "stability": "experimental"
+        }
+      }
+    },
+    "agentos.deployment_workers": {
+      "exports": {
+        "LocalSubprocessWorkerSupervisor": {
+          "signature": "(*, clock: 'object | None' = None) -> 'None'",
           "stability": "experimental"
         },
         "WorkerProcessSupervisor": {
