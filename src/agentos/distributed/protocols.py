@@ -60,6 +60,13 @@ class RunQueryPort(Protocol):
         run_id: str,
     ) -> RunReadModel | None: ...
 
+    async def get_active_run(
+        self,
+        *,
+        scope: RequestScope,
+        session_id: str,
+    ) -> RunReadModel | None: ...
+
 
 class ExecutionClaimPort(Protocol):
     """Accepted input、Claim 和 Fencing 的 PostgreSQL 原子边界。"""

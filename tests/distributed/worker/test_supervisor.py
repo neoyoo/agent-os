@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import get_type_hints
 
 import pytest
 
@@ -12,7 +13,7 @@ from agentos.distributed.errors import (
 )
 from agentos.distributed.models import QueueDelivery
 from agentos.distributed.worker.runner import WorkerRunner
-from agentos.distributed.worker.supervisor import DistributedWorker
+from agentos.distributed.worker.supervisor import DeliveryRunner, DistributedWorker
 from agentos.runtime.stream_events import TurnStreamCompleted
 
 from tests.distributed.worker._fakes import (
@@ -67,6 +68,11 @@ def build_worker(
         claims,
         leases,
     )
+
+
+def test_worker_depends_on_delivery_runner_protocol() -> None:
+    assert DeliveryRunner._is_protocol
+    assert get_type_hints(DistributedWorker.__init__)["runner"] is DeliveryRunner
 
 
 def test_worker_runs_full_receive_to_ack_path_and_drains_receive() -> None:

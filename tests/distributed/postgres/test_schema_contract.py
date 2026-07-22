@@ -180,7 +180,26 @@ def test_team_migration_enforces_delivery_result_and_event_kinds() -> None:
         "CREATE TABLE agentos_team_outbox",
         1,
     )[0]
+    event_scope = (
+        " ".join(events.lower().split())
+        .replace(", ", ",")
+        .replace("( ", "(")
+        .replace(" )", ")")
+    )
     assert "event_kind IN ('delivery_applied', 'delivery_rejected')" in events
+    assert "delivery_id text not null" in event_scope
+    assert "unique (tenant_id,delivery_id)" in event_scope
+    assert (
+        "foreign key (tenant_id,delivery_id,team_id) references "
+        "agentos_team_deliveries(tenant_id,delivery_id,team_id)"
+    ) in event_scope
+    deliveries = " ".join(
+        migration.split("CREATE TABLE agentos_team_deliveries", 1)[1]
+        .split("CREATE INDEX agentos_team_deliveries_pending", 1)[0]
+        .lower()
+        .split()
+    ).replace(", ", ",")
+    assert "unique (tenant_id,delivery_id,team_id)" in deliveries
     assert "CHECK (state = 'pending' OR fencing_token > 0)" in migration
     matrix = " ".join(
         migration.split("CREATE TABLE agentos_team_deliveries", 1)[1]
@@ -195,6 +214,24 @@ def test_team_migration_enforces_delivery_result_and_event_kinds() -> None:
     )
     assert "state = 'rejected' and result_kind = 'rejected_nonterminal'" in matrix
     assert "observed_run_status in ('created', 'queued', 'running', 'waiting')" in matrix
+
+
+def test_team_migration_uses_monotonic_message_sequence_for_pagination() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    messages = migration.split("CREATE TABLE agentos_team_messages", 1)[1].split(
+        "CREATE TABLE agentos_team_deliveries",
+        1,
+    )[0]
+    compact = " ".join(messages.lower().split()).replace(", ", ",")
+
+    assert "message_sequence bigint generated always as identity" in compact
+    assert "unique (message_sequence)" in compact
+    assert (
+        "on agentos_team_messages (tenant_id,team_id,message_sequence)"
+        in compact
+    )
 
 
 def test_team_migration_extends_accepted_input_for_internal_start() -> None:
@@ -217,6 +254,73 @@ def test_team_migration_extends_accepted_input_for_internal_start() -> None:
     assert "when 'team_message' then 'internal_start'" in up
     assert "source_kind in ('submission', 'command', 'team_message')" in up
     assert "octet_length(payload_json) <= 4096" in up
+
+
+def test_team_migration_persists_trusted_run_input_provenance() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    up, down = migration.split("-- migrate:down", 1)
+    compact = " ".join(up.lower().split()).replace(", ", ",")
+    down_compact = " ".join(down.lower().split())
+
+    commands = compact.split(
+        "alter table agentos_distributed_commands",
+        1,
+    )[1].split("alter table agentos_distributed_accepted_inputs", 1)[0]
+    accepted = compact.split(
+        "alter table agentos_distributed_accepted_inputs",
+        1,
+    )[1].split("alter table agentos_distributed_outbox", 1)[0]
+
+    assert "add column team_delivery_id text" in commands
+    assert "foreign key (tenant_id,team_delivery_id,session_id)" in commands
+    assert "team_delivery_id is null or kind = 'wakeup'" in commands
+    assert "add column team_delivery_id text" in accepted
+    assert "foreign key (tenant_id,team_delivery_id,session_id)" in accepted
+    assert "source_kind = 'submission'" in accepted
+    assert "team_delivery_id is null" in accepted
+    assert "continuation_kind = 'wakeup'" in accepted
+    assert "source_kind = 'team_message'" in accepted
+    assert "team_delivery_id is not null" in accepted
+    assert (
+        "create unique index agentos_distributed_accepted_inputs_team_delivery"
+        in compact
+    )
+    assert "where team_delivery_id is not null" in compact
+    assert down_compact.count("drop column team_delivery_id") == 4
+
+
+def test_team_migration_down_preserves_team_bound_input_truth() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    down = migration.split("-- migrate:down", 1)[1].strip().lower()
+    compact = " ".join(down.split())
+
+    assert compact.startswith("lock table agentos_distributed_commands")
+    lock = (
+        "lock table agentos_distributed_commands, "
+        "agentos_distributed_submissions, agentos_distributed_accepted_inputs "
+        "in access exclusive mode;"
+    )
+    assert lock in compact
+    guard = compact.split("do $$", 1)[1].split("$$;", 1)[0]
+    assert (
+        "from agentos_distributed_accepted_inputs "
+        "where team_delivery_id is not null"
+    ) in guard
+    assert (
+        "from agentos_distributed_commands where team_delivery_id is not null"
+    ) in guard
+    assert (
+        "from agentos_distributed_submissions where team_delivery_id is not null"
+    ) in guard
+    assert "errcode = 'dependent_objects_still_exist'" in guard
+    assert compact.index(lock) < compact.index("do $$")
+    assert compact.index("$$;") < compact.index(
+        "delete from agentos_distributed_outbox"
+    )
 
 
 def test_v1_names_accepted_input_constraints_for_v2_evolution() -> None:
@@ -300,7 +404,7 @@ def test_team_migration_enforces_complete_delivery_scope() -> None:
     assert compact.count(
         "foreign key (tenant_id,team_delivery_id,session_id) references "
         "agentos_team_deliveries(tenant_id,delivery_id,target_session_id)"
-    ) == 2
+    ) == 4
 
 
 def test_team_delivery_records_complete_observed_run_evidence() -> None:

@@ -123,6 +123,24 @@ class PostgresStateStore:
             )
         return None if row is None else run_read_model(row)
 
+    async def get_active_run(
+        self,
+        *,
+        scope: RequestScope,
+        session_id: str,
+    ) -> RunReadModel | None:
+        async with self._database.connection() as connection:
+            row = await fetchone(
+                connection,
+                """
+                SELECT * FROM agentos_distributed_runs
+                WHERE tenant_id = %s AND session_id = %s
+                  AND status IN ('created', 'queued', 'running', 'waiting')
+                """,
+                (scope.tenant_id, session_id),
+            )
+        return None if row is None else run_read_model(row)
+
     async def submit_command(
         self,
         *,

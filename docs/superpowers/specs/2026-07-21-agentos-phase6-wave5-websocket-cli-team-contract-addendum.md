@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Wave 5 WebSocket / CLI / Team Contract Addendum
 
-> 状态：合同已冻结；5A-5C 已完成，5D-5E 待实现
+> 状态：合同已冻结；5A-5D 已完成并通过独立收口 Review，5E 待实现
 >
 > 日期：2026-07-21
 >
@@ -343,6 +343,10 @@ v1 SQL 和 `SCHEMA_STATEMENTS` 删除 `agentos_distributed_schema` 创建/写入
 记录。version 2 resource 固定为 `2026-07-21-postgres-team-delivery.sql`。ledger 与 legacy marker
 不允许共存，共存一律 fail closed。
 
+version 2 down migration 不允许静默丢失 Team Run 输入真值。只要 submission、command 或 accepted
+input 仍持有非空 `team_delivery_id`，必须在任何 DELETE/DROP 前以
+`dependent_objects_still_exist` fail closed；运维方须先终止并清理关联 Run，再执行降级。
+
 Migration 是 deployment authority，不使用 tenant `RequestScope`。授权由受信任 `CliHostFactory`
 factory/部署边界完成。
 
@@ -397,7 +401,8 @@ Team message 是 runtime fact，不能写成 user StoredMessage。主线新增�
 
 - `distributed/internal_models.py`：`InternalRunSubmission`、`InternalSubmissionAuthority`；
 - `distributed/internal_errors.py`：非 public `StaleInternalSubmissionAuthorityError`；
-- `distributed/internal_protocols.py`：非 public `InternalRunSubmissionPort.submit_internal`；
+- `distributed/internal_protocols.py`：非 public `InternalRunSubmissionPort.submit_internal`、
+  `submit_wakeup` 与 `get_applied_input`；
 - `distributed/internal_services.py`：只注入 Team Worker 的 `InternalRunSubmissionService`；
 - `runtime/execution.py`：`AcceptedInternalStartInput` 加入 canonical `AcceptedTurnInput` union。
 
@@ -407,6 +412,12 @@ Team message 是 runtime fact，不能写成 user StoredMessage。主线新增�
 `state == CLAIMED`、claim_id、fence 且 `expires_at > database_now` 后才允许创建 Run。release 后的
 `PENDING`、已过期但尚未 takeover、APPLIED/REJECTED 或 claim/fence 不匹配统一抛出 typed
 `StaleInternalSubmissionAuthorityError`，事务不得创建或修改 Run。wire payload 无法构造 authority。
+
+trusted Team wakeup 与 internal-start 使用同一 authority 校验。PostgreSQL 必须把可信来源写入
+`team_delivery_id`：internal-start 写入 submission 与 accepted input，wakeup 写入 command 与
+accepted input；四处都以 `(tenant_id, team_delivery_id, session_id)` 外键绑定权威 TeamDelivery。
+普通 command 的该字段必须为 `NULL`，非空 command 只允许 `wakeup`；同一 tenant/delivery 最多只有
+一个非空 `team_delivery_id` 的 accepted input，因此 internal-start 与 wakeup 不能同时成为事实。
 
 `InternalRunSubmission` 固定字段为 `session_id`、`submission_id`、
 `source_kind=team_message` 和 frozen `source_payload`，payload 只允许：
@@ -437,6 +448,8 @@ class AcceptedInternalStartInput:
 submission identity 一起持久化。`AcceptedTurnInput` 精确扩为 `AcceptedStartInput |
 AcceptedContinuationInput | AcceptedInternalStartInput`，并沿用同一 claim、RunWriteGuard、
 `CREATED -> QUEUED -> RUNNING`、running cursor、checkpoint 和 terminal 原子合同。
+可信 wakeup 的 `AcceptedContinuationInput.team_delivery_id` 必须从 PostgreSQL accepted row 恢复；
+payload 形状、command ID 前缀、principal 或 Redis metadata 均不能产生 Team authority。
 
 执行分支固定如下：
 
@@ -504,6 +517,12 @@ active Run。第二次若得到可执行路径则用同一 deterministic identit
 claim 且不 ACK，交由 takeover 重算。durable reject 必须记录 observed run_id、aggregate_version 和
 status 作为线性化证据；不能基于过期 read model 静默 reject。
 
+Worker 的 matcher 只用于减少无效提交，不能作为最终 authority。`submit_wakeup` 必须在同一
+PostgreSQL command 事务内锁定 TeamDelivery，读取其不可变 TeamMessage correlation，再锁定
+Session/Run，并重新验证当前 wait kind 仅为 `remote_result/resource_availability`、correlation 非空且
+等于当前 `WaitReason.handle`。handle 已切换、timer wait 或空 correlation 都必须在任何 command、
+accepted input、Run 与 Outbox 写入前抛出 `CommandStateError`。
+
 ## 7. Team Delivery Transaction 与 Fence
 
 `team_say` 的单一 PostgreSQL 事务：
@@ -563,6 +582,8 @@ Team Worker：
 Queue receive/reclaim
 -> PostgreSQL resolve outbox + authoritative tenant/team/session
 -> PENDING/expired CLAIMED -> CLAIMED(claim_id, monotonic fence, DB expiry)
+-> 按 team_delivery_id 恢复既有 accepted Run input
+-> 无既有输入时才校验 active binding
 -> active-run query
 -> InternalRunSubmission 或 wakeup command，或 durable reject
 -> fenced APPLIED/REJECTED + Team UI/result Outbox transaction
@@ -581,13 +602,24 @@ fence 并使用 database time；heartbeat 与 result commit 还必须原子验�
 typed stale/fenced failure，不写 Team result、不写 UI/result Outbox 且不 ACK。Team fence 只保护
 TeamDelivery，绝不冒充 RunWriteGuard。
 
-Run receipt 成功后、Team result commit 前崩溃时，takeover 使用同一 deterministic ID 获得 duplicate
-receipt 后收敛；PostgreSQL、Application Service 或 result commit 失败时不 ACK。不得新增 Team retry
-store/daemon；pending reclaim 是唯一重投机制。
+Run receipt 成功后、Team result commit 前崩溃时，takeover 必须先在当前 claim authority 下按
+`team_delivery_id` 读取原 accepted input，并使用首次 acceptance 的 input kind、run ID 和 aggregate
+version 收敛 APPLIED；该读取优先于 binding 状态和 active-run query。即使原 Run 已 terminal、binding
+已删除，也不得改走新 internal-start 或错误 REJECTED。只有不存在历史 accepted input 时才重新路由并
+使用 deterministic ID。PostgreSQL、Application Service 或 result commit 失败时不 ACK。不得新增
+Team retry store/daemon；pending reclaim 是唯一重投机制。
 
 Team result 与 Team UI/result Outbox 同事务。新增 typed `TeamEventEnvelope/TeamEventReplayPort`；
 PostgreSQL 是事件真值，Redis 只做有界 replay/tail。Run `EventReplayPort` 强绑定 run scope，禁止塞入
 Team event 或维护进程内 UI list。
+
+Team replay 的 `max_events` SDK hard max 固定为 `1000`；Redis cursor 固定由 PostgreSQL
+`event_sequence` 派生为 `<event_sequence>-0`，不得使用 Redis wall-clock/自动 ID 作为事件顺序。
+append Lua 单次最多扫描 `max_events` 条：乱序但仍位于最新 N 条窗口内的事件按 sequence 原子重建
+有界 stream；已落到窗口之外的旧事件返回幂等 trimmed receipt，不得重新出现在尾部；历史 stream
+超过配置上限时先用 bounded `XREVRANGE COUNT max_events` 保留最新 canonical 窗口并原子收敛；只有
+cursor/sequence 不 canonical 时才使用 `UNLINK` 失效并从当前 PostgreSQL event 重建。不维护脱离
+replay retention 的旁路去重 key。
 
 `DistributedWorker` 抽取窄 `DeliveryRunner` Protocol（`heartbeat_interval`、`claim_ttl`、
 `run_delivery`），Run 和 Team runner 共用同一 Supervisor，不复制 daemon。
@@ -631,7 +663,10 @@ backpressure、transaction、fence 和 crash window 拆分，禁止用 sleep 构
   撤销时稳定 REJECTED 并 ACK；
 - Team claim/takeover/stale fence、claim 自然过期但未 takeover 时 result 零写入且 no-ACK、两次 route
   race 后 release 且 no-ACK、receipt-result crash、ACK-after-commit；
-- Team UI typed replay、无 LocalContinuation/独立 retry/daemon；
+- heartbeat 失权时已开始的 Application Service 调用完成后 no-result/no-ACK，后续调用不启动；binding
+  在线性化提交前撤销时使用专用 typed error 收敛为 REJECTED 并 ACK，其他 stale authority 不得降格；
+- Team UI typed replay 覆盖乱序、trimmed old event、oversized legacy stream 与真实 Redis Lua；无
+  LocalContinuation/独立 retry/daemon；
 - Base import 不加载 psycopg/redis/uvicorn；
 - OCR 零新增；
 - 全量 pytest、Architecture、Ruff、compileall、module size、public API 和 `git diff --check`；

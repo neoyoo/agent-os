@@ -51,6 +51,7 @@ CREATE TABLE agentos_team_messages (
     tenant_id TEXT NOT NULL,
     team_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
+    message_sequence BIGINT GENERATED ALWAYS AS IDENTITY,
     sender_agent_id TEXT NOT NULL,
     operation_id TEXT NOT NULL,
     message_kind TEXT NOT NULL CHECK (
@@ -66,6 +67,7 @@ CREATE TABLE agentos_team_messages (
     request_sha256 CHAR(64) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, message_id),
+    UNIQUE (message_sequence),
     UNIQUE (tenant_id, team_id, message_id),
     UNIQUE (tenant_id, team_id, operation_id),
     FOREIGN KEY (tenant_id, team_id)
@@ -82,7 +84,7 @@ CREATE TABLE agentos_team_messages (
 );
 
 CREATE INDEX agentos_team_messages_order
-ON agentos_team_messages (tenant_id, team_id, created_at, message_id);
+ON agentos_team_messages (tenant_id, team_id, message_sequence);
 
 CREATE TABLE agentos_team_deliveries (
     tenant_id TEXT NOT NULL,
@@ -117,6 +119,7 @@ CREATE TABLE agentos_team_deliveries (
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, delivery_id),
+    UNIQUE (tenant_id, delivery_id, team_id),
     UNIQUE (tenant_id, message_id, recipient_agent_id),
     UNIQUE (tenant_id, delivery_id, target_session_id),
     FOREIGN KEY (tenant_id, team_id, message_id)
@@ -171,6 +174,7 @@ WHERE state IN ('pending', 'claimed');
 CREATE TABLE agentos_team_events (
     tenant_id TEXT NOT NULL,
     team_id TEXT NOT NULL,
+    delivery_id TEXT NOT NULL,
     event_sequence BIGINT GENERATED ALWAYS AS IDENTITY,
     event_kind TEXT NOT NULL CHECK (
         event_kind IN ('delivery_applied', 'delivery_rejected')
@@ -179,8 +183,13 @@ CREATE TABLE agentos_team_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, team_id, event_sequence),
     UNIQUE (event_sequence),
+    UNIQUE (tenant_id, delivery_id),
     FOREIGN KEY (tenant_id, team_id)
         REFERENCES agentos_teams(tenant_id, team_id),
+    FOREIGN KEY (tenant_id, delivery_id, team_id)
+        REFERENCES agentos_team_deliveries(
+            tenant_id, delivery_id, team_id
+        ),
     CHECK (jsonb_typeof(payload_json) = 'object')
 );
 
@@ -225,9 +234,26 @@ ALTER TABLE agentos_distributed_submissions
             AND team_delivery_id IS NOT NULL)
     );
 
+ALTER TABLE agentos_distributed_commands
+    ADD COLUMN team_delivery_id TEXT,
+    ADD CONSTRAINT agentos_distributed_commands_team_delivery_fk
+        FOREIGN KEY (tenant_id, team_delivery_id, session_id)
+        REFERENCES agentos_team_deliveries(
+            tenant_id, delivery_id, target_session_id
+        ),
+    ADD CONSTRAINT agentos_distributed_commands_team_delivery_check CHECK (
+        team_delivery_id IS NULL OR kind = 'wakeup'
+    );
+
 ALTER TABLE agentos_distributed_accepted_inputs
     DROP CONSTRAINT agentos_distributed_accepted_inputs_source_kind_check,
     DROP CONSTRAINT agentos_distributed_accepted_inputs_shape_check,
+    ADD COLUMN team_delivery_id TEXT,
+    ADD CONSTRAINT agentos_distributed_accepted_inputs_team_delivery_fk
+        FOREIGN KEY (tenant_id, team_delivery_id, session_id)
+        REFERENCES agentos_team_deliveries(
+            tenant_id, delivery_id, target_session_id
+        ),
     ADD COLUMN input_kind TEXT GENERATED ALWAYS AS (
         CASE source_kind
             WHEN 'submission' THEN 'start'
@@ -240,17 +266,25 @@ ALTER TABLE agentos_distributed_accepted_inputs
     ADD CONSTRAINT agentos_distributed_accepted_inputs_shape_check CHECK (
         (source_kind = 'submission' AND content IS NOT NULL
             AND artifact_handles IS NOT NULL AND user_message_id IS NOT NULL
-            AND continuation_kind IS NULL AND payload_json IS NULL)
+            AND continuation_kind IS NULL AND payload_json IS NULL
+            AND team_delivery_id IS NULL)
         OR
         (source_kind = 'command' AND content IS NULL
             AND artifact_handles IS NULL AND user_message_id IS NULL
-            AND continuation_kind IS NOT NULL AND payload_json IS NOT NULL)
+            AND continuation_kind IS NOT NULL AND payload_json IS NOT NULL
+            AND (team_delivery_id IS NULL
+                OR continuation_kind = 'wakeup'))
         OR
         (source_kind = 'team_message' AND content IS NULL
             AND artifact_handles IS NULL AND user_message_id IS NULL
             AND continuation_kind IS NULL AND payload_json IS NOT NULL
-            AND octet_length(payload_json) <= 4096)
+            AND octet_length(payload_json) <= 4096
+            AND team_delivery_id IS NOT NULL)
     );
+
+CREATE UNIQUE INDEX agentos_distributed_accepted_inputs_team_delivery
+ON agentos_distributed_accepted_inputs (tenant_id, team_delivery_id)
+WHERE team_delivery_id IS NOT NULL;
 
 ALTER TABLE agentos_distributed_outbox
     ALTER COLUMN run_id DROP NOT NULL,
@@ -266,6 +300,35 @@ ALTER TABLE agentos_distributed_outbox
     );
 
 -- migrate:down
+
+LOCK TABLE
+    agentos_distributed_commands,
+    agentos_distributed_submissions,
+    agentos_distributed_accepted_inputs
+IN ACCESS EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM agentos_distributed_accepted_inputs
+        WHERE team_delivery_id IS NOT NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM agentos_distributed_commands
+        WHERE team_delivery_id IS NOT NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM agentos_distributed_submissions
+        WHERE team_delivery_id IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION
+            USING
+                ERRCODE = 'dependent_objects_still_exist',
+                MESSAGE = 'cannot downgrade while Team-bound input truth exists';
+    END IF;
+END
+$$;
 
 DELETE FROM agentos_distributed_outbox
 WHERE team_delivery_id IS NOT NULL;
@@ -285,7 +348,9 @@ ALTER TABLE agentos_distributed_outbox
 ALTER TABLE agentos_distributed_accepted_inputs
     DROP CONSTRAINT agentos_distributed_accepted_inputs_source_kind_check,
     DROP CONSTRAINT agentos_distributed_accepted_inputs_shape_check,
+    DROP CONSTRAINT agentos_distributed_accepted_inputs_team_delivery_fk,
     DROP COLUMN input_kind,
+    DROP COLUMN team_delivery_id,
     ADD CONSTRAINT agentos_distributed_accepted_inputs_source_kind_check
         CHECK (source_kind IN ('submission', 'command')),
     ADD CONSTRAINT agentos_distributed_accepted_inputs_shape_check CHECK (
@@ -297,6 +362,11 @@ ALTER TABLE agentos_distributed_accepted_inputs
             AND artifact_handles IS NULL AND user_message_id IS NULL
             AND continuation_kind IS NOT NULL AND payload_json IS NOT NULL)
     );
+
+ALTER TABLE agentos_distributed_commands
+    DROP CONSTRAINT agentos_distributed_commands_team_delivery_check,
+    DROP CONSTRAINT agentos_distributed_commands_team_delivery_fk,
+    DROP COLUMN team_delivery_id;
 
 ALTER TABLE agentos_distributed_submissions
     DROP CONSTRAINT agentos_distributed_submissions_shape_check,

@@ -198,7 +198,7 @@ class AgentBuilder:
 
     def _query_loop_kwargs(
         self, session_id: str, *, state: RuntimeStateComponents | None = None,
-        messages: MessageRuntime | None = None,
+        messages: MessageRuntime | None = None, injected: Iterable[RegisteredTool] = (),
     ) -> dict[str, object]:
         """组装唯一 QueryLoop 使用的组件。"""
 
@@ -229,7 +229,7 @@ class AgentBuilder:
             message_runtime=messages,
         )
         tool_components = assemble_tool_components(
-            tools=self._tools,
+            tools=[*(self._tools or ()), *injected] or None,
             tool_call_router=self._tool_call_router,
             context_runtime=context,
             recall_runtime=recall_runtime,

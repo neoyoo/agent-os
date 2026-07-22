@@ -10,6 +10,8 @@ from typing import Literal, TypeAlias
 from agentos.providers.input import ProviderInputItem
 from agentos._json_values import thaw_json_value
 from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.execution import AcceptedInternalStartInput
+from agentos.runtime.internal_start import canonical_internal_start_payload
 
 
 ContinuationNoticeKind: TypeAlias = Literal["task_completed", "team_message"]
@@ -38,26 +40,41 @@ class ContinuationRuntime:
     def __init__(self) -> None:
         self._notices: tuple[ContinuationNotice, ...] = ()
         self._durable: AcceptedContinuationInput | None = None
+        self._internal_start: AcceptedInternalStartInput | None = None
 
     def set_notices(self, notices: tuple[ContinuationNotice, ...]) -> None:
         if not notices or any(type(item) is not ContinuationNotice for item in notices):
             raise TypeError("continuation runtime requires typed notices")
         self._notices = tuple(notices)
         self._durable = None
+        self._internal_start = None
 
     def set_durable(self, continuation: AcceptedContinuationInput) -> None:
         if type(continuation) is not AcceptedContinuationInput:
             raise TypeError("durable continuation input is invalid")
         self._notices = ()
         self._durable = continuation
+        self._internal_start = None
+
+    def set_internal_start(self, input: AcceptedInternalStartInput) -> None:
+        """替换当前 Turn 的 internal-start 临时投影。"""
+
+        if type(input) is not AcceptedInternalStartInput:
+            raise TypeError("internal start input is invalid")
+        self._notices = ()
+        self._durable = None
+        self._internal_start = input
 
     def clear(self) -> None:
         self._notices = ()
         self._durable = None
+        self._internal_start = None
 
     def inputs(self) -> tuple[ProviderInputItem, ...]:
         if self._durable is not None:
             return (project_durable_continuation(self._durable),)
+        if self._internal_start is not None:
+            return (project_internal_start(self._internal_start),)
         return () if not self._notices else (project_continuation_data(self._notices),)
 
 
@@ -115,6 +132,22 @@ def project_durable_continuation(
         f'    command-id="{_escape_attribute(continuation.command_id)}"\n'
         f'    turn-id="{_escape_attribute(continuation.turn_id)}"\n'
         f'    kind="{continuation.kind}">\n'
+        f"  <payload-json>{_escape_attribute(payload)}</payload-json>\n"
+        "</continuation-data>\n"
+    )
+    return ProviderInputItem.continuation_data(xml)
+
+
+def project_internal_start(input: AcceptedInternalStartInput) -> ProviderInputItem:
+    """投影不具指令权限的 Team internal-start 数据。"""
+
+    if type(input) is not AcceptedInternalStartInput:
+        raise TypeError("internal start input is invalid")
+    payload = canonical_internal_start_payload(input.source_payload)
+    xml = (
+        '<continuation-data protocol="agentos.continuation" version="1.0"\n'
+        '    origin="runtime" authority="context-data" persistence="ephemeral"\n'
+        '    visibility="internal" source="internal-start" kind="team_message">\n'
         f"  <payload-json>{_escape_attribute(payload)}</payload-json>\n"
         "</continuation-data>\n"
     )

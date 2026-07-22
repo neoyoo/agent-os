@@ -198,6 +198,16 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/worker/team.py",
+      "lines": 427,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/multi/team_tools.py",
+      "lines": 423,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/distributed/postgres/_reconciliation.py",
       "lines": 420,
       "gate": "responsibility_review"
@@ -228,6 +238,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/postgres/_commands.py",
+      "lines": 398,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/durable/serialization.py",
       "lines": 397,
       "gate": "responsibility_review"
@@ -235,11 +250,6 @@
     {
       "path": "src/agentos/distributed/postgres/_a2a_push_support.py",
       "lines": 393,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/multi/team_tools.py",
-      "lines": 389,
       "gate": "responsibility_review"
     },
     {
@@ -289,7 +299,7 @@
     },
     {
       "path": "src/agentos/multi/team_runtime.py",
-      "lines": 351,
+      "lines": 353,
       "gate": "responsibility_review"
     },
     {
@@ -323,6 +333,16 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/services.py",
+      "lines": 338,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/postgres/state.py",
+      "lines": 333,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/observability/tracer.py",
       "lines": 331,
       "gate": "responsibility_review"
@@ -348,7 +368,7 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/postgres/state.py",
+      "path": "src/agentos/distributed/protocols.py",
       "lines": 315,
       "gate": "responsibility_review"
     },
@@ -358,18 +378,8 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/services.py",
-      "lines": 312,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/probes.py",
       "lines": 312,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/distributed/protocols.py",
-      "lines": 308,
       "gate": "responsibility_review"
     },
     {

@@ -107,6 +107,41 @@ async def evaluate_agentos_script(
         )
         return ["appended", cursor]
 
+    if "agentos:team-replay:ensure-event:v2" in script:
+        assert numkeys == 1 and len(args) >= 5 and (len(args) - 3) % 2 == 0
+        stream, sequence, max_events = map(str, args[:3])
+        cursor = f"{sequence}-0"
+        expected = {
+            str(name): str(value)
+            for name, value in zip(args[3::2], args[4::2], strict=True)
+        }
+        rows = redis.streams.get(stream, [])
+        if len(rows) > int(max_events):
+            rows = rows[-int(max_events) :]
+            redis.streams[stream] = rows
+        if any(
+            current_cursor != f"{fields.get('event_sequence')}-0"
+            for current_cursor, fields in rows
+        ):
+            redis.streams.pop(stream, None)
+            rows = []
+        for current_cursor, fields in rows:
+            current = {str(name): str(value) for name, value in fields.items()}
+            if current_cursor == cursor:
+                if current != expected:
+                    return ["conflict", ""]
+                return ["existing", current_cursor]
+        retained = sorted(
+            [*rows, (cursor, expected)],
+            key=lambda row: stream_id_key(row[0]),
+        )[-int(max_events) :]
+        if all(current_cursor != cursor for current_cursor, _ in retained):
+            return ["trimmed", cursor]
+        redis.streams.pop(stream, None)
+        for current_cursor, fields in retained:
+            await redis.xadd(stream, fields, id=current_cursor)
+        return ["appended", cursor]
+
     return UNHANDLED
 
 

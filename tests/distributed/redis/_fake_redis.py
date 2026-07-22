@@ -102,12 +102,17 @@ class FakeAsyncRedis:
     ) -> str:
         self._raise_if_failed()
         self.xadd_ids.append(id)
-        if id != "*":
-            raise AssertionError("tests require Redis-assigned stream IDs")
-        sequence = self._sequence.get(name, 0) + 1
-        self._sequence[name] = sequence
-        message_id = f"{sequence}-0"
         stream = self.streams.setdefault(name, [])
+        if id == "*":
+            sequence = self._sequence.get(name, 0) + 1
+            message_id = f"{sequence}-0"
+        else:
+            stream_id_key(id)
+            if stream and not stream_id_gt(id, stream[-1][0]):
+                raise FakeRedisError("stream ID is not greater than the top item")
+            sequence = max(self._sequence.get(name, 0), stream_id_key(id)[0])
+            message_id = id
+        self._sequence[name] = sequence
         stream.append((message_id, dict(fields)))
         if maxlen is not None and len(stream) > maxlen:
             del stream[: len(stream) - maxlen]

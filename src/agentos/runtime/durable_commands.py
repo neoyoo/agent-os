@@ -80,6 +80,7 @@ class AcceptedContinuationInput:
     kind: DurableContinuationKind
     payload: FrozenJsonObject
     turn_id: str
+    team_delivery_id: str | None
 
     def __init__(
         self,
@@ -88,17 +89,24 @@ class AcceptedContinuationInput:
         kind: DurableContinuationKind,
         payload: dict[str, object] | FrozenJsonObject | None,
         turn_id: str,
+        *,
+        team_delivery_id: str | None = None,
     ) -> None:
         _require_identifier(run_id, "run_id")
         _require_identifier(command_id, "command_id")
         _require_identifier(turn_id, "turn_id")
         if kind not in _CONTINUATION_KINDS:
             raise ValueError("accepted continuation kind is invalid")
+        if team_delivery_id is not None:
+            _require_identifier(team_delivery_id, "team_delivery_id")
+            if kind != "wakeup":
+                raise ValueError("team_delivery_id requires a wakeup continuation")
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "command_id", command_id)
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "payload", _normalize_payload(kind, payload))
         object.__setattr__(self, "turn_id", turn_id)
+        object.__setattr__(self, "team_delivery_id", team_delivery_id)
 
 
 @dataclass(frozen=True, slots=True)

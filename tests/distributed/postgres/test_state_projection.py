@@ -188,11 +188,25 @@ def test_command_duplicate_requires_exact_immutable_command() -> None:
         "aggregate_version": 4,
     }
 
-    receipt = _duplicate_receipt(row, "session_1", command, payload_json)
+    receipt = _duplicate_receipt(row, "session_1", command, payload_json, None)
 
     assert receipt.duplicate is True
     with pytest.raises(CommandConflictError):
-        _duplicate_receipt(row, "different_session", command, payload_json)
+        _duplicate_receipt(
+            row,
+            "different_session",
+            command,
+            payload_json,
+            None,
+        )
+    with pytest.raises(CommandConflictError):
+        _duplicate_receipt(
+            row,
+            "session_1",
+            command,
+            payload_json,
+            "team_delivery_other",
+        )
 
 
 def _run_row(status: RunStatus, result_content: str | None) -> dict[str, object]:

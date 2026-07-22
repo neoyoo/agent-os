@@ -5,6 +5,7 @@ from typing import TypeAlias
 from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.errors import RunProtocolError
 from agentos.runtime.execution import (
+    AcceptedInternalStartInput,
     AcceptedStartInput,
     AcceptedTurnExecution,
     AcceptedTurnPreparation,
@@ -22,6 +23,7 @@ TurnExecutionInput: TypeAlias = (
     UserTurnInput
     | LocalContinuationInput
     | AcceptedStartInput
+    | AcceptedInternalStartInput
     | AcceptedContinuationInput
 )
 
@@ -51,6 +53,8 @@ async def prepare_execution_turn(
                 turn_id=input.turn_id,
                 user_message_id=input.user_message_id,
             )
+        if type(input) is AcceptedInternalStartInput:
+            return turns.prepare_internal_start_turn(input)
         if type(input) is UserTurnInput:
             return await turns.prepare_user_turn(input)
         return turns.prepare_continuation_turn(input)
@@ -62,7 +66,11 @@ async def prepare_execution_turn(
         return turns.prepare_continuation_turn(input)
     if type(preparation) is not RestoreAcceptedTurn or not isinstance(
         input,
-        (AcceptedStartInput, AcceptedContinuationInput),
+        (
+            AcceptedStartInput,
+            AcceptedContinuationInput,
+            AcceptedInternalStartInput,
+        ),
     ):
         raise RunProtocolError("only accepted input can restore a prepared turn")
     return await turns.restore_turn(input), ()

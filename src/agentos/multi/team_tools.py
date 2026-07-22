@@ -141,11 +141,43 @@ class TeamTools:
             authorization_policy or DefaultTeamToolAuthorizationPolicy()
         )
         self.target_workspace_resolver = target_workspace_resolver
+        self._claim_access: TeamAccessContext | None = None
 
-    def register(self, registry: ToolRegistry) -> None:
-        """注册五个规范的 async Team Tool。"""
+    @classmethod
+    def claim_scoped(
+        cls,
+        *,
+        runtime: TeamRuntime,
+        scope: RequestScope,
+        access: TeamAccessContext,
+        owner_workspace: WorkspaceHandle | None,
+        owner_capabilities: tuple[str, ...],
+        authorization_policy: TeamToolAuthorizationPolicy | None = None,
+        target_workspace_resolver: TeamWorkspaceAuthorityPort | None = None,
+    ) -> TeamTools:
+        """从当前 Worker claim 的可信 binding 构造 Team Tool。"""
 
-        registry.register(
+        if type(access) is not TeamAccessContext:
+            raise TypeError("access must be TeamAccessContext")
+        if access.tenant_id != scope.tenant_id:
+            raise TeamToolAuthorizationError
+        tools = cls(
+            runtime=runtime,
+            scope=scope,
+            owner_agent_id=access.recipient_agent_id,
+            owner_session_id=access.target_session_id,
+            owner_workspace=owner_workspace,
+            owner_capabilities=owner_capabilities,
+            authorization_policy=authorization_policy,
+            target_workspace_resolver=target_workspace_resolver,
+        )
+        tools._claim_access = access
+        return tools
+
+    def registered_tools(self) -> tuple[RegisteredTool, ...]:
+        """返回绑定当前 owner authority 的规范 Team Tool。"""
+
+        return (
             RegisteredTool(
                 name="team_create",
                 description="Create a Team with this agent as its leader.",
@@ -153,8 +185,6 @@ class TeamTools:
                 handler=self._team_create,
                 side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
-        )
-        registry.register(
             RegisteredTool(
                 name="agent_create",
                 description="Add a worker binding to a Team led by this agent.",
@@ -162,8 +192,6 @@ class TeamTools:
                 handler=self._agent_create,
                 side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
-        )
-        registry.register(
             RegisteredTool(
                 name="team_say",
                 description="Send an idempotent message as this Team member.",
@@ -171,8 +199,6 @@ class TeamTools:
                 handler=self._team_say,
                 side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
-        )
-        registry.register(
             RegisteredTool(
                 name="team_read_messages",
                 description="Read Team messages visible to this member.",
@@ -180,8 +206,6 @@ class TeamTools:
                 handler=self._team_read_messages,
                 side_effect_policy=SideEffectPolicy.PURE,
             ),
-        )
-        registry.register(
             RegisteredTool(
                 name="team_delete",
                 description="Delete a Team led by this agent.",
@@ -190,6 +214,12 @@ class TeamTools:
                 side_effect_policy=SideEffectPolicy.NON_RETRYABLE,
             ),
         )
+
+    def register(self, registry: ToolRegistry) -> None:
+        """注册五个规范的 async Team Tool。"""
+
+        for tool in self.registered_tools():
+            registry.register(tool)
 
     async def _team_create(self, invocation: ToolInvocation) -> str:
         arguments = invocation.arguments
@@ -331,6 +361,10 @@ class TeamTools:
         )
 
     def _access_context(self, team_id: str) -> TeamAccessContext:
+        if self._claim_access is not None:
+            if team_id != self._claim_access.team_id:
+                raise TeamToolAuthorizationError
+            return self._claim_access
         return TeamAccessContext(
             tenant_id=self.scope.tenant_id,
             team_id=team_id,

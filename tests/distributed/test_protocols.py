@@ -17,7 +17,7 @@ from agentos.distributed.protocols import (
 PROTOCOL_METHODS = {
     RunSubmissionPort: ("submit",),
     RunCommandPort: ("submit_command",),
-    RunQueryPort: ("get_run",),
+    RunQueryPort: ("get_run", "get_active_run"),
     ExecutionClaimPort: (
         "resolve_delivery",
         "resolve_committed_outcome",

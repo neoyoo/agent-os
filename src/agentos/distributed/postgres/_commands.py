@@ -19,6 +19,7 @@ from agentos.distributed.postgres._database import AsyncConnection, PostgresPool
 from agentos.distributed.postgres._artifact_references import (
     require_active_artifact_result,
 )
+from agentos.distributed.internal_models import InternalSubmissionAuthority
 from agentos.distributed.postgres._guards import lock_run_with_session
 from agentos.distributed.postgres._outbox_records import (
     EXECUTION_TOPIC,
@@ -30,8 +31,11 @@ from agentos.distributed.postgres._reconciliation_sources import (
     validate_reconciliation_command_source,
 )
 from agentos.distributed.postgres._side_effect_codec import side_effect_record_from_json
+from agentos.distributed.postgres._team_access import lock_internal_delivery
 from agentos.durable.serialization import dump_json
+from agentos.multi.team_identity import team_command_id
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
+from agentos.runtime.internal_start import normalize_internal_start_payload
 from agentos.runtime.run_state import RunState, RunStatus
 from agentos.runtime.side_effect_resolution import side_effect_resolution_from_payload
 from agentos.runtime.side_effect_types import (
@@ -47,12 +51,72 @@ async def submit_command(
     session_id: str,
     command: DurableRunCommand,
 ) -> DurableCommandReceipt:
+    return await _submit_command(
+        database,
+        scope=scope,
+        session_id=session_id,
+        command=command,
+        authority=None,
+    )
+
+
+async def submit_team_wakeup(
+    database: PostgresPool,
+    *,
+    scope: RequestScope,
+    session_id: str,
+    command: DurableRunCommand,
+    authority: InternalSubmissionAuthority,
+) -> DurableCommandReceipt:
+    if type(authority) is not InternalSubmissionAuthority or command.kind != "wakeup":
+        raise TypeError("team wakeup requires InternalSubmissionAuthority")
+    normalize_internal_start_payload(command.payload)
+    expected_id = team_command_id(
+        scope=scope,
+        delivery_id=authority.delivery_id,
+        target_session_id=session_id,
+        run_id=command.run_id,
+    )
+    if command.command_id != expected_id:
+        raise CommandConflictError()
+    return await _submit_command(
+        database,
+        scope=scope,
+        session_id=session_id,
+        command=command,
+        authority=authority,
+    )
+
+
+async def _submit_command(
+    database: PostgresPool,
+    *,
+    scope: RequestScope,
+    session_id: str,
+    command: DurableRunCommand,
+    authority: InternalSubmissionAuthority | None,
+) -> DurableCommandReceipt:
     payload_json = dump_json(thaw_json_value(command.payload))
+    team_delivery_id = None if authority is None else authority.delivery_id
     async with database.transaction() as connection:
         await connection.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
             (f"command\x1f{scope.tenant_id}\x1f{command.command_id}",),
         )
+        team_wait_handle = None
+        if authority is not None:
+            delivery = await lock_internal_delivery(
+                connection,
+                scope=scope,
+                session_id=session_id,
+                authority=authority,
+                source_payload=thaw_json_value(command.payload),
+            )
+            team_wait_handle = await _team_wakeup_handle(
+                connection,
+                scope=scope,
+                delivery=delivery,
+            )
         duplicate = await fetchone(
             connection,
             """
@@ -62,7 +126,13 @@ async def submit_command(
             (scope.tenant_id, command.command_id),
         )
         if duplicate is not None:
-            return _duplicate_receipt(duplicate, session_id, command, payload_json)
+            return _duplicate_receipt(
+                duplicate,
+                session_id,
+                command,
+                payload_json,
+                team_delivery_id,
+            )
         row = await lock_run_with_session(
             connection,
             tenant_id=scope.tenant_id,
@@ -87,6 +157,8 @@ async def submit_command(
             database_now=cast(datetime, row["database_now"]),
             current_fence=cast(int, row["fencing_token"]),
             active_claim_id=cast(str | None, row["active_claim_id"]),
+            team_delivery_id=team_delivery_id,
+            team_wait_handle=team_wait_handle,
         )
 
 
@@ -100,10 +172,17 @@ async def _commit_continuation(
     database_now: datetime,
     current_fence: int,
     active_claim_id: str | None,
+    team_delivery_id: str | None,
+    team_wait_handle: str | None,
 ) -> DurableCommandReceipt:
     if active_claim_id is not None:
         raise CommandStateError()
-    _validate_continuation(command, current, database_now)
+    _validate_continuation(
+        command,
+        current,
+        database_now,
+        team_wait_handle=team_wait_handle,
+    )
     if command.kind == "resolve_side_effect":
         await _validate_resolution(connection, scope, current, command)
     updated = current.transition(RunStatus.QUEUED)
@@ -112,8 +191,8 @@ async def _commit_continuation(
         """
         INSERT INTO agentos_distributed_commands
             (tenant_id, command_id, session_id, run_id, kind, payload_json,
-             turn_id, aggregate_version, fencing_token)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             turn_id, aggregate_version, fencing_token, team_delivery_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             scope.tenant_id,
@@ -125,14 +204,15 @@ async def _commit_continuation(
             turn_id,
             updated.aggregate_version,
             current_fence,
+            team_delivery_id,
         ),
     )
     await connection.execute(
         """
         INSERT INTO agentos_distributed_accepted_inputs
             (tenant_id, principal_id, session_id, run_id, turn_id, source_kind, source_id,
-             continuation_kind, payload_json, status)
-        VALUES (%s, %s, %s, %s, %s, 'command', %s, %s, %s, 'accepted')
+             continuation_kind, payload_json, team_delivery_id, status)
+        VALUES (%s, %s, %s, %s, %s, 'command', %s, %s, %s, %s, 'accepted')
         """,
         (
             scope.tenant_id,
@@ -143,6 +223,7 @@ async def _commit_continuation(
             command.command_id,
             command.kind,
             payload_json,
+            team_delivery_id,
         ),
     )
     await update_run(connection, scope.tenant_id, updated)
@@ -182,6 +263,8 @@ def _validate_continuation(
     command: DurableRunCommand,
     state: RunState,
     database_now: datetime,
+    *,
+    team_wait_handle: str | None = None,
 ) -> None:
     reason = state.wait_reason
     if state.status is not RunStatus.WAITING or reason is None:
@@ -195,8 +278,32 @@ def _validate_continuation(
     }
     if reason.kind not in allowed[command.kind]:
         raise CommandStateError()
+    if team_wait_handle is not None and (
+        reason.kind not in {"remote_result", "resource_availability"}
+        or reason.handle != team_wait_handle
+    ):
+        raise CommandStateError()
     if reason.not_before is not None and database_now < reason.not_before:
         raise CommandNotDueError()
+
+
+async def _team_wakeup_handle(
+    connection: AsyncConnection,
+    *,
+    scope: RequestScope,
+    delivery: Mapping[str, object],
+) -> str:
+    row = await fetchone(
+        connection,
+        """
+        SELECT correlation_id FROM agentos_team_messages
+        WHERE tenant_id = %s AND team_id = %s AND message_id = %s
+        """,
+        (scope.tenant_id, delivery["team_id"], delivery["message_id"]),
+    )
+    if row is None or type(row["correlation_id"]) is not str:
+        raise CommandStateError()
+    return cast(str, row["correlation_id"])
 
 
 async def _validate_resolution(
@@ -269,12 +376,14 @@ def _duplicate_receipt(
     session_id: str,
     command: DurableRunCommand,
     payload_json: str,
+    team_delivery_id: str | None,
 ) -> DurableCommandReceipt:
     if (
         row["session_id"] != session_id
         or row["run_id"] != command.run_id
         or row["kind"] != command.kind
         or row["payload_json"] != payload_json
+        or row.get("team_delivery_id") != team_delivery_id
     ):
         raise CommandConflictError()
     return DurableCommandReceipt(
@@ -286,4 +395,4 @@ def _duplicate_receipt(
     )
 
 
-__all__ = ["submit_command"]
+__all__ = ["submit_command", "submit_team_wakeup"]

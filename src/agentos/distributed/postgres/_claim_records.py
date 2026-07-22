@@ -8,7 +8,7 @@ from agentos.distributed.postgres._database import Row
 from agentos.distributed.postgres._records import run_state_from_row
 from agentos.durable.serialization import load_json_object
 from agentos.runtime.durable_commands import AcceptedContinuationInput
-from agentos.runtime.execution import AcceptedStartInput
+from agentos.runtime.execution import AcceptedInternalStartInput, AcceptedStartInput
 from agentos.runtime.run import UserTurnInput
 
 
@@ -39,12 +39,21 @@ def accepted_input(row: Row):  # type: ignore[no-untyped-def]
     payload = row["payload_json"]
     if type(payload) is not str:
         raise ClaimConflictError()
+    if row["source_kind"] == "team_message":
+        return AcceptedInternalStartInput(
+            run_id=cast(str, row["run_id"]),
+            submission_id=cast(str, row["source_id"]),
+            source_kind="team_message",
+            source_payload=load_json_object(payload),
+            turn_id=cast(str, row["turn_id"]),
+        )
     return AcceptedContinuationInput(
         run_id=cast(str, row["run_id"]),
         command_id=cast(str, row["source_id"]),
         kind=cast(object, row["continuation_kind"]),  # type: ignore[arg-type]
         payload=load_json_object(payload),
         turn_id=cast(str, row["turn_id"]),
+        team_delivery_id=cast(str | None, row.get("team_delivery_id")),
     )
 
 

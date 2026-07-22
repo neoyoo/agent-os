@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal, TypeAlias, Union
 
+from agentos._json_values import FrozenJsonObject
 from agentos.runtime.durable_commands import AcceptedContinuationInput
+from agentos.runtime.internal_start import normalize_internal_start_payload
 from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.run_runtime import RunWriteGuard
 
@@ -44,7 +47,43 @@ class AcceptedStartInput:
             raise TypeError("input must be UserTurnInput")
 
 
-AcceptedTurnInput: TypeAlias = AcceptedStartInput | AcceptedContinuationInput
+@dataclass(frozen=True, slots=True, init=False)
+class AcceptedInternalStartInput:
+    """Store 已接受且不追加用户消息的内部首次输入。"""
+
+    run_id: str
+    submission_id: str
+    source_kind: Literal["team_message"]
+    source_payload: FrozenJsonObject
+    turn_id: str
+
+    def __init__(
+        self,
+        run_id: str,
+        submission_id: str,
+        source_kind: Literal["team_message"],
+        source_payload: Mapping[str, object] | FrozenJsonObject,
+        turn_id: str,
+    ) -> None:
+        _require_identifier(run_id, "run_id")
+        _require_identifier(submission_id, "submission_id")
+        _require_identifier(turn_id, "turn_id")
+        if source_kind != "team_message":
+            raise ValueError("source_kind must be team_message")
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "submission_id", submission_id)
+        object.__setattr__(self, "source_kind", source_kind)
+        object.__setattr__(
+            self,
+            "source_payload",
+            normalize_internal_start_payload(source_payload),
+        )
+        object.__setattr__(self, "turn_id", turn_id)
+
+
+AcceptedTurnInput: TypeAlias = (
+    AcceptedStartInput | AcceptedContinuationInput | AcceptedInternalStartInput
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +121,7 @@ class AcceptedTurnExecution:
         if type(self.input) not in {
             AcceptedStartInput,
             AcceptedContinuationInput,
+            AcceptedInternalStartInput,
         }:
             raise TypeError("input must be an accepted turn input")
         if type(self.guard) is not RunWriteGuard:
@@ -220,6 +260,7 @@ def _require_stable_id(value: object, prefix: str, field_name: str) -> None:
 
 
 __all__ = [
+    "AcceptedInternalStartInput",
     "AcceptedStartInput",
     "AcceptedTurnExecution",
     "AcceptedTurnInput",

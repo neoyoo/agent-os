@@ -111,7 +111,7 @@ class TeamRuntime:
             raise TeamMembershipError
         if not set(member.capabilities).issubset(leader.capabilities):
             raise TeamBoundaryError
-        self._validate_workspace(team.workspace, target_workspace)
+        self.validate_member_workspace(team.workspace, target_workspace)
         created = await self._port.add_member(
             scope=scope,
             access=access,
@@ -287,11 +287,13 @@ class TeamRuntime:
             raise TeamMembershipError
         return member
 
-    def _validate_workspace(
+    def validate_member_workspace(
         self,
         team_workspace: WorkspaceHandle | None,
         target_workspace: WorkspaceHandle | None,
     ) -> None:
+        """校验成员 workspace 没有扩大 Team 的权限边界。"""
+
         if team_workspace is None:
             if target_workspace is None:
                 return

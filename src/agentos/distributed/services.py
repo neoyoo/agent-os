@@ -33,6 +33,12 @@ from agentos.distributed.protocols import (
     RunSubmissionPort,
 )
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
+from agentos.runtime.run_state import RunStatus
+
+
+_ACTIVE_RUN_STATUSES = frozenset(
+    {RunStatus.CREATED, RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING},
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +116,26 @@ class RunQueryService:
         require_identifier(session_id, "session_id")
         require_identifier(run_id, "run_id")
         return await get_run(self.port, scope, session_id, run_id)
+
+    async def get_active(
+        self,
+        scope: RequestScope,
+        session_id: str,
+    ) -> RunReadModel | None:
+        """按 Session 查询唯一非终态 Run；不存在时返回 None。"""
+
+        _require_scope(scope)
+        require_identifier(session_id, "session_id")
+        run = await self.port.get_active_run(scope=scope, session_id=session_id)
+        if run is None:
+            return None
+        if type(run) is not RunReadModel or (
+            run.tenant_id != scope.tenant_id
+            or run.session_id != session_id
+            or run.status not in _ACTIVE_RUN_STATUSES
+        ):
+            raise RuntimeError("run query port returned an invalid active run")
+        return run
 
 
 @dataclass(frozen=True, slots=True)

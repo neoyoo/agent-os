@@ -2,14 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
-from agentos.distributed.models import WorkerState, WorkerStatus
+from agentos.distributed.models import QueueDelivery, WorkerState, WorkerStatus
 from agentos.distributed.protocols import QueuePort
-from agentos.distributed.worker.runner import WorkerRunner
 
 
 Clock = Callable[[], datetime]
+
+
+class DeliveryRunner(Protocol):
+    """Supervisor 调度 delivery 所需的最小异步边界。"""
+
+    heartbeat_interval: timedelta
+    claim_ttl: timedelta
+
+    async def run_delivery(self, delivery: QueueDelivery) -> bool: ...
 
 
 class DistributedWorker:
@@ -18,7 +27,7 @@ class DistributedWorker:
     def __init__(
         self,
         *,
-        runner: WorkerRunner,
+        runner: DeliveryRunner,
         queue: QueuePort,
         worker_id: str,
         topic: str,
@@ -235,4 +244,4 @@ async def _cancel_receiver(
     return None
 
 
-__all__ = ["DistributedWorker"]
+__all__ = ["DeliveryRunner", "DistributedWorker"]

@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：Wave 0-4 与 Wave 5A-5C 已完成，下一阶段进入 Wave 5D
+> 状态：Wave 0-4 与 Wave 5A-5D 已完成；下一阶段为 Wave 5E breaking cutover
 >
 > 日期：2026-07-17
 >
@@ -26,7 +26,9 @@
 - Wave 5B：Migration authority、PostgreSQL migration adapter 与 CLI Application Commands 已完成；
 - Wave 5C：Team types/ports/runtime/tools/identity/in-memory adapter 与 delivery/event typed contract
   已完成；
-- 下一阶段：Wave 5D Team PostgreSQL/Redis delivery、Worker 与 internal start；OCR 仍明确排除。
+- Wave 5D：Team PostgreSQL/Redis delivery、Worker、internal start、claim-scoped Team hydration 与
+  trusted wakeup provenance 已完成并通过独立 Spec/Quality/Security Review；OCR 仍明确排除；
+- 下一阶段：Wave 5E facade/inventory/breaking cutover。
 
 Wave 4 收口证据：
 
@@ -80,6 +82,39 @@ Wave 5C 收口证据：
 - Spec Compliance Review：`P0=0, P1=0, P2=0`；Code Quality/Security Review：
   `P0=0, P1=0`，两项 P2（capability raw count、Workspace metadata 传递不可变性）已按 TDD 修复；
 - Ruff、`compileall`、module-size baseline 与 `git diff --check` 全部通过。
+
+Wave 5D 实现证据：
+
+- PostgreSQL 保存 Team/Member/Message/Delivery/Event 真值，Redis 只保存幂等 typed replay；
+- internal-start 与 wakeup 都由当前 TeamDelivery claim authority 授权，`team_delivery_id` 持久关联
+  submission/command/accepted input，普通 command 不能伪造 Team authority；
+- takeover 在 binding 与 active-run 重算前按 delivery 恢复首次 accepted input，覆盖 Run terminal、
+  binding 删除及 receipt-result commit crash window；
+- trusted wakeup 在 PostgreSQL command 事务内重新验证 message correlation 与锁定后的 wait kind/handle；
+- Team delivery heartbeat 失权后等待已开始的 Service 调用完成但禁止 result/ACK；binding 在线性化
+  提交前撤销时以专用 typed error 收敛为 durable reject，其他 stale authority 保持 fail closed；
+- Team Redis replay 使用 PostgreSQL `event_sequence` 稳定 cursor、`1000` 条 SDK hard max、bounded Lua
+  scan，覆盖乱序补投、trim 后旧事件不复活、oversized canonical window 有界收敛与 malformed stream
+  失效重建；
+- Team message 分页使用同 Team 事务串行化下分配的 PostgreSQL `message_sequence`，不再以节点时间或
+  可回拨 wall clock 作为 keyset 真值；Team event 使用结构化 `delivery_id`、一 delivery 一 event
+  唯一约束和 tenant/delivery/team 复合外键，不扫描 JSON payload；
+- version 2 down migration 在 guard 前以 `ACCESS EXCLUSIVE` 锁定 submission/command/accepted input，
+  再于任何 destructive statement 前拒绝仍有关联 `team_delivery_id` 的输入真值；两份 migration
+  SHA-256 均为 `822EF95CB9CCD45EFBCBA0CEFE8C1482FF5662BEDF532BEAC5B58FC28582B304`；
+- Wave 5D Team 定向：`191 passed`；Distributed：`432 passed, 10 skipped`；真实 Redis Lua：
+  `1 passed`；Runtime + Distributed + Multi：`1314 passed, 10 skipped`；
+- 全量测试：`4219 passed, 22 skipped`；Architecture：`164 passed`；
+- 真实 PostgreSQL 17 验证通过 v1 -> v2、Team-bound down fail-closed、清理后 v2 -> v1 -> v2、
+  message identity/index 与 event composite FK/unique catalog 检查；Python async PostgreSQL live tests
+  因本机未安装 `psycopg/psycopg_pool` 未执行；
+- Ruff、`compileall`、module-size baseline、no-sync/OCR 静态检查与 `git diff --check` 全部通过；
+- `distributed/worker/team.py` 427 行仍只拥有单条 delivery claim/heartbeat/route/result/ACK 状态机；
+  `distributed/postgres/_commands.py` 398 行仍只拥有 Durable Command 事务，trusted wakeup 沿用该
+  authority；`multi/team_tools.py` 423 行仍只拥有 Team Tool surface，schema/projection 已在独立 leaf；
+  均低于 500 行强制拆分线，不做机械拆分；
+- Spec Compliance Review：`P0=0, P1=0, P2=0`；Code Quality/Security Review：
+  `P0=0, P1=0, P2=0`；Wave 5D 已关闭，下一阶段进入 Wave 5E。
 
 ## 1. 完成标准
 
@@ -802,6 +837,10 @@ Kernel/schema/restore 合同、active-run-by-session query、Team identity helpe
 - active Run 阻止 binding/team 删除，pending delivery 遇 binding 撤销稳定 REJECTED 并 ACK；
 - claim 自然过期但尚未 takeover 时 result commit 零写入且不 ACK；
 - 第二次 route evaluation 再次冲突时 release claim、保持可 takeover 且不 ACK。
+- trusted wakeup 必须持久化 `team_delivery_id` provenance，普通同形 wakeup 不获得 TeamTools；
+- receipt-result crash takeover 必须先按 delivery 恢复原 input kind/run/version，再检查 binding 或
+  active Run；
+- wakeup 提交事务内必须复核 PostgreSQL TeamMessage correlation 与锁定后的 wait kind/handle。
 
 ### Workstream I：Migration Authority（主线串行）
 

@@ -25,7 +25,11 @@ from agentos.runtime.query_loop_support import (
     TurnNoticeProvider,
 )
 from agentos.runtime.durable_commands import AcceptedContinuationInput
-from agentos.runtime.execution import AcceptedStartInput, AcceptedTurnInput
+from agentos.runtime.execution import (
+    AcceptedInternalStartInput,
+    AcceptedStartInput,
+    AcceptedTurnInput,
+)
 from agentos.runtime.run import LocalContinuationInput, UserTurnInput
 from agentos.runtime.session import SessionState
 from agentos.runtime.stream_events import (
@@ -114,6 +118,22 @@ class TurnLifecycle:
             self.continuation_runtime.set_notices(notices)
         return turn, (TurnStreamStarted(""),)
 
+    def prepare_internal_start_turn(
+        self,
+        input: AcceptedInternalStartInput,
+    ) -> tuple[TurnState | None, tuple[TurnStreamEvent, ...]]:
+        """创建 internal-start Turn，不追加 StoredMessage。"""
+
+        if self.continuation_runtime is None:
+            raise RuntimeError("continuation runtime is not configured")
+        turn = self._start_turn(
+            "",
+            is_continuation=True,
+            turn_id=input.turn_id,
+        )
+        self.continuation_runtime.set_internal_start(input)
+        return turn, (TurnStreamStarted(""),)
+
     async def restore_turn(self, input: AcceptedTurnInput) -> TurnState | None:
         """恢复已持久化 Turn 的内存状态，不重复产生首次应用副作用。"""
 
@@ -143,6 +163,12 @@ class TurnLifecycle:
                 self.continuation_runtime.clear()
             else:
                 self.continuation_runtime.set_durable(input)
+        elif type(input) is AcceptedInternalStartInput:
+            content = ""
+            turn_id = input.turn_id
+            if self.continuation_runtime is None:
+                raise RuntimeError("continuation runtime is not configured")
+            self.continuation_runtime.set_internal_start(input)
         else:
             raise TypeError("input must be an accepted turn input")
         if self.session_state is None:
