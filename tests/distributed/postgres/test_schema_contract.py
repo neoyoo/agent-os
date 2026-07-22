@@ -134,6 +134,69 @@ def test_team_delivery_migration_is_packaged_without_drift() -> None:
     assert "fencing_token BIGINT NOT NULL" in documented
 
 
+def test_team_message_migration_persists_operation_identity() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+    messages = migration.split("CREATE TABLE agentos_team_messages", 1)[1].split(
+        "CREATE INDEX agentos_team_messages_order",
+        1,
+    )[0]
+
+    assert "operation_id TEXT NOT NULL" in messages
+    assert "UNIQUE (tenant_id, team_id, operation_id)" in messages
+    assert (
+        "message_kind IN ('instruction', 'observation', 'result', 'notice')"
+        in messages
+    )
+    assert "octet_length(content) BETWEEN 1 AND 4096" in messages
+    teams = migration.split("CREATE TABLE agentos_teams", 1)[1].split(
+        "CREATE TABLE agentos_team_members",
+        1,
+    )[0]
+    assert "workspace_id TEXT" in teams
+    assert "workspace TEXT" not in teams
+    assert "agentos_team_members_one_leader" in migration
+    assert "WHERE role = 'leader'" in migration
+    assert "jsonb_array_length(capabilities_json) <= 32" in migration
+
+
+def test_team_migration_enforces_delivery_result_and_event_kinds() -> None:
+    migration = (
+        _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION
+    ).read_text(encoding="utf-8")
+
+    for value in (
+        "internal_start",
+        "wakeup",
+        "rejected_binding_revoked",
+        "rejected_nonterminal",
+    ):
+        assert f"'{value}'" in migration.split(
+            "CREATE TABLE agentos_team_deliveries",
+            1,
+        )[1].split("CREATE INDEX agentos_team_deliveries_pending", 1)[0]
+    events = migration.split("CREATE TABLE agentos_team_events", 1)[1].split(
+        "CREATE TABLE agentos_team_outbox",
+        1,
+    )[0]
+    assert "event_kind IN ('delivery_applied', 'delivery_rejected')" in events
+    assert "CHECK (state = 'pending' OR fencing_token > 0)" in migration
+    matrix = " ".join(
+        migration.split("CREATE TABLE agentos_team_deliveries", 1)[1]
+        .split("CREATE INDEX agentos_team_deliveries_pending", 1)[0]
+        .lower()
+        .split(),
+    )
+    assert "state = 'applied' and result_kind in ('internal_start', 'wakeup')" in matrix
+    assert (
+        "state = 'rejected' and result_kind = 'rejected_binding_revoked'"
+        in matrix
+    )
+    assert "state = 'rejected' and result_kind = 'rejected_nonterminal'" in matrix
+    assert "observed_run_status in ('created', 'queued', 'running', 'waiting')" in matrix
+
+
 def test_team_migration_extends_accepted_input_for_internal_start() -> None:
     migration = (
         _ROOT / "src" / "agentos" / "migrations" / _V2_MIGRATION

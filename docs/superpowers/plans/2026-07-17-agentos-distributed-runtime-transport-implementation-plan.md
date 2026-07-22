@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：Wave 0-4 与 Wave 5A-5B 已完成，下一阶段进入 Wave 5C
+> 状态：Wave 0-4 与 Wave 5A-5C 已完成，下一阶段进入 Wave 5D
 >
 > 日期：2026-07-17
 >
@@ -24,7 +24,9 @@
 - Wave 4：HTTP/SSE/Artifact、A2A wire、A2A durable push 和 Channel Integration 已完成；
 - Wave 5A：Shared Run Stream、WebSocket wire/channel/ASGI 与 terminal publication recovery 已完成；
 - Wave 5B：Migration authority、PostgreSQL migration adapter 与 CLI Application Commands 已完成；
-- 下一阶段：Wave 5C Team Domain；OCR 仍明确排除。
+- Wave 5C：Team types/ports/runtime/tools/identity/in-memory adapter 与 delivery/event typed contract
+  已完成；
+- 下一阶段：Wave 5D Team PostgreSQL/Redis delivery、Worker 与 internal start；OCR 仍明确排除。
 
 Wave 4 收口证据：
 
@@ -61,6 +63,23 @@ Wave 5B 收口证据：
   单一职责，不做机械拆分；
 - CLI conflict 分类覆盖 side-effect-in-flight 与 Artifact 幂等冲突；基础 import 不加载
   `psycopg`、`redis`、`uvicorn`，Distributed 路径不存在同步 I/O wrapper。
+
+Wave 5C 收口证据：
+
+- Team Domain：`76 passed`；Multi：`335 passed`；Schema/Migration：`31 passed`；
+- 全量测试：`4109 passed, 23 skipped`；Architecture：`164 passed`；
+- Team message 使用 `4096 UTF-8 bytes` hard max，Team Tool Result 使用 `64 KiB` hard max，
+  message page hard max 为 `10`，member capability raw item hard max 为 `32` 且拒绝重复项；
+- `TeamAccessContext` 贯通 member-originated Runtime、Port、Tool 与 InMemory Adapter，owner identity
+  只从可信 tenant/team/member/session binding 派生；
+- Team DTO、recipient snapshot、capability tuple 与 Workspace metadata 均在构造边界防御复制并冻结；
+  capability 只接受有界 `tuple/list`，Workspace metadata 只接受精确 `str -> str` 且支持
+  `deepcopy/dataclasses.asdict`；
+- Provider projection 不暴露 target Session、delivery/claim/fence、operation digest、workspace path 或
+  metadata；
+- Spec Compliance Review：`P0=0, P1=0, P2=0`；Code Quality/Security Review：
+  `P0=0, P1=0`，两项 P2（capability raw count、Workspace metadata 传递不可变性）已按 TDD 修复；
+- Ruff、`compileall`、module-size baseline 与 `git diff --check` 全部通过。
 
 ## 1. 完成标准
 
@@ -902,6 +921,23 @@ ASGI middleware/API Gateway 承担，定义 tenant/principal 维度、稳定 `42
 release-ready evidence。
 
 提交：`test: add distributed runtime failure injection matrix`
+
+### Task 8.5：Workspace 模块职责拆分
+
+Wave 5C 收口触碰 `src/agentos/workspace.py` 时，该文件为 663 行，已超过 500 行拆分门禁。
+本轮只收紧 `WorkspaceHandle.metadata` 的既有不可变领域边界，不扩大为公共模块搬迁；Phase 6
+breaking cutover 前必须原子完成以下拆分：
+
+- `agentos/workspace/models.py`：Workspace scope、handle、request/result 和 Port DTO；
+- `agentos/workspace/policies.py`：workspace narrowing、execution 与 isolation policy；
+- `agentos/workspace/local.py`：Local provider 和 reference execution backend；
+- `agentos/workspace/__init__.py`：canonical public exports；同批删除旧 `workspace.py`，不保留
+  兼容文件、动态 alias 或双实现。
+
+验收：现有 Workspace/Public API/Planning/Team 测试保持通过，root import identity 不分叉，单个生产
+文件低于 500 行，Local backend 不进入 Kernel/Team Domain 依赖图。
+
+提交：`refactor: split workspace domain and local adapters`
 
 ### Task 9：Breaking Cutover
 

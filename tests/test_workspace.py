@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,61 @@ from agentos.workspace import (
 def test_workspace_handle_rejects_unknown_scope() -> None:
     with pytest.raises(ValueError, match="invalid workspace scope"):
         WorkspaceHandle("workspace_1", "unknown")  # type: ignore[arg-type]
+
+
+def test_workspace_handle_copies_and_freezes_metadata() -> None:
+    metadata = {"session_id": "session_1"}
+    handle = WorkspaceHandle(
+        workspace_id="workspace_1",
+        scope="session",
+        metadata=metadata,
+    )
+
+    metadata["session_id"] = "session_tampered"
+
+    assert handle.metadata == {"session_id": "session_1"}
+    with pytest.raises(TypeError):
+        handle.metadata["session_id"] = "session_other"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    (
+        {1: "session_1"},
+        {"session_id": 1},
+        {"session_id": ["session_1"]},
+    ),
+)
+def test_workspace_handle_rejects_non_string_metadata(
+    metadata: dict[object, object],
+) -> None:
+    with pytest.raises(TypeError, match="metadata must contain string keys and values"):
+        WorkspaceHandle(
+            workspace_id="workspace_1",
+            scope="session",
+            metadata=metadata,  # type: ignore[arg-type]
+        )
+
+
+def test_workspace_handle_supports_deepcopy_and_asdict() -> None:
+    handle = WorkspaceHandle(
+        workspace_id="workspace_1",
+        scope="session",
+        metadata={"session_id": "session_1"},
+    )
+
+    copied = deepcopy(handle)
+    serialized = asdict(handle)
+
+    assert copied == handle
+    assert copied.metadata == {"session_id": "session_1"}
+    assert serialized == {
+        "workspace_id": "workspace_1",
+        "scope": "session",
+        "root": None,
+        "parent_workspace_id": None,
+        "metadata": {"session_id": "session_1"},
+    }
 
 
 def test_local_workspace_provider_resolves_process_workspace(tmp_path: Path) -> None:

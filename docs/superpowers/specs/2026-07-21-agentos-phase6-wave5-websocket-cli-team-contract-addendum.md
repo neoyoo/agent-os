@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Wave 5 WebSocket / CLI / Team Contract Addendum
 
-> 状态：合同已冻结；5A-5B 已完成，5C-5E 待实现
+> 状态：合同已冻结；5A-5C 已完成，5D-5E 待实现
 >
 > 日期：2026-07-21
 >
@@ -358,6 +358,33 @@ team_read_messages/team_delete`。
 新 API 全 async，所有 Port 操作显式接收 `RequestScope`。可投递 member 必须绑定非空
 `target_session_id`。时间使用 UTC `datetime`，不使用 float wall clock。TeamMessage 不包含
 `artifact_handles`；Wave 5 禁止跨 Session Artifact 传递，未来只能通过显式复制或授权合同增加。
+
+member-originated 的 add/remove/send/read/delete Runtime 与 Port 操作还必须接收完整
+`TeamAccessContext(tenant_id, team_id, recipient_agent_id, target_session_id)`。Runtime 只从该 context
+派生 actor、sender 和 reader identity；Adapter 必须在同一事务或内存锁边界验证 scope、Team、active
+member 与目标 Session 四元绑定，不能用 Runtime 外的预检查替代。Team Tool 的 context 只能从受信任
+owner scope 构建，模型选择的 `team_id` 只是待验证的资源标识。
+
+Team message `content` 使用 UTF-8 hard max `4096 bytes`。`team_read_messages` 使用
+`after_message_id` keyset cursor，默认和 hard max 都为 `10`，返回 typed page 与仅在仍有后续数据时
+存在的 `next_cursor`；Store/Port 必须在 materialize 全量历史前应用 limit。Provider-visible
+`team_say` 结果只投影 message public fields、`duplicate` 和 `accepted_recipient_count`，
+`team_read_messages` 不投影 operation/request digest、recipient session binding、delivery/claim/fence、
+source digest 或 observed Run evidence。所有 Team Tool Result 使用 UTF-8 hard max `64 KiB`；
+member capabilities 最多 `32` 项且不得重复，非法集合在 Store/Provider 调用前拒绝。
+
+`TeamToolAuthorizationPolicy` 接收不含 message 正文的 typed resource intent；`agent_create` intent
+至少包含 recipient、target Session 和 capabilities，`team_say` intent 包含 addressing kind/target。
+默认策略继续拒绝管理操作。Member 不持久化独立 workspace：绑定创建与每次 Worker claim 都必须
+按 `target_session_id` 从可信 Session/Workspace authority 重新解析 workspace，并在 Team parent
+workspace 下执行 narrowing 校验；模型参数、Tool metadata、Redis 或 delivery payload 均不能提供
+workspace authority。Team 有 parent workspace 而目标 workspace 无法解析时 fail closed。
+PostgreSQL 只持久化稳定 `workspace_id`，不持久化 root、metadata 或节点本地路径；读取 Team 时
+通过同一 workspace authority 解析 parent `WorkspaceHandle`。
+
+除五个 LLM Tool 外，Application Port 冻结 leader/deployment-authorized `remove_member` mutation；它
+只软删除 worker binding，leader 只能通过 `team_delete` 删除。PostgreSQL 实现必须与
+`team_delete` 一样在 active Run 时抛 `TeamActiveRunConflictError`。
 
 删除对象：旧 TeamWorkerRunner/Daemon/AgentProvider/SessionProvider、Retry/Cancellation Store、
 RunResult/Error、LocalTeamWakeupTrigger、distributed TeamNotice、Postgres Team retry/cancel/UI store、

@@ -5,7 +5,7 @@ CREATE TABLE agentos_teams (
     team_id TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('active', 'deleted')),
     leader_agent_id TEXT NOT NULL,
-    workspace TEXT,
+    workspace_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     deleted_at TIMESTAMPTZ,
     PRIMARY KEY (tenant_id, team_id),
@@ -35,20 +35,28 @@ CREATE TABLE agentos_team_members (
         (status = 'active' AND deleted_at IS NULL)
         OR (status = 'deleted' AND deleted_at IS NOT NULL)
     ),
-    CHECK (jsonb_typeof(capabilities_json) = 'array')
+    CHECK (jsonb_typeof(capabilities_json) = 'array'),
+    CHECK (jsonb_array_length(capabilities_json) <= 32)
 );
 
 CREATE UNIQUE INDEX agentos_team_members_active_session
 ON agentos_team_members (tenant_id, target_session_id)
 WHERE status = 'active';
 
+CREATE UNIQUE INDEX agentos_team_members_one_leader
+ON agentos_team_members (tenant_id, team_id)
+WHERE role = 'leader';
+
 CREATE TABLE agentos_team_messages (
     tenant_id TEXT NOT NULL,
     team_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
     sender_agent_id TEXT NOT NULL,
-    message_kind TEXT NOT NULL,
-    content TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    message_kind TEXT NOT NULL CHECK (
+        message_kind IN ('instruction', 'observation', 'result', 'notice')
+    ),
+    content TEXT NOT NULL CHECK (octet_length(content) BETWEEN 1 AND 4096),
     correlation_id TEXT,
     addressing_kind TEXT NOT NULL CHECK (
         addressing_kind IN ('direct', 'broadcast')
@@ -59,6 +67,7 @@ CREATE TABLE agentos_team_messages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, message_id),
     UNIQUE (tenant_id, team_id, message_id),
+    UNIQUE (tenant_id, team_id, operation_id),
     FOREIGN KEY (tenant_id, team_id)
         REFERENCES agentos_teams(tenant_id, team_id),
     FOREIGN KEY (tenant_id, team_id, sender_agent_id)
@@ -89,7 +98,12 @@ CREATE TABLE agentos_team_deliveries (
     fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
     claim_expires_at TIMESTAMPTZ,
     source_sha256 CHAR(64) NOT NULL,
-    result_kind TEXT,
+    result_kind TEXT CHECK (
+        result_kind IN (
+            'internal_start', 'wakeup',
+            'rejected_binding_revoked', 'rejected_nonterminal'
+        )
+    ),
     observed_run_id TEXT,
     observed_aggregate_version BIGINT CHECK (
         observed_aggregate_version >= 0
@@ -122,6 +136,7 @@ CREATE TABLE agentos_team_deliveries (
         OR (state <> 'claimed' AND claim_id IS NULL
             AND claim_expires_at IS NULL)
     ),
+    CHECK (state = 'pending' OR fencing_token > 0),
     CHECK (
         (state IN ('pending', 'claimed')
             AND result_kind IS NULL
@@ -130,22 +145,22 @@ CREATE TABLE agentos_team_deliveries (
             AND observed_run_status IS NULL)
         OR
         (state = 'applied'
-            AND result_kind IS NOT NULL
+            AND result_kind IN ('internal_start', 'wakeup')
             AND observed_run_id IS NOT NULL
             AND observed_aggregate_version IS NOT NULL
             AND observed_run_status IS NOT NULL)
         OR
         (state = 'rejected'
-            AND result_kind IS NOT NULL
-            AND (
-                (observed_run_id IS NULL
-                    AND observed_aggregate_version IS NULL
-                    AND observed_run_status IS NULL)
-                OR
-                (observed_run_id IS NOT NULL
-                    AND observed_aggregate_version IS NOT NULL
-                    AND observed_run_status IS NOT NULL)
-            ))
+            AND result_kind = 'rejected_binding_revoked'
+            AND observed_run_id IS NULL
+            AND observed_aggregate_version IS NULL
+            AND observed_run_status IS NULL)
+        OR
+        (state = 'rejected'
+            AND result_kind = 'rejected_nonterminal'
+            AND observed_run_id IS NOT NULL
+            AND observed_aggregate_version IS NOT NULL
+            AND observed_run_status IN ('created', 'queued', 'running', 'waiting'))
     )
 );
 
@@ -157,7 +172,9 @@ CREATE TABLE agentos_team_events (
     tenant_id TEXT NOT NULL,
     team_id TEXT NOT NULL,
     event_sequence BIGINT GENERATED ALWAYS AS IDENTITY,
-    event_kind TEXT NOT NULL,
+    event_kind TEXT NOT NULL CHECK (
+        event_kind IN ('delivery_applied', 'delivery_rejected')
+    ),
     payload_json JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, team_id, event_sequence),

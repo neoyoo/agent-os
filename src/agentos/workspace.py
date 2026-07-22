@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, Protocol
 
+from agentos._json_values import FrozenJsonObject
 from agentos._sync_work import run_sync
 from agentos._redaction import (
     is_secret_like_key,
@@ -165,6 +166,16 @@ class WorkspaceHandle:
     def __post_init__(self) -> None:
         if self.scope not in WORKSPACE_SCOPES:
             raise ValueError(f"invalid workspace scope: {self.scope}")
+        if not isinstance(self.metadata, Mapping) or any(
+            type(key) is not str or type(value) is not str
+            for key, value in self.metadata.items()
+        ):
+            raise TypeError("metadata must contain string keys and values")
+        object.__setattr__(
+            self,
+            "metadata",
+            FrozenJsonObject(self.metadata.items()),
+        )
 
 
 @dataclass(frozen=True, slots=True)

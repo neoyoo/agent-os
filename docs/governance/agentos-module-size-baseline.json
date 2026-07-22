@@ -79,7 +79,7 @@
     },
     {
       "path": "src/agentos/workspace.py",
-      "lines": 652,
+      "lines": 663,
       "gate": "split_or_exception"
     },
     {
@@ -183,6 +183,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/multi/team_in_memory.py",
+      "lines": 448,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/durable/sqlite_store.py",
       "lines": 428,
       "gate": "responsibility_review"
@@ -233,6 +238,11 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/multi/team_tools.py",
+      "lines": 389,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/capabilities/skill_sources.py",
       "lines": 387,
       "gate": "responsibility_review"
@@ -275,6 +285,11 @@
     {
       "path": "src/agentos/planning/tool_schemas.py",
       "lines": 361,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/multi/team_runtime.py",
+      "lines": 351,
       "gate": "responsibility_review"
     },
     {
@@ -365,6 +380,11 @@
     {
       "path": "src/agentos/distributed/postgres/_a2a_delivery_attempt.py",
       "lines": 305,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/multi/team_types.py",
+      "lines": 302,
       "gate": "responsibility_review"
     },
     {
