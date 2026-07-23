@@ -2,8 +2,9 @@
 
 Audit target: the `0.3.0a1` Phase 6 distributed runtime cutover.
 
-Goal status: active until the final test gates and two independent reviews are
-complete. This document records SDK coverage; it does not certify a deployment.
+Goal status: complete. The final Phase 6 test gates and two independent reviews
+passed with no open P0, P1, or P2 findings. This document records SDK coverage;
+it does not certify a deployment.
 
 ## Objective Matrix
 
@@ -22,7 +23,7 @@ complete. This document records SDK coverage; it does not certify a deployment.
 | Context protocol | complete for Phase 6 | per-attempt context rebuild, StoredMessage/Artifact separation, typed projections | application projection selection |
 | Side effects | complete for Phase 6 | `SideEffectPolicy`, ledger, resolution, cancel safe-stop | business compensation handlers |
 | Live failure evidence | complete in SDK test scope | restart, timeout, claim race, fence, checkpoint, outbox, artifact and side-effect integration tests | deployment drills and alerting |
-| Release governance | in progress | public API inventory, module-size baseline, migration guide, release evidence | final green gates and review sign-off |
+| Release governance | complete | public API inventory, module-size baseline, migration guide, release evidence generator/validator, final green gates and review sign-off | publishing and deployment approval |
 
 ## Architecture Invariants
 

@@ -11,12 +11,13 @@ def _audit() -> str:
     return " ".join(text.split())
 
 
-def test_audit_targets_current_release_and_keeps_goal_active() -> None:
+def test_audit_targets_current_release_and_records_goal_complete() -> None:
     text = _audit()
 
     assert "0.3.0a1" in text
     assert "Phase 6 distributed runtime cutover" in text
-    assert "Goal status: active" in text
+    assert "Goal status: complete" in text
+    assert "| Release governance | complete |" in text
     assert "does not certify a deployment" in text
 
 
