@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from agentos._json_values import thaw_json_value
 from agentos.distributed.errors import ClaimConflictError
 from agentos.distributed.models import RequestScope
 from agentos.distributed.postgres._database import AsyncConnection, Row, fetchone
@@ -19,7 +18,7 @@ from agentos.distributed.postgres._side_effect_transitions import (
     begin_compensation_current,
     resolve_current,
 )
-from agentos.durable.serialization import dump_json
+from agentos.durable.command_serialization import command_payload_to_json
 from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.execution import RestoreAcceptedTurn, RunExecutionCursor
 from agentos.runtime.run_runtime import RunWriteGuard
@@ -267,7 +266,7 @@ async def _lock_source_for_command(
             resolution.operation_id,
         ),
     )
-    expected_payload = dump_json(thaw_json_value(accepted.payload))
+    expected_payload = command_payload_to_json(accepted.kind, accepted.payload)
     if (
         row is None
         or run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}
@@ -407,9 +406,10 @@ def _source_row_is_consistent(row: Row, resume: SideEffectResume, cursor) -> boo
         and row["source_aggregate_version"] + 1 == row["waiting_aggregate_version"]
         and row["command_aggregate_version"] == row["waiting_aggregate_version"] + 1
         and row["command_payload_json"]
-        == dump_json(thaw_json_value(side_effect_resolution_to_payload(
-            resume.resolution,
-        )))
+        == command_payload_to_json(
+            "resolve_side_effect",
+            side_effect_resolution_to_payload(resume.resolution),
+        )
         and cursor_contains_record(cursor, resume.record)
     )
 

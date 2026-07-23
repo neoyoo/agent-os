@@ -19,6 +19,7 @@ from agentos.runtime.errors import (
     CheckpointCorruptedError,
     DurableUnsafeDataError,
 )
+from agentos.runtime.payloads import ProtectedPayloadRef
 from agentos.runtime.run_runtime import RunRuntime, RunWriteGuard
 from agentos.runtime.run_state import RunStatus
 from agentos.runtime.side_effect_types import (
@@ -195,6 +196,36 @@ def test_sqlite_runtime_fails_closed_without_resolution_resume_assembly(
         "cmd_resolve",
         "resolve_side_effect",
         SideEffectResolution(operation_id, SideEffectResolutionKind.FAIL),
+    )
+
+    with pytest.raises(CommandStateError, match="not assembled"):
+        run(runtime.accept(command))
+
+    assert run(runs.get_run("run_1")).status is RunStatus.WAITING
+    run(store.close())
+
+
+def test_resolution_command_allows_opaque_protected_attestation(tmp_path) -> None:
+    operation_id = "operation_d340f3861e0c6a7eefbaf707fdc69d3d"
+    store, runs = waiting_run(
+        tmp_path,
+        WaitReason("side_effect_reconciliation", operation_id),
+    )
+    runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
+    attestation = ProtectedPayloadRef(
+        "A" * 128,
+        "hmac-sha256:" + "b" * 64,
+    )
+    command = DurableRunCommand(
+        "run_1",
+        "cmd_resolve",
+        "resolve_side_effect",
+        SideEffectResolution(
+            operation_id,
+            SideEffectResolutionKind.RETRY_PROVEN_SAFE,
+            attestation_ref=attestation,
+            attestation_digest=attestation.digest,
+        ),
     )
 
     with pytest.raises(CommandStateError, match="not assembled"):

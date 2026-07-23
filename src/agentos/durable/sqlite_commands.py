@@ -5,8 +5,10 @@ from typing import cast
 
 import aiosqlite
 
-from agentos._json_values import thaw_json_value
-from agentos.durable.serialization import dump_json, load_json_object
+from agentos.durable.command_serialization import (
+    command_payload_from_json,
+    command_payload_to_json,
+)
 from agentos.durable.sqlite_records import require_run, update_run
 from agentos.runtime.durable_commands import (
     AcceptedContinuationInput,
@@ -32,7 +34,7 @@ async def accept_command(
     command: DurableRunCommand,
     now: datetime,
 ) -> AcceptedTurnExecution | DurableCommandReceipt:
-    payload_json = dump_json(thaw_json_value(command.payload))
+    payload_json = command_payload_to_json(command.kind, command.payload)
     async with connection.execute(
         "SELECT * FROM durable_commands WHERE command_id = ?",
         (command.command_id,),
@@ -119,12 +121,15 @@ async def load_pending_continuation(
         payload = row["payload_json"]
         if not isinstance(payload, str):
             raise TypeError("payload_json")
+        kind = row["kind"]
+        if type(kind) is not str:
+            raise TypeError("kind")
         return AcceptedTurnExecution(
             input=AcceptedContinuationInput(
                 run_id=row["run_id"],
                 command_id=row["command_id"],
-                kind=cast(object, row["kind"]),  # type: ignore[arg-type]
-                payload=load_json_object(payload),
+                kind=cast(object, kind),  # type: ignore[arg-type]
+                payload=command_payload_from_json(kind, payload),
                 turn_id=row["turn_id"],
             ),
             guard=RunWriteGuard(row["aggregate_version"]),
@@ -200,9 +205,7 @@ def _duplicate_receipt(
             raise TypeError("session_id")
         if type(stored_payload_json) is not str:
             raise TypeError("payload_json")
-        stored_payload = load_json_object(stored_payload_json)
-        if dump_json(stored_payload) != stored_payload_json:
-            raise ValueError("payload_json")
+        command_payload_from_json(stored_kind, stored_payload_json)
         receipt = DurableCommandReceipt(
             run_id=stored_run_id,
             command_id=stored_command_id,

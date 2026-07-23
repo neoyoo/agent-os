@@ -32,7 +32,7 @@ from agentos.distributed.postgres._reconciliation_sources import (
 )
 from agentos.distributed.postgres._side_effect_codec import side_effect_record_from_json
 from agentos.distributed.postgres._team_access import lock_internal_delivery
-from agentos.durable.serialization import dump_json
+from agentos.durable.command_serialization import command_payload_to_json
 from agentos.multi.team_identity import team_command_id
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
 from agentos.runtime.internal_start import normalize_internal_start_payload
@@ -96,7 +96,7 @@ async def _submit_command(
     command: DurableRunCommand,
     authority: InternalSubmissionAuthority | None,
 ) -> DurableCommandReceipt:
-    payload_json = dump_json(thaw_json_value(command.payload))
+    payload_json = command_payload_to_json(command.kind, command.payload)
     team_delivery_id = None if authority is None else authority.delivery_id
     async with database.transaction() as connection:
         await connection.execute(

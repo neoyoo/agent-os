@@ -6,6 +6,9 @@ from agentos.distributed.errors import ClaimConflictError
 from agentos.distributed.models import RequestScope, RunDeliveryTarget
 from agentos.distributed.postgres._database import Row
 from agentos.distributed.postgres._records import run_state_from_row
+from agentos.durable.command_serialization import (
+    command_payload_from_json,
+)
 from agentos.durable.serialization import load_json_object
 from agentos.runtime.durable_commands import AcceptedContinuationInput
 from agentos.runtime.execution import AcceptedInternalStartInput, AcceptedStartInput
@@ -47,11 +50,14 @@ def accepted_input(row: Row):  # type: ignore[no-untyped-def]
             source_payload=load_json_object(payload),
             turn_id=cast(str, row["turn_id"]),
         )
+    continuation_kind = row["continuation_kind"]
+    if type(continuation_kind) is not str:
+        raise ClaimConflictError()
     return AcceptedContinuationInput(
         run_id=cast(str, row["run_id"]),
         command_id=cast(str, row["source_id"]),
-        kind=cast(object, row["continuation_kind"]),  # type: ignore[arg-type]
-        payload=load_json_object(payload),
+        kind=cast(object, continuation_kind),  # type: ignore[arg-type]
+        payload=command_payload_from_json(continuation_kind, payload),
         turn_id=cast(str, row["turn_id"]),
         team_delivery_id=cast(str | None, row.get("team_delivery_id")),
     )
