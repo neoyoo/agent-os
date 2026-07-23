@@ -6,7 +6,7 @@ from typing import cast
 from agentos._json_values import thaw_json_value
 from agentos.durable.safety import validate_durable_data
 from agentos.runtime.durable_commands import DurableRunCommand
-from agentos.runtime.errors import CheckpointCorruptedError
+from agentos.runtime.errors import CheckpointCorruptedError, DurableUnsafeDataError
 
 
 def command_payload_to_json(kind: str, payload: object) -> str:
@@ -31,7 +31,7 @@ def command_payload_from_json(kind: str, value: str) -> dict[str, object]:
     payload = _parse_json_object(value)
     try:
         canonical = command_payload_to_json(kind, payload)
-    except (TypeError, ValueError):
+    except (DurableUnsafeDataError, TypeError, ValueError):
         raise CheckpointCorruptedError("durable command record is corrupted") from None
     if canonical != value:
         raise CheckpointCorruptedError("durable command record is corrupted")

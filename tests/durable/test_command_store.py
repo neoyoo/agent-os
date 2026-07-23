@@ -104,6 +104,34 @@ def test_accepted_queued_continuation_can_be_recovered_after_crash(tmp_path) -> 
     run(reopened.close())
 
 
+def test_unsafe_pending_command_record_uses_stable_corruption_error(tmp_path) -> None:
+    path = database_path(tmp_path)
+    store, _ = waiting_run(tmp_path, WaitReason("human_input", "approval_1"))
+    command = DurableRunCommand("run_1", "cmd_1", "resume", {})
+    run(DurableCommandRuntime(
+        "session_1",
+        store,
+        clock=lambda: NOW,
+    ).accept(command))
+    run(store.close())
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE durable_commands SET payload_json = ? WHERE command_id = ?",
+            ('{"value":"' + ("A" * 128) + '"}', command.command_id),
+        )
+
+    reopened = run(SQLiteDurableStore.open(path, clock=lambda: NOW))
+    with pytest.raises(
+        CheckpointCorruptedError,
+        match="^durable command record is corrupted$",
+    ):
+        run(reopened.load_pending_continuation(
+            session_id="session_1",
+            run_id="run_1",
+        ))
+    run(reopened.close())
+
+
 def test_conflicting_duplicate_command_is_rejected(tmp_path) -> None:
     store, _ = waiting_run(tmp_path, WaitReason("human_input", "approval_1"))
     runtime = DurableCommandRuntime("session_1", store, clock=lambda: NOW)
