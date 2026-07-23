@@ -10,6 +10,7 @@ from agentos.capabilities.result_refs import ArtifactToolResultRef
 from agentos._json_values import freeze_json_mapping
 from agentos.capabilities.tools import SideEffectPolicy
 from agentos.context import WorkingStateField
+from agentos.distributed.errors import ClaimConflictError
 from agentos.distributed.postgres import (
     PostgresArtifactStore,
     PostgresClaimStore,
@@ -19,6 +20,7 @@ from agentos.distributed.postgres import (
     PostgresStateStore,
 )
 from agentos.distributed.postgres import claims as claims_module
+from agentos.distributed.postgres._claim_records import accepted_input
 from agentos.distributed.postgres._records import (
     session_checkpoint_from_json,
     session_checkpoint_to_json,
@@ -224,3 +226,18 @@ def test_claim_authority_uses_database_time_only() -> None:
     assert "clock_timestamp()" in source
     assert "datetime.now" not in source
     assert "time.monotonic" not in source
+
+
+@pytest.mark.parametrize("source_kind", ("command", "team_message"))
+def test_unsafe_payload_hydration_uses_distributed_error(source_kind: str) -> None:
+    row = {
+        "source_kind": source_kind,
+        "payload_json": '{"value":"' + ("A" * 128) + '"}',
+        "continuation_kind": "resume",
+        "run_id": "run_1",
+        "source_id": "command_1",
+        "turn_id": "turn_1",
+    }
+
+    with pytest.raises(ClaimConflictError):
+        accepted_input(row)
