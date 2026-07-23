@@ -22,139 +22,8 @@ PHASE0_PLAN = (
     / "plans"
     / "2026-07-11-agentos-phase0-baseline-remediation-implementation-plan.md"
 )
-_REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
-
 _PHASE4_ROOT_STABLE_EXPORTS = frozenset(
     {"__version__", "Agent", "AgentBuilder", "AgentResult", "RunOptions"},
-)
-_RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
-    {
-        "Agent",
-        _REMOVED_ASYNC_LOOP_NAME,
-        "ContextLoaded",
-        "DistributedWebRuntimeProfile",
-        "DistributedWebSessionOperationsProfile",
-        "FinalResult",
-        "LocalRuntimeProfile",
-        "PlanUpdated",
-        "ProviderRequestBuilder",
-        "QueryLoop",
-        "RuntimeProfile",
-        "SkillLoaded",
-        "StatusUpdate",
-        "WebRuntimeProfile",
-    }
-)
-_RUNTIME_EXPERIMENTAL_BEFORE_SINGLE_ASYNC_CUTOVER = frozenset(
-    {
-        "AgentContinuationFailedEvent",
-        "AgentEvent",
-        "AgentInboxBackpressureEvent",
-        "AgentResult",
-        "AgentTaskCancelledEvent",
-        "AgentTaskCompletedEvent",
-        "AgentTaskDispatchedEvent",
-        "AgentTaskFailedEvent",
-        "AgentTaskLateResultReceivedEvent",
-        "AssistantCompleted",
-        "AssistantContentDelta",
-        "AssistantMessageAppendedEvent",
-        "AssistantThinkingDelta",
-        "ChannelRuntimeProfile",
-        "ChapterStartedEvent",
-        "CompressedSegmentAppendedEvent",
-        "CompressionCompletedEvent",
-        "CompressionFailedEvent",
-        "CompressionSkippedEvent",
-        "ContextRenderedEvent",
-        "DistributedAgentProfile",
-        "DistributedRuntimeProfile",
-        "DistributedTeamRuntimeProfile",
-        "event_payload",
-        "event_to_json",
-        "event_to_sse",
-        "event_type",
-        "EventBus",
-        "InheritedStateSetEvent",
-        "MemoryContextSetEvent",
-        "ProductionStatePlaneDeploymentProfile",
-        "ProviderCircuitOpenError",
-        "ProviderRequestBuiltEvent",
-        "ProviderResponseReceivedEvent",
-        "ProviderRetryEvent",
-        "RecallContextFailedEvent",
-        "RecallContextInjectedEvent",
-        "RecallContextRequestedEvent",
-        "RetryPolicy",
-        "RunOptions",
-        "RuntimeCompositionProfile",
-        "SessionState",
-        "SnapshotLoadedEvent",
-        "SnapshotSavedEvent",
-        "SubagentSpawnedEvent",
-        "ToolCallRequestedEvent",
-        "ToolExecutionCompletedEvent",
-        "ToolExecutionStartedEvent",
-        "ToolResultAppendedEvent",
-        "ToolResultCappedEvent",
-        "ToolStreamCompleted",
-        "ToolStreamFailed",
-        "ToolStreamStarted",
-        "TurnCompletedEvent",
-        "TurnFailedEvent",
-        "TurnNoticeProvider",
-        "TurnStartedEvent",
-        "TurnState",
-        "TurnStreamCancelled",
-        "TurnStreamCompleted",
-        "TurnStreamEvent",
-        "TurnStreamFailed",
-        "TurnStreamStarted",
-        "UserMessageAppendedEvent",
-        "WorkerProcessLifecycleDeploymentProfile",
-        "WorkingStateSchemaDeclaredEvent",
-        "WorkingStateSchemaExtendedEvent",
-        "WorkingStateUpdatedEvent",
-    }
-)
-_RUNTIME_STABLE_SINGLE_ASYNC_ADDITIONS = frozenset(
-    {
-        "AgentBusyError",
-        "AgentResult",
-        "AgentRunError",
-        "AgentStream",
-        "AgentStreamClosedError",
-        "AgentStreamConsumerError",
-        "AgentWaiting",
-        "ContinuationUnavailableError",
-        "iter_jsonl",
-        "iter_sse",
-        "LocalContinuationInput",
-        "RunInput",
-        "RunOptions",
-        "RunOutcome",
-        "RunProtocolError",
-        "RunRequest",
-        "TurnStreamWaiting",
-        "UserTurnInput",
-        "WaitingUnsupportedError",
-        "WaitReason",
-    }
-)
-_RUNTIME_STABLE_PHASE5_ADDITIONS = frozenset(
-    {
-        "DurableCommandReceipt",
-        "DurableRunCommand",
-    }
-)
-_RUNTIME_EXPERIMENTAL_TASK6_ADDITIONS = frozenset(
-    {
-        "SideEffectResolution",
-        "SideEffectResolutionKind",
-        "SideEffectResume",
-        "side_effect_resolution_from_payload",
-        "side_effect_resolution_to_payload",
-    }
 )
 _DURABLE_STABLE_PHASE5_EXPORTS = frozenset(
     {
@@ -451,22 +320,45 @@ def test_public_api_stability_policy_contains_only_classifications() -> None:
     assert '"signature"' not in PUBLIC_API_STABILITY.read_text(encoding="utf-8")
 
 
-def test_phase5_policy_keeps_root_level1_and_adds_durable_api() -> None:
+def test_phase6_policy_keeps_root_minimal_and_governs_canonical_surfaces() -> None:
     policy = json.loads(PUBLIC_API_STABILITY.read_text(encoding="utf-8"))
     modules = policy["modules"]
 
     assert set(modules["agentos"]["stable"]) == _PHASE4_ROOT_STABLE_EXPORTS
     assert modules["agentos"]["experimental"] == []
-    assert set(modules["agentos.runtime"]["stable"]) == (
-        _RUNTIME_STABLE_BEFORE_SINGLE_ASYNC_CUTOVER
-        - {_REMOVED_ASYNC_LOOP_NAME}
-        | _RUNTIME_STABLE_SINGLE_ASYNC_ADDITIONS
-        | _RUNTIME_STABLE_PHASE5_ADDITIONS
+    for module_name in (
+        "agentos.channels",
+        "agentos.distributed",
+        "agentos.distributed.models",
+        "agentos.distributed.services",
+        "agentos.transports.a2a",
+        "agentos.transports.http",
+        "agentos.transports.sse",
+        "agentos.transports.websocket",
+        "agentos.adapters.a2a",
+    ):
+        assert modules[module_name]["stable"] == []
+        assert modules[module_name]["experimental"]
+    assert set(modules["agentos.distributed"]["experimental"]) == {
+        "DistributedRuntimeProfile",
+        "DistributedWorker",
+    }
+    assert {
+        "PostgresSessionSnapshotPersistence",
+        "PostgresDurableSessionStore",
+        "RedisHotSessionStore",
+    }.isdisjoint(
+        modules["agentos.persistence"]["stable"]
+        + modules["agentos.persistence"]["experimental"]
     )
-    assert set(modules["agentos.runtime"]["experimental"]) == (
-        _RUNTIME_EXPERIMENTAL_BEFORE_SINGLE_ASYNC_CUTOVER
-        - {"AgentResult", "RunOptions"}
-        | _RUNTIME_EXPERIMENTAL_TASK6_ADDITIONS
+    assert {
+        "DistributedWebRuntimeProfile",
+        "DistributedWebSessionOperationsProfile",
+        "RuntimeCompositionProfile",
+        "WebRuntimeProfile",
+    }.isdisjoint(
+        modules["agentos.runtime"]["stable"]
+        + modules["agentos.runtime"]["experimental"]
     )
     assert set(modules["agentos.durable"]["stable"]) == (
         _DURABLE_STABLE_PHASE5_EXPORTS

@@ -15,7 +15,10 @@ from agentos.distributed.models import (
     RunSubmission,
     RunSubmissionReceipt,
 )
-from agentos.distributed.errors import RunNotFoundError
+from agentos.distributed.errors import (
+    RunNotFoundError,
+    SideEffectResolutionPermissionError,
+)
 from agentos.distributed.services import (
     ArtifactService,
     RunCommandService,
@@ -25,6 +28,10 @@ from agentos.distributed.services import (
 )
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
 from agentos.runtime.run_state import RunStatus
+from agentos.runtime.side_effect_types import (
+    SideEffectResolution,
+    SideEffectResolutionKind,
+)
 
 
 NOW = datetime(2026, 7, 20, 12, tzinfo=UTC)
@@ -314,5 +321,141 @@ def test_same_ids_in_different_tenants_remain_distinct_calls() -> None:
         )
 
         assert port.calls[0][1][0] != port.calls[1][1][0]
+
+    asyncio.run(scenario())
+
+
+def test_side_effect_resolution_is_authorized_before_command_port() -> None:
+    async def scenario() -> None:
+        port = RecordingPort()
+        scope = RequestScope("tenant_1", "security_operator")
+        resolution = SideEffectResolution(
+            "operation_0123456789abcdef0123456789abcdef",
+            SideEffectResolutionKind.FAIL,
+        )
+        command = DurableRunCommand(
+            "run_1",
+            "command_1",
+            "resolve_side_effect",
+            resolution,
+        )
+
+        class DenyingAuthorizer:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            async def authorize(
+                self,
+                *,
+                scope: RequestScope,
+                session_id: str,
+                run_id: str,
+                resolution: SideEffectResolution,
+            ) -> None:
+                self.calls.append((scope, session_id, run_id, resolution))
+                raise PermissionError("denied")
+
+        authorizer = DenyingAuthorizer()
+        service = RunCommandService(port, authorizer)  # type: ignore[arg-type]
+
+        with pytest.raises(PermissionError, match="denied"):
+            await service.submit(scope, "session_1", command)
+
+        assert authorizer.calls == [(scope, "session_1", "run_1", resolution)]
+        assert port.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_authorized_side_effect_resolution_reaches_command_port_once() -> None:
+    async def scenario() -> None:
+        scope = RequestScope("tenant_1", "security_operator")
+        resolution = SideEffectResolution(
+            "operation_0123456789abcdef0123456789abcdef",
+            SideEffectResolutionKind.FAIL,
+        )
+        command = DurableRunCommand(
+            "run_1",
+            "command_1",
+            "resolve_side_effect",
+            resolution,
+        )
+        call_order: list[str] = []
+
+        class AllowingAuthorizer:
+            async def authorize(
+                self,
+                *,
+                scope: RequestScope,
+                session_id: str,
+                run_id: str,
+                resolution: SideEffectResolution,
+            ) -> None:
+                call_order.append("authorize")
+                assert (scope, session_id, run_id, resolution) == (
+                    RequestScope("tenant_1", "security_operator"),
+                    "session_1",
+                    "run_1",
+                    SideEffectResolution(
+                        "operation_0123456789abcdef0123456789abcdef",
+                        SideEffectResolutionKind.FAIL,
+                    ),
+                )
+
+        class OrderedPort(RecordingPort):
+            async def submit_command(
+                self,
+                *,
+                scope: RequestScope,
+                session_id: str,
+                command: DurableRunCommand,
+            ) -> DurableCommandReceipt:
+                call_order.append("submit_command")
+                return await super().submit_command(
+                    scope=scope,
+                    session_id=session_id,
+                    command=command,
+                )
+
+        ordered_port = OrderedPort()
+        receipt = await RunCommandService(
+            ordered_port,
+            AllowingAuthorizer(),  # type: ignore[arg-type]
+        ).submit(scope, "session_1", command)
+
+        assert receipt.command_id == "command_1"
+        assert call_order == ["authorize", "submit_command"]
+        assert ordered_port.calls == [
+            ("submit_command", (scope, "session_1", command)),
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_side_effect_resolution_defaults_to_fail_closed() -> None:
+    async def scenario() -> None:
+        port = RecordingPort()
+        resolution = SideEffectResolution(
+            "operation_0123456789abcdef0123456789abcdef",
+            SideEffectResolutionKind.FAIL,
+        )
+        command = DurableRunCommand(
+            "run_1",
+            "command_1",
+            "resolve_side_effect",
+            resolution,
+        )
+
+        with pytest.raises(
+            SideEffectResolutionPermissionError,
+            match="^side effect resolution is not permitted$",
+        ):
+            await RunCommandService(port).submit(
+                RequestScope("tenant_1", "security_operator"),
+                "session_1",
+                command,
+            )
+
+        assert port.calls == []
 
     asyncio.run(scenario())

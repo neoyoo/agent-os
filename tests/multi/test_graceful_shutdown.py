@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 from threading import Event, Thread
 import time
 
-from agentos.channels.asgi import AsgiAgentApp
-from agentos.channels.session import InMemoryAgentSessionProvider
-from agentos.multi import ExpertAgentRunner, SpawnExecutor, TaskRecord, TaskRequest, TaskResult, TaskTable
-from tests.channels.test_asgi_app import call_asgi
-from tests.multi.helpers import build_agent_with_response
+from agentos.multi import (
+    ExpertAgentRunner,
+    SpawnExecutor,
+    TaskRecord,
+    TaskRequest,
+    TaskResult,
+    TaskTable,
+)
 
 
 def test_spawn_executor_shutdown_cancels_pending_tasks_after_timeout() -> None:
@@ -60,7 +62,10 @@ def test_expert_runner_stop_waits_for_current_run_once() -> None:
         def execute_expert_envelope(self, envelope: object) -> None:
             return None
 
-    runner = ExpertAgentRunner(coordinator=Coordinator(), agent_id="expert")  # type: ignore[arg-type]
+    runner = ExpertAgentRunner(
+        coordinator=Coordinator(),  # type: ignore[arg-type]
+        agent_id="expert",
+    )
     thread = Thread(target=runner.run_forever, kwargs={"timeout": 0.01})
     thread.start()
 
@@ -69,33 +74,6 @@ def test_expert_runner_stop_waits_for_current_run_once() -> None:
 
     assert finished.is_set()
     assert not thread.is_alive()
-
-
-def test_asgi_lifespan_shutdown_runs_registered_callbacks() -> None:
-    stopped: list[bool] = []
-    app = AsgiAgentApp(
-        sessions=InMemoryAgentSessionProvider(lambda session_id: build_agent_with_response("ok")),
-        shutdown_handlers=[lambda: stopped.append(True)],
-    )
-
-    sent = asyncio.run(
-        call_asgi(
-            app,
-            method="GET",
-            path="/",
-            scope_type="lifespan",
-            receive_after_body=[
-                {"type": "lifespan.startup"},
-                {"type": "lifespan.shutdown"},
-            ],
-        ),
-    )
-
-    assert [message["type"] for message in sent] == [
-        "lifespan.startup.complete",
-        "lifespan.shutdown.complete",
-    ]
-    assert stopped == [True]
 
 
 def test_task_table_releases_running_leases_for_shutdown() -> None:
@@ -128,25 +106,3 @@ def test_task_table_releases_running_leases_for_shutdown() -> None:
     assert record.status == "queued"
     assert record.worker_id is None
     assert record.lease_expires_at is None
-
-
-def test_asgi_lifespan_reports_shutdown_failure() -> None:
-    app = AsgiAgentApp(
-        sessions=InMemoryAgentSessionProvider(lambda session_id: build_agent_with_response("ok")),
-        shutdown_handlers=[lambda: (_ for _ in ()).throw(RuntimeError("boom"))],
-    )
-
-    sent = asyncio.run(
-        call_asgi(
-            app,
-            method="GET",
-            path="/",
-            scope_type="lifespan",
-            receive_after_body=[
-                {"type": "lifespan.shutdown"},
-            ],
-        ),
-    )
-
-    assert sent[0]["type"] == "lifespan.shutdown.failed"
-    assert "boom" in str(sent[0]["message"])

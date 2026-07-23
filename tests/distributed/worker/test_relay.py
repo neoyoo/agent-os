@@ -99,6 +99,41 @@ class ReleaseFailingBatchOutbox(BatchOutbox):
         await super().release_claim(claim=claim)
 
 
+class BlockingReleaseBatchOutbox(BatchOutbox):
+    def __init__(self, trace: list[str], claims: tuple[OutboxClaim, ...]) -> None:
+        super().__init__(trace, claims, mark_failure_at=1)
+        self.release_attempts: list[OutboxClaim] = []
+
+    async def release_claim(self, *, claim: OutboxClaim) -> None:
+        self.release_attempts.append(claim)
+        await asyncio.Event().wait()
+
+
+class FailingThenBlockingReleaseBatchOutbox(BatchOutbox):
+    def __init__(self, trace: list[str], claims: tuple[OutboxClaim, ...]) -> None:
+        super().__init__(trace, claims, mark_failure_at=1)
+        self.release_attempts: list[OutboxClaim] = []
+
+    async def release_claim(self, *, claim: OutboxClaim) -> None:
+        self.release_attempts.append(claim)
+        if len(self.release_attempts) == 1:
+            raise RuntimeError("release interrupted")
+        await asyncio.Event().wait()
+
+
+class CancellableThenBlockingReleaseBatchOutbox(BatchOutbox):
+    def __init__(self, trace: list[str], claims: tuple[OutboxClaim, ...]) -> None:
+        super().__init__(trace, claims, mark_failure_at=1)
+        self.release_attempts: list[OutboxClaim] = []
+        self.release_started = asyncio.Event()
+
+    async def release_claim(self, *, claim: OutboxClaim) -> None:
+        self.release_attempts.append(claim)
+        if len(self.release_attempts) == 1:
+            self.release_started.set()
+        await asyncio.Event().wait()
+
+
 def batch_claims() -> tuple[OutboxClaim, ...]:
     claim = outbox_claim()
     return tuple(
@@ -254,6 +289,76 @@ def test_release_failure_does_not_skip_remaining_batch_claims() -> None:
     asyncio.run(scenario())
 
 
+def test_blocking_release_cannot_exceed_the_shared_batch_deadline() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        claims = batch_claims()
+        outbox = BlockingReleaseBatchOutbox(trace, claims)
+        relay = OutboxRelay(
+            outbox=outbox,
+            queue=FakeQueue(trace),
+            owner_id="relay_1",
+            batch_size=10,
+            claim_ttl=timedelta(seconds=30),
+            batch_timeout=timedelta(milliseconds=10),
+        )
+
+        with pytest.raises(DeliveryUnavailableError):
+            await asyncio.wait_for(relay.relay_once(), timeout=0.2)
+
+        assert outbox.release_attempts == list(claims)
+
+    asyncio.run(scenario())
+
+
+def test_release_deadline_takes_precedence_over_an_earlier_release_error() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        claims = batch_claims()
+        outbox = FailingThenBlockingReleaseBatchOutbox(trace, claims)
+        relay = OutboxRelay(
+            outbox=outbox,
+            queue=FakeQueue(trace),
+            owner_id="relay_1",
+            batch_size=10,
+            claim_ttl=timedelta(seconds=30),
+            batch_timeout=timedelta(milliseconds=10),
+        )
+
+        with pytest.raises(DeliveryUnavailableError):
+            await asyncio.wait_for(relay.relay_once(), timeout=0.2)
+
+        assert outbox.release_attempts == list(claims)
+
+    asyncio.run(scenario())
+
+
+def test_release_cancellation_takes_precedence_over_the_batch_deadline() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        claims = batch_claims()
+        outbox = CancellableThenBlockingReleaseBatchOutbox(trace, claims)
+        relay = OutboxRelay(
+            outbox=outbox,
+            queue=FakeQueue(trace),
+            owner_id="relay_1",
+            batch_size=10,
+            claim_ttl=timedelta(seconds=30),
+            batch_timeout=timedelta(milliseconds=20),
+        )
+        active = asyncio.create_task(relay.relay_once())
+        await outbox.release_started.wait()
+        active.cancel("caller stopped")
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await asyncio.wait_for(active, timeout=0.2)
+
+        assert caught.value.args == ("caller stopped",)
+        assert outbox.release_attempts == list(claims)
+
+    asyncio.run(scenario())
+
+
 def test_close_waits_for_active_batch_and_rejects_new_batches() -> None:
     async def scenario() -> None:
         trace: list[str] = []
@@ -339,6 +444,33 @@ def test_close_waits_for_cancelled_batch_to_release_claim() -> None:
         assert outbox.released == [outbox.claim]
         assert outbox.marked == []
         assert trace[-1] == "outbox.release"
+
+    asyncio.run(scenario())
+
+
+def test_batch_timeout_releases_claim_and_bounds_close() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        outbox = FakeOutbox(trace, outbox_claim())
+        queue = BlockingPublishQueue(trace)
+        relay = OutboxRelay(
+            outbox=outbox,
+            queue=queue,
+            owner_id="relay_1",
+            batch_size=10,
+            claim_ttl=timedelta(seconds=30),
+            batch_timeout=timedelta(milliseconds=10),
+        )
+
+        batch = asyncio.create_task(relay.relay_once())
+        await queue.publish_started.wait()
+        closing = asyncio.create_task(relay.close())
+
+        with pytest.raises(DeliveryUnavailableError):
+            await batch
+        await asyncio.wait_for(closing, timeout=1)
+        assert outbox.released == [outbox.claim]
+        assert outbox.marked == []
 
     asyncio.run(scenario())
 

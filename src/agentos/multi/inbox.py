@@ -146,25 +146,6 @@ class AgentInbox:
                 self._events[agent_id].set()
             return deliveries
 
-    def collect_team_messages(
-        self,
-        agent_id: str,
-        *,
-        team_id: str,
-    ) -> list[QueueDelivery]:
-        """Collect team-message deliveries for one team, retaining others."""
-
-        from agentos.multi.team import TeamMessage
-
-        return self.collect_matching(
-            agent_id,
-            envelope_types=("team_message",),
-            predicate=lambda delivery: (
-                isinstance(delivery.envelope.payload, TeamMessage)
-                and delivery.envelope.payload.team_id == team_id
-            ),
-        )
-
     def collect_envelopes(
         self,
         agent_id: str,

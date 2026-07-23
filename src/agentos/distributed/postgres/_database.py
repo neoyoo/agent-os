@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import timedelta
 from typing import Protocol, cast
 
 from agentos.distributed.errors import (
     DistributedBackendUnavailableError,
+    DistributedShutdownTimeoutError,
     DistributedStoreClosedError,
 )
 from agentos.distributed._cancel_safe import close_cancelled_acquisition
@@ -56,9 +58,13 @@ class PostgresPool:
         pool: AsyncPool,
         *,
         database_errors: tuple[type[BaseException], ...] = (),
+        operation_timeout: timedelta = timedelta(seconds=5),
     ) -> None:
+        if type(operation_timeout) is not timedelta or operation_timeout <= timedelta(0):
+            raise ValueError("operation_timeout must be positive")
         self._pool: AsyncPool | None = pool
         self._database_errors = database_errors
+        self._operation_timeout = operation_timeout.total_seconds()
 
     @classmethod
     async def open(
@@ -67,6 +73,7 @@ class PostgresPool:
         *,
         min_size: int = 1,
         max_size: int = 10,
+        operation_timeout: timedelta = timedelta(seconds=5),
     ) -> PostgresPool:
         if type(dsn) is not str or not dsn.strip():
             raise ValueError("dsn must not be empty")
@@ -78,27 +85,46 @@ class PostgresPool:
             or min_size > max_size
         ):
             raise ValueError("postgres pool size is invalid")
+        if type(operation_timeout) is not timedelta or operation_timeout <= timedelta(0):
+            raise ValueError("operation_timeout must be positive")
         try:
+            from psycopg import AsyncConnection as PsycopgAsyncConnection
             from psycopg import Error as PsycopgError
             from psycopg.rows import dict_row
             from psycopg_pool import AsyncConnectionPool
         except ImportError:
             raise DistributedBackendUnavailableError() from None
         try:
+            class AbortOnCancelConnection(PsycopgAsyncConnection):  # type: ignore[misc]
+                async def _try_cancel(self, *, timeout: float = 5.0) -> None:
+                    del timeout
+                    await self.close()
+                    raise asyncio.CancelledError
+
             raw_pool = AsyncConnectionPool(
                 conninfo=dsn,
+                connection_class=AbortOnCancelConnection,
                 min_size=min_size,
                 max_size=max_size,
-                kwargs={"row_factory": dict_row},
+                kwargs={"row_factory": dict_row, "autocommit": True},
                 open=False,
             )
             acquisition = asyncio.create_task(raw_pool.open(wait=True))
             try:
-                await asyncio.shield(acquisition)
+                async with asyncio.timeout(operation_timeout.total_seconds()):
+                    await asyncio.shield(acquisition)
+            except TimeoutError:
+                await _cleanup_failed_open(
+                    acquisition,
+                    cast(AsyncPool, raw_pool),
+                    timeout=operation_timeout.total_seconds(),
+                )
+                raise DistributedBackendUnavailableError() from None
             except asyncio.CancelledError as cancellation:
                 await close_cancelled_acquisition(
                     acquisition,
                     lambda _: raw_pool.close(),
+                    timeout=operation_timeout.total_seconds(),
                 )
                 raise cancellation from None
         except Exception:
@@ -106,6 +132,7 @@ class PostgresPool:
         return cls(
             cast(AsyncPool, raw_pool),
             database_errors=(PsycopgError,),
+            operation_timeout=operation_timeout,
         )
 
     async def __aenter__(self) -> PostgresPool:
@@ -119,9 +146,11 @@ class PostgresPool:
     async def connection(self) -> AsyncIterator[AsyncConnection]:
         pool = self._require_open()
         try:
-            async with pool.connection() as connection:
-                yield connection
-        except self._database_errors:
+            async with asyncio.timeout(self._operation_timeout):
+                async with pool.connection() as connection:
+                    await connection.execute("")
+                    yield connection
+        except (TimeoutError, *self._database_errors):
             raise DistributedBackendUnavailableError() from None
 
     @asynccontextmanager
@@ -138,7 +167,10 @@ class PostgresPool:
         if pool is None:
             return
         try:
-            await pool.close()
+            async with asyncio.timeout(self._operation_timeout):
+                await pool.close()
+        except TimeoutError:
+            raise DistributedShutdownTimeoutError() from None
         except self._database_errors:
             raise DistributedBackendUnavailableError() from None
         self._pool = None
@@ -147,6 +179,35 @@ class PostgresPool:
         if self._pool is None:
             raise DistributedStoreClosedError()
         return self._pool
+
+
+async def _cleanup_failed_open(
+    acquisition: asyncio.Task[object],
+    pool: AsyncPool,
+    *,
+    timeout: float,
+) -> None:
+    acquisition.cancel()
+    done, _ = await asyncio.wait((acquisition,), timeout=timeout)
+    if not done:
+        acquisition.add_done_callback(_consume_task_result)
+    closing = asyncio.create_task(pool.close())
+    done, _ = await asyncio.wait((closing,), timeout=timeout)
+    if done:
+        try:
+            closing.result()
+        except BaseException:
+            pass
+        return
+    closing.cancel()
+    closing.add_done_callback(_consume_task_result)
+
+
+def _consume_task_result(task: asyncio.Task[object]) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
 
 
 async def fetchone(

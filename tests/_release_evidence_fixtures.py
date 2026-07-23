@@ -42,12 +42,12 @@ def release_manifest(**overrides: object) -> dict[str, object]:
             "sdk_rc_claim": "boundary_only",
             "required_before_production_deployment": True,
             "required_backends": (
-                "agent_registry",
-                "message_queue",
-                "task_store",
-                "plan_store",
-                "worker_process_supervisor",
-                "session_snapshot_persistence",
+                "postgres_state_store",
+                "postgres_artifact_store",
+                "redis_worker_queue",
+                "redis_relay_queue",
+                "redis_event_replay",
+                "distributed_worker",
             ),
             "evidence_ref": (
                 "docs/production-readiness.md"

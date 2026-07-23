@@ -148,7 +148,11 @@ def _terminal_allowed(record: SideEffectRecord, status: RunStatus) -> bool:
     if status is RunStatus.COMPLETED:
         return (
             record.status is SideEffectStatus.COMPLETED
-            and record.outcome_kind is SideEffectOutcomeKind.PROVIDER_RESULT
+            and record.outcome_kind
+            in {
+                SideEffectOutcomeKind.PROVIDER_RESULT,
+                SideEffectOutcomeKind.WAIT_CONTROL,
+            }
         ) or (
             record.status is SideEffectStatus.RESOLVED
             and record.resolution is SideEffectResolutionOutcome.ACCEPTED
@@ -162,7 +166,7 @@ def _terminal_allowed(record: SideEffectRecord, status: RunStatus) -> bool:
     }:
         return False
     if record.status is SideEffectStatus.COMPLETED:
-        return record.outcome_kind is not SideEffectOutcomeKind.WAIT_CONTROL
+        return True
     if record.status is SideEffectStatus.RESOLVED:
         return record.resolution in {
             SideEffectResolutionOutcome.ACCEPTED,

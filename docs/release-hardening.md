@@ -4,10 +4,9 @@ Canonical path: `docs/release-hardening.md`.
 
 ## Target Conclusion
 
-Phase 100: Release Hardening does not add runtime capability. It turns the
-long-running review branch into a reviewable, publishable, and maintainable SDK
-release candidate by requiring a release hardening gate with concrete release
-candidate evidence.
+Release hardening does not add runtime capability. It turns the Phase 6
+`0.3.0a1` cutover into a reviewable and publishable SDK release candidate by
+requiring concrete, revision-bound evidence.
 
 The SDK-owned release evidence is:
 
@@ -56,12 +55,12 @@ deployment.
 
 ## Release Hardening Gate
 
-A Phase 100 release candidate passes the release hardening gate only when every
+A Phase 6 release candidate passes the release hardening gate only when every
 item below has evidence in the branch:
 
 | Gate item | Evidence |
 |-----------|----------|
-| Release scope | `docs/release-scope.md` describes the first production SDK release. |
+| Release scope | `docs/release-scope.md` describes the `0.3.0a1` breaking alpha. |
 | API stability | `docs/api-stability.md` classifies stable API and experimental API surfaces. |
 | Public API inventory | `docs/public-api-inventory.json` records selected public exports, stability classes, and current signatures. |
 | Release evidence template | `docs/release-evidence.example.json` records the machine-readable schema with placeholders and non-certifying SDK evidence. |
@@ -73,7 +72,7 @@ item below has evidence in the branch:
 | README alignment | `README.md` links release scope, readiness, API stability, migration index, quickstart, and examples. |
 | Quickstart alignment | `docs/quickstart.md` names supported release shapes and links release gates. |
 | Examples alignment | `src/agentos/examples/` includes runnable examples with `if __name__ == "__main__"`. |
-| Changelog | `CHANGELOG.md` records Phase 96 through Phase 100 release work. |
+| Changelog | `CHANGELOG.md` records the Phase 6 cutover and migration boundary. |
 | Tests | `uv run pytest -q` provides full test suite evidence. |
 | Diff hygiene | `git diff --check` provides whitespace evidence. |
 | Runtime boundary | Search confirms planner/A2A/team/worker/state-plane/readiness/sandbox/release-hardening concepts are not moved into the single async `QueryLoop`; `agentos.sync` remains an adapter only. |
@@ -106,7 +105,7 @@ candidate identity:
 Use these commands as release candidate evidence:
 
 ```bash
-uv run python scripts/generate_release_evidence.py --output docs/release-evidence.json --branch review/agentos-sdk-architecture-20260611 --commit <current-commit> --version <pyproject-version> --independent-review-status pending
+uv run python scripts/generate_release_evidence.py --output docs/release-evidence.json --branch <current-branch> --commit <current-commit> --version <pyproject-version> --independent-review-status pending
 uv run pytest tests/docs/test_production_hardening_docs.py tests/docs/test_production_readiness_docs.py tests/docs/test_objective_coverage_audit_docs.py -q
 uv run pytest tests/test_release_evidence.py tests/test_release_evidence_local.py tests/test_release_evidence_cli.py -q
 python -m json.tool docs/release-evidence.example.json
@@ -115,7 +114,7 @@ python -m json.tool docs/public-api-inventory.json
 uv run pytest tests/architecture/test_public_api.py -q
 uv run python -m compileall -q src tests
 git diff --check
-rg -n "ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|worker supervisor|production_design_constraints|release hardening" src/agentos/runtime/query_loop.py src/agentos/sync
+rg -n "TaskStore|RunStore|SessionProvider|sqlite|postgres|redis|Worker|Daemon|from agentos.runtime import Agent" src/agentos/transports
 uv run pytest -q
 ```
 
@@ -130,10 +129,9 @@ must fail closed even if every gate payload otherwise looks valid.
 
 ## Release Boundary
 
-The first production SDK release supports trusted tools, internal service
-orchestration, terminal agent, single-node web agent, distributed web agent,
-team/planner/A2A primitive composition, production state plane, readiness
-evidence, and audit evidence.
+The `0.3.0a1` alpha supports Local, Durable, and Distributed profiles over one
+async execution kernel, plus typed context, Artifact, transport, team, planner,
+side-effect, readiness, and release-evidence boundaries.
 
 Sandbox / Docker / E2B / microVM / enterprise runner adapter work is a
 non-blocking future adapter. The release does not promise physical isolation

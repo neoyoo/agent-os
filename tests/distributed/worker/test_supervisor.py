@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import get_type_hints
 
@@ -12,67 +11,54 @@ from agentos.distributed.errors import (
     DistributedBackendUnavailableError,
 )
 from agentos.distributed.models import QueueDelivery
-from agentos.distributed.worker.runner import WorkerRunner
 from agentos.distributed.worker.supervisor import DeliveryRunner, DistributedWorker
 from agentos.runtime.stream_events import TurnStreamCompleted
 
 from tests.distributed.worker._fakes import (
     DELIVERY,
-    FakeAgent,
-    FakeAgentFactory,
-    FakeClaims,
-    FakeEventSink,
-    FakeLeases,
     FakeQueue,
     HeartbeatGate,
     NOW,
     ScriptedStream,
-    claimed_execution,
 )
-
-
-def build_worker(
-    *,
-    trace: list[str],
-    queue: FakeQueue,
-    stream: ScriptedStream,
-    heartbeat_wait=asyncio.sleep,
-    heartbeat_interval: timedelta = timedelta(seconds=10),
-    clock: Callable[[], datetime] = lambda: NOW,
-) -> tuple[DistributedWorker, FakeClaims, FakeLeases]:
-    claimed = claimed_execution()
-    claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
-    leases = FakeLeases(trace)
-    runner = WorkerRunner(
-        claims=claims,
-        queue=queue,
-        leases=leases,
-        agent_factory=FakeAgentFactory(trace, FakeAgent(trace, stream)),
-        event_sink=FakeEventSink(trace),
-        worker_id="worker_1",
-        topic="runs",
-        claim_ttl=timedelta(minutes=1),
-        lease_ttl=timedelta(seconds=30),
-        heartbeat_interval=heartbeat_interval,
-        heartbeat_wait=heartbeat_wait,
-    )
-    return (
-        DistributedWorker(
-            runner=runner,
-            queue=queue,
-            worker_id="worker_1",
-            topic="runs",
-            max_concurrency=1,
-            clock=clock,
-        ),
-        claims,
-        leases,
-    )
+from tests.distributed.worker._supervisor_support import build_worker
 
 
 def test_worker_depends_on_delivery_runner_protocol() -> None:
     assert DeliveryRunner._is_protocol
     assert get_type_hints(DistributedWorker.__init__)["runner"] is DeliveryRunner
+
+
+def test_close_before_start_allows_wait_to_observe_terminal_state() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        worker, _, _ = build_worker(trace=trace, queue=queue, stream=stream)
+
+        await worker.close()
+        await asyncio.wait_for(worker.wait(), timeout=0.1)
+
+        assert worker.state.status == "closed"
+        assert queue.closed
+
+    asyncio.run(scenario())
+
+
+def test_drain_before_start_allows_wait_to_observe_stopped_receiver() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        queue = FakeQueue(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        worker, _, _ = build_worker(trace=trace, queue=queue, stream=stream)
+
+        await worker.drain(timeout=0)
+        await asyncio.wait_for(worker.wait(), timeout=0.1)
+
+        assert worker.state.status == "draining"
+        await worker.close()
+
+    asyncio.run(scenario())
 
 
 def test_worker_runs_full_receive_to_ack_path_and_drains_receive() -> None:
@@ -189,31 +175,6 @@ def test_full_capacity_keeps_readiness_heartbeat_fresh() -> None:
         terminal_gate.set()
         await queue.acknowledged.wait()
         await worker.drain(timeout=1)
-        await worker.close()
-
-    asyncio.run(scenario())
-
-
-def test_drain_timeout_closes_stream_and_leaves_claim_to_expire() -> None:
-    async def scenario() -> None:
-        trace: list[str] = []
-        queue = FakeQueue(trace, (DELIVERY,))
-        stream = ScriptedStream(
-            trace,
-            (TurnStreamCompleted("unreachable"),),
-            terminal_gate=asyncio.Event(),
-        )
-        worker, claims, _ = build_worker(trace=trace, queue=queue, stream=stream)
-
-        await worker.start()
-        await stream.started.wait()
-        await worker.drain(timeout=0)
-
-        assert stream.closed
-        assert stream.cleanup_finished.is_set()
-        assert queue.acked == []
-        assert claims.release_calls == 0
-        assert worker.state.active_claim_count == 0
         await worker.close()
 
     asyncio.run(scenario())

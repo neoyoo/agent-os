@@ -12,7 +12,6 @@ from agentos.persistence import (
     InMemoryDurableSessionStore,
     InMemoryHotSessionStore,
     HotSessionStore,
-    RedisHotSessionStore,
 )
 from agentos.persistence.session_serializers import (
     message_from_dict,
@@ -39,8 +38,6 @@ def _annotation_text(annotation: object) -> str:
         (InMemoryHotSessionStore, "get_hot_messages", "return"),
         (InMemoryDurableSessionStore, "append_message", "message"),
         (InMemoryDurableSessionStore, "get_messages", "return"),
-        (RedisHotSessionStore, "append_hot_message", "message"),
-        (RedisHotSessionStore, "get_hot_messages", "return"),
     ],
 )
 def test_memory_public_message_annotations_use_stored_message(
@@ -92,7 +89,6 @@ def test_hot_session_state_annotations_use_stored_message() -> None:
 def test_session_sources_do_not_import_legacy_message_name() -> None:
     modules = (
         "agentos.persistence.in_memory_session",
-        "agentos.persistence.redis_session",
         "agentos.persistence.session_serializers",
         "agentos.persistence.session_store",
     )

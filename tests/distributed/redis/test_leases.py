@@ -32,6 +32,13 @@ class DelayedRenewRedis(FakeAsyncRedis):
         return await super().eval(script, numkeys, *args)
 
 
+class BlockingRedis(FakeAsyncRedis):
+    async def set(self, *args: object, **kwargs: object) -> bool:
+        del args, kwargs
+        await asyncio.Event().wait()
+        return True
+
+
 def test_lease_acquire_renew_and_release_require_the_exact_owner() -> None:
     async def scenario() -> None:
         redis = FakeAsyncRedis()
@@ -115,6 +122,24 @@ def test_lease_maps_redis_outage_to_safe_delivery_error() -> None:
                 ttl=timedelta(seconds=30),
             )
         assert "secret" not in str(caught.value)
+
+    asyncio.run(scenario())
+
+
+def test_lease_operation_timeout_maps_to_safe_delivery_error() -> None:
+    async def scenario() -> None:
+        leases = RedisLeaseAdapter(
+            client=BlockingRedis(),
+            operation_timeout=timedelta(milliseconds=10),
+        )
+
+        with pytest.raises(DeliveryUnavailableError):
+            await leases.acquire(
+                scope=SCOPE,
+                session_id="session_1",
+                owner_id="worker_1",
+                ttl=timedelta(seconds=30),
+            )
 
     asyncio.run(scenario())
 

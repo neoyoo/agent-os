@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol
+from typing import AsyncIterator, Literal, Protocol
 
 from agentos.distributed._execution_outcomes import CommittedExecutionOutcome
 from agentos.distributed.models import (
@@ -18,7 +19,11 @@ from agentos.distributed.models import (
     SessionLease,
     project_live_event,
 )
-from agentos.distributed.errors import RunEventTooLargeError
+from agentos.distributed.errors import (
+    DeliveryUnavailableError,
+    DistributedBackendUnavailableError,
+    RunEventTooLargeError,
+)
 from agentos.distributed.protocols import ExecutionClaimPort, LeasePort, QueuePort
 from agentos.distributed.run_event_limits import require_run_event_size
 from agentos.distributed.worker._terminal_publication import (
@@ -100,6 +105,7 @@ class WorkerRunner:
     claim_ttl: timedelta
     lease_ttl: timedelta
     heartbeat_interval: timedelta
+    heartbeat_cycle_timeout: timedelta = timedelta(seconds=10)
     heartbeat_wait: HeartbeatWait = asyncio.sleep
     clock: Clock = lambda: datetime.now(UTC)
 
@@ -112,11 +118,17 @@ class WorkerRunner:
             (self.claim_ttl, "claim_ttl"),
             (self.lease_ttl, "lease_ttl"),
             (self.heartbeat_interval, "heartbeat_interval"),
+            (self.heartbeat_cycle_timeout, "heartbeat_cycle_timeout"),
         ):
             if value <= timedelta(0):
                 raise ValueError(f"{name} must be positive")
         if self.heartbeat_interval >= min(self.claim_ttl, self.lease_ttl):
             raise ValueError("heartbeat_interval must be less than claim and lease TTL")
+        if self.heartbeat_interval + self.heartbeat_cycle_timeout >= min(
+            self.claim_ttl,
+            self.lease_ttl,
+        ):
+            raise ValueError("heartbeat cycle must complete before claim and lease TTL")
 
     async def run_delivery(self, delivery: QueueDelivery) -> bool:
         """执行或去重一个 delivery；返回是否已成功 ACK。"""
@@ -153,7 +165,11 @@ class WorkerRunner:
             or lease.owner_id != self.worker_id
         ):
             raise RuntimeError("lease does not match the delivery target")
-        try:
+        async with _lease_scope(
+            leases=self.leases,
+            scope=target.scope,
+            lease=lease,
+        ):
             claimed = await self.claims.claim_pending_turn(
                 scope=target.scope,
                 outbox_id=delivery.outbox_id,
@@ -183,9 +199,6 @@ class WorkerRunner:
             )
             await self._ack(delivery)
             return True
-        finally:
-            await self.leases.release(scope=target.scope, lease=lease)
-
     async def _recover_committed_delivery(
         self,
         delivery: QueueDelivery,
@@ -206,14 +219,15 @@ class WorkerRunner:
             or lease.owner_id != self.worker_id
         ):
             raise RuntimeError("lease does not match the committed outcome")
-        try:
+        async with _lease_scope(
+            leases=self.leases,
+            scope=target.scope,
+            lease=lease,
+        ):
             await self.leases.ensure_owned(scope=target.scope, lease=lease)
             await self._ensure_committed_outcome(outcome)
             await self._ack(delivery)
             return True
-        finally:
-            await self.leases.release(scope=target.scope, lease=lease)
-
     async def _run_claimed(
         self,
         *,
@@ -232,20 +246,22 @@ class WorkerRunner:
             if heartbeat in done:
                 try:
                     await heartbeat
-                except BaseException:
-                    await _cancel_and_wait_strict(execution)
+                except BaseException as heartbeat_error:
+                    cleanup_error = await _cancel_and_wait_result(execution)
+                    if cleanup_error is not None:
+                        raise cleanup_error
                     committed = await self.claims.resolve_committed_outcome(
                         outbox_id=claimed.target.outbox_id,
                     )
-                    if committed is not None:
-                        if committed.is_current:
-                            await self.leases.ensure_owned(
-                                scope=committed.target.scope,
-                                lease=lease,
-                            )
-                            await self._ensure_committed_outcome(committed)
-                        return
-                    raise
+                    if committed is None:
+                        raise heartbeat_error
+                    if committed.is_current:
+                        await self.leases.ensure_owned(
+                            scope=committed.target.scope,
+                            lease=lease,
+                        )
+                        await self._ensure_committed_outcome(committed)
+                    return
                 raise RuntimeError("claim heartbeat stopped before execution")
             await execution
         except BaseException:
@@ -346,16 +362,28 @@ class WorkerRunner:
         current_claim = claimed.claim
         while True:
             await self.heartbeat_wait(self.heartbeat_interval.total_seconds())
-            current_lease = await self.leases.renew(
-                scope=claimed.target.scope,
-                lease=current_lease,
-                ttl=self.lease_ttl,
+            deadline = (
+                asyncio.get_running_loop().time()
+                + self.heartbeat_cycle_timeout.total_seconds()
             )
-            current_claim = await self.claims.heartbeat(
-                scope=claimed.target.scope,
-                claim=current_claim,
-                ttl=self.claim_ttl,
-            )
+            try:
+                async with asyncio.timeout_at(deadline):
+                    current_lease = await self.leases.renew(
+                        scope=claimed.target.scope,
+                        lease=current_lease,
+                        ttl=self.lease_ttl,
+                    )
+            except TimeoutError:
+                raise DeliveryUnavailableError() from None
+            try:
+                async with asyncio.timeout_at(deadline):
+                    current_claim = await self.claims.heartbeat(
+                        scope=claimed.target.scope,
+                        claim=current_claim,
+                        ttl=self.claim_ttl,
+                    )
+            except TimeoutError:
+                raise DistributedBackendUnavailableError() from None
 
     async def _ack(self, delivery: QueueDelivery) -> None:
         await self.queue.ack(topic=self.topic, delivery=delivery)
@@ -367,7 +395,9 @@ async def _cancel_and_wait(task: asyncio.Task[object]) -> None:
     await asyncio.gather(task, return_exceptions=True)
 
 
-async def _cancel_and_wait_strict(task: asyncio.Task[object]) -> None:
+async def _cancel_and_wait_result(
+    task: asyncio.Task[object],
+) -> BaseException | None:
     if not task.done():
         task.cancel()
     result = (await asyncio.gather(task, return_exceptions=True))[0]
@@ -375,7 +405,27 @@ async def _cancel_and_wait_strict(task: asyncio.Task[object]) -> None:
         result,
         asyncio.CancelledError,
     ):
-        raise result
+        return result
+    return None
+
+
+@asynccontextmanager
+async def _lease_scope(
+    *,
+    leases: LeasePort,
+    scope: RequestScope,
+    lease: SessionLease,
+) -> AsyncIterator[None]:
+    try:
+        yield
+    except BaseException as error:
+        try:
+            await leases.release(scope=scope, lease=lease)
+        except BaseException as release_error:
+            raise error from release_error
+        raise
+    else:
+        await leases.release(scope=scope, lease=lease)
 
 
 __all__ = [

@@ -3,7 +3,6 @@ import pytest
 from agentos.events import AgentInboxBackpressureEvent, EventBus
 from agentos.multi import AgentEnvelope, AgentInbox
 from agentos.multi.inbox import AgentInboxFullError, AgentInboxMissingError
-from agentos.multi.team import TeamMessage
 from agentos.multi.types import TaskRequest, TaskResult
 
 
@@ -61,55 +60,6 @@ def test_inbox_filtered_collect_leaves_other_message_types_pending() -> None:
         task_envelope,
     ]
     assert not inbox.has_pending("parent")
-
-
-def test_inbox_collect_matching_retains_unmatched_same_type_deliveries() -> None:
-    inbox = AgentInbox()
-    inbox.create_inbox("worker")
-    team_2 = AgentEnvelope(
-        envelope_id="env_team_2",
-        from_agent_id="leader_2",
-        to_agent_id="worker",
-        type="team_message",
-        payload=TeamMessage(
-            message_id="msg_2",
-            team_id="team_2",
-            from_agent_id="leader_2",
-            to_agent_id="worker",
-            content="team 2 work",
-            created_at=1.0,
-        ),
-        created_at=1.0,
-    )
-    team_1 = AgentEnvelope(
-        envelope_id="env_team_1",
-        from_agent_id="leader_1",
-        to_agent_id="worker",
-        type="team_message",
-        payload=TeamMessage(
-            message_id="msg_1",
-            team_id="team_1",
-            from_agent_id="leader_1",
-            to_agent_id="worker",
-            content="team 1 work",
-            created_at=1.0,
-        ),
-        created_at=1.0,
-    )
-    inbox.send(team_2)
-    inbox.send(team_1)
-
-    team_1_deliveries = inbox.collect_matching(
-        "worker",
-        envelope_types=("team_message",),
-        predicate=lambda delivery: (
-            isinstance(delivery.envelope.payload, TeamMessage)
-            and delivery.envelope.payload.team_id == "team_1"
-        ),
-    )
-
-    assert [delivery.envelope for delivery in team_1_deliveries] == [team_1]
-    assert [delivery.envelope for delivery in inbox.collect("worker")] == [team_2]
 
 
 def test_inbox_fails_closed_for_missing_inbox() -> None:

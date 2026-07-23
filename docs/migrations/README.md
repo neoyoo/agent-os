@@ -2,8 +2,8 @@
 
 Canonical path: `docs/migrations/README.md`.
 
-This migration index is Phase 100: Release Hardening evidence. It lists the
-schema/data migrations that may be needed by deployment-owned stores. AgentOS
+This migration index is release-hardening evidence. It lists API, schema, and
+data migrations that may be needed by deployment-owned stores. AgentOS
 keeps migration docs and reference SQL/Python files in the SDK repository, but
 deployment-owned execution applies them to real Postgres, SQLite, Qdrant, or
 other backend environments.
@@ -16,6 +16,7 @@ required environment variables and idempotency behavior.
 
 | File | Backend | Purpose |
 |------|---------|---------|
+| `phase6-distributed-runtime-breaking-map.md` | SDK API | Breaking cutover to canonical async Local/Durable/Distributed profiles, services, channels, and adapters. |
 | `0.2-single-async-query-loop.md` | SDK API | Breaking migration to the single async QueryLoop and `agentos.sync` adapter. |
 | `2026-05-07-postgres-agent-registry.sql` | Postgres | Agent registry metadata. |
 | `2026-05-07-postgres-memory-backends.sql` | Postgres | Durable memory backend tables. |
@@ -31,6 +32,11 @@ required environment variables and idempotency behavior.
 | `2026-06-15-postgres-team-worker-cancellations.sql` | Postgres | Team worker cancellation intent state. |
 | `2026-06-16-postgres-plan-claims.sql` | Postgres | Planner claim/lease state. |
 | `2026-07-20-postgres-distributed-runtime.sql` | Postgres | Phase 6 tenant-scoped Run, claim/fence, checkpoint, outbox, side-effect, and Artifact truth store. |
+
+Pre-Phase 6 PostgreSQL task, plan, team, and Session Snapshot migrations remain
+listed as historical schema artifacts. New distributed runtime deployments use
+`2026-07-20-postgres-distributed-runtime.sql`; they must not rebuild the removed
+Session Snapshot or synchronous store architecture.
 
 ## Ownership
 

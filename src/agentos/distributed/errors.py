@@ -162,6 +162,13 @@ class SideEffectInFlightError(DistributedError):
     message = "side effect is still in flight"
 
 
+class SideEffectResolutionPermissionError(DistributedError):
+    """当前主体无权提交副作用 reconciliation 决议。"""
+
+    code = "side_effect_resolution_permission_denied"
+    message = "side effect resolution is not permitted"
+
+
 class DistributedStoreClosedError(DistributedError):
     """Distributed Store 已关闭。"""
 
@@ -174,6 +181,13 @@ class DistributedBackendUnavailableError(DistributedError):
 
     code = "distributed_backend_unavailable"
     message = "distributed backend is unavailable"
+
+
+class DistributedShutdownTimeoutError(DistributedError):
+    """分布式运行时资源未在 cleanup deadline 内关闭。"""
+
+    code = "distributed_shutdown_timeout"
+    message = "distributed runtime shutdown timed out"
 
 
 class SchemaMigrationRequiredError(DistributedError):
@@ -223,6 +237,7 @@ __all__ = [
     "DeliveryUnavailableError",
     "DistributedBackendUnavailableError",
     "DistributedError",
+    "DistributedShutdownTimeoutError",
     "DistributedStoreClosedError",
     "LegacyDistributedSchemaError",
     "MigrationChecksumMismatchError",
@@ -232,6 +247,7 @@ __all__ = [
     "RunEventTooLargeError",
     "SideEffectAmbiguousError",
     "SideEffectInFlightError",
+    "SideEffectResolutionPermissionError",
     "SchemaMigrationRequiredError",
     "StaleFenceError",
 ]

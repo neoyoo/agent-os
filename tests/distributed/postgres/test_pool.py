@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import os
 from pathlib import Path
 import subprocess
@@ -11,6 +12,7 @@ import pytest
 
 from agentos.distributed.errors import (
     DistributedBackendUnavailableError,
+    DistributedShutdownTimeoutError,
     DistributedStoreClosedError,
 )
 from agentos.distributed.postgres._database import PostgresPool
@@ -20,6 +22,20 @@ class FakeDatabaseError(Exception):
     pass
 
 
+class FakeAsyncConnection:
+    close_calls = 0
+
+    async def close(self) -> None:
+        FakeAsyncConnection.close_calls += 1
+
+
+class _HealthyConnection:
+    async def execute(self, query: str, params: object = ()) -> object:
+        assert query == ""
+        assert params == ()
+        return object()
+
+
 class _ConnectionContext:
     def __init__(self, *, failure: BaseException | None = None) -> None:
         self.failure = failure
@@ -27,7 +43,7 @@ class _ConnectionContext:
     async def __aenter__(self):  # type: ignore[no-untyped-def]
         if self.failure is not None:
             raise self.failure
-        return object()
+        return _HealthyConnection()
 
     async def __aexit__(self, *args: object) -> None:
         return None
@@ -43,6 +59,30 @@ class FakePool:
 
     async def close(self) -> None:
         self.close_calls += 1
+
+
+def _install_fake_driver(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_pool: object,
+) -> None:
+    psycopg = ModuleType("psycopg")
+    psycopg.AsyncConnection = FakeAsyncConnection  # type: ignore[attr-defined]
+    psycopg.Error = FakeDatabaseError  # type: ignore[attr-defined]
+    rows = ModuleType("psycopg.rows")
+    rows.dict_row = object()  # type: ignore[attr-defined]
+    psycopg_pool = ModuleType("psycopg_pool")
+
+    def create_pool(**kwargs: object) -> object:
+        assert kwargs["kwargs"] == {"row_factory": rows.dict_row, "autocommit": True}
+        connection_class = kwargs["connection_class"]
+        assert issubclass(connection_class, FakeAsyncConnection)  # type: ignore[arg-type]
+        raw_pool.connection_class = connection_class
+        return raw_pool
+
+    psycopg_pool.AsyncConnectionPool = create_pool  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+    monkeypatch.setitem(sys.modules, "psycopg.rows", rows)
+    monkeypatch.setitem(sys.modules, "psycopg_pool", psycopg_pool)
 
 
 def test_postgres_module_import_does_not_load_optional_driver() -> None:
@@ -102,6 +142,54 @@ def test_pool_maps_driver_failure_without_secret_text() -> None:
     asyncio.run(exercise())
 
 
+def test_pool_connection_timeout_maps_to_backend_unavailable() -> None:
+    class BlockingConnectionContext(_ConnectionContext):
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            await asyncio.Event().wait()
+
+    class BlockingPool(FakePool):
+        def connection(self) -> BlockingConnectionContext:
+            return BlockingConnectionContext()
+
+    async def exercise() -> None:
+        pool = PostgresPool(
+            BlockingPool(),  # type: ignore[arg-type]
+            operation_timeout=timedelta(milliseconds=10),
+        )
+
+        with pytest.raises(DistributedBackendUnavailableError):
+            async with pool.connection():
+                pass
+
+    asyncio.run(exercise())
+
+
+def test_pool_query_cancellation_aborts_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OpeningPool(FakePool):
+        async def open(self, *, wait: bool) -> None:
+            assert wait is True
+
+    async def exercise() -> None:
+        raw = OpeningPool()
+        FakeAsyncConnection.close_calls = 0
+        _install_fake_driver(monkeypatch, raw)
+        pool = await PostgresPool.open(
+            "postgresql://db/agentos",
+            operation_timeout=timedelta(milliseconds=100),
+        )
+        connection = raw.connection_class()  # type: ignore[attr-defined]
+
+        with pytest.raises(asyncio.CancelledError):
+            await connection._try_cancel(timeout=5)
+        await pool.close()
+
+        assert FakeAsyncConnection.close_calls == 1
+
+    asyncio.run(exercise())
+
+
 def test_pool_transaction_delegates_exception_to_driver_rollback() -> None:
     class RecordingTransaction:
         def __init__(self) -> None:
@@ -122,6 +210,11 @@ def test_pool_transaction_delegates_exception_to_driver_rollback() -> None:
     class TransactionConnection:
         def __init__(self) -> None:
             self.boundary = RecordingTransaction()
+
+        async def execute(self, query: str, params: object = ()) -> object:
+            assert query == ""
+            assert params == ()
+            return object()
 
         def transaction(self) -> RecordingTransaction:
             return self.boundary
@@ -189,6 +282,29 @@ def test_pool_cancelled_close_remains_retryable() -> None:
     asyncio.run(exercise())
 
 
+def test_pool_close_timeout_uses_shutdown_error_and_remains_retryable() -> None:
+    class BlockingOncePool(FakePool):
+        async def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                await asyncio.Event().wait()
+
+    async def exercise() -> None:
+        raw = BlockingOncePool()
+        pool = PostgresPool(
+            raw,  # type: ignore[arg-type]
+            operation_timeout=timedelta(milliseconds=10),
+        )
+
+        with pytest.raises(DistributedShutdownTimeoutError):
+            await pool.close()
+        await pool.close()
+
+        assert raw.close_calls == 2
+
+    asyncio.run(exercise())
+
+
 def test_pool_cancelled_open_finishes_acquisition_and_closes_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -215,17 +331,7 @@ def test_pool_cancelled_open_finishes_acquisition_and_closes_pool(
 
     async def exercise() -> None:
         raw = BlockingOpenPool()
-        psycopg = ModuleType("psycopg")
-        psycopg.Error = FakeDatabaseError  # type: ignore[attr-defined]
-        rows = ModuleType("psycopg.rows")
-        rows.dict_row = object()  # type: ignore[attr-defined]
-        psycopg_pool = ModuleType("psycopg_pool")
-        psycopg_pool.AsyncConnectionPool = (  # type: ignore[attr-defined]
-            lambda **kwargs: raw
-        )
-        monkeypatch.setitem(sys.modules, "psycopg", psycopg)
-        monkeypatch.setitem(sys.modules, "psycopg.rows", rows)
-        monkeypatch.setitem(sys.modules, "psycopg_pool", psycopg_pool)
+        _install_fake_driver(monkeypatch, raw)
 
         opening = asyncio.create_task(PostgresPool.open("postgresql://db/agentos"))
         await raw.open_started.wait()
@@ -241,6 +347,41 @@ def test_pool_cancelled_open_finishes_acquisition_and_closes_pool(
 
         assert caught.value.args == ("caller stopped",)
         assert raw.opened is True
+        assert raw.close_calls == 1
+
+    asyncio.run(exercise())
+
+
+def test_pool_open_timeout_cancels_acquisition_and_closes_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BlockingOpenPool(FakePool):
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            super().__init__()
+            self.cancelled = asyncio.Event()
+
+        async def open(self, *, wait: bool) -> None:
+            assert wait is True
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled.set()
+
+    async def exercise() -> None:
+        raw = BlockingOpenPool()
+        _install_fake_driver(monkeypatch, raw)
+
+        with pytest.raises(DistributedBackendUnavailableError):
+            await asyncio.wait_for(
+                PostgresPool.open(
+                    "postgresql://db/agentos",
+                    operation_timeout=timedelta(milliseconds=10),
+                ),
+                timeout=0.2,
+            )
+
+        assert raw.cancelled.is_set()
         assert raw.close_calls == 1
 
     asyncio.run(exercise())

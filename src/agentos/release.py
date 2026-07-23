@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 import re
 
-from agentos._redaction import redact_secret_patterns
+from agentos._release_redaction import _json_safe_mapping, _redact_with_findings
 
 
 ReleaseEvidenceGateStatus = Literal["unknown", "pending", "passed", "failed"]
@@ -20,24 +19,14 @@ RELEASE_EVIDENCE_REQUIRED_GATES: tuple[str, ...] = (
     "docs_alignment",
     "migration_index",
     "api_stability_inventory",
-    "production_reference_honesty",
-    "planner_plan_store_concurrency",
+    "distributed_runtime_contract",
+    "distributed_recovery_concurrency",
     "workspace_security_policy",
     "independent_review",
 )
 
 _RELEASE_EVIDENCE_STATUSES = frozenset(
     {"unknown", "pending", "passed", "failed"},
-)
-_SECRET_KEY_PARTS = frozenset(
-    {
-        "authorization",
-        "credential",
-        "credentials",
-        "password",
-        "secret",
-        "token",
-    },
 )
 _PEP440_RELEASE_RE = re.compile(
     r"^[0-9]+(?:\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?"
@@ -52,12 +41,12 @@ _LIVE_BACKEND_SCOPE_STATUSES = frozenset(
     },
 )
 _LIVE_BACKEND_REQUIRED_BACKENDS = (
-    "agent_registry",
-    "message_queue",
-    "task_store",
-    "plan_store",
-    "worker_process_supervisor",
-    "session_snapshot_persistence",
+    "postgres_state_store",
+    "postgres_artifact_store",
+    "redis_worker_queue",
+    "redis_relay_queue",
+    "redis_event_replay",
+    "distributed_worker",
 )
 _ALLOWED_CERTIFICATION_CLAIMS = frozenset(
     {
@@ -432,87 +421,6 @@ def _independent_review_status(manifest: Mapping[str, object]) -> str:
     if isinstance(status, str) and status.lower() in _RELEASE_EVIDENCE_STATUSES:
         return status.lower()
     return "unknown"
-
-
-def _redact_with_findings(
-    value: object,
-    *,
-    path: str = "",
-    key_hint: str = "",
-) -> tuple[object, list[str]]:
-    if _is_secret_like_key(key_hint):
-        return "<redacted>", (
-            [f"secret-like value at {path}"] if _has_unredacted_value(value) else []
-        )
-    if isinstance(value, str):
-        redacted = redact_secret_patterns(value)
-        return redacted, (
-            [f"secret-like value at {path}"] if redacted != value else []
-        )
-    if value is None or isinstance(value, int | float | bool):
-        return value, []
-    if isinstance(value, Path):
-        return str(value), []
-    if isinstance(value, Mapping):
-        findings: list[str] = []
-        redacted: dict[str, object] = {}
-        for key, item in value.items():
-            key_text = str(key)
-            child_path = f"{path}.{key_text}" if path else key_text
-            child_value, child_findings = _redact_with_findings(
-                item,
-                path=child_path,
-                key_hint=key_text,
-            )
-            redacted[key_text] = child_value
-            findings.extend(child_findings)
-        return redacted, findings
-    if isinstance(value, tuple | list):
-        findings = []
-        redacted_items = []
-        for index, item in enumerate(value):
-            child_path = f"{path}[{index}]" if path else f"[{index}]"
-            child_value, child_findings = _redact_with_findings(
-                item,
-                path=child_path,
-            )
-            redacted_items.append(child_value)
-            findings.extend(child_findings)
-        return tuple(redacted_items), findings
-    return repr(value), []
-
-
-def _json_safe_mapping(values: Mapping[str, object]) -> dict[str, object]:
-    safe, _ = _redact_with_findings(values)
-    if isinstance(safe, Mapping):
-        return dict(safe)
-    return {"value": safe}
-
-
-def _is_secret_like_key(key: str) -> bool:
-    lowered = key.lower()
-    parts = {
-        part
-        for part in lowered.replace("-", "_").replace(".", "_").split("_")
-        if part
-    }
-    if lowered in _SECRET_KEY_PARTS:
-        return True
-    if parts & _SECRET_KEY_PARTS:
-        return True
-    return ("api" in parts and "key" in parts) or (
-        "private" in parts and "key" in parts
-    )
-
-
-def _has_unredacted_value(value: object) -> bool:
-    if value in (None, "", "<redacted>"):
-        return False
-    if isinstance(value, Mapping):
-        return any(_has_unredacted_value(item) for item in value.values())
-    if isinstance(value, tuple | list):
-        return any(_has_unredacted_value(item) for item in value)
-    return True
 
 
 __all__ = [

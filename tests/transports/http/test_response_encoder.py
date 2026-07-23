@@ -28,6 +28,7 @@ from agentos.distributed.errors import (
     RunNotFoundError,
     RunSubmissionConflictError,
     SideEffectInFlightError,
+    SideEffectResolutionPermissionError,
 )
 from agentos.distributed.models import (
     ArtifactContent,
@@ -180,6 +181,12 @@ def test_encode_artifact_operations_never_expose_storage_identity() -> None:
         (ArtifactValidationError("unsafe detail"), 400, "invalid_artifact", "invalid artifact request"),
         (AuthenticationRequiredError(), 401, "authentication_required", "authentication required"),
         (PermissionDeniedError(), 403, "permission_denied", "permission denied"),
+        (
+            SideEffectResolutionPermissionError(),
+            403,
+            "side_effect_resolution_permission_denied",
+            "side effect resolution is not permitted",
+        ),
         (RunNotFoundError(), 404, "run_not_found", "run not found"),
         (ArtifactNotFoundError(), 404, "artifact_not_found", "artifact not found"),
         (A2ATaskNotFoundError(), 404, "a2a_task_not_found", "a2a task not found"),

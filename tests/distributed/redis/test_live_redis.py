@@ -20,10 +20,13 @@ from agentos.distributed.redis.replay import RedisEventReplayAdapter
 
 
 REDIS_URL = os.environ.get("AGENTOS_TEST_REDIS_URL")
-pytestmark = pytest.mark.skipif(
-    REDIS_URL is None,
-    reason="set AGENTOS_TEST_REDIS_URL to run live Redis tests",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        REDIS_URL is None,
+        reason="set AGENTOS_TEST_REDIS_URL to run live Redis tests",
+    ),
+]
 SCOPE = RequestScope("tenant_1", "user_1")
 NOW = datetime(2026, 7, 20, 12, tzinfo=UTC)
 
@@ -239,6 +242,19 @@ def test_live_queue_reclaims_canonical_after_older_noncanonical_duplicate() -> N
 
             assert older_id != canonical[0].delivery_id
             assert reclaimed[0].delivery_id == canonical[0].delivery_id
+            await queue.ack(topic=topic, delivery=reclaimed[0])
+            assert await queue.receive(
+                topic=topic,
+                consumer_id="recovery_worker",
+                limit=1,
+            ) == ()
+            assert await queue.reclaim(
+                topic=topic,
+                consumer_id="recovery_worker",
+                min_idle=timedelta(milliseconds=1),
+                limit=10,
+            ) == ()
+            assert (await client.xpending(stream, "workers"))["pending"] == 0
         finally:
             await queue.close()
             await _delete_prefix(client, prefix)

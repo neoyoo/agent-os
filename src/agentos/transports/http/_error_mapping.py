@@ -21,6 +21,7 @@ from agentos.distributed.errors import (
     RunNotFoundError,
     RunSubmissionConflictError,
     SideEffectInFlightError,
+    SideEffectResolutionPermissionError,
 )
 from agentos.transports.http.errors import (
     AuthenticationRequiredError,
@@ -41,6 +42,11 @@ _ERROR_RESPONSES: dict[type[BaseException], tuple[int, str, str]] = {
         "authentication required",
     ),
     PermissionDeniedError: (403, "permission_denied", "permission denied"),
+    SideEffectResolutionPermissionError: (
+        403,
+        "side_effect_resolution_permission_denied",
+        "side effect resolution is not permitted",
+    ),
     RunNotFoundError: (404, "run_not_found", "run not found"),
     ArtifactNotFoundError: (404, "artifact_not_found", "artifact not found"),
     A2ATaskNotFoundError: (404, "a2a_task_not_found", "a2a task not found"),

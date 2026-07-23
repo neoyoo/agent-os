@@ -1,6 +1,6 @@
 # AgentOS Phase 6 Distributed Runtime / Transport 实施计划
 
-> 状态：Wave 0-5D、Wave 6 Task 7 与 Task 8.5 已完成；下一阶段为 Task 8 live backend failure injection
+> 状态：Wave 0-5D 与 Wave 6 Task 7-9 已完成；Phase 6 已通过最终双层独立 Review
 >
 > 日期：2026-07-17
 >
@@ -30,7 +30,10 @@
   trusted wakeup provenance 已完成并通过独立 Spec/Quality/Security Review；OCR 仍明确排除；
 - Wave 6 Task 7：Deployment canonical leaf、消费者迁移与旧模块物理删除已完成；
 - Wave 6 Task 8.5：Workspace 模块职责拆分已完成；
-- 下一阶段：Task 8 live backend failure injection；完成后进入 Task 9 breaking cutover。
+- Wave 6 Task 8：live backend failure injection、backend I/O deadline、heartbeat fail-closed、
+  Relay batch deadline 与 shutdown cleanup 已完成；
+- Wave 6 Task 9：canonical import、public facade 收窄、legacy 物理删除、`0.3.0a1`
+  version/migration/release evidence 与治理清单切换已完成，并通过最终双层独立 Review。
 
 Wave 4 收口证据：
 
@@ -929,6 +932,10 @@ plane、reference example 与 API inventory 联合门禁为 `182 passed`，Ruff�
 
 ### Task 8：Live Backend Failure Injection
 
+网络半开、heartbeat fail-closed 与 Relay batch deadline 同时遵循
+`2026-07-22-agentos-phase6-task8-failure-timeout-addendum.md`，不得由测试侧 `wait_for()` 替代
+生产 Adapter 的 I/O deadline。
+
 新增 live tests：
 
 - command commit crash windows；
@@ -967,6 +974,30 @@ plane、reference example 与 API inventory 联合门禁为 `182 passed`，Ruff�
   慢上传期间不得由 age-based cleanup 删除 staging/blob；
 - full restart/hydration/artifact reload。
 
+Task 8 模块职责审查（2026-07-22）：`runtime/side_effect_types.py` 仍只承载 Side Effect
+领域值对象与状态不变量；`distributed/profile.py` 仍是资源组合和生命周期 owner；
+`distributed/worker/runner.py` 仍只承载单条 Run delivery 状态机；`distributed/services.py`、
+`distributed/redis/replay.py`、`distributed/postgres/state.py` 与
+`distributed/worker/supervisor.py` 分别保持 Application boundary、Run replay、State facade 与
+Worker lifecycle 单一职责。上述文件均低于 500 行强制拆分线，本阶段不做机械拆分。
+
+Task 8 收口证据（2026-07-22）：
+
+- 真实 PostgreSQL、Redis 与 S3-compatible Artifact live suite：
+  `99 passed, 1 skipped, 4271 deselected`；唯一 skip 为未安装的可选 OpenTelemetry；
+- 本地 Artifact live evidence 使用 Moto S3-compatible HTTP server；CI 继续固定使用
+  `localstack/localstack:3.8.1`，两者执行同一 S3 Adapter 合同；
+- 排除 Task 9 breaking cutover 红门禁后的 non-integration：
+  `4265 passed, 4 skipped, 99 deselected`；Architecture：`171 passed`；
+- Worker 全量：`108 passed`；heartbeat 与 Relay timeout live 定向：`4 passed`；
+- Ruff、compileall、module-size baseline 与 `git diff --check` 全部通过；Transport 反向依赖和
+  Distributed 同步 I/O 静态搜索均为零命中；OCR 仅命中本 Contract 的四处明确排除文字；
+- Spec Compliance Review：`P0=0, P1=0, P2=0`；原始唯一 P2 为本计划状态滞后，已由本段
+  修复；Code Quality/Security Review：`P0=0, P1=0, P2=0`；
+- Contract 第 17 节提到 Dead Letter 前真值校验，但当前未定义 QueuePort/DLQ 状态转换；
+  Task 8 不新增未冻结的 DLQ surface。现有高 `delivery_count` 重投测试证明 Worker 始终先查
+  PostgreSQL 真值；若未来提供 SDK 级 DLQ，必须先单独冻结合同，不计入本 Task 验收。
+
 真实后端命令使用项目已有 integration marker 和 test compose。跳过 live suite 不能生成
 release-ready evidence。
 
@@ -1003,6 +1034,25 @@ breaking cutover 前必须原子完成以下拆分：
 8. 全量门禁。
 
 禁止多个 worktree 同时修改 public facade 或执行部分删除。
+
+Task 9 实现与门禁证据（2026-07-22，独立 Review 整改后）：
+
+- 全量测试：`3655 passed, 93 skipped`；Architecture：`176 passed`；
+- 真实 PostgreSQL、Redis 与 Moto S3-compatible integration：`89 passed, 1 skipped,
+  3658 deselected`；唯一 skip 为未安装的可选 OpenTelemetry；
+- Ruff、`compileall` 与 `git diff --check` 全部通过；Transport 反向依赖、Distributed
+  同步 I/O、Legacy Snapshot 三项静态搜索均为零命中；OCR 仅命中本 Contract 的四处明确
+  排除文字；
+- Public API inventory 与 module-size baseline 已重新生成；`readiness.py` 按 release evidence、
+  form types、channel forms、orchestration forms 和聚合器拆分为 `401/90/287/260/38` 行，
+  公共 API 与类型 identity 保持不变；当前无 800 行以上生产模块；
+- Release evidence 生成器复用 canonical live-backend 常量，示例命令、版本与 backend 集合已
+  对齐；`release.py` 的 redaction/JSON-safe 职责已拆到 106 行私有叶子，入口模块降至 432 行；
+  Local/Durable 仍不加载 PostgreSQL/Redis client；
+- 初审发现的 legacy `redis`/`postgres` extras、Planner readiness 旧声明、两份旧 README 草稿、
+  Worker close/drain-before-start 后 `wait()` 阻塞及 `release.py` 规模问题均已修复并加入回归
+  门禁；最终 Spec Compliance Review 与 Code Quality/Security Review 均为
+  `P0=0, P1=0, P2=0`，Task 9 与 Phase 6 正式关闭。
 
 提交：`refactor!: complete phase6 distributed runtime cutover`
 

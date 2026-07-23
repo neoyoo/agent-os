@@ -27,24 +27,24 @@ def _passed_record(name: str) -> BackendVerificationRecord:
 
 def test_backend_verification_record_payload_is_json_safe() -> None:
     record = BackendVerificationRecord(
-        backend_name="agent_registry",
-        backend_kind="nacos",
+        backend_name="postgres_state_store",
+        backend_kind="postgres",
         status="passed",
         checked_at=1781580000.0,
-        evidence_ref="ci://checks/nacos-agent-registry",
-        target_ref="nacos://agentos/agent-registry",
+        evidence_ref="ci://checks/postgres-state-store",
+        target_ref="postgresql://agentos/state",
         metadata={"namespace": "agentos-prod", "attempt": 2},
     )
 
     payload = record.as_dict()
 
     assert payload == {
-        "backend_name": "agent_registry",
-        "backend_kind": "nacos",
+        "backend_name": "postgres_state_store",
+        "backend_kind": "postgres",
         "status": "passed",
         "checked_at": 1781580000.0,
-        "evidence_ref": "ci://checks/nacos-agent-registry",
-        "target_ref": "nacos://agentos/agent-registry",
+        "evidence_ref": "ci://checks/postgres-state-store",
+        "target_ref": "postgresql://agentos/state",
         "error": None,
         "metadata": {"namespace": "agentos-prod", "attempt": 2},
     }
@@ -53,7 +53,7 @@ def test_backend_verification_record_payload_is_json_safe() -> None:
 
 def test_backend_verification_record_redacts_secret_patterns_in_target_ref() -> None:
     record = BackendVerificationRecord(
-        backend_name="session_snapshot_persistence",
+        backend_name="postgres_artifact_store",
         backend_kind="postgres",
         status="passed",
         checked_at=1781580000.0,
@@ -70,7 +70,7 @@ def test_backend_verification_record_redacts_secret_patterns_in_target_ref() -> 
 
 def test_backend_verification_record_redacts_secret_patterns_in_evidence_and_error() -> None:
     record = BackendVerificationRecord(
-        backend_name="message_queue",
+        backend_name="redis_worker_queue",
         backend_kind="redis",
         status="failed",
         checked_at=1781580000.0,
@@ -93,7 +93,7 @@ def test_backend_verification_record_rejects_missing_refs_and_secret_metadata() 
     with pytest.raises(ValueError, match="backend_name must not be empty"):
         BackendVerificationRecord(
             backend_name=" ",
-            backend_kind="nacos",
+            backend_kind="postgres",
             status="passed",
             checked_at=1.0,
             evidence_ref="ci://check",
@@ -101,8 +101,8 @@ def test_backend_verification_record_rejects_missing_refs_and_secret_metadata() 
 
     with pytest.raises(ValueError, match="evidence_ref must not be empty"):
         BackendVerificationRecord(
-            backend_name="agent_registry",
-            backend_kind="nacos",
+            backend_name="postgres_state_store",
+            backend_kind="postgres",
             status="passed",
             checked_at=1.0,
             evidence_ref=" ",
@@ -110,7 +110,7 @@ def test_backend_verification_record_rejects_missing_refs_and_secret_metadata() 
 
     with pytest.raises(ValueError, match="metadata contains restricted key"):
         BackendVerificationRecord(
-            backend_name="message_queue",
+            backend_name="redis_worker_queue",
             backend_kind="redis",
             status="passed",
             checked_at=1.0,
@@ -144,8 +144,8 @@ def test_live_backend_verification_gate_accepts_all_required_passed_records() ->
 
 def test_live_backend_verification_gate_blocks_missing_backend_evidence() -> None:
     records = (
-        _passed_record("agent_registry"),
-        _passed_record("message_queue"),
+        _passed_record("postgres_state_store"),
+        _passed_record("postgres_artifact_store"),
     )
 
     report = DeploymentLiveBackendVerificationGateReport.from_records(
@@ -156,10 +156,10 @@ def test_live_backend_verification_gate_blocks_missing_backend_evidence() -> Non
     assert report.accepted is False
     assert report.block_production_readiness is True
     assert report.missing_backends == (
-        "task_store",
-        "plan_store",
-        "worker_process_supervisor",
-        "session_snapshot_persistence",
+        "redis_worker_queue",
+        "redis_relay_queue",
+        "redis_event_replay",
+        "distributed_worker",
     )
 
 
@@ -169,19 +169,19 @@ def test_live_backend_verification_gate_blocks_failed_or_unknown_backend() -> No
         for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     ]
     records[1] = BackendVerificationRecord(
-        backend_name="message_queue",
-        backend_kind="redis",
+        backend_name="postgres_artifact_store",
+        backend_kind="postgres",
         status="failed",
         checked_at=1781580001.0,
-        evidence_ref="ci://checks/redis-message-queue",
+        evidence_ref="ci://checks/postgres-artifact-store",
         error="ping timeout",
     )
     records[3] = BackendVerificationRecord(
-        backend_name="plan_store",
-        backend_kind="postgres",
+        backend_name="redis_relay_queue",
+        backend_kind="redis",
         status="unknown",
         checked_at=1781580002.0,
-        evidence_ref="ci://checks/postgres-plan-store",
+        evidence_ref="ci://checks/redis-relay-queue",
         error="report missing assertion",
     )
 
@@ -192,8 +192,8 @@ def test_live_backend_verification_gate_blocks_failed_or_unknown_backend() -> No
 
     assert report.accepted is False
     assert report.block_production_readiness is True
-    assert report.failed_backends == ("message_queue",)
-    assert report.unknown_backends == ("plan_store",)
+    assert report.failed_backends == ("postgres_artifact_store",)
+    assert report.unknown_backends == ("redis_relay_queue",)
     assert report.as_dict()["status"] == "failed"
 
 
@@ -203,11 +203,11 @@ def test_live_backend_verification_gate_blocks_passed_record_without_target_ref(
         for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     ]
     records[0] = BackendVerificationRecord(
-        backend_name="agent_registry",
-        backend_kind="nacos",
+        backend_name="postgres_state_store",
+        backend_kind="postgres",
         status="passed",
         checked_at=1781580000.0,
-        evidence_ref="ci://checks/nacos-agent-registry",
+        evidence_ref="ci://checks/postgres-state-store",
     )
 
     report = DeploymentLiveBackendVerificationGateReport.from_records(
@@ -217,8 +217,8 @@ def test_live_backend_verification_gate_blocks_passed_record_without_target_ref(
 
     assert report.accepted is False
     assert report.block_production_readiness is True
-    assert report.invalid_backends == ("agent_registry",)
-    assert report.as_dict()["invalid_backends"] == ("agent_registry",)
+    assert report.invalid_backends == ("postgres_state_store",)
+    assert report.as_dict()["invalid_backends"] == ("postgres_state_store",)
 
 
 def test_live_backend_verification_gate_blocks_backend_kind_mismatch() -> None:
@@ -227,34 +227,11 @@ def test_live_backend_verification_gate_blocks_backend_kind_mismatch() -> None:
         for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     ]
     records[2] = BackendVerificationRecord(
-        backend_name="task_store",
-        backend_kind="redis",
+        backend_name="redis_worker_queue",
+        backend_kind="postgres",
         status="passed",
         checked_at=1781580000.0,
-        evidence_ref="ci://checks/postgres-task-store",
-        target_ref="postgresql://deployment.example/agentos",
-    )
-
-    report = DeploymentLiveBackendVerificationGateReport.from_records(
-        tuple(records),
-        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
-    )
-
-    assert report.accepted is False
-    assert report.invalid_backends == ("task_store",)
-
-
-def test_live_backend_verification_gate_blocks_passed_record_without_checked_at() -> None:
-    records = [
-        _passed_record(name)
-        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
-    ]
-    records[1] = BackendVerificationRecord(
-        backend_name="message_queue",
-        backend_kind="redis",
-        status="passed",
-        checked_at=0.0,
-        evidence_ref="ci://checks/redis-message-queue",
+        evidence_ref="ci://checks/redis-worker-queue",
         target_ref="redis://deployment.example/0",
     )
 
@@ -264,20 +241,20 @@ def test_live_backend_verification_gate_blocks_passed_record_without_checked_at(
     )
 
     assert report.accepted is False
-    assert report.invalid_backends == ("message_queue",)
+    assert report.invalid_backends == ("redis_worker_queue",)
 
 
-def test_live_backend_verification_gate_blocks_placeholder_evidence_ref() -> None:
+def test_live_backend_verification_gate_blocks_passed_record_without_checked_at() -> None:
     records = [
         _passed_record(name)
         for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     ]
-    records[2] = BackendVerificationRecord(
-        backend_name="task_store",
+    records[1] = BackendVerificationRecord(
+        backend_name="postgres_artifact_store",
         backend_kind="postgres",
         status="passed",
-        checked_at=1781580000.0,
-        evidence_ref="<artifact-or-log-ref>",
+        checked_at=0.0,
+        evidence_ref="ci://checks/postgres-artifact-store",
         target_ref="postgresql://deployment.example/agentos",
     )
 
@@ -287,14 +264,37 @@ def test_live_backend_verification_gate_blocks_placeholder_evidence_ref() -> Non
     )
 
     assert report.accepted is False
-    assert report.invalid_backends == ("task_store",)
+    assert report.invalid_backends == ("postgres_artifact_store",)
+
+
+def test_live_backend_verification_gate_blocks_placeholder_evidence_ref() -> None:
+    records = [
+        _passed_record(name)
+        for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+    ]
+    records[2] = BackendVerificationRecord(
+        backend_name="redis_worker_queue",
+        backend_kind="redis",
+        status="passed",
+        checked_at=1781580000.0,
+        evidence_ref="<artifact-or-log-ref>",
+        target_ref="redis://deployment.example/0",
+    )
+
+    report = DeploymentLiveBackendVerificationGateReport.from_records(
+        tuple(records),
+        required_backends=LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+
+    assert report.accepted is False
+    assert report.invalid_backends == ("redis_worker_queue",)
 
 
 def test_live_backend_verification_gate_blocks_duplicate_backend_records() -> None:
     records = tuple(
         _passed_record(name)
         for name in LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
-    ) + (_passed_record("plan_store"),)
+    ) + (_passed_record("redis_relay_queue"),)
 
     report = DeploymentLiveBackendVerificationGateReport.from_records(
         records,
@@ -302,8 +302,8 @@ def test_live_backend_verification_gate_blocks_duplicate_backend_records() -> No
     )
 
     assert report.accepted is False
-    assert report.duplicate_backends == ("plan_store",)
-    assert report.as_dict()["duplicate_backends"] == ("plan_store",)
+    assert report.duplicate_backends == ("redis_relay_queue",)
+    assert report.as_dict()["duplicate_backends"] == ("redis_relay_queue",)
 
 
 def test_live_backend_verification_profile_exposes_readiness_check() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import cast
 from uuid import uuid4
 
@@ -9,7 +10,10 @@ from agentos.distributed.postgres._command_records import update_run
 from agentos.distributed.postgres._database import AsyncConnection, fetchone
 from agentos.distributed.postgres._identities import stable_id
 from agentos.distributed.postgres._outbox_records import STATUS_TOPIC, insert_outbox
-from agentos.distributed.postgres._records import session_checkpoint_from_json
+from agentos.distributed.postgres._records import (
+    session_checkpoint_from_json,
+    session_checkpoint_to_json,
+)
 from agentos.distributed.postgres._side_effect_composite import apply_cancel_safe_stop
 from agentos.runtime.checkpoint import CHECKPOINT_SCHEMA_VERSION
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
@@ -56,7 +60,7 @@ async def commit_cancel(
     if snapshot_json is not None:
         if type(snapshot_json) is not str:
             raise CheckpointConflictError()
-        session_checkpoint_from_json(snapshot_json)
+        snapshot_json = _cancelled_snapshot_json(snapshot_json)
     turn_id = (
         cast(str, pending["turn_id"])
         if pending is not None
@@ -153,6 +157,23 @@ async def commit_cancel(
         command.kind,
         updated.aggregate_version,
         False,
+    )
+
+
+def _cancelled_snapshot_json(snapshot_json: str) -> str:
+    checkpoint = session_checkpoint_from_json(snapshot_json)
+    cursor = checkpoint.execution_cursor
+    active_refs = checkpoint.active_refs
+    if cursor is not None and cursor.stage == "pending_tools":
+        active_refs = tuple(
+            ref for ref in active_refs if ref != cursor.assistant_message_id
+        )
+    return session_checkpoint_to_json(
+        replace(
+            checkpoint,
+            active_refs=active_refs,
+            execution_cursor=None,
+        ),
     )
 
 

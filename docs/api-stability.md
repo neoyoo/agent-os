@@ -2,19 +2,26 @@
 
 Canonical path: `docs/api-stability.md`.
 
-## `0.2.0a1` Compatibility Target
+## `0.3.0a1` Compatibility Target
 
-The `0.2.0a1` root `agentos` facade commits only to the stable entry points
+The `0.3.0a1` root `agentos` facade commits only to the stable entry points
 needed by the Level 1 local loop. Level 2 Artifact and Durable APIs are exposed
-only from their owning modules; Distributed types that are not implemented for
-their level are not exported in advance. Later phases add public names only
-when their owning phase, behavior, and compatibility tests are implemented.
+only from their owning modules. Phase 6 adds implemented Distributed contracts
+from `agentos.distributed`, `agentos.distributed.models`,
+`agentos.distributed.services`, `agentos.channels`, `agentos.transports.*`, and
+`agentos.adapters.a2a`; these entries remain experimental for the breaking alpha.
 
 Phase 5 adds the stable module-level Durable command, profile, and SQLite/
 filesystem adapter entry points. The `agentos[durable]` installation intent is
 an empty extra because the reference adapters use only the Python standard
 library. It does not add Redis or PostgreSQL dependencies, and it does not
 expand the root `agentos` facade.
+
+Phase 6 is a breaking cutover. It removes the legacy Channel/A2A facades,
+distributed SessionSnapshot path, synchronous PostgreSQL/Redis Store wrappers,
+and the old web/service composition profiles. No compatibility wrapper,
+deprecated alias, or dynamic fallback is retained. PostgreSQL is the
+Distributed state truth; Redis is delivery and replay only.
 
 Phase 2 applies a breaking message-boundary reset: `StoredMessage` is the only
 business message truth type, while `ProviderInputItem` is the only accepted
@@ -57,27 +64,37 @@ Every namespace listed here must be represented in
 `docs/public-api-inventory.json`:
 
 - `agentos`
+- `agentos.adapters.a2a`
 - `agentos.artifacts`
 - `agentos.capabilities`
 - `agentos.channels`
-- `agentos.durable`
-- `agentos.multi`
-- `agentos.planning`
-- `agentos.persistence`
-- `agentos.runtime`
-- `agentos.sync`
-- `agentos.workspace`
-- `agentos.registry`
 - `agentos.deployment_constants`
 - `agentos.deployment_profiles`
 - `agentos.deployment_reports`
 - `agentos.deployment_types`
 - `agentos.deployment_validation`
 - `agentos.deployment_workers`
+- `agentos.distributed`
+- `agentos.distributed.models`
+- `agentos.distributed.services`
+- `agentos.durable`
+- `agentos.memory`
+- `agentos.multi`
+- `agentos.persistence`
+- `agentos.planning`
 - `agentos.readiness`
+- `agentos.recall`
+- `agentos.registry`
 - `agentos.release`
+- `agentos.runtime`
+- `agentos.sync`
 - `agentos.testing`
 - `agentos.testing.contracts`
+- `agentos.transports.a2a`
+- `agentos.transports.http`
+- `agentos.transports.sse`
+- `agentos.transports.websocket`
+- `agentos.workspace`
 
 ## Stable API
 
@@ -96,14 +113,10 @@ governed exports and do not promote unlisted submodule names to stable API.
 - stable `agentos.sync` adapter exports: `SyncAgent`, `SyncAgentStream`,
   `run`, and the `Sync*Error` types. These are not exported from root
   `agentos` and do not create a second QueryLoop.
-- governed channel exports such as `AsgiAgentApp`, durable session provider
-  protocols, session lease protocols, SSE replay/control stores, and
-  `LeaseFencedSessionPersistence`
-- governed persistence exports such as `SessionPersistence`,
-  `SessionSnapshot`, `PostgresSessionSnapshotPersistence`, and related snapshot
-  records/errors
-- `RuntimeProfile`, `LocalRuntimeProfile`, `WebRuntimeProfile`,
-  `DistributedWebRuntimeProfile`, and distributed session operation profiles
+- governed persistence exports are the Local/Durable snapshot contracts and
+  adapters only; Distributed persistence is not exposed from this namespace
+- `RuntimeProfile` and `LocalRuntimeProfile`; Distributed composition belongs
+  to `agentos.distributed`
 - `ProductionReadinessEvidenceBundle`, `ReadinessEvidenceCheck`,
   `ReadinessEvidenceStatus`, and `agentos.readiness` form records
 - release evidence validation surfaces: `RELEASE_EVIDENCE_REQUIRED_GATES`,
@@ -132,7 +145,11 @@ Experimental API is production-useful but may change while the release line
 hardens. Changes must be noted in `CHANGELOG.md` and, when schema or state
 changes are involved, in migration notes.
 
-- advanced A2A operation and conformance surfaces
+- Phase 6 application entries `DistributedRuntimeProfile`,
+  `DistributedWorker`, `RunSubmissionService`, `RunCommandService`,
+  `RunQueryService`, `RunEventStream`, and `ArtifactService`
+- Phase 6 typed Distributed models, Channel composition, HTTP/SSE/WebSocket/A2A
+  wire mapping, and the A2A outbound adapter
 - existing `agentos.artifacts` domain/runtime exports other than the stable
   SQLite/filesystem adapter
 - existing `agentos.capabilities` tool, MCP, and Skill exports other than the
@@ -141,13 +158,13 @@ changes are involved, in migration notes.
   access/store ports, the Level 1 in-memory adapter, and request-bound
   `memory-context` selection/projection
 - Nacos registry adapter behavior beyond AgentCard metadata projection
-- team runtime UI stream and worker daemon profiles
+- the canonical Team domain/runtime exports under `agentos.multi`
 - planner scheduler daemon, claimed scheduler, stale claim sweep, and LLM
   governance profiles
 - `agentos.recall`: compressed-segment recall boundaries including
   `SegmentRepository`, `RecallIndex`, and their local/optional adapters
-- hot and durable session-store boundaries under `agentos.persistence`,
-  including `HotSessionStore`, `DurableSessionStore`, and Redis adapters
+- Local/Durable hot and durable session-store boundaries under
+  `agentos.persistence`, without Redis or PostgreSQL implementations
 - `ReferenceStatePlaneStack` and `ReferenceLiveBackendProbePack`
 - worker supervisor reference adapters
 - release evidence helpers that aggregate external backend probe output
@@ -172,7 +189,8 @@ namespaces; adapter test suites should import contract runners from
   The root facade is intentionally limited to the five Level 1 entry points;
   all other stable or experimental names must be imported from their owning
   namespace, for example `agentos.artifacts`, `agentos.capabilities`,
-  `agentos.durable`, `agentos.planning`, `agentos.runtime`, or `agentos.sync`.
+  `agentos.durable`, `agentos.distributed`, `agentos.planning`,
+  `agentos.runtime`, or `agentos.sync`.
 - boundary-first ownership stays unchanged: SDK API exposes protocols, profiles,
   reference compositions, readiness, and audit evidence; deployment code owns
   real infrastructure, credentials, migrations execution, CI/CD, signing,

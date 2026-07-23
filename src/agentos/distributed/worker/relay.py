@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from agentos.distributed.errors import DeliveryUnavailableError
 from agentos.distributed.models import OutboxClaim
 from agentos.distributed.protocols import OutboxPort, QueuePort
 
@@ -24,6 +25,7 @@ class OutboxRelay:
     owner_id: str
     batch_size: int
     claim_ttl: timedelta
+    batch_timeout: timedelta = timedelta(seconds=30)
     _lifecycle: _RelayLifecycle = field(
         default_factory=_RelayLifecycle,
         compare=False,
@@ -38,6 +40,8 @@ class OutboxRelay:
             raise ValueError("batch_size must be a positive integer")
         if self.claim_ttl <= timedelta(0):
             raise ValueError("claim_ttl must be positive")
+        if type(self.batch_timeout) is not timedelta or self.batch_timeout <= timedelta(0):
+            raise ValueError("batch_timeout must be positive")
 
     async def relay_once(self) -> int:
         """Publish one bounded batch while the relay accepts work."""
@@ -48,7 +52,13 @@ class OutboxRelay:
         async with lifecycle.activity:
             if lifecycle.closing:
                 raise RuntimeError("relay is closing or closed")
-            return await self._relay_batch()
+            deadline = (
+                asyncio.get_running_loop().time() + self.batch_timeout.total_seconds()
+            )
+            try:
+                return await self._relay_batch(deadline=deadline)
+            except TimeoutError:
+                raise DeliveryUnavailableError() from None
 
     async def close(self) -> None:
         """Stop new batches and wait for the active batch to finish."""
@@ -60,39 +70,71 @@ class OutboxRelay:
         async with lifecycle.activity:
             lifecycle.closed = True
 
-    async def _relay_batch(self) -> int:
+    async def _relay_batch(self, *, deadline: float) -> int:
         """发布一个有界批次；失败时释放尚未完成的 claim 尾段。"""
 
-        claims = await self.outbox.claim_batch(
-            owner_id=self.owner_id,
-            limit=self.batch_size,
-            ttl=self.claim_ttl,
-        )
+        async with asyncio.timeout_at(deadline):
+            claims = await self.outbox.claim_batch(
+                owner_id=self.owner_id,
+                limit=self.batch_size,
+                ttl=self.claim_ttl,
+            )
         published = 0
         for index, claim in enumerate(claims):
             try:
-                queue_entry_id = await self.queue.publish(record=claim.record)
-                await self.outbox.mark_published(
-                    claim=claim,
-                    queue_entry_id=queue_entry_id,
-                )
+                async with asyncio.timeout_at(deadline):
+                    queue_entry_id = await self.queue.publish(record=claim.record)
+                async with asyncio.timeout_at(deadline):
+                    await self.outbox.mark_published(
+                        claim=claim,
+                        queue_entry_id=queue_entry_id,
+                    )
             except BaseException as error:
                 try:
-                    await self._release_claims(claims[index:])
+                    await self._release_claims(
+                        claims[index:],
+                        deadline=deadline,
+                    )
                 except BaseException as release_error:
+                    if isinstance(release_error, asyncio.CancelledError):
+                        raise release_error from error
+                    if isinstance(release_error, TimeoutError) and not isinstance(
+                        error,
+                        asyncio.CancelledError,
+                    ):
+                        raise release_error from error
                     raise error from release_error
                 raise
             published += 1
         return published
 
-    async def _release_claims(self, claims: tuple[OutboxClaim, ...]) -> None:
+    async def _release_claims(
+        self,
+        claims: tuple[OutboxClaim, ...],
+        *,
+        deadline: float,
+    ) -> None:
         first_error: BaseException | None = None
+        cancellation_error: asyncio.CancelledError | None = None
+        timeout_error: TimeoutError | None = None
         for claim in claims:
             try:
-                await self.outbox.release_claim(claim=claim)
+                async with asyncio.timeout_at(deadline):
+                    await self.outbox.release_claim(claim=claim)
             except BaseException as error:
-                if first_error is None:
+                if (
+                    isinstance(error, asyncio.CancelledError)
+                    and cancellation_error is None
+                ):
+                    cancellation_error = error
+                elif isinstance(error, TimeoutError) and timeout_error is None:
+                    timeout_error = error
+                elif first_error is None:
                     first_error = error
+        if cancellation_error is not None:
+            raise cancellation_error
+        if timeout_error is not None:
+            raise timeout_error
         if first_error is not None:
             raise first_error
 

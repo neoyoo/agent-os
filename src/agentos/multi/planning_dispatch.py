@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from agentos.multi.coordinator import AgentCoordinator
 from agentos.multi.types import TaskAlreadySubmittedError
-from agentos.planning import (
+from agentos.planning.errors import PlanDispatchAlreadySubmittedError
+from agentos.planning.models import (
     PlanAssignment,
-    PlanDispatchAlreadySubmittedError,
     PlanState,
     PlanStep,
     SubAgentTemplate,

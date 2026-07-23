@@ -36,13 +36,18 @@ class RedisQueueAdapter:
         block_ms: int = 1_000,
         max_entries: int = 10_000,
         dedup_ttl_seconds: int = 86_400,
+        operation_timeout: timedelta = timedelta(seconds=5),
     ) -> None:
         require_identifier(key_prefix, "key_prefix")
         require_identifier(group_name, "group_name")
         require_positive(block_ms, "block_ms")
         require_positive(max_entries, "max_entries")
         require_positive(dedup_ttl_seconds, "dedup_ttl_seconds")
-        self._redis = AsyncRedisClient(url, client)
+        self._redis = AsyncRedisClient(
+            url,
+            client,
+            operation_timeout=operation_timeout,
+        )
         self._key_prefix = key_prefix.rstrip(":")
         self._group_name = group_name
         self._block_ms = block_ms
@@ -201,7 +206,14 @@ class RedisQueueAdapter:
         **kwargs: object,
     ) -> Any:
         self._ensure_open()
-        task = asyncio.create_task(self._redis.call(method_name, *args, **kwargs))
+        task = asyncio.create_task(
+            self._redis.blocking_call(
+                self._block_ms,
+                method_name,
+                *args,
+                **kwargs,
+            ),
+        )
         self._blocked_reads.add(task)
         try:
             return await task

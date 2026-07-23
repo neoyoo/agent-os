@@ -1,9 +1,13 @@
 import asyncio
 from collections.abc import Callable
+from datetime import timedelta
 
 import pytest
 
-from agentos.distributed.errors import DeliveryUnavailableError
+from agentos.distributed.errors import (
+    DeliveryUnavailableError,
+    DistributedShutdownTimeoutError,
+)
 from agentos.distributed.models import RequestScope
 from agentos.distributed.redis import _client as client_module
 from agentos.distributed.redis.queue import RedisQueueAdapter
@@ -83,6 +87,32 @@ def test_owned_adapter_close_can_retry_after_cancellation(
         closing.cancel()
         with pytest.raises(asyncio.CancelledError):
             await closing
+        await adapter.close()
+
+        assert redis.close_calls == 2
+        assert redis.closed is True
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "adapter_factory",
+    [RedisQueueAdapter, RedisEventReplayAdapter],
+)
+def test_owned_adapter_close_timeout_uses_shutdown_error(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_factory: AdapterFactory,
+) -> None:
+    async def scenario() -> None:
+        redis = CancelOnceCloseRedis()
+        monkeypatch.setattr(client_module, "_create_client", lambda url: redis)
+        adapter = adapter_factory(
+            "redis://example.invalid",
+            operation_timeout=timedelta(milliseconds=10),
+        )
+
+        with pytest.raises(DistributedShutdownTimeoutError):
+            await adapter.close()
         await adapter.close()
 
         assert redis.close_calls == 2

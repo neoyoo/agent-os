@@ -15,7 +15,7 @@ from scripts.generate_public_api_inventory import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_API_INVENTORY = PROJECT_ROOT / "docs" / "public-api-inventory.json"
-ONLINE_README = PROJECT_ROOT / "docs" / "readme-online.md"
+CURRENT_README = PROJECT_ROOT / "README.md"
 REMOVED_ASYNC_LOOP_NAME = "Async" + "QueryLoop"
 
 
@@ -46,7 +46,7 @@ def _public_export_names(module: object) -> set[str]:
 def test_public_package_imports_as_agentos_pep8_name() -> None:
     package = importlib.import_module("agentos")
 
-    assert package.__version__ == "0.2.0a1"
+    assert package.__version__ == "0.3.0a1"
 
 
 def test_public_api_inventory_is_machine_readable_and_current() -> None:
@@ -65,9 +65,17 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
 
     required_modules = {
         "agentos",
+        "agentos.adapters.a2a",
         "agentos.channels",
+        "agentos.distributed",
+        "agentos.distributed.models",
+        "agentos.distributed.services",
         "agentos.multi",
         "agentos.runtime",
+        "agentos.transports.a2a",
+        "agentos.transports.http",
+        "agentos.transports.sse",
+        "agentos.transports.websocket",
         "agentos.workspace",
         "agentos.registry",
         "agentos.deployment_constants",
@@ -93,7 +101,10 @@ def test_public_api_inventory_is_machine_readable_and_current() -> None:
     assert {
         payload["stability"] for payload in agentos_exports.values()
     } == {"stable"}
-    assert modules["agentos.channels"]["exports"]["A2AOperationServer"][
+    assert modules["agentos.channels"]["exports"]["DistributedAsgiApp"][
+        "stability"
+    ] == "experimental"
+    assert modules["agentos.distributed"]["exports"]["DistributedWorker"][
         "stability"
     ] == "experimental"
     assert modules["agentos.registry"]["exports"]["NacosAgentRegistryAdapter"][
@@ -161,7 +172,7 @@ def test_documented_stable_namespaces_are_governed() -> None:
     inventory = _load_public_api_inventory()
 
     documented_namespaces = set(
-        re.findall(r"- `(agentos(?:\.[a-z_]+)*)`", api_stability),
+        re.findall(r"- `(agentos(?:\.[a-z0-9_]+)*)`", api_stability),
     )
 
     assert documented_namespaces == set(inventory["modules"])
@@ -222,8 +233,10 @@ def test_public_api_uses_responsibility_specific_names() -> None:
     assert hasattr(runtime, "QueryLoop")
     assert hasattr(runtime, "ProviderRequestBuilder")
     assert hasattr(runtime, "TurnNoticeProvider")
-    for name in [
-        "RuntimeProfile",
+    for name in ["RuntimeProfile", "LocalRuntimeProfile"]:
+        assert hasattr(runtime, name)
+        assert not hasattr(agentos, name)
+    for removed_name in [
         "RuntimeCompositionProfile",
         "ChannelRuntimeProfile",
         "DistributedRuntimeProfile",
@@ -232,15 +245,10 @@ def test_public_api_uses_responsibility_specific_names() -> None:
         "DistributedTeamRuntimeProfile",
         "ProductionStatePlaneDeploymentProfile",
         "WorkerProcessLifecycleDeploymentProfile",
-        "LocalRuntimeProfile",
         "WebRuntimeProfile",
         "DistributedAgentProfile",
     ]:
-        assert hasattr(runtime, name)
-        if name in agentos.__all__:
-            assert hasattr(agentos, name)
-        else:
-            assert not hasattr(agentos, name)
+        assert not hasattr(runtime, removed_name)
     assert not hasattr(runtime, "AgentLoop")
     assert not hasattr(runtime, "RequestBuilder")
     assert not hasattr(runtime, "RuntimeEvent")
@@ -290,7 +298,7 @@ def test_phase2_legacy_message_boundaries_are_removed() -> None:
     legacy_attachment_package = "agentos" + ".attachments"
     assert importlib.util.find_spec(legacy_attachment_package) is None
 
-    online_readme = ONLINE_README.read_text(encoding="utf-8")
+    current_readme = CURRENT_README.read_text(encoding="utf-8")
     for legacy_reference in [
         "ProviderMessage",
         "UserMessage",
@@ -303,7 +311,7 @@ def test_phase2_legacy_message_boundaries_are_removed() -> None:
         "materialize_provider_messages",
         "providers/messages.py",
     ]:
-        assert legacy_reference not in online_readme, legacy_reference
+        assert legacy_reference not in current_readme, legacy_reference
 
 
 def test_context_protocol_public_constants_remain_available() -> None:
@@ -360,7 +368,6 @@ def test_phase5_phase6_public_api_exports() -> None:
         "SessionPersistence",
         "MemoryPersistence",
         "FileSystemPersistence",
-        "PostgresDurableSessionStore",
         "SQLitePersistence",
         "SnapshotLoadError",
     ]:
@@ -435,8 +442,6 @@ def test_memory_recall_and_session_storage_public_api_exports() -> None:
         "HotSessionStore",
         "InMemoryDurableSessionStore",
         "InMemoryHotSessionStore",
-        "PostgresDurableSessionStore",
-        "RedisHotSessionStore",
     ]:
         assert hasattr(persistence, name)
 
@@ -448,7 +453,6 @@ def test_memory_recall_and_session_storage_public_api_exports() -> None:
         "QdrantRecallIndex",
         "RecallCandidate",
         "RecallIndex",
-        "RedisHotSessionStore",
         "SegmentRecallDocument",
         "TextEmbeddingProvider",
     ]:
@@ -460,159 +464,73 @@ def test_memory_recall_and_session_storage_public_api_exports() -> None:
         "MemoryRuntime",
         "MemorySelectionContext",
         "MemoryStore",
-        "PostgresDurableSessionStore",
         "QdrantRecallIndex",
-        "RedisHotSessionStore",
         "SegmentRecallDocument",
     ]:
         assert not hasattr(agentos, name)
 
 
-def test_phase8_multi_agent_public_api_exports() -> None:
+def test_multi_agent_public_api_exports_use_canonical_domain_modules() -> None:
     agentos = importlib.import_module("agentos")
     multi = importlib.import_module("agentos.multi")
     planning = importlib.import_module("agentos.planning")
-    postgres_plan = importlib.import_module("agentos.multi.postgres_plan")
 
-    for name in [
+    for name in (
         "AgentCard",
         "AgentCoordinator",
         "AgentCoordinatorPlanStepDispatcher",
         "AgentCoordinationTools",
         "AgentEnvelope",
         "AgentInbox",
-        "AgentInboxFullError",
-        "AgentInboxMissingError",
         "AgentTaskNoticeStore",
-        "AllowAllPlannerToolAuthorizationPolicy",
         "AllowAllTeamToolAuthorizationPolicy",
-        "CompareAndSavePlanStore",
-        "ClaimGuardedPlanStore",
-        "ContinuationErrorRecord",
         "ContinuationTrigger",
-        "DefaultPlannerToolAuthorizationPolicy",
         "DefaultTeamToolAuthorizationPolicy",
-        "EvidenceHandle",
         "ExpertAgentRunner",
-        "InMemoryPlanClaimStore",
         "InMemoryRegistry",
-        "InMemoryPlanStore",
         "InMemoryTeamStore",
-        "InMemoryTeamUiStreamStore",
-        "InMemoryTeamWorkerCancellationStore",
-        "InMemoryTeamWorkerSessionProvider",
-        "InMemoryTeamWorkerRetryStore",
         "LocalContinuationTrigger",
-        "LocalTeamWakeupTrigger",
+        "RemoteTaskExecutor",
         "SpawnExecutor",
         "SubagentInitRequest",
-        "PlanDecomposition",
-        "PlanConflictError",
-        "PlanDecompositionGatePolicy",
-        "PlanDecompositionGateReport",
-        "PlanDecompositionValidationReport",
-        "PlanAssignment",
-        "PlanClaimRecord",
-        "PlanClaimResult",
-        "PlanClaimStatus",
-        "PlanClaimSweepReport",
-        "PlanClaimSweepSkip",
-        "PlanClaimSweepStore",
-        "PlanClaimStore",
-        "PlanClaimedSchedulerTickReport",
-        "PlanClaimedSchedulerTickSkip",
-        "PlanDispatchReport",
-        "PlanDispatchSkip",
-        "PlanError",
-        "PlanRetryPolicy",
-        "PlanSchedulerRetryReset",
-        "PlanSchedulerTickReport",
-        "PlanState",
-        "PlanStep",
-        "PlanStepSpec",
-        "PlanStore",
-        "PlanStoreRecord",
-        "PlannerSchedulablePlan",
-        "PlannerSchedulablePlanReason",
-        "PlannerDecompositionPolicyDeploymentProfile",
-        "PlannerLlmDecompositionGovernanceProfile",
-        "PlannerLlmGovernanceEvidenceRecord",
-        "PlannerLlmGovernanceEvidenceGateReport",
-        "PlannerOrchestrationDeploymentProfile",
-        "PlannerSchedulerGovernanceDeploymentProfile",
-        "PlannerClaimedSchedulerDaemon",
-        "PlannerClaimedSchedulerDaemonError",
-        "PlannerClaimedSchedulerDaemonState",
-        "PlannerClaimedSchedulerDaemonStatus",
-        "PlannerStaleClaimSweepProfile",
-        "PlannerWorkerDispatchSupervisionProfile",
-        "PlannerSchedulerDaemon",
-        "PlannerSchedulerDaemonError",
-        "PlannerSchedulerDaemonState",
-        "PlannerSchedulerDaemonStatus",
-        "PlannerToolAuthorizationError",
-        "PlannerToolAuthorizationPolicy",
-        "PlannerTools",
-        "PlannerRuntime",
-        "PostgresPlanStore",
-        "PostgresPlanClaimStore",
-        "PostgresTeamStore",
-        "PostgresTeamUiStreamStore",
-        "PostgresTeamWorkerCancellationStore",
-        "PostgresTeamWorkerRetryStore",
         "TaskHandle",
         "TaskRecord",
         "TaskRequest",
         "TaskResult",
         "TaskTable",
-        "SubAgentTemplate",
         "TeamError",
         "TeamMemberRecord",
         "TeamMessage",
-        "TeamNoticeProvider",
-        "TeamNoticeStore",
         "TeamRecord",
         "TeamRuntime",
-        "TeamStore",
         "TeamToolAuthorizationError",
         "TeamToolAuthorizationPolicy",
         "TeamTools",
-        "TeamWakeupTrigger",
-        "TeamUiEvent",
-        "TeamUiEventKind",
-        "TeamUiStreamStore",
-        "TeamWorkerAgentProvider",
-        "TeamWorkerCancellationRecord",
-        "TeamWorkerCancellationStatus",
-        "TeamWorkerCancellationStore",
-        "TeamWorkerDaemon",
-        "TeamWorkerDaemonState",
-        "TeamWorkerDaemonStatus",
-        "TeamWorkerPermissionError",
-        "TeamWorkerPermissionPolicy",
-        "TeamWorkerRetryPolicy",
-        "TeamWorkerRetryRecord",
-        "TeamWorkerRetryStatus",
-        "TeamWorkerRetryStore",
-        "TeamWorkerRunError",
-        "TeamWorkerRunResult",
-        "TeamWorkerRunner",
-        "TeamWorkerSession",
-        "TeamWorkerSessionProvider",
-        "TeamWorkerSessionRequest",
-    ]:
-        if name in planning.__all__:
-            assert hasattr(planning, name)
-        elif name in {"PostgresPlanStore", "PostgresPlanClaimStore"}:
-            assert hasattr(postgres_plan, name)
-        else:
-            assert hasattr(multi, name)
+    ):
+        assert hasattr(multi, name)
+
+    for name in (
+        "CompareAndSavePlanStore",
+        "InMemoryPlanStore",
+        "PlanConflictError",
+        "PlanState",
+        "PlanStep",
+        "PlanStoreRecord",
+        "PlannerRuntime",
+    ):
+        assert hasattr(planning, name)
 
     assert set(multi.__all__).isdisjoint(planning.__all__)
-    assert not hasattr(multi, "PostgresPlanStore")
-    assert not hasattr(multi, "PostgresPlanClaimStore")
+    for removed_module in (
+        "agentos.multi.postgres_plan",
+        "agentos.multi.postgres_tasks",
+        "agentos.multi.postgres_team",
+        "agentos.multi.redis_queue",
+        "agentos.multi.team",
+    ):
+        assert importlib.util.find_spec(removed_module) is None
 
-    for name in [
+    for name in (
         "AgentCard",
         "AgentCoordinator",
         "CompareAndSavePlanStore",
@@ -620,11 +538,8 @@ def test_phase8_multi_agent_public_api_exports() -> None:
         "PlanConflictError",
         "PlanStoreRecord",
         "PlannerRuntime",
-        "PostgresPlanStore",
         "TeamRuntime",
-        "PostgresPlanClaimStore",
-        "PostgresTeamStore",
-    ]:
+    ):
         assert not hasattr(agentos, name)
 
     assert not hasattr(multi, "MessageBus")
@@ -642,6 +557,11 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
     agentos = importlib.import_module("agentos")
     registry = importlib.import_module("agentos.registry")
     channels = importlib.import_module("agentos.channels")
+    a2a = importlib.import_module("agentos.transports.a2a")
+    a2a_adapter = importlib.import_module("agentos.adapters.a2a")
+    http = importlib.import_module("agentos.transports.http")
+    sse = importlib.import_module("agentos.transports.sse")
+    websocket = importlib.import_module("agentos.transports.websocket")
 
     for name in [
         "AgentResolver",
@@ -662,209 +582,52 @@ def test_remote_registry_and_channel_public_api_exports() -> None:
     ]:
         assert hasattr(registry, name)
 
-    for name in [
-        "A2AAdapter",
-        "A2AAgentCapabilities",
-        "A2AAgentCard",
-        "A2AAgentExtension",
-        "A2AAgentInterface",
-        "A2AAgentProvider",
-        "A2AAgentSkill",
-        "A2AAuthProvider",
-        "A2ABearerCredential",
-        "A2ACardSignature",
-        "A2ACardSigner",
-        "A2ACardTrustError",
-        "A2ACardTrustStore",
-        "A2ACardVerifier",
-        "A2AConformanceCheck",
-        "A2AConformanceFinding",
-        "A2AConformanceHarness",
-        "A2AConformanceReport",
-        "A2AExternalConformanceExecutionProfile",
-        "A2AExternalConformanceExecutionRecord",
-        "A2AExternalConformanceGateReport",
-        "A2AExternalConformanceRunner",
-        "A2AExternalConformanceCliRunner",
-        "A2AExternalConformanceInvocationGateReport",
-        "A2AExternalConformanceInvocationPlan",
-        "A2AExternalConformanceImportError",
-        "A2AExternalConformanceReportImporter",
-        "A2AEgressPolicyError",
-        "A2AEgressUrlPolicy",
-        "A2ACredentialRotationError",
-        "A2AInboundAuthError",
-        "A2AInboundAuthPolicy",
-        "A2AJwtClaims",
-        "A2AJwtVerifier",
-        "A2AOidcDiscoveryError",
-        "A2AOperationInboundAuthPolicy",
-        "A2AResourceInboundAuthPolicy",
-        "A2ATenantRbacRule",
-        "A2ARateLimitError",
-        "A2AArtifact",
-        "A2AExtensionNegotiationError",
-        "A2AExtensionNegotiationPolicy",
-        "A2AExtensionNegotiationResult",
-        "A2AMessage",
-        "A2AMessagePart",
-        "A2AMessageStreamEvent",
-        "A2AOperationClient",
-        "A2AOperationError",
-        "A2AOperationRateLimitPolicy",
-        "A2AOperationRequest",
-        "A2AOperationResponse",
-        "A2AOperationRunner",
-        "A2AOperationServer",
-        "A2APeerIdResolver",
-        "A2AProtocolVersionPolicy",
-        "A2APushNotificationAuthentication",
-        "A2APushNotificationConfig",
-        "A2APushNotificationConfigError",
-        "A2APushNotificationConfigStore",
-        "A2APushNotificationDaemon",
-        "A2APushNotificationDaemonError",
-        "A2APushNotificationDaemonState",
-        "A2APushNotificationDaemonStatus",
-        "A2APushNotificationDeploymentProfile",
-        "A2APushNotificationDelivery",
-        "A2APushNotificationDeliveryRecord",
-        "A2APushNotificationDeliveryRecordStatus",
-        "A2APushNotificationDeliveryStore",
-        "A2APushNotificationDeliveryWorker",
-        "A2APushNotificationDispatcher",
-        "A2APushNotificationHealthPolicy",
-        "A2APushNotificationHealthReport",
-        "A2APushNotificationHealthStatus",
-        "A2APushNotificationRetryPolicy",
-        "A2APushNotificationUrlPolicy",
-        "A2AStreamLifecycleDeploymentProfile",
-        "A2AServerAdapter",
-        "A2ATransport",
-        "A2ACardResolver",
-        "A2ATask",
-        "A2ATaskArtifactUpdateEvent",
-        "A2ATaskLifecycleRunner",
-        "A2ATaskSubscriptionEvent",
-        "AgentA2AOperationRunner",
-        "AgentA2ATaskRunner",
-        "AgentHealth",
-        "HmacA2ACardSigner",
-        "HmacA2ACardVerifier",
-        "JwksA2ACardTrustStore",
-        "HostAllowListA2AEgressUrlPolicy",
-        "AsyncAgentSessionProvider",
-        "AgentSessionProvider",
-        "AllowAllA2AInboundAuthPolicy",
-        "AllowAllChannelAuthPolicy",
-        "AllowAllTeamUiAuthPolicy",
-        "AsgiAgentApp",
-        "ChannelAuthError",
-        "ChannelAuthPolicy",
-        "ChannelError",
-        "ChannelTurnRequest",
-        "ChannelTurnResult",
-        "ClaimsTenantRbacA2AInboundAuthPolicy",
-        "DurableAgentSessionProvider",
-        "HttpAgentChannel",
-        "HostAllowListA2APushNotificationUrlPolicy",
-        "HmacA2AJwtVerifier",
-        "InMemoryA2APushNotificationConfigStore",
-        "InMemoryA2APushNotificationDeliveryStore",
-        "InMemoryAgentSessionProvider",
-        "InMemorySessionLeaseStore",
-        "InMemorySseEventBuffer",
-        "InMemorySseTurnControlStore",
-        "JwksA2AJwtVerifier",
-        "OperationAllowListA2AInboundAuthPolicy",
-        "OidcDiscoveryMetadata",
-        "OidcDiscoveryMetadataProvider",
-        "OidcClaimsA2AInboundAuthPolicy",
-        "PeerAllowListA2AInboundAuthPolicy",
-        "PeerKeyA2AOperationRateLimitPolicy",
-        "PostgresA2APushNotificationConfigStore",
-        "PostgresA2APushNotificationDeliveryStore",
-        "PublicHttpsA2AEgressUrlPolicy",
-        "PublicHttpsA2APushNotificationUrlPolicy",
-        "RejectAllA2AInboundAuthPolicy",
-        "RejectAllChannelAuthPolicy",
-        "RejectAllTeamUiAuthPolicy",
-        "RedisSessionLeaseStore",
-        "LeaseFencedSessionPersistence",
-        "RedisSseEventBuffer",
-        "RedisSseTurnControlStore",
-        "ResourceAllowListA2AInboundAuthPolicy",
-        "RotatingA2ACardTrustKey",
-        "RotatingA2ACardTrustStore",
-        "RotatingBearerA2AAuthProvider",
-        "RotatingBearerA2ACredentialStore",
-        "RotatingBearerA2AInboundAuthPolicy",
-        "RotatingHmacA2ACardSigner",
-        "SessionLease",
-        "SessionLeaseError",
-        "SessionLeaseStore",
-        "SnapshotAgentFactory",
-        "SseAgentChannel",
-        "SseEventBuffer",
-        "SseReplayWindow",
-        "SseTurnAlreadyActiveError",
-        "SseTurnControlState",
-        "SseTurnControlStore",
-        "StaticA2ACardTrustStore",
-        "StaticBearerA2AAuthProvider",
-        "StaticBearerA2AInboundAuthPolicy",
-        "a2a_artifact_from_dict",
-        "a2a_artifact_to_dict",
-        "a2a_message_stream_event_from_dict",
-        "a2a_card_from_agent_card",
-        "a2a_card_from_dict",
-        "a2a_card_to_dict",
-        "a2a_push_notification_config_from_dict",
-        "a2a_push_notification_config_to_dict",
-        "a2a_push_notification_payload_to_dict",
-        "a2a_state_from_task_status",
-        "a2a_task_artifact_update_event_from_dict",
-        "a2a_task_artifact_update_event_to_dict",
-        "a2a_task_from_task_record",
-        "a2a_task_subscription_event_from_dict",
-        "a2a_task_subscription_event_to_dict",
-        "parse_a2a_sse_events",
-    ]:
+    for name in (
+        "A2AEndpoint",
+        "ArtifactEndpoint",
+        "ChannelServices",
+        "DistributedAsgiApp",
+        "RunEndpoint",
+        "RunSseEndpoint",
+        "WebSocketEndpoint",
+    ):
         assert hasattr(channels, name)
 
-    for name in [
-        "A2AAdapter",
-        "A2AOperationServer",
-        "AsgiAgentApp",
-        "DurableAgentSessionProvider",
-        "LeaseFencedSessionPersistence",
+    for module, names in (
+        (a2a, ("A2AAgentCard", "A2AOperationRequest", "encode_agent_card")),
+        (a2a_adapter, ("A2APushHttpClient", "A2APushSendGate")),
+        (http, ("HttpResponse", "decode_run_submission", "map_http_error")),
+        (sse, ("SseEventFrame", "encode_replay_event")),
+        (websocket, ("ClientFrame", "decode_client_frame", "encode_server_frame")),
+    ):
+        for name in names:
+            assert hasattr(module, name)
+
+    for name in (
         "NacosAgentRegistryAdapter",
         "PersistentAgentRegistry",
         "PostgresAgentRegistryStore",
-        "RedisSessionLeaseStore",
         "RemoteTaskExecutor",
-        "SessionLeaseStore",
         "agent_card_to_nacos_metadata",
-    ]:
+    ):
         assert not hasattr(agentos, name)
 
 
-def test_distributed_sse_public_api_inventory_covers_shared_replay_and_control() -> None:
+def test_sse_public_api_inventory_covers_canonical_wire_surface() -> None:
     inventory = _load_public_api_inventory()
-    channel_exports = inventory["modules"]["agentos.channels"]["exports"]
+    sse_exports = inventory["modules"]["agentos.transports.sse"]["exports"]
 
-    for name in [
-        "InMemorySseEventBuffer",
-        "RedisSseEventBuffer",
-        "SseEventBuffer",
-        "SseReplayWindow",
-        "InMemorySseTurnControlStore",
-        "RedisSseTurnControlStore",
-        "SseTurnAlreadyActiveError",
-        "SseTurnControlState",
-        "SseTurnControlStore",
-    ]:
-        assert channel_exports[name]["stability"] == "stable"
+    assert set(sse_exports) == {
+        "SseCommentFrame",
+        "SseEventFrame",
+        "encode_gap",
+        "encode_heartbeat",
+        "encode_replay_event",
+        "is_terminal_event",
+    }
+    assert {value["stability"] for value in sse_exports.values()} == {
+        "experimental"
+    }
 
 
 def test_workspace_public_api_exports() -> None:
@@ -947,76 +710,56 @@ def test_skill_release_public_api_exports() -> None:
         assert not hasattr(agentos, name)
 
 
-def test_distributed_session_adapter_public_api_exports() -> None:
+def test_legacy_distributed_session_adapter_public_api_is_removed() -> None:
     agentos = importlib.import_module("agentos")
     channels = importlib.import_module("agentos.channels")
     persistence = importlib.import_module("agentos.persistence")
 
-    assert hasattr(channels, "RedisSessionLeaseStore")
-    assert hasattr(channels, "LeaseFencedSessionPersistence")
-    assert hasattr(persistence, "PostgresSessionSnapshotPersistence")
-    assert not hasattr(agentos, "RedisSessionLeaseStore")
-    assert not hasattr(agentos, "LeaseFencedSessionPersistence")
-    assert not hasattr(agentos, "PostgresSessionSnapshotPersistence")
-
-
-def test_distributed_session_public_api_exposes_snapshot_fencing_fields() -> None:
-    inventory = _load_public_api_inventory()
-
-    channel_exports = inventory["modules"]["agentos.channels"]["exports"]
-    persistence_exports = inventory["modules"]["agentos.persistence"]["exports"]
-
-    assert "fence: 'int' = 0" in channel_exports["SessionLease"]["signature"]
-    assert (
-        "lease_fence: int = 0"
-        in persistence_exports["SessionSnapshotRecord"]["signature"]
-    )
-
-
-def test_distributed_web_runtime_profile_public_api_exports() -> None:
-    agentos = importlib.import_module("agentos")
-    runtime = importlib.import_module("agentos.runtime")
-
-    assert hasattr(runtime, "DistributedWebRuntimeProfile")
-    assert not hasattr(agentos, "DistributedWebRuntimeProfile")
-    assert hasattr(runtime, "DistributedWebSessionOperationsProfile")
-    assert not hasattr(agentos, "DistributedWebSessionOperationsProfile")
-    assert hasattr(runtime, "DistributedTeamRuntimeProfile")
-    assert not hasattr(agentos, "DistributedTeamRuntimeProfile")
-    assert hasattr(runtime, "ProductionStatePlaneDeploymentProfile")
-    assert not hasattr(agentos, "ProductionStatePlaneDeploymentProfile")
-    assert hasattr(runtime, "WorkerProcessLifecycleDeploymentProfile")
-    assert not hasattr(agentos, "WorkerProcessLifecycleDeploymentProfile")
-
-
-def test_runtime_composition_profiles_do_not_advertise_agent_builder_contract() -> None:
-    agentos = importlib.import_module("agentos")
-    runtime = importlib.import_module("agentos.runtime")
-    inventory = _load_public_api_inventory()
-    runtime_exports = inventory["modules"]["agentos.runtime"]["exports"]
-
-    assert hasattr(runtime, "RuntimeCompositionProfile")
-    assert not hasattr(agentos, "RuntimeCompositionProfile")
-    assert "build_agent" not in runtime_exports["RuntimeCompositionProfile"][
-        "methods"
-    ]
-    for name in ["DistributedAgentProfile", "DistributedTeamRuntimeProfile"]:
-        assert "methods" not in runtime_exports[name] or (
-            "build_agent" not in runtime_exports[name]["methods"]
-        )
-
-
-def test_agent_service_reference_public_api_exports() -> None:
-    agentos = importlib.import_module("agentos")
-    service = importlib.import_module("agentos.service")
-
-    for name in [
-        "AGENT_SERVICE_REFERENCE_REQUIRED_COMPONENTS",
-        "AgentServiceReference",
-        "AgentServiceReferenceProfile",
-    ]:
-        assert hasattr(service, name)
+    for name in (
+        "RedisSessionLeaseStore",
+        "LeaseFencedSessionPersistence",
+        "PostgresSessionSnapshotPersistence",
+        "PostgresDurableSessionStore",
+        "RedisHotSessionStore",
+    ):
         assert not hasattr(agentos, name)
+        assert not hasattr(channels, name)
+        assert not hasattr(persistence, name)
+
+
+def test_distributed_public_api_exposes_claim_fencing_fields() -> None:
+    inventory = _load_public_api_inventory()
+
+    model_exports = inventory["modules"]["agentos.distributed.models"]["exports"]
+
+    assert "fencing_token" in model_exports["ExecutionClaim"]["signature"]
+
+
+def test_distributed_runtime_public_api_exports() -> None:
+    agentos = importlib.import_module("agentos")
+    distributed = importlib.import_module("agentos.distributed")
+
+    for name in ("DistributedRuntimeProfile", "DistributedWorker"):
+        assert hasattr(distributed, name)
+        assert not hasattr(agentos, name)
+
+
+def test_runtime_profiles_own_local_agent_assembly_only() -> None:
+    agentos = importlib.import_module("agentos")
+    runtime = importlib.import_module("agentos.runtime")
+
+    for name in ("RuntimeProfile", "LocalRuntimeProfile"):
+        assert hasattr(runtime, name)
+        assert not hasattr(agentos, name)
+        assert callable(getattr(getattr(runtime, name), "build_agent"))
+
+
+def test_legacy_agent_service_reference_is_replaced_by_channel_services() -> None:
+    channels = importlib.import_module("agentos.channels")
+
+    assert importlib.util.find_spec("agentos.service") is None
+    assert hasattr(channels, "ChannelServices")
+    assert hasattr(channels, "DistributedAsgiApp")
 
 
 def test_reference_state_plane_stack_public_api_exports() -> None:

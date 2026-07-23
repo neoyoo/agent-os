@@ -1,111 +1,41 @@
-# AgentOS RC P2 Release Backlog
+# AgentOS Phase 6 Residual Backlog
 
-This file records P2 items that should not block the current release-candidate
-review when the SDK contract is honest, tested, and documented. Items here are
-not waived permanently; they are explicit follow-up work.
+This file records work that is explicitly outside the `0.3.0a1` SDK contract.
+It does not waive failures in the Phase 6 implementation or its release gates.
 
-## Planner dispatch crash window
+## Deployment-Owned Production Controls
 
-Status: mitigated for RC; residual distributed idempotency remains follow-up.
+- distributed/global quota storage and gateway enforcement;
+- public A2A peer admission, external certification, credential issuance, and
+  egress infrastructure;
+- worker process supervision, autoscaling, rollout, and alert routing;
+- tenant directory integration and physical sandbox isolation;
+- backup, restore, migration rollout, and disaster-recovery drills.
 
-This entry tracks the planner dispatch crash window.
+These items are non-blocking for the SDK alpha only because the SDK exposes
+fail-closed policy and evidence boundaries without claiming to operate the
+deployment infrastructure.
 
-Original risk: `PlannerRuntime.assign_step(...)` saves a step assignment before
-calling the external coordinator. If the process crashes between plan mutation
-and coordinator spawn, the step can remain `assigned` without a worker process
-or task submission evidence. Existing exception handling records coordinator
-failures, but a process crash in that gap cannot be caught by normal Python
-error handling.
+## Planner Product Policy
 
-RC mitigation now implemented: `PlanAssignment` is a lightweight dispatch
-outbox record with a pending-dispatch marker through
-`dispatch_status="pending" | "submitted" | "failed"`, `submitted_at`, and
-`dispatch_error`. `PlannerRuntime.assign_step(...)` persists the pending marker
-before the external coordinator boundary, then records submitted evidence after
-successful coordinator submission or failed evidence on coordinator errors.
-`PlannerRuntime.recover_pending_dispatches(...)` and
-`PlannerRuntime.dispatch_ready_steps(...)` act as the compensation scanner: they
-can submit the pending assignment idempotently using the original `task_id` or
-mark it failed with recovery evidence. The SDK `AgentCoordinator` now converts
-duplicate reserved task ids into `TaskAlreadySubmittedError`, and planner
-recovery treats `PlanDispatchAlreadySubmittedError` as submitted evidence for
-the original assignment. Submitted-marker persistence retries revision
-conflicts, while claim loss is surfaced as `claim-lost` instead of hidden as a
-successful tick.
+`PlannerRuntime` remains a pattern layer over typed plan state and dispatch
+ports. Model prompts, approval workflows, tenant scheduling, global fairness,
+leader election, and business compensation policy remain application-owned.
+They must not be moved into `QueryLoop` or treated as implicit defaults.
 
-Residual follow-up: production coordinators and task backends should continue
-to live-test `task_id` idempotency across process restarts and durable backend
-failover. The SDK provides at-least-once recovery with a typed duplicate-task
-signal, not distributed exactly-once execution. Deployment code should still run
-planner workers under a supervisor, use
-`PlannerRuntime.claimed_scheduler_tick(...)` with a `PlanClaimStore`, and
-monitor `PlannerWorkerDispatchSupervisionProfile` plus stale claim sweep
-evidence. This is non-blocking for RC because the current release has PlanStore
-public boundary tests, focused planner behavior tests for save-before-dispatch,
-pending-dispatch recovery, duplicate-task recovery, coordinator failure
-handling, submitted-marker conflict retry, and claim-guarded scheduler paths,
-and no known P1 behavior bug remains in planner dispatch.
+## Deferred Runtime Semantics
 
-The duplicate-task signal is intentionally scoped: fresh assignment submission
-does not treat a duplicate `task_id` as success because it may be an unrelated
-id collision. Only pending-dispatch recovery can use
-`TaskAlreadySubmittedError` as submitted evidence for the previously persisted
-assignment. `PostgresTaskStore` normalizes `agentos_multi_agent_tasks.task_id`
-primary-key duplicate violations into `TaskAlreadySubmittedError` so the
-coordinator boundary sees the same contract from local and Postgres task
-stores.
+- global exactly-once execution;
+- Provider transcript recovery;
+- cross-region multi-primary state;
+- automatic attachment summaries, embeddings, and vector retrieval.
 
-## A2A public operation rate limiting
+The implemented contract uses idempotent submissions and commands,
+claim/fencing guards, a PostgreSQL side-effect ledger, and at-least-once Redis
+delivery. Documentation and release evidence must not broaden that claim.
 
-Status: production guidance strengthened, distributed quota backlog.
+## Future Adapter Work
 
-Production A2A reference services should pass
-`A2AOperationServer(rate_limit_policy=PeerKeyA2AOperationRateLimitPolicy(...))`
-when exposing public A2A operations. The SDK owns the local per-peer operation
-rate-limit boundary through `A2AOperationRateLimitPolicy`,
-`PeerKeyA2AOperationRateLimitPolicy`, `A2APeerIdResolver`, and
-`A2ARateLimitError`. The generic constructor shape is
-`A2AOperationServer(rate_limit_policy=...)`.
-
-Required follow-up: distributed/global quota storage, gateway enforcement,
-commercial entitlement policy, and billing tiers remain deployment-owned.
-
-## Team worker capability allow-list
-
-Status: production guidance strengthened and tool-path test coverage added.
-
-Production team runtimes that expose `agent_create` must pair worker session
-creation with `TeamWorkerPermissionPolicy(allowed_capabilities=...)`, narrowed
-workspace handles, and worker `WorkspaceToolSandboxPolicy` instances. This
-keeps worker capabilities from broadening at the session boundary before
-external tool handlers run.
-
-Required follow-up: production profiles should wire durable worker session
-providers to the deployment session system and process supervisor.
-
-## Large-module decomposition
-
-Status: backlog, non-blocking for RC.
-
-This entry tracks large-module decomposition.
-
-Large modules increase maintenance risk and should be split after the RC review:
-
-- `src/agentos/channels/a2a_operations.py`
-- `src/agentos/multi/planner.py`
-- `src/agentos/multi/team.py`
-- `src/agentos/channels/asgi.py`
-
-Recommended split:
-
-- Move A2A auth/rate-limit/push/conformance operation helpers into focused
-  modules with stable re-exports.
-- Split planner profiles, stores, tools, daemon loops, and serialization
-  helpers while preserving `agentos.multi` public imports.
-- Split team records/stores, worker lifecycle, UI streams, and tools while
-  preserving `agentos.multi.team` import compatibility.
-- Split ASGI A2A, team UI, durable session, and core HTTP/SSE routing helpers.
-
-This is non-blocking for RC because public boundary tests cover the stable API
-surface, focused behavior tests cover the high-risk planner/team/A2A paths, and
-there is no known P1 behavior bug caused by module size alone.
+Additional BlobStore, sandbox, secret-manager, metrics, and deployment adapters
+may be added after the canonical ports are stable. They are not reasons to add
+compatibility facades or fallback behavior to the Phase 6 core.

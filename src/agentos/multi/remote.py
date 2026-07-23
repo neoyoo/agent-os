@@ -4,7 +4,6 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Protocol
 
-from agentos.channels.a2a import A2AAdapter
 from agentos.multi.types import AgentCard, TaskRequest, TaskResult
 
 
@@ -16,17 +15,17 @@ class RemoteTaskAdapter(Protocol):
 
 
 class RemoteTaskExecutor:
-    """通过 A2AAdapter 执行 endpoint-backed remote task。"""
+    """通过注入的远程 Adapter 执行 endpoint-backed task。"""
 
     def __init__(
         self,
         *,
-        a2a_adapter: RemoteTaskAdapter | None = None,
+        a2a_adapter: RemoteTaskAdapter,
         max_workers: int = 3,
     ) -> None:
         """创建 remote task executor。"""
 
-        self._a2a_adapter = a2a_adapter or A2AAdapter()
+        self._a2a_adapter = a2a_adapter
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def submit(

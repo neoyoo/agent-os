@@ -229,7 +229,6 @@ def test_recall_and_session_storage_have_single_domain_owners() -> None:
         "src/agentos/recall/qdrant_index.py",
         "src/agentos/persistence/session_store.py",
         "src/agentos/persistence/in_memory_session.py",
-        "src/agentos/persistence/redis_session.py",
         "src/agentos/persistence/session_serializers.py",
     )
     assert all((PROJECT_ROOT / module).is_file() for module in required_modules)

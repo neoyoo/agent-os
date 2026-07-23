@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+from agentos.deployment_constants import (
+    LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+)
 from agentos.release import RELEASE_EVIDENCE_REQUIRED_GATES
 
 
@@ -17,11 +20,9 @@ DEFAULT_GATE_COMMANDS: dict[str, str] = {
     "compileall": "uv run python -m compileall -q src tests",
     "diff_hygiene": "git diff --check",
     "runtime_boundary_scan": (
-        'rg -n "ReferenceLiveBackendProbe|REFERENCE_LIVE_BACKEND|'
-        "ReferenceStatePlane|state plane|readiness|planner|team|A2A|sandbox|"
-        "worker supervisor|production_design_constraints|release hardening|"
-        'production reference" src/agentos/runtime/query_loop.py '
-        "src/agentos/runtime/async_query_loop.py"
+        'rg -n "TaskStore|RunStore|SessionProvider|sqlite|postgres|redis|'
+        'Worker|Daemon|from agentos.runtime import Agent" '
+        "src/agentos/transports"
     ),
     "docs_alignment": (
         "uv run pytest tests/docs/test_production_hardening_docs.py "
@@ -30,15 +31,13 @@ DEFAULT_GATE_COMMANDS: dict[str, str] = {
     ),
     "migration_index": "manual review: docs/migrations/README.md",
     "api_stability_inventory": "manual review: docs/api-stability.md",
-    "production_reference_honesty": (
-        "uv run pytest tests/examples/test_production_reference_web_agent.py -q"
+    "distributed_runtime_contract": (
+        "uv run pytest tests/architecture/test_phase6_breaking_cutover.py "
+        "tests/distributed/test_profile.py "
+        "tests/channels/test_distributed_asgi_app.py -q"
     ),
-    "planner_plan_store_concurrency": (
-        "uv run pytest tests/multi/test_planner_runtime.py "
-        "tests/multi/test_postgres_plan_store.py "
-        "tests/multi/test_postgres_plan_claim_store.py "
-        "tests/multi/test_planner_claimed_scheduler_daemon.py "
-        "tests/multi/test_planner_scheduler_daemon.py -q"
+    "distributed_recovery_concurrency": (
+        "uv run pytest -m integration -q"
     ),
     "workspace_security_policy": (
         "uv run pytest tests/test_workspace.py "
@@ -116,14 +115,9 @@ def build_manifest(
             "status": "not_certified_by_sdk_rc",
             "sdk_rc_claim": "boundary_only",
             "required_before_production_deployment": True,
-            "required_backends": [
-                "agent_registry",
-                "message_queue",
-                "task_store",
-                "plan_store",
-                "worker_process_supervisor",
-                "session_snapshot_persistence",
-            ],
+            "required_backends": list(
+                LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+            ),
             "evidence_ref": (
                 "docs/production-readiness.md#live-backend-verification-evidence-boundary"
             ),

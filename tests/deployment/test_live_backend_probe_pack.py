@@ -96,15 +96,15 @@ def test_reference_probe_pack_declares_state_plane_backend_probes() -> None:
         LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
     )
     assert all(isinstance(spec, ReferenceLiveBackendProbeSpec) for spec in pack.probe_specs)
-    assert pack.probe_by_backend("agent_registry").backend_kind == "nacos"
-    assert pack.probe_by_backend("message_queue").backend_kind == "redis"
-    assert pack.probe_by_backend("task_store").backend_kind == "postgres"
-    assert pack.probe_by_backend("plan_store").backend_kind == "postgres"
-    assert pack.probe_by_backend("worker_process_supervisor").backend_kind == (
-        "worker_process_supervisor"
-    )
-    assert pack.probe_by_backend("session_snapshot_persistence").backend_kind == (
+    assert pack.probe_by_backend("postgres_state_store").backend_kind == "postgres"
+    assert pack.probe_by_backend("postgres_artifact_store").backend_kind == (
         "postgres"
+    )
+    assert pack.probe_by_backend("redis_worker_queue").backend_kind == "redis"
+    assert pack.probe_by_backend("redis_relay_queue").backend_kind == "redis"
+    assert pack.probe_by_backend("redis_event_replay").backend_kind == "redis"
+    assert pack.probe_by_backend("distributed_worker").backend_kind == (
+        "distributed_worker"
     )
     assert "does not create backend clients" in pack.as_dict()["sdk_owned"]
     assert (
@@ -123,22 +123,22 @@ def test_reference_probe_pack_builds_argv_only_invocation_plan() -> None:
         environment="ci",
     )
 
-    plan = pack.invocation_plan("agent_registry")
+    plan = pack.invocation_plan("postgres_state_store")
 
     assert isinstance(plan, BackendVerificationInvocationPlan)
     assert plan.command == (
         "python",
         "-m",
         "checks.live_backend",
-        "agent_registry",
+        "postgres_state_store",
     )
-    assert plan.required_backends == ("agent_registry",)
+    assert plan.required_backends == ("postgres_state_store",)
     assert plan.metadata["probe_pack"] == "reference_live_backend_probe_pack"
-    assert plan.metadata["backend_kind"] == "nacos"
-    assert plan.metadata["adapter_hint"] == "NacosAgentRegistryAdapter"
+    assert plan.metadata["backend_kind"] == "postgres"
+    assert plan.metadata["adapter_hint"] == "PostgresStateStore"
     assert plan.metadata["deployment_stage"] == "ci"
     assert plan.metadata["artifact_uri"] == (
-        "s3://agentos/live-backend/agent_registry.json"
+        "s3://agentos/live-backend/postgres_state_store.json"
     )
     json.dumps(plan.as_dict())
 
@@ -146,13 +146,13 @@ def test_reference_probe_pack_builds_argv_only_invocation_plan() -> None:
 def test_reference_probe_pack_default_invocation_uses_sdk_example_module() -> None:
     from agentos.probes import ReferenceLiveBackendProbePack
 
-    plan = ReferenceLiveBackendProbePack().invocation_plan("agent_registry")
+    plan = ReferenceLiveBackendProbePack().invocation_plan("postgres_state_store")
 
     assert plan.command == (
         "python",
         "-m",
         "agentos.examples.live_backend_probe",
-        "agent_registry",
+        "postgres_state_store",
     )
 
 
@@ -160,25 +160,25 @@ def test_reference_live_backend_probe_subprocess_has_isolated_import(
     tmp_path: Path,
 ) -> None:
     completed = _run_live_backend_probe(
-        "agent_registry",
+        "postgres_state_store",
         cwd=tmp_path,
     )
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout)["records"][0]["backend_name"] == (
-        "agent_registry"
+        "postgres_state_store"
     )
 
 
 def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> None:
     completed = _run_live_backend_probe(
-        "agent_registry",
+        "postgres_state_store",
         "--status",
         "passed",
         "--checked-at",
         "1781592000",
         "--evidence-ref",
-        "ci://live-backend/agent_registry",
+        "ci://live-backend/postgres_state_store",
         "--target-ref",
         "nacos://agentos/agent-registry",
     )
@@ -188,21 +188,21 @@ def test_reference_live_backend_probe_example_emits_importable_stdout_json() -> 
     records = BackendVerificationReportImporter().from_json(completed.stdout)
 
     assert len(records) == 1
-    assert records[0].backend_name == "agent_registry"
-    assert records[0].backend_kind == "nacos"
+    assert records[0].backend_name == "postgres_state_store"
+    assert records[0].backend_kind == "postgres"
     assert records[0].status == "skipped"
     assert records[0].target_ref == "nacos://agentos/agent-registry"
 
 
 def test_reference_live_backend_probe_example_does_not_certify_passed_status() -> None:
     completed = _run_live_backend_probe(
-        "agent_registry",
+        "postgres_state_store",
         "--status",
         "passed",
         "--checked-at",
         "1781592000",
         "--evidence-ref",
-        "ci://live-backend/agent_registry",
+        "ci://live-backend/postgres_state_store",
         "--target-ref",
         "nacos://agentos/agent-registry",
     )
@@ -221,7 +221,7 @@ def test_reference_live_backend_probe_example_does_not_certify_passed_status() -
 
 
 def test_reference_live_backend_probe_example_defaults_to_non_certifying_unknown() -> None:
-    completed = _run_live_backend_probe("agent_registry")
+    completed = _run_live_backend_probe("postgres_state_store")
 
     assert completed.returncode == 0, completed.stderr
 
@@ -229,7 +229,7 @@ def test_reference_live_backend_probe_example_defaults_to_non_certifying_unknown
     payload = json.loads(completed.stdout)
 
     assert len(records) == 1
-    assert records[0].backend_name == "agent_registry"
+    assert records[0].backend_name == "postgres_state_store"
     assert records[0].status == "unknown"
     assert records[0].error == "reference probe did not execute a live backend check"
     assert payload["records"][0]["metadata"]["does not create backend clients"] is True
@@ -251,9 +251,9 @@ def test_reference_probe_pack_rejects_shell_strings_and_secret_metadata() -> Non
 
     with pytest.raises(ValueError, match="metadata contains restricted key"):
         ReferenceLiveBackendProbeSpec(
-            backend_name="agent_registry",
-            backend_kind="nacos",
-            adapter_hint="NacosAgentRegistryAdapter",
+            backend_name="postgres_state_store",
+            backend_kind="postgres",
+            adapter_hint="PostgresStateStore",
             metadata={"token": "secret"},
         )
 
@@ -314,7 +314,7 @@ def test_reference_probe_pack_readiness_bundle_blocks_missing_backend_result() -
 
     pack = ReferenceLiveBackendProbePack()
     results = {
-        "agent_registry": _passed_run_result("agent_registry"),
+        "postgres_state_store": _passed_run_result("postgres_state_store"),
     }
 
     bundle = pack.readiness_bundle(results)
@@ -322,9 +322,9 @@ def test_reference_probe_pack_readiness_bundle_blocks_missing_backend_result() -
     assert bundle.accepted is False
     assert bundle.block_production_readiness is True
     assert bundle.missing_required_checks == (
-        "message_queue",
-        "task_store",
-        "plan_store",
-        "worker_process_supervisor",
-        "session_snapshot_persistence",
+        "postgres_artifact_store",
+        "redis_worker_queue",
+        "redis_relay_queue",
+        "redis_event_replay",
+        "distributed_worker",
     )

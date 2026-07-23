@@ -43,13 +43,20 @@ from agentos.runtime.side_effect_types import (
 from tests.planning._async import async_test
 
 
-def _checkpoint(*messages: CheckpointStoredMessage) -> SessionCheckpoint:
+def _checkpoint(
+    *messages: CheckpointStoredMessage,
+    active_refs: tuple[str, ...] | None = None,
+) -> SessionCheckpoint:
     return SessionCheckpoint(
         session_id="session_1",
         session_status="running",
         next_turn_number=2,
         messages=messages,
-        active_refs=tuple(message.id for message in messages),
+        active_refs=(
+            tuple(message.id for message in messages)
+            if active_refs is None
+            else active_refs
+        ),
         context=ContextCheckpoint(
             schema=(WorkingStateField("goal", "string", "task goal"),),
             working_state={},
@@ -122,6 +129,33 @@ def test_completed_with_dangling_tool_pair_fails_closed() -> None:
 
     with pytest.raises(CheckpointConflictError):
         terminal_result_from_checkpoint(checkpoint, RunStatus.COMPLETED)
+
+
+def test_completed_ignores_inactive_wait_control_tool_use() -> None:
+    call = CheckpointToolCall(
+        id="provider_call_1",
+        name="request_waiting",
+        run_id="run_1",
+        turn_id="turn_1",
+        invocation_id="invocation_0123456789abcdef0123456789abcdef",
+        invocation_ref=ProtectedPayloadRef("sealed", "digest"),
+    )
+    checkpoint = _checkpoint(
+        CheckpointStoredMessage("message_1", "user", "wait for approval"),
+        CheckpointStoredMessage(
+            "message_2",
+            "assistant",
+            "",
+            tool_calls=(call,),
+        ),
+        CheckpointStoredMessage("message_3", "assistant", "approved"),
+        active_refs=("message_1", "message_3"),
+    )
+
+    result = terminal_result_from_checkpoint(checkpoint, RunStatus.COMPLETED)
+
+    assert result is not None
+    assert result.content == "approved"
 
 
 def test_completed_with_valid_tool_pair_projects_final_assistant() -> None:

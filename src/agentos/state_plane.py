@@ -15,22 +15,18 @@ from agentos.readiness import ProductionReadinessEvidenceBundle
 
 
 REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS: tuple[str, ...] = (
-    "agent_registry",
-    "message_queue",
-    "task_store",
-    "plan_store",
-    "worker_process_supervisor",
-    "session_snapshot_persistence",
-    "distributed_web_runtime_profile",
-    "agent_service_reference",
+    "postgres_state_store",
+    "postgres_artifact_store",
+    "redis_worker_queue",
+    "redis_relay_queue",
+    "redis_event_replay",
+    "distributed_worker",
+    "distributed_runtime_profile",
+    "channel_services",
+    "distributed_asgi_app",
     "production_state_plane_profile",
     "live_backend_verification",
     "production_readiness_evidence_bundle",
-)
-
-_REFERENCE_STATE_PLANE_OPTIONAL_COMPONENTS: tuple[str, ...] = (
-    "agent_card_resolver",
-    "distributed_session_profile",
 )
 
 _SECRET_KEY_PARTS = frozenset(
@@ -118,12 +114,11 @@ class ReferenceStatePlaneStackProfile:
                 ),
             ),
             "boundary_policy": (
-                "Nacos registry is discovery and AgentCard metadata",
-                "Redis queue is delivery and wakeup only",
-                "Postgres task and plan stores are truth sources",
-                "worker supervisor owns local process lifecycle evidence",
-                "session snapshot persistence owns session runtime snapshots",
-                "AgentServiceReference wires service readiness",
+                "PostgreSQL is the only distributed state truth",
+                "Redis queue and replay are delivery projections only",
+                "DistributedWorker commits state before ACK",
+                "ChannelServices exposes application services to stateless channels",
+                "DistributedAsgiApp maps ASGI wire traffic without owning state",
                 "ProductionReadinessEvidenceBundle gates release evidence",
                 "does not create backend clients",
             ),
@@ -155,17 +150,16 @@ class ReferenceStatePlaneStackProfile:
 class ReferenceStatePlaneStack:
     """SDK-owned reference composition over deployment-owned state backends."""
 
-    agent_registry: object | None = None
-    agent_card_resolver: object | None = None
-    message_queue: object | None = None
-    task_store: object | None = None
-    plan_store: object | None = None
-    worker_process_supervisor: object | None = None
-    session_snapshot_persistence: object | None = None
+    postgres_state_store: object | None = None
+    postgres_artifact_store: object | None = None
+    redis_worker_queue: object | None = None
+    redis_relay_queue: object | None = None
+    redis_event_replay: object | None = None
+    distributed_worker: object | None = None
     runtime_profile: object | None = None
-    service_reference: object | None = None
+    channel_services: object | None = None
+    asgi_app: object | None = None
     state_plane_profile: object | None = None
-    distributed_session_profile: object | None = None
     live_backend_verification: object | None = None
     readiness_bundle: ProductionReadinessEvidenceBundle | None = None
     stack_profile: ReferenceStatePlaneStackProfile | None = None
@@ -175,17 +169,16 @@ class ReferenceStatePlaneStack:
         """Return configured reference stack component names."""
 
         component_values = {
-            "agent_registry": self.agent_registry,
-            "agent_card_resolver": self.agent_card_resolver,
-            "message_queue": self.message_queue,
-            "task_store": self.task_store,
-            "plan_store": self.plan_store,
-            "worker_process_supervisor": self.worker_process_supervisor,
-            "session_snapshot_persistence": self.session_snapshot_persistence,
-            "distributed_web_runtime_profile": self.runtime_profile,
-            "agent_service_reference": self.service_reference,
+            "postgres_state_store": self.postgres_state_store,
+            "postgres_artifact_store": self.postgres_artifact_store,
+            "redis_worker_queue": self.redis_worker_queue,
+            "redis_relay_queue": self.redis_relay_queue,
+            "redis_event_replay": self.redis_event_replay,
+            "distributed_worker": self.distributed_worker,
+            "distributed_runtime_profile": self.runtime_profile,
+            "channel_services": self.channel_services,
+            "distributed_asgi_app": self.asgi_app,
             "production_state_plane_profile": self.state_plane_profile,
-            "distributed_session_profile": self.distributed_session_profile,
             "live_backend_verification": self.live_backend_verification,
         }
         configured = [
@@ -196,10 +189,7 @@ class ReferenceStatePlaneStack:
         configured.append("production_readiness_evidence_bundle")
         return tuple(
             name
-            for name in (
-                *REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS,
-                *_REFERENCE_STATE_PLANE_OPTIONAL_COMPONENTS,
-            )
+            for name in REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS
             if name in configured
         )
 
@@ -221,18 +211,23 @@ class ReferenceStatePlaneStack:
         )
         self._add_source(
             sources,
-            "distributed_web_runtime_profile",
+            "distributed_runtime_profile",
             self.runtime_profile,
         )
         self._add_source(
             sources,
-            "agent_service_reference",
-            self.service_reference,
+            "distributed_worker",
+            self.distributed_worker,
         )
         self._add_source(
             sources,
-            "distributed_session_profile",
-            self.distributed_session_profile,
+            "channel_services",
+            self.channel_services,
+        )
+        self._add_source(
+            sources,
+            "distributed_asgi_app",
+            self.asgi_app,
         )
         self._add_source(
             sources,
@@ -253,8 +248,10 @@ class ReferenceStatePlaneStack:
             required_checks=(
                 "reference_state_plane_stack",
                 "production_state_plane",
-                "distributed_web_runtime_profile",
-                "agent_service_reference",
+                "distributed_runtime_profile",
+                "distributed_worker",
+                "channel_services",
+                "distributed_asgi_app",
                 "live_backend_verification",
             ),
             bundle_name="reference_state_plane",
@@ -282,23 +279,18 @@ class ReferenceStatePlaneStack:
         """Return JSON-safe component class identities for audit evidence."""
 
         return {
-            "agent_registry": _adapter_name(self.agent_registry),
-            "agent_card_resolver": _adapter_name(self.agent_card_resolver),
-            "message_queue": _adapter_name(self.message_queue),
-            "task_store": _adapter_name(self.task_store),
-            "plan_store": _adapter_name(self.plan_store),
-            "worker_process_supervisor": _adapter_name(
-                self.worker_process_supervisor,
+            "postgres_state_store": _adapter_name(self.postgres_state_store),
+            "postgres_artifact_store": _adapter_name(
+                self.postgres_artifact_store,
             ),
-            "session_snapshot_persistence": _adapter_name(
-                self.session_snapshot_persistence,
-            ),
+            "redis_worker_queue": _adapter_name(self.redis_worker_queue),
+            "redis_relay_queue": _adapter_name(self.redis_relay_queue),
+            "redis_event_replay": _adapter_name(self.redis_event_replay),
+            "distributed_worker": _adapter_name(self.distributed_worker),
             "runtime_profile": _adapter_name(self.runtime_profile),
-            "service_reference": _adapter_name(self.service_reference),
+            "channel_services": _adapter_name(self.channel_services),
+            "asgi_app": _adapter_name(self.asgi_app),
             "state_plane_profile": _adapter_name(self.state_plane_profile),
-            "distributed_session_profile": _adapter_name(
-                self.distributed_session_profile,
-            ),
             "live_backend_verification": _adapter_name(
                 self.live_backend_verification,
             ),
@@ -322,10 +314,9 @@ class ReferenceStatePlaneStack:
             "component_identities": self.component_identities(),
             "state_plane_profile": self._source_metadata(self.state_plane_profile),
             "runtime_profile": self._source_metadata(self.runtime_profile),
-            "service_reference": self._source_metadata(self.service_reference),
-            "distributed_session_profile": self._source_metadata(
-                self.distributed_session_profile,
-            ),
+            "distributed_worker": self._source_metadata(self.distributed_worker),
+            "channel_services": self._source_metadata(self.channel_services),
+            "asgi_app": self._source_metadata(self.asgi_app),
             "live_backend_verification": self._source_metadata(
                 self.live_backend_verification,
             ),
@@ -338,8 +329,14 @@ class ReferenceStatePlaneStack:
                 "ProductionStatePlaneDeploymentProfile",
                 "DeploymentLiveBackendVerificationProfile",
                 "ProductionReadinessEvidenceBundle",
-                "AgentServiceReference",
-                "DistributedWebRuntimeProfile",
+                "DistributedRuntimeProfile",
+                "DistributedWorker",
+                "ChannelServices",
+                "DistributedAsgiApp",
+                "PostgresStateStore",
+                "PostgresArtifactStore",
+                "RedisQueueAdapter",
+                "RedisEventReplayAdapter",
                 "reference state plane",
                 "readiness source aggregation",
                 "component identity evidence",
@@ -347,12 +344,12 @@ class ReferenceStatePlaneStack:
                 "does not create backend clients",
             ),
             "deployment_owned": (
-                "Nacos registry deployment and credentials",
-                "Redis queue deployment and credentials",
-                "Postgres task, plan, claim, and snapshot migrations",
-                "worker process host policy",
+                "PostgreSQL and Redis deployment and credentials",
+                "distributed runtime migration execution",
+                "shared BlobStore deployment",
+                "worker process hosting and autoscaling",
                 "live backend probe execution",
-                "autoscaling and tenant directory",
+                "tenant directory integration",
                 "credentials, migrations, CI matrix execution, alert routing and runbooks remain deployment-owned",
             ),
         }

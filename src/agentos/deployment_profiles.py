@@ -104,97 +104,75 @@ class ProductionStatePlaneDeploymentProfile:
             "configured_components": self.configured_components,
             "missing_components": missing,
             "state_planes": {
-                "agent_registry": {
+                "postgres_state_store": {
                     "responsibility": (
-                        "Registry discovers agents and workers by AgentCard, "
-                        "endpoint, capabilities, version, and health metadata"
+                        "PostgreSQL owns Run, accepted input, claim/fence, "
+                        "checkpoint, outbox, and side-effect truth"
                     ),
-                    "recommended_boundary": (
-                        "NacosAgentRegistryAdapter or custom registry adapter"
-                    ),
+                    "recommended_boundary": "PostgresStateStore",
                     "not_responsible_for": (
-                        "task truth",
-                        "plan truth",
-                        "session runtime snapshots",
-                        "worker runtime state",
+                        "Redis delivery",
+                        "live event replay",
+                        "blob bytes",
                     ),
                 },
-                "message_queue": {
+                "postgres_artifact_store": {
                     "responsibility": (
-                        "Queue delivers messages and wakeups through inbox, "
-                        "delivery, and fan-out hints"
+                        "PostgreSQL owns Artifact metadata and idempotent upload "
+                        "or deletion state while BlobStore owns shared bytes"
                     ),
-                    "recommended_boundary": (
-                        "RedisAgentMessageQueue or custom queue adapter"
-                    ),
+                    "recommended_boundary": "PostgresArtifactStore",
                     "not_responsible_for": (
-                        "final task status",
-                        "final plan status",
-                        "session snapshots",
+                        "Run state transitions",
+                        "queue delivery",
+                        "Provider context projection",
                     ),
                 },
-                "task_store": {
+                "redis_worker_queue": {
                     "responsibility": (
-                        "Truth state lives in stores; task store owns task "
-                        "truth, execution result, retry state, and assignment "
-                        "evidence"
+                        "Redis delivers execution wakeups and supports pending "
+                        "reclaim with explicit ACK"
                     ),
-                    "recommended_boundary": (
-                        "PostgresTaskStore or custom task store"
-                    ),
+                    "recommended_boundary": "RedisQueueAdapter",
                     "not_responsible_for": (
-                        "agent discovery",
-                        "message delivery",
-                        "worker process lifecycle",
+                        "Run truth",
+                        "claim/fence truth",
+                        "terminal outcome",
                     ),
                 },
-                "plan_store": {
+                "redis_relay_queue": {
                     "responsibility": (
-                        "Plan store owns plan truth, step state, claims, "
-                        "scheduler recovery metadata, and planner execution "
-                        "evidence"
+                        "Redis carries outbox deliveries using the stable "
+                        "PostgreSQL outbox identity"
                     ),
-                    "recommended_boundary": (
-                        "PostgresPlanStore plus PostgresPlanClaimStore or "
-                        "custom plan stores"
-                    ),
+                    "recommended_boundary": "RedisQueueAdapter",
                     "not_responsible_for": (
-                        "agent discovery",
-                        "message delivery",
-                        "process supervision",
+                        "outbox truth",
+                        "submission idempotency",
+                        "command state",
                     ),
                 },
-                "worker_process_supervisor": {
+                "redis_event_replay": {
                     "responsibility": (
-                        "Worker supervisor owns local process start, running, "
-                        "stop, exit, failure, exit code, and timestamp evidence"
+                        "Redis provides bounded typed live-event replay and tail"
                     ),
-                    "recommended_boundary": (
-                        "WorkerProcessSupervisor or deployment-owned job runner"
-                    ),
+                    "recommended_boundary": "RedisEventReplayAdapter",
                     "not_responsible_for": (
-                        "task truth",
-                        "plan truth",
-                        "session snapshots",
+                        "authoritative Run history",
+                        "StoredMessage truth",
+                        "Provider transcript persistence",
+                    ),
+                },
+                "distributed_worker": {
+                    "responsibility": (
+                        "Worker claims execution, hydrates authoritative state, "
+                        "runs Agent, commits through RunDriver, then ACKs"
+                    ),
+                    "recommended_boundary": "DistributedWorker",
+                    "not_responsible_for": (
+                        "database migrations",
+                        "ingress authorization",
                         "autoscaling policy",
-                    ),
-                },
-                "session_snapshot_persistence": {
-                    "responsibility": (
-                        "Session persistence owns context, messages, "
-                        "compression, working state, and session runtime "
-                        "snapshots"
-                    ),
-                    "recommended_boundary": (
-                        "SessionSnapshotPersistence, "
-                        "PostgresSessionSnapshotPersistence, or custom "
-                        "SessionPersistence"
-                    ),
-                    "not_responsible_for": (
-                        "agent discovery",
-                        "worker process status",
-                        "task truth",
-                        "plan truth",
                     ),
                 },
             },
@@ -202,17 +180,17 @@ class ProductionStatePlaneDeploymentProfile:
                 "ProductionStatePlaneDeploymentProfile",
                 "state-plane responsibility metadata",
                 "readiness-compatible profile payloads",
-                "AgentCard and registry protocols",
-                "AgentMessageQueue protocol",
-                "TaskStore protocol",
-                "PlanStore and PlanClaimStore protocols",
-                "SessionPersistence protocol",
+                "PostgresStateStore",
+                "PostgresArtifactStore",
+                "RedisQueueAdapter",
+                "RedisEventReplayAdapter",
+                "DistributedWorker",
             ),
             "deployment_owned": (
-                "Nacos registry deployment and credentials",
-                "Redis queue deployment and credentials",
-                "Postgres task, plan, claim, and snapshot migrations",
-                "worker process supervisor implementation",
+                "PostgreSQL and Redis deployment and credentials",
+                "distributed runtime migration execution",
+                "shared BlobStore deployment",
+                "worker process hosting and autoscaling",
                 "secret distribution",
                 "tenant directory integration",
                 "autoscaling policy",
@@ -220,11 +198,11 @@ class ProductionStatePlaneDeploymentProfile:
                 "live backend verification",
             ),
             "boundary_policy": (
-                "registry is not task truth",
-                "queue is not final task or plan state",
-                "task and plan stores are not process supervisors",
-                "worker lifecycle evidence is not session runtime state",
-                "session snapshots are not registry discovery metadata",
+                "PostgreSQL is the only distributed state truth",
+                "Redis queue and replay are delivery projections only",
+                "Worker commits state before ACK",
+                "Artifact bytes remain outside messages and traces",
+                "deployment owns credentials, migrations, and physical isolation",
             ),
         }
 

@@ -14,6 +14,7 @@ from agentos.distributed.errors import (
     CommandStateError,
     DeliveryUnavailableError,
     DistributedBackendUnavailableError,
+    DistributedShutdownTimeoutError,
     LegacyDistributedSchemaError,
     MigrationChecksumMismatchError,
     MigrationVersionError,
@@ -21,6 +22,7 @@ from agentos.distributed.errors import (
     RunSubmissionConflictError,
     SchemaMigrationRequiredError,
     SideEffectInFlightError,
+    SideEffectResolutionPermissionError,
 )
 
 
@@ -33,7 +35,11 @@ class CliError:
     message: str
 
 
-_AUTH_ERRORS = (CliAuthenticationError, CliPermissionError)
+_AUTH_ERRORS = (
+    CliAuthenticationError,
+    CliPermissionError,
+    SideEffectResolutionPermissionError,
+)
 _CONFLICT_ERRORS = (
     ActiveRunConflictError,
     ArtifactConflictError,
@@ -51,6 +57,7 @@ _CONFLICT_ERRORS = (
 _BACKEND_ERRORS = (
     DeliveryUnavailableError,
     DistributedBackendUnavailableError,
+    DistributedShutdownTimeoutError,
 )
 
 

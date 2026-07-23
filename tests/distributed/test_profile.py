@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
 import agentos.distributed.profile as profile_module
 from agentos import AgentBuilder
 from agentos.distributed import DistributedRuntimeProfile
+from agentos.distributed.authorization import DenySideEffectResolutionAuthorizer
 from agentos.distributed.errors import DistributedStoreClosedError
+from agentos.distributed.errors import DistributedShutdownTimeoutError
 from agentos.providers import FakeProvider
 from tests.planning._async import async_test
 
@@ -25,9 +28,17 @@ class _OpeningPool:
     pool: _Pool
 
     @classmethod
-    async def open(cls, dsn: str, *, min_size: int, max_size: int) -> _Pool:
+    async def open(
+        cls,
+        dsn: str,
+        *,
+        min_size: int,
+        max_size: int,
+        operation_timeout: timedelta,
+    ) -> _Pool:
         assert dsn == "postgresql://agentos"
         assert (min_size, max_size) == (1, 10)
+        assert operation_timeout == timedelta(seconds=5)
         cls.trace.append("postgres.open")
         return cls.pool
 
@@ -161,6 +172,9 @@ def _patch_adapters(
 
 def _profile(
     blob_store: object,
+    *,
+    shutdown_cleanup_timeout: timedelta = timedelta(seconds=5),
+    relay_batch_timeout: timedelta = timedelta(seconds=30),
 ) -> DistributedRuntimeProfile:
     return DistributedRuntimeProfile(
         agent_builder=AgentBuilder().provider(FakeProvider([])),
@@ -169,6 +183,9 @@ def _profile(
         blob_store=blob_store,  # type: ignore[arg-type]
         worker_id="worker_1",
         relay_id="relay_1",
+        side_effect_resolution_authorizer=DenySideEffectResolutionAuthorizer(),
+        shutdown_cleanup_timeout=shutdown_cleanup_timeout,
+        relay_batch_timeout=relay_batch_timeout,
     )
 
 
@@ -183,6 +200,8 @@ async def test_profile_constructor_is_io_free_and_worker_start_is_explicit(
 
     assert trace == []
     assert not profile.is_open
+
+
     with pytest.raises(DistributedStoreClosedError):
         _ = profile.worker
 
@@ -210,6 +229,48 @@ async def test_profile_constructor_is_io_free_and_worker_start_is_explicit(
         "postgres.close",
     ]
     assert not profile.is_open
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {
+                "heartbeat_cycle_timeout": timedelta(seconds=20),
+                "lease_ttl": timedelta(seconds=30),
+            },
+            "lease_ttl",
+        ),
+        (
+            {
+                "heartbeat_cycle_timeout": timedelta(seconds=50),
+                "claim_ttl": timedelta(seconds=60),
+                "lease_ttl": timedelta(seconds=90),
+            },
+            "claim_ttl",
+        ),
+    ],
+)
+def test_profile_rejects_heartbeat_budget_that_can_expire_ownership(
+    overrides: dict[str, timedelta],
+    message: str,
+) -> None:
+    trace: list[str] = []
+    blob = _BlobStore(trace)
+
+    with pytest.raises(ValueError, match=message):
+        DistributedRuntimeProfile(
+            agent_builder=AgentBuilder().provider(FakeProvider([])),
+            postgres_dsn="postgresql://agentos",
+            redis_url="redis://agentos",
+            blob_store=blob,
+            worker_id="worker_1",
+            relay_id="relay_1",
+            side_effect_resolution_authorizer=(
+                DenySideEffectResolutionAuthorizer()
+            ),
+            **overrides,
+        )
 
 
 @async_test
@@ -249,3 +310,80 @@ async def test_profile_schema_check_failure_closes_acquired_postgres_pool(
         "postgres.close",
     ]
     assert not profile.is_open
+
+
+@async_test
+async def test_partial_open_closes_worker_queue_before_worker_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingAgentFactory:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            raise RuntimeError("agent factory failed")
+
+    trace: list[str] = []
+    _, blob = _patch_adapters(monkeypatch, trace)
+    monkeypatch.setattr(
+        profile_module,
+        "ClaimScopedAgentFactory",
+        FailingAgentFactory,
+    )
+    profile = _profile(blob)
+
+    with pytest.raises(RuntimeError, match="agent factory failed"):
+        await profile.open()
+
+    assert [queue.closed for queue in _Queue.instances] == [1, 1]
+    assert "queue_0.close" in trace
+    assert "queue_1.close" in trace
+
+
+@async_test
+async def test_profile_close_worker_failure_still_closes_worker_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingClose:
+        async def close(self) -> None:
+            raise RuntimeError("worker close failed")
+
+    trace: list[str] = []
+    _, blob = _patch_adapters(monkeypatch, trace)
+    profile = _profile(blob)
+    await profile.open()
+    profile._resources.worker = FailingClose()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="worker close failed"):
+        await profile.close()
+
+    assert _Queue.instances[0].closed == 1
+
+
+@pytest.mark.parametrize("blocking_resource", ("relay", "worker"))
+@async_test
+async def test_profile_close_timeout_still_attempts_later_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    blocking_resource: str,
+) -> None:
+    class BlockingClose:
+        async def close(self) -> None:
+            await asyncio.Event().wait()
+
+    trace: list[str] = []
+    _, blob = _patch_adapters(monkeypatch, trace)
+    profile = _profile(
+        blob,
+        shutdown_cleanup_timeout=timedelta(milliseconds=10),
+        relay_batch_timeout=timedelta(seconds=10),
+    )
+    await profile.open()
+    setattr(profile._resources, blocking_resource, BlockingClose())
+
+    with pytest.raises(DistributedShutdownTimeoutError):
+        await asyncio.wait_for(profile.close(), timeout=0.2)
+
+    assert "queue_0.close" in trace
+    assert "redis_1.close" in trace
+    assert "redis_0.close" in trace
+    assert "queue_1.close" in trace
+    assert "artifacts.close" in trace
+    assert "postgres.close" in trace

@@ -252,7 +252,7 @@ def test_release_evidence_validator_accepts_complete_manifest() -> None:
 def test_package_and_release_manifest_versions_match() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert project["project"]["version"] == agentos.__version__ == "0.2.0a1"
+    assert project["project"]["version"] == agentos.__version__ == "0.3.0a1"
 
 
 def test_generated_release_evidence_is_ignored_not_source_tracked() -> None:
@@ -321,6 +321,11 @@ def test_release_evidence_templates_include_top_level_independent_review() -> No
 
 
 def test_release_evidence_templates_include_committed_generator_metadata() -> None:
+    from agentos.deployment_constants import (
+        LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS,
+    )
+    from scripts.generate_release_evidence import DEFAULT_GATE_COMMANDS, build_manifest
+
     for manifest_path in (RELEASE_EVIDENCE_EXAMPLE,):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
@@ -328,3 +333,22 @@ def test_release_evidence_templates_include_committed_generator_metadata() -> No
             "source_path": "scripts/generate_release_evidence.py",
             "review_policy": "does_not_mark_independent_review_passed",
         }
+        assert manifest["release_candidate"]["version"] == "0.3.0a1"
+        assert manifest["gates"]["runtime_boundary_scan"]["command"] == (
+            DEFAULT_GATE_COMMANDS["runtime_boundary_scan"]
+        )
+        assert tuple(
+            manifest["live_backend_verification"]["required_backends"]
+        ) == LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS
+
+    generated = build_manifest(
+        branch="feature/agentos-sdk-phase6-distributed-runtime",
+        commit="abc123",
+        version="0.3.0a1",
+        generated_at="2026-07-22T00:00:00+00:00",
+        independent_review_status="pending",
+        gate_results={},
+    )
+    assert tuple(
+        generated["live_backend_verification"]["required_backends"]
+    ) == LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS

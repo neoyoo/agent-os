@@ -7,12 +7,12 @@ from collections.abc import Sequence
 
 
 _BACKEND_KINDS: dict[str, str] = {
-    "agent_registry": "nacos",
-    "message_queue": "redis",
-    "task_store": "postgres",
-    "plan_store": "postgres",
-    "worker_process_supervisor": "worker_process_supervisor",
-    "session_snapshot_persistence": "postgres",
+    "postgres_state_store": "postgres",
+    "postgres_artifact_store": "postgres",
+    "redis_worker_queue": "redis",
+    "redis_relay_queue": "redis",
+    "redis_event_replay": "redis",
+    "distributed_worker": "distributed_worker",
 }
 
 
@@ -29,7 +29,7 @@ def build_probe_report(
 
     This reference example intentionally does not connect to live infrastructure.
     Deployment-owned probes can reuse the report shape after performing real
-    Nacos, Redis, Postgres, supervisor, or session persistence checks.
+    PostgreSQL, Redis, or Distributed Worker checks.
     """
 
     backend_kind = _BACKEND_KINDS[backend_name]

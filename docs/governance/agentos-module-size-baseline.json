@@ -8,88 +8,13 @@
   },
   "modules": [
     {
-      "path": "src/agentos/channels/a2a_operations.py",
-      "lines": 4644,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/channels/a2a.py",
-      "lines": 2592,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/channels/asgi.py",
-      "lines": 2188,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/multi/team.py",
-      "lines": 2001,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/channels/a2a_conformance.py",
-      "lines": 1834,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/readiness.py",
-      "lines": 1125,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/multi/postgres_team.py",
-      "lines": 1042,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/multi/postgres_tasks.py",
-      "lines": 1008,
-      "gate": "no_new_responsibility"
-    },
-    {
-      "path": "src/agentos/multi/postgres_plan.py",
-      "lines": 732,
-      "gate": "split_or_exception"
-    },
-    {
-      "path": "src/agentos/persistence/postgres.py",
-      "lines": 730,
-      "gate": "split_or_exception"
-    },
-    {
       "path": "src/agentos/multi/coordinator.py",
       "lines": 719,
       "gate": "split_or_exception"
     },
     {
-      "path": "src/agentos/examples/production_reference_web_agent.py",
-      "lines": 714,
-      "gate": "split_or_exception"
-    },
-    {
       "path": "src/agentos/observability/instrumented.py",
       "lines": 669,
-      "gate": "split_or_exception"
-    },
-    {
-      "path": "src/agentos/channels/durable_session.py",
-      "lines": 639,
-      "gate": "split_or_exception"
-    },
-    {
-      "path": "src/agentos/multi/serializers.py",
-      "lines": 550,
-      "gate": "split_or_exception"
-    },
-    {
-      "path": "src/agentos/multi/redis_queue.py",
-      "lines": 529,
-      "gate": "split_or_exception"
-    },
-    {
-      "path": "src/agentos/release.py",
-      "lines": 524,
       "gate": "split_or_exception"
     },
     {
@@ -138,13 +63,13 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/planning/scheduling_profiles.py",
-      "lines": 473,
+      "path": "src/agentos/runtime/side_effect_types.py",
+      "lines": 476,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/runtime/side_effect_types.py",
-      "lines": 468,
+      "path": "src/agentos/planning/scheduling_profiles.py",
+      "lines": 473,
       "gate": "responsibility_review"
     },
     {
@@ -159,7 +84,12 @@
     },
     {
       "path": "src/agentos/state_plane.py",
-      "lines": 457,
+      "lines": 454,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/profile.py",
+      "lines": 450,
       "gate": "responsibility_review"
     },
     {
@@ -180,6 +110,16 @@
     {
       "path": "src/agentos/deployment_reports.py",
       "lines": 439,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/distributed/worker/runner.py",
+      "lines": 436,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/release.py",
+      "lines": 432,
       "gate": "responsibility_review"
     },
     {
@@ -218,11 +158,6 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/channels/__init__.py",
-      "lines": 407,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/distributed/a2a_models.py",
       "lines": 403,
       "gate": "responsibility_review"
@@ -230,6 +165,11 @@
     {
       "path": "src/agentos/runtime/tool_payloads.py",
       "lines": 403,
+      "gate": "responsibility_review"
+    },
+    {
+      "path": "src/agentos/readiness.py",
+      "lines": 401,
       "gate": "responsibility_review"
     },
     {
@@ -253,18 +193,8 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/profile.py",
-      "lines": 387,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/distributed/worker/runner.py",
-      "lines": 386,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/service.py",
-      "lines": 371,
+      "path": "src/agentos/distributed/worker/supervisor.py",
+      "lines": 385,
       "gate": "responsibility_review"
     },
     {
@@ -283,11 +213,6 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/channels/sse_buffer.py",
-      "lines": 362,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/planning/tool_schemas.py",
       "lines": 361,
       "gate": "responsibility_review"
@@ -298,13 +223,18 @@
       "gate": "responsibility_review"
     },
     {
+      "path": "src/agentos/distributed/services.py",
+      "lines": 353,
+      "gate": "responsibility_review"
+    },
+    {
       "path": "src/agentos/testing/contracts/plan_claim_store.py",
       "lines": 350,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/channels/sse_turn_control.py",
-      "lines": 348,
+      "path": "src/agentos/distributed/redis/replay.py",
+      "lines": 349,
       "gate": "responsibility_review"
     },
     {
@@ -318,33 +248,18 @@
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/redis/replay.py",
-      "lines": 342,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/channels/websocket_session.py",
       "lines": 340,
       "gate": "responsibility_review"
     },
     {
-      "path": "src/agentos/distributed/services.py",
-      "lines": 338,
-      "gate": "responsibility_review"
-    },
-    {
       "path": "src/agentos/distributed/postgres/state.py",
-      "lines": 333,
+      "lines": 337,
       "gate": "responsibility_review"
     },
     {
       "path": "src/agentos/observability/tracer.py",
       "lines": 331,
-      "gate": "responsibility_review"
-    },
-    {
-      "path": "src/agentos/runtime/profile_web.py",
-      "lines": 329,
       "gate": "responsibility_review"
     },
     {

@@ -19,6 +19,10 @@ from agentos.distributed.models import (
     RunSubmission,
     RunSubmissionReceipt,
 )
+from agentos.distributed.authorization import (
+    DenySideEffectResolutionAuthorizer,
+    SideEffectResolutionAuthorizer,
+)
 from agentos.distributed._model_validation import (
     require_identifier,
     require_positive,
@@ -34,6 +38,7 @@ from agentos.distributed.protocols import (
 )
 from agentos.runtime.durable_commands import DurableCommandReceipt, DurableRunCommand
 from agentos.runtime.run_state import RunStatus
+from agentos.runtime.side_effect_resolution import side_effect_resolution_from_payload
 
 
 _ACTIVE_RUN_STATUSES = frozenset(
@@ -71,6 +76,9 @@ class RunCommandService:
     """Durable Command 的 tenant-scoped Application Service。"""
 
     port: RunCommandPort
+    resolution_authorizer: SideEffectResolutionAuthorizer = field(
+        default_factory=DenySideEffectResolutionAuthorizer,
+    )
 
     async def submit(
         self,
@@ -84,6 +92,13 @@ class RunCommandService:
         require_identifier(session_id, "session_id")
         if type(command) is not DurableRunCommand:
             raise TypeError("command must be DurableRunCommand")
+        if command.kind == "resolve_side_effect":
+            await self.resolution_authorizer.authorize(
+                scope=scope,
+                session_id=session_id,
+                run_id=command.run_id,
+                resolution=side_effect_resolution_from_payload(command.payload),
+            )
         receipt = await self.port.submit_command(
             scope=scope,
             session_id=session_id,

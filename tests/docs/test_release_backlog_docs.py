@@ -4,58 +4,42 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def assert_phrase(text: str, expected: str) -> None:
+def test_release_backlog_contains_only_residual_or_deployment_owned_work() -> None:
+    text = (ROOT / "docs/release-backlog.md").read_text(encoding="utf-8")
     normalized = " ".join(text.split())
-    assert expected in text or expected in normalized
 
-
-def test_release_backlog_classifies_remaining_p2_items() -> None:
-    backlog = (ROOT / "docs" / "release-backlog.md").read_text(encoding="utf-8")
-    production_readiness = (ROOT / "docs" / "production-readiness.md").read_text(
-        encoding="utf-8",
-    )
-    skill = (ROOT / ".claude" / "skills" / "agent-os" / "SKILL.md").read_text(
-        encoding="utf-8",
-    )
-
-    for expected in [
-        "RC P2 Release Backlog",
-        "planner dispatch crash window",
-        "plan mutation and coordinator spawn",
-        "dispatch outbox",
-        "pending-dispatch marker",
-        "compensation scanner",
-        "non-blocking for RC",
-        "PlanStore public boundary tests",
-        "focused planner behavior tests",
-        "no known P1 behavior bug",
-        "A2A public operation rate limiting",
-        "PeerKeyA2AOperationRateLimitPolicy",
-        "A2AOperationServer(rate_limit_policy=...)",
+    for expected in (
+        "Phase 6 Residual Backlog",
+        "outside the `0.3.0a1` SDK contract",
+        "does not waive failures",
         "distributed/global quota storage",
-        "Team worker capability allow-list",
-        "agent_create",
-        "TeamWorkerPermissionPolicy(allowed_capabilities=...)",
-        "WorkspaceToolSandboxPolicy",
-        "large-module decomposition",
-        "a2a_operations.py",
-        "planner.py",
-        "team.py",
-        "asgi.py",
-    ]:
-        assert_phrase(backlog, expected)
+        "public A2A peer admission",
+        "worker process supervision",
+        "tenant directory integration",
+        "physical sandbox isolation",
+        "PlannerRuntime",
+        "global fairness",
+        "leader election",
+        "global exactly-once execution",
+        "Provider transcript recovery",
+        "cross-region multi-primary state",
+        "automatic attachment summaries",
+        "PostgreSQL side-effect ledger",
+        "at-least-once Redis delivery",
+        "compatibility facades or fallback behavior",
+    ):
+        assert expected in normalized
 
-    for expected in [
-        "production A2A reference services should pass",
-        "A2AOperationServer(rate_limit_policy=PeerKeyA2AOperationRateLimitPolicy",
-        "agent_create must be paired with an explicit worker capability allow-list",
-        "TeamWorkerPermissionPolicy(allowed_capabilities=",
-    ]:
-        assert_phrase(production_readiness, expected)
 
-    assert chr(0x9239) not in skill
-    assert chr(0x251C) not in skill
-    assert chr(0x2514) not in skill
-    assert chr(0x2500) not in skill
-    assert "+-- runtime/" in skill
-    assert "`TeamWorkerPermissionPolicy(allowed_capabilities=...)`" in skill
+def test_release_backlog_does_not_name_removed_phase5_implementations() -> None:
+    text = (ROOT / "docs/release-backlog.md").read_text(encoding="utf-8")
+
+    for removed in (
+        "production_reference_web_agent.py",
+        "DistributedWebRuntimeProfile",
+        "PostgresSessionSnapshotPersistence",
+        "RedisAgentMessageQueue",
+        "PostgresTaskStore",
+        "PostgresPlanStore",
+    ):
+        assert removed not in text

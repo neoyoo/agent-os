@@ -1,5 +1,7 @@
 """Planner 领域、状态真值与可选调度能力。"""
 
+from typing import TYPE_CHECKING
+
 from agentos.planning.errors import (
     PlanClaimLostError,
     PlanConflictError,
@@ -85,7 +87,6 @@ from agentos.planning.scheduling_profiles import (
     PlannerStaleClaimSweepProfile,
     PlannerWorkerDispatchSupervisionProfile,
 )
-from agentos.planning.sqlite import SQLitePlanStore
 from agentos.planning.store import (
     ClaimGuardedPlanStore,
     CompareAndSavePlanStore,
@@ -103,6 +104,19 @@ from agentos.planning.tools import (
     PlannerToolAuthorizationPolicy,
     PlannerTools,
 )
+
+if TYPE_CHECKING:
+    from agentos.planning.sqlite import SQLitePlanStore
+
+
+def __getattr__(name: str) -> object:
+    """惰性导出 Durable Adapter，保持 Planning 领域导入轻量。"""
+
+    if name == "SQLitePlanStore":
+        from agentos.planning.sqlite import SQLitePlanStore
+
+        return SQLitePlanStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "AuthorizedPlanSource",

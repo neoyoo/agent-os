@@ -5,7 +5,26 @@ here.
 
 ## Unreleased
 
-### Phase 6: Explicit Tool Side Effects
+### `0.3.0a1`: Phase 6 Distributed Runtime Cutover
+
+- Added `DistributedRuntimeProfile` and `DistributedWorker` over the same async
+  `Agent -> QueryLoop -> RunDriver` kernel used by Local and Durable profiles.
+- Made PostgreSQL the only distributed truth for Run, accepted input,
+  claim/fence, checkpoint, outbox, side effects, and Artifact metadata.
+- Limited Redis to execution/relay delivery, leases, and bounded event replay;
+  shared `BlobStore` implementations own Artifact bytes.
+- Added stateless `ChannelServices` and `DistributedAsgiApp` composition for
+  HTTP, SSE, WebSocket, and A2A.
+- Removed the legacy distributed Session Snapshot path, synchronous
+  PostgreSQL/Redis wrappers, old web runtime profiles, service-reference
+  composition, and superseded channel/multi-agent modules without compatibility
+  aliases or fallbacks.
+- Added live failure-injection coverage for restart, timeout, claim/fence,
+  checkpoint, outbox, artifact, side-effect, drain, and recovery behavior.
+- Added the Phase 6 breaking map and upgraded release evidence to the canonical
+  PostgreSQL/Redis/Worker backend set.
+
+### Explicit Tool Side Effects
 
 - Breaking: replaced `AsyncToolHandler` and bare argument handlers with one
   `ToolHandler(ToolInvocation)` contract; synchronous handlers are adapted only
@@ -48,18 +67,6 @@ here.
 - Added `docs/migrations/0.2-single-async-query-loop.md` for the required
   breaking migration.
 
-### Phase 101: Production Reference Example
-
-- Added the production reference web agent at
-  `src/agentos/examples/production_reference_web_agent.py`.
-- Composed `AgentServiceReference`, `DistributedWebRuntimeProfile`,
-  Nacos/Redis/Postgres state plane evidence, readiness endpoint, backend
-  verification, `ProductionReadinessEvidenceBundle`,
-  `ReferenceStatePlaneStack`, `ReferenceLiveBackendProbePack`, and a planner
-  primitive in one reference example.
-- Kept backend clients, credentials, migrations, CI/CD, process supervision,
-  and real infrastructure deployment-owned.
-
 ### Phase 100: Release Hardening
 
 - Added the release hardening gate and release candidate evidence checklist in
@@ -85,15 +92,16 @@ here.
 - Added `ReferenceLiveBackendProbePack`, `ReferenceLiveBackendProbeSpec`,
   `REFERENCE_LIVE_BACKEND_PROBE_PACK_NAME`, and
   `agentos.examples.live_backend_probe`.
-- Added reference Nacos, Redis, Postgres task/plan/session, and worker
-  supervisor probe invocation planning without creating backend clients.
+- Added reference PostgreSQL state/Artifact, Redis queue/replay, and
+  Distributed Worker probe invocation planning without creating backend
+  clients.
 
 ### Phase 97: Reference State Plane Stack
 
 - Added `ReferenceStatePlaneStack`, `ReferenceStatePlaneStackProfile`, and
   `REFERENCE_STATE_PLANE_REQUIRED_COMPONENTS`.
-- Composed registry, queue, task store, plan store, worker supervisor, session
-  snapshot persistence, service reference, runtime profile, and readiness
+- Composed the canonical PostgreSQL state/Artifact stores, Redis queue/replay
+  adapters, Distributed Worker/Profile, Channel services/ASGI app, and readiness
   evidence without owning real infrastructure.
 
 ### Phase 96: Release Scope Re-baseline

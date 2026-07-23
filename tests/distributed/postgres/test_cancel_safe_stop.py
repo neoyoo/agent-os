@@ -3,17 +3,20 @@ from __future__ import annotations
 import pytest
 
 from agentos.capabilities.tools import SideEffectPolicy
-from agentos.distributed.errors import SideEffectInFlightError
+from agentos.distributed.errors import CheckpointConflictError, SideEffectInFlightError
 from agentos.distributed.postgres._side_effect_codec import (
     side_effect_record_from_json,
     side_effect_record_to_json,
 )
 from agentos.distributed.postgres._side_effect_composite import (
     apply_cancel_safe_stop,
+    ensure_terminal_safe_stop,
 )
 from agentos.runtime.payloads import ProtectedPayloadRef
+from agentos.runtime.run_state import RunStatus
 from agentos.runtime.side_effect_types import (
     SideEffectAttemptId,
+    SideEffectOutcomeKind,
     SideEffectRecord,
     SideEffectResolutionOutcome,
     SideEffectStatus,
@@ -52,6 +55,29 @@ def _side_effect(status: SideEffectStatus) -> SideEffectRecord:
         status=status,
         invocation_digest="sha256:" + "a" * 64,
         invocation_ref=ProtectedPayloadRef("sealed", "digest"),
+        claim_id="claim_1",
+        fencing_token=7,
+    )
+
+
+def _completed_wait_control() -> SideEffectRecord:
+    return SideEffectRecord(
+        attempt_id=SideEffectAttemptId(
+            "tenant_1",
+            "session_1",
+            OPERATION_ID,
+            1,
+        ),
+        run_id="run_1",
+        turn_id="turn_1",
+        invocation_id=INVOCATION_ID,
+        tool_name="request_waiting",
+        policy=SideEffectPolicy.PURE,
+        status=SideEffectStatus.COMPLETED,
+        invocation_digest="sha256:" + "a" * 64,
+        invocation_ref=ProtectedPayloadRef("sealed", "digest"),
+        outcome_kind=SideEffectOutcomeKind.WAIT_CONTROL,
+        wait_reason_digest="sha256:" + "b" * 64,
         claim_id="claim_1",
         fencing_token=7,
     )
@@ -117,3 +143,33 @@ async def test_cancel_in_flight_effect_performs_no_writes() -> None:
         )
 
     assert connection.writes == []
+
+
+@pytest.mark.parametrize("status", [RunStatus.COMPLETED, RunStatus.FAILED])
+@async_test
+async def test_terminal_allows_completed_wait_control_from_prior_turn(
+    status: RunStatus,
+) -> None:
+    connection = CancelConnection(_completed_wait_control())
+
+    await ensure_terminal_safe_stop(  # type: ignore[arg-type]
+        connection,
+        tenant_id="tenant_1",
+        session_id="session_1",
+        run_id="run_1",
+        status=status,
+    )
+
+
+@async_test
+async def test_terminal_rejects_started_effect() -> None:
+    connection = CancelConnection(_side_effect(SideEffectStatus.STARTED))
+
+    with pytest.raises(CheckpointConflictError):
+        await ensure_terminal_safe_stop(  # type: ignore[arg-type]
+            connection,
+            tenant_id="tenant_1",
+            session_id="session_1",
+            run_id="run_1",
+            status=RunStatus.COMPLETED,
+        )

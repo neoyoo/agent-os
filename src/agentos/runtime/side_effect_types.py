@@ -210,11 +210,10 @@ class SideEffectResolution:
         if self.kind is SideEffectResolutionKind.RETRY_PROVEN_SAFE:
             if self.result_ref is not None or self.result_digest is not None:
                 raise ValueError("retry resolution cannot carry a result")
-            if type(self.attestation_ref) is not ProtectedPayloadRef:
-                raise ValueError("retry resolution requires protected attestation")
-            _require_digest(self.attestation_digest, "attestation_digest")
-            if self.attestation_ref.digest != self.attestation_digest:
-                raise ValueError("attestation_digest does not match attestation_ref")
+            _require_attestation_pair(
+                self.attestation_ref,
+                self.attestation_digest,
+            )
             return
         if any(
             value is not None
@@ -377,11 +376,10 @@ class SideEffectRecord:
         elif self.resolution is SideEffectResolutionOutcome.RETRY_SAFE:
             if self.result_ref is not None or self.result_digest is not None:
                 raise ValueError("retry-safe resolution cannot carry result")
-            if type(self.attestation_ref) is not ProtectedPayloadRef:
-                raise ValueError("retry-safe resolution requires attestation")
-            _require_digest(self.attestation_digest, "attestation_digest")
-            if self.attestation_ref.digest != self.attestation_digest:
-                raise ValueError("attestation_digest does not match attestation_ref")
+            _require_attestation_pair(
+                self.attestation_ref,
+                self.attestation_digest,
+            )
         else:
             if (
                 self.resolution is SideEffectResolutionOutcome.SUPERSEDED
@@ -417,6 +415,16 @@ class SideEffectRecord:
 
 def _require_failure_code(value: object) -> None:
     _require_identifier(value, "failure_code")
+
+
+def _require_attestation_pair(
+    reference: object,
+    digest: object,
+) -> None:
+    if type(reference) is not ProtectedPayloadRef:
+        raise ValueError("retry resolution requires protected attestation")
+    if type(digest) is not str or reference.digest != digest:
+        raise ValueError("attestation_digest does not match attestation_ref")
 
 
 def _require_result_pair(

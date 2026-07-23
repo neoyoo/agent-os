@@ -32,34 +32,34 @@ _RESTRICTED_METADATA_KEY_PARTS: tuple[str, ...] = (
 def _default_probe_specs() -> tuple[ReferenceLiveBackendProbeSpec, ...]:
     return (
         ReferenceLiveBackendProbeSpec(
-            backend_name="agent_registry",
-            backend_kind="nacos",
-            adapter_hint="NacosAgentRegistryAdapter",
+            backend_name="postgres_state_store",
+            backend_kind="postgres",
+            adapter_hint="PostgresStateStore",
         ),
         ReferenceLiveBackendProbeSpec(
-            backend_name="message_queue",
+            backend_name="postgres_artifact_store",
+            backend_kind="postgres",
+            adapter_hint="PostgresArtifactStore",
+        ),
+        ReferenceLiveBackendProbeSpec(
+            backend_name="redis_worker_queue",
             backend_kind="redis",
-            adapter_hint="RedisAgentMessageQueue",
+            adapter_hint="RedisQueueAdapter",
         ),
         ReferenceLiveBackendProbeSpec(
-            backend_name="task_store",
-            backend_kind="postgres",
-            adapter_hint="PostgresTaskStore",
+            backend_name="redis_relay_queue",
+            backend_kind="redis",
+            adapter_hint="RedisQueueAdapter",
         ),
         ReferenceLiveBackendProbeSpec(
-            backend_name="plan_store",
-            backend_kind="postgres",
-            adapter_hint="PostgresPlanStore",
+            backend_name="redis_event_replay",
+            backend_kind="redis",
+            adapter_hint="RedisEventReplayAdapter",
         ),
         ReferenceLiveBackendProbeSpec(
-            backend_name="worker_process_supervisor",
-            backend_kind="worker_process_supervisor",
-            adapter_hint="WorkerProcessSupervisor",
-        ),
-        ReferenceLiveBackendProbeSpec(
-            backend_name="session_snapshot_persistence",
-            backend_kind="postgres",
-            adapter_hint="PostgresSessionSnapshotPersistence",
+            backend_name="distributed_worker",
+            backend_kind="distributed_worker",
+            adapter_hint="DistributedWorker",
         ),
     )
 
@@ -214,10 +214,10 @@ class ReferenceLiveBackendProbePack:
                     "ProductionReadinessEvidenceBundle",
                 ),
                 "deployment_owned": (
-                    "Nacos probe implementation",
-                    "Redis probe implementation",
-                    "Postgres task/plan/session probe implementation",
-                    "worker supervisor probe implementation",
+                    "PostgreSQL state and Artifact probe implementation",
+                    "Redis queue and replay probe implementation",
+                    "Distributed Worker probe implementation",
+                    "shared BlobStore probe implementation",
                     "credentials, migrations, CI matrix execution, alert routing and runbooks",
                 ),
             },
@@ -245,10 +245,10 @@ class ReferenceLiveBackendProbePack:
                 "does not create backend clients",
             ),
             "deployment_owned": (
-                "Nacos probe implementation",
-                "Redis probe implementation",
-                "Postgres task/plan/session probe implementation",
-                "worker supervisor probe implementation",
+                "PostgreSQL state and Artifact probe implementation",
+                "Redis queue and replay probe implementation",
+                "Distributed Worker probe implementation",
+                "shared BlobStore probe implementation",
                 "credentials, migrations, CI matrix execution, alert routing and runbooks",
             ),
         }

@@ -12,3 +12,5 @@ def test_distributed_optional_dependencies_are_explicit() -> None:
         "redis>=5.0",
     ]
     assert extras["distributed-artifacts"] == ["aioboto3>=13.0"]
+    assert "postgres" not in extras
+    assert "redis" not in extras

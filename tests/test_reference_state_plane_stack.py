@@ -14,50 +14,44 @@ from agentos.deployment_profiles import (
 from agentos.deployment_types import BackendVerificationRecord
 
 
-class NacosAgentRegistryAdapter:
-    pass
-
-
-class NacosAgentCardResolver:
-    pass
-
-
-class RedisAgentMessageQueue:
-    pass
-
-
-class PostgresTaskStore:
-    pass
-
-
-class PostgresPlanStore:
-    pass
-
-
-class WorkerProcessSupervisor:
-    pass
-
-
-class PostgresSessionSnapshotPersistence:
-    pass
-
-
-class DistributedWebRuntimeProfile:
-    def readiness_metadata(self) -> dict[str, object]:
-        return {
-            "profile": self.__class__.__name__,
-            "ready": True,
-            "session_provider": "DurableAgentSessionProvider",
-        }
-
-
-class AgentServiceReference:
+class _ReadyComponent:
     def readiness_check(self) -> dict[str, object]:
         return {
             "profile": self.__class__.__name__,
             "ok": True,
-            "readiness": "reference service",
         }
+
+
+class PostgresStateStore(_ReadyComponent):
+    pass
+
+
+class PostgresArtifactStore(_ReadyComponent):
+    pass
+
+
+class RedisQueueAdapter(_ReadyComponent):
+    pass
+
+
+class RedisEventReplayAdapter(_ReadyComponent):
+    pass
+
+
+class DistributedWorker(_ReadyComponent):
+    pass
+
+
+class DistributedRuntimeProfile(_ReadyComponent):
+    pass
+
+
+class ChannelServices(_ReadyComponent):
+    pass
+
+
+class DistributedAsgiApp(_ReadyComponent):
+    pass
 
 
 def passed_backend_verification() -> DeploymentLiveBackendVerificationProfile:
@@ -84,15 +78,15 @@ def configured_state_plane_profile() -> ProductionStatePlaneDeploymentProfile:
 
 def full_stack_kwargs() -> dict[str, object]:
     return {
-        "agent_registry": NacosAgentRegistryAdapter(),
-        "agent_card_resolver": NacosAgentCardResolver(),
-        "message_queue": RedisAgentMessageQueue(),
-        "task_store": PostgresTaskStore(),
-        "plan_store": PostgresPlanStore(),
-        "worker_process_supervisor": WorkerProcessSupervisor(),
-        "session_snapshot_persistence": PostgresSessionSnapshotPersistence(),
-        "runtime_profile": DistributedWebRuntimeProfile(),
-        "service_reference": AgentServiceReference(),
+        "postgres_state_store": PostgresStateStore(),
+        "postgres_artifact_store": PostgresArtifactStore(),
+        "redis_worker_queue": RedisQueueAdapter(),
+        "redis_relay_queue": RedisQueueAdapter(),
+        "redis_event_replay": RedisEventReplayAdapter(),
+        "distributed_worker": DistributedWorker(),
+        "runtime_profile": DistributedRuntimeProfile(),
+        "channel_services": ChannelServices(),
+        "asgi_app": DistributedAsgiApp(),
         "state_plane_profile": configured_state_plane_profile(),
         "live_backend_verification": passed_backend_verification(),
         "metadata": {
@@ -122,29 +116,31 @@ def test_reference_state_plane_stack_builds_json_safe_readiness_bundle() -> None
     assert bundle.accepted is True
     assert metadata["ready"] is True
     assert metadata["profile"] == "ReferenceStatePlaneStack"
-    assert metadata["component_identities"]["agent_registry"] == (
-        "NacosAgentRegistryAdapter"
+    assert metadata["component_identities"]["postgres_state_store"] == (
+        "PostgresStateStore"
     )
-    assert metadata["component_identities"]["agent_card_resolver"] == (
-        "NacosAgentCardResolver"
+    assert metadata["component_identities"]["postgres_artifact_store"] == (
+        "PostgresArtifactStore"
     )
-    assert metadata["component_identities"]["message_queue"] == (
-        "RedisAgentMessageQueue"
+    assert metadata["component_identities"]["redis_worker_queue"] == (
+        "RedisQueueAdapter"
     )
-    assert metadata["component_identities"]["task_store"] == "PostgresTaskStore"
-    assert metadata["component_identities"]["plan_store"] == "PostgresPlanStore"
-    assert metadata["component_identities"]["worker_process_supervisor"] == (
-        "WorkerProcessSupervisor"
+    assert metadata["component_identities"]["redis_relay_queue"] == (
+        "RedisQueueAdapter"
     )
-    assert metadata["component_identities"]["session_snapshot_persistence"] == (
-        "PostgresSessionSnapshotPersistence"
+    assert metadata["component_identities"]["redis_event_replay"] == (
+        "RedisEventReplayAdapter"
+    )
+    assert metadata["component_identities"]["distributed_worker"] == (
+        "DistributedWorker"
     )
     assert metadata["component_identities"]["runtime_profile"] == (
-        "DistributedWebRuntimeProfile"
+        "DistributedRuntimeProfile"
     )
-    assert metadata["component_identities"]["service_reference"] == (
-        "AgentServiceReference"
+    assert metadata["component_identities"]["channel_services"] == (
+        "ChannelServices"
     )
+    assert metadata["component_identities"]["asgi_app"] == "DistributedAsgiApp"
     assert "ProductionStatePlaneDeploymentProfile" in encoded
     assert "DeploymentLiveBackendVerificationProfile" in encoded
     assert "ProductionReadinessEvidenceBundle" in encoded
@@ -161,14 +157,14 @@ def test_reference_state_plane_stack_blocks_when_required_component_missing() ->
     from agentos.state_plane import ReferenceStatePlaneStack
 
     kwargs = full_stack_kwargs()
-    kwargs.pop("message_queue")
+    kwargs.pop("redis_worker_queue")
     kwargs.pop("live_backend_verification")
 
     stack = ReferenceStatePlaneStack(**kwargs)
     check = stack.readiness_check()
     bundle = stack.build_readiness_bundle()
 
-    assert "message_queue" in stack.missing_components()
+    assert "redis_worker_queue" in stack.missing_components()
     assert "live_backend_verification" in stack.missing_components()
     assert check["ok"] is False
     assert check["status"] == "failed"

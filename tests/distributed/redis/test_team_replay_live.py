@@ -19,10 +19,13 @@ from agentos.runtime.run_state import RunStatus
 
 
 REDIS_URL = os.environ.get("AGENTOS_TEST_REDIS_URL")
-pytestmark = pytest.mark.skipif(
-    REDIS_URL is None,
-    reason="set AGENTOS_TEST_REDIS_URL to run live Redis tests",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        REDIS_URL is None,
+        reason="set AGENTOS_TEST_REDIS_URL to run live Redis tests",
+    ),
+]
 SCOPE = RequestScope("tenant_1", "user_1")
 NOW = datetime(2026, 7, 22, 12, tzinfo=UTC)
 
@@ -56,10 +59,15 @@ def test_live_team_replay_handles_ordering_retention_and_oversized_streams() -> 
             key_prefix=prefix,
             max_events=2,
         )
+        recovered = RedisTeamEventReplayAdapter(
+            client=client,
+            key_prefix=prefix,
+            max_events=2,
+        )
         try:
             second = await replay.append(scope=SCOPE, event=_event(2))
             first = await replay.append(scope=SCOPE, event=_event(1))
-            assert await replay.append(scope=SCOPE, event=_event(1)) == first
+            assert await recovered.append(scope=SCOPE, event=_event(1)) == first
             third = await replay.append(scope=SCOPE, event=_event(3))
             assert await replay.append(scope=SCOPE, event=_event(1)) == first
 
@@ -111,6 +119,7 @@ def test_live_team_replay_handles_ordering_retention_and_oversized_streams() -> 
             ) == TeamEventReplayBatch((sixth,), sixth.cursor)
         finally:
             await replay.close()
+            await recovered.close()
             keys = [
                 key
                 async for key in client.scan_iter(match=f"{prefix}:*")

@@ -97,7 +97,6 @@ def test_plan_codec_has_one_planning_owner() -> None:
 
 def test_planner_exports_exist_only_on_their_real_owners() -> None:
     agentos = importlib.import_module("agentos")
-    postgres_plan = importlib.import_module("agentos.multi.postgres_plan")
 
     for name in (
         "CompareAndSavePlanStore",
@@ -107,5 +106,5 @@ def test_planner_exports_exist_only_on_their_real_owners() -> None:
     ):
         assert hasattr(planning, name)
         assert not hasattr(agentos, name)
-    assert hasattr(postgres_plan, "PostgresPlanStore")
     assert not hasattr(agentos, "PostgresPlanStore")
+    assert importlib.util.find_spec("agentos.multi.postgres_plan") is None

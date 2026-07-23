@@ -33,14 +33,53 @@ class PostgresOutboxStore:
             rows = await fetchall(
                 connection,
                 """
-                SELECT * FROM agentos_distributed_outbox
-                WHERE published_at IS NULL
-                  AND (claim_id IS NULL OR claim_expires_at <= clock_timestamp())
+                SELECT outbox.* FROM agentos_distributed_outbox AS outbox
+                WHERE (
+                    outbox.published_at IS NULL
+                    OR (
+                        outbox.topic = 'agentos.run.execution'
+                        AND outbox.published_at <=
+                            clock_timestamp() - (%s * interval '1 second')
+                        AND EXISTS (
+                            SELECT 1
+                            FROM agentos_distributed_runs AS run
+                            JOIN agentos_distributed_sessions AS session
+                              ON session.tenant_id = run.tenant_id
+                             AND session.session_id = run.session_id
+                            JOIN agentos_distributed_accepted_inputs AS input
+                              ON input.tenant_id = run.tenant_id
+                             AND input.session_id = run.session_id
+                             AND input.run_id = run.run_id
+                             AND input.status = 'accepted'
+                            WHERE run.tenant_id = outbox.tenant_id
+                              AND run.session_id = outbox.session_id
+                              AND run.run_id = outbox.run_id
+                              AND run.status IN ('queued', 'running')
+                              AND session.active_claim_id IS NULL
+                              AND (
+                                  (
+                                      outbox.payload ->> 'kind' = input.source_kind
+                                      AND outbox.payload ->> 'source_id' = input.source_id
+                                  )
+                                  OR (
+                                      outbox.payload ->> 'kind' = 'recover'
+                                      AND outbox.payload ->> 'turn_id' = input.turn_id
+                                      AND outbox.payload ->> 'fencing_token' =
+                                          session.fencing_token::text
+                                  )
+                              )
+                        )
+                    )
+                )
+                  AND (
+                      outbox.claim_id IS NULL
+                      OR outbox.claim_expires_at <= clock_timestamp()
+                  )
                 ORDER BY created_at, outbox_id
                 FOR UPDATE SKIP LOCKED
                 LIMIT %s
                 """,
-                (limit,),
+                (seconds, limit),
             )
             for row in rows:
                 claim_id = f"outbox_claim_{uuid4().hex}"
@@ -52,7 +91,8 @@ class PostgresOutboxStore:
                         claim_expires_at =
                             clock_timestamp() + (%s * interval '1 second'),
                         publish_attempts = publish_attempts + 1,
-                        last_publish_attempt_at = clock_timestamp()
+                        last_publish_attempt_at = clock_timestamp(),
+                        published_at = NULL, queue_entry_id = NULL
                     WHERE outbox_id = %s
                     RETURNING *
                     """,

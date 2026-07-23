@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-os"
-version = "0.2.0a1"
+version = "0.3.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "markdown-it-py" },
@@ -41,10 +41,6 @@ observability = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
-postgres = [
-    { name = "psycopg", extra = ["binary"] },
-    { name = "psycopg-pool" },
-]
 production-memory = [
     { name = "psycopg", extra = ["binary"] },
     { name = "qdrant-client" },
@@ -52,9 +48,6 @@ production-memory = [
 ]
 qdrant = [
     { name = "qdrant-client" },
-]
-redis = [
-    { name = "redis" },
 ]
 security = [
     { name = "cryptography" },
@@ -74,21 +67,18 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.28" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.28" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'distributed'", specifier = ">=3.1" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.1" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'production-memory'", specifier = ">=3.1" },
     { name = "psycopg-pool", marker = "extra == 'distributed'", specifier = ">=3.2" },
-    { name = "psycopg-pool", marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "qdrant-client", marker = "extra == 'production-memory'", specifier = ">=1.9" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.9" },
     { name = "redis", marker = "extra == 'distributed'", specifier = ">=5.0" },
     { name = "redis", marker = "extra == 'production-memory'", specifier = ">=5.0" },
-    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30" },
 ]
-provides-extras = ["durable", "dev", "server", "observability", "async-http", "redis", "qdrant", "postgres", "distributed", "distributed-artifacts", "production-memory", "security"]
+provides-extras = ["durable", "dev", "server", "observability", "async-http", "qdrant", "distributed", "distributed-artifacts", "production-memory", "security"]
 
 [[package]]
 name = "aioboto3"

@@ -26,34 +26,34 @@ WorkerProcessStatus = Literal[
 
 
 PRODUCTION_STATE_PLANE_REQUIRED_COMPONENTS: tuple[str, ...] = (
-    "agent_registry",
-    "message_queue",
-    "task_store",
-    "plan_store",
-    "worker_process_supervisor",
-    "session_snapshot_persistence",
+    "postgres_state_store",
+    "postgres_artifact_store",
+    "redis_worker_queue",
+    "redis_relay_queue",
+    "redis_event_replay",
+    "distributed_worker",
     "state_plane_boundary_policy",
     "live_backend_verification",
 )
 
 
 LIVE_BACKEND_VERIFICATION_STATE_PLANE_BACKENDS: tuple[str, ...] = (
-    "agent_registry",
-    "message_queue",
-    "task_store",
-    "plan_store",
-    "worker_process_supervisor",
-    "session_snapshot_persistence",
+    "postgres_state_store",
+    "postgres_artifact_store",
+    "redis_worker_queue",
+    "redis_relay_queue",
+    "redis_event_replay",
+    "distributed_worker",
 )
 
 
 LIVE_BACKEND_VERIFICATION_EXPECTED_BACKEND_KINDS: Mapping[str, str] = {
-    "agent_registry": "nacos",
-    "message_queue": "redis",
-    "task_store": "postgres",
-    "plan_store": "postgres",
-    "worker_process_supervisor": "worker_process_supervisor",
-    "session_snapshot_persistence": "postgres",
+    "postgres_state_store": "postgres",
+    "postgres_artifact_store": "postgres",
+    "redis_worker_queue": "redis",
+    "redis_relay_queue": "redis",
+    "redis_event_replay": "redis",
+    "distributed_worker": "distributed_worker",
 }
 
 

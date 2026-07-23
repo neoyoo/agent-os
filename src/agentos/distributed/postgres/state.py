@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from agentos._waiting import WaitReason
 from agentos.distributed.errors import CheckpointConflictError
 from agentos.distributed.migrations.service import (
@@ -61,11 +63,13 @@ class PostgresStateStore:
         *,
         min_size: int = 1,
         max_size: int = 10,
+        operation_timeout: timedelta = timedelta(seconds=5),
     ) -> PostgresStateStore:
         database = await PostgresPool.open(
             dsn,
             min_size=min_size,
             max_size=max_size,
+            operation_timeout=operation_timeout,
         )
         store = cls(database, owns_database=True)
         try:

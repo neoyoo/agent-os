@@ -11,7 +11,11 @@ from agentos._builder_distributed import (
     validate_distributed_builder,
 )
 from agentos.distributed.blobs.protocol import BlobStore
-from agentos.distributed.errors import DistributedStoreClosedError
+from agentos.distributed.authorization import SideEffectResolutionAuthorizer
+from agentos.distributed.errors import (
+    DistributedShutdownTimeoutError,
+    DistributedStoreClosedError,
+)
 from agentos.distributed.migrations.service import (
     DistributedMigrationService,
     canonical_migration_plan,
@@ -84,6 +88,7 @@ class DistributedRuntimeProfile:
         blob_store: BlobStore,
         worker_id: str,
         relay_id: str,
+        side_effect_resolution_authorizer: SideEffectResolutionAuthorizer,
         key_prefix: str = "agentos",
         queue_group_name: str = "agentos-workers",
         worker_max_concurrency: int = 1,
@@ -92,8 +97,12 @@ class DistributedRuntimeProfile:
         claim_ttl: timedelta = timedelta(minutes=1),
         lease_ttl: timedelta = timedelta(seconds=30),
         heartbeat_interval: timedelta = timedelta(seconds=10),
+        heartbeat_cycle_timeout: timedelta = timedelta(seconds=10),
+        backend_operation_timeout: timedelta = timedelta(seconds=5),
         relay_batch_size: int = 100,
         relay_claim_ttl: timedelta = timedelta(minutes=1),
+        relay_batch_timeout: timedelta = timedelta(seconds=30),
+        shutdown_cleanup_timeout: timedelta = timedelta(seconds=5),
         payload_protector: PayloadProtector | None = None,
         clock: Clock | None = None,
     ) -> None:
@@ -111,9 +120,14 @@ class DistributedRuntimeProfile:
             claim_ttl=claim_ttl,
             lease_ttl=lease_ttl,
             heartbeat_interval=heartbeat_interval,
+            heartbeat_cycle_timeout=heartbeat_cycle_timeout,
+            backend_operation_timeout=backend_operation_timeout,
             relay_batch_size=relay_batch_size,
             relay_claim_ttl=relay_claim_ttl,
+            relay_batch_timeout=relay_batch_timeout,
+            shutdown_cleanup_timeout=shutdown_cleanup_timeout,
             blob_store=blob_store,
+            side_effect_resolution_authorizer=side_effect_resolution_authorizer,
         )
         self._builder = agent_builder
         self._postgres_dsn = postgres_dsn
@@ -121,6 +135,7 @@ class DistributedRuntimeProfile:
         self._blob_store = blob_store
         self._worker_id = worker_id
         self._relay_id = relay_id
+        self._side_effect_resolution_authorizer = side_effect_resolution_authorizer
         self._key_prefix = key_prefix
         self._queue_group_name = queue_group_name
         self._worker_max_concurrency = worker_max_concurrency
@@ -129,8 +144,12 @@ class DistributedRuntimeProfile:
         self._claim_ttl = claim_ttl
         self._lease_ttl = lease_ttl
         self._heartbeat_interval = heartbeat_interval
+        self._heartbeat_cycle_timeout = heartbeat_cycle_timeout
+        self._backend_operation_timeout = backend_operation_timeout
         self._relay_batch_size = relay_batch_size
         self._relay_claim_ttl = relay_claim_ttl
+        self._relay_batch_timeout = relay_batch_timeout
+        self._shutdown_cleanup_timeout = shutdown_cleanup_timeout
         self._payload_protector = payload_protector
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lifecycle_lock = asyncio.Lock()
@@ -224,6 +243,7 @@ class DistributedRuntimeProfile:
             self._postgres_dsn,
             min_size=self._postgres_min_size,
             max_size=self._postgres_max_size,
+            operation_timeout=self._backend_operation_timeout,
         )
         await DistributedMigrationService(
             port=PostgresMigrationPort(resources.pool),
@@ -241,6 +261,7 @@ class DistributedRuntimeProfile:
         queue_options = {
             "key_prefix": self._key_prefix,
             "group_name": self._queue_group_name,
+            "operation_timeout": self._backend_operation_timeout,
         }
         resources.worker_queue = RedisQueueAdapter(
             self._redis_url,
@@ -253,10 +274,12 @@ class DistributedRuntimeProfile:
         resources.leases = RedisLeaseAdapter(
             self._redis_url,
             key_prefix=self._key_prefix,
+            operation_timeout=self._backend_operation_timeout,
         )
         resources.replay = RedisEventReplayAdapter(
             self._redis_url,
             key_prefix=self._key_prefix,
+            operation_timeout=self._backend_operation_timeout,
         )
         agent_factory = ClaimScopedAgentFactory(
             builder=self._builder,
@@ -277,6 +300,7 @@ class DistributedRuntimeProfile:
             claim_ttl=self._claim_ttl,
             lease_ttl=self._lease_ttl,
             heartbeat_interval=self._heartbeat_interval,
+            heartbeat_cycle_timeout=self._heartbeat_cycle_timeout,
             clock=self._clock,
         )
         resources.worker = DistributedWorker(
@@ -286,6 +310,7 @@ class DistributedRuntimeProfile:
             topic=EXECUTION_TOPIC,
             max_concurrency=self._worker_max_concurrency,
             clock=self._clock,
+            shutdown_cleanup_timeout=self._shutdown_cleanup_timeout,
         )
         resources.relay = OutboxRelay(
             outbox=outbox,
@@ -293,9 +318,13 @@ class DistributedRuntimeProfile:
             owner_id=self._relay_id,
             batch_size=self._relay_batch_size,
             claim_ttl=self._relay_claim_ttl,
+            batch_timeout=self._relay_batch_timeout,
         )
         resources.runs = RunSubmissionService(resources.state)
-        resources.commands = RunCommandService(resources.state)
+        resources.commands = RunCommandService(
+            resources.state,
+            self._side_effect_resolution_authorizer,
+        )
         resources.queries = RunQueryService(resources.state)
         resources.events = RunEventStream(resources.state, resources.replay)
         resources.artifact_service = ArtifactService(resources.artifacts)
@@ -304,18 +333,31 @@ class DistributedRuntimeProfile:
         resources = self._resources
         first_error: BaseException | None = None
 
-        async def close(resource: object | None) -> None:
+        async def close(resource: object | None) -> bool:
             nonlocal first_error
             if resource is None:
-                return
+                return True
+            task = asyncio.create_task(resource.close())  # type: ignore[attr-defined]
             try:
-                await resource.close()  # type: ignore[attr-defined]
+                done, _ = await asyncio.wait(
+                    (task,),
+                    timeout=self._shutdown_cleanup_timeout.total_seconds(),
+                )
+                if not done:
+                    task.cancel()
+                    task.add_done_callback(_consume_task_result)
+                    error = DistributedShutdownTimeoutError()
+                    first_error = first_error or error
+                    return False
+                await task
             except BaseException as error:
                 first_error = first_error or error
+                return False
+            return True
 
         await close(resources.relay)
-        await close(resources.worker)
-        if resources.worker is None:
+        worker_closed = await close(resources.worker)
+        if resources.worker is None or not worker_closed:
             await close(resources.worker_queue)
         await close(resources.replay)
         await close(resources.leases)
@@ -363,7 +405,11 @@ def _validate_config(**values: object) -> None:
         "claim_ttl",
         "lease_ttl",
         "heartbeat_interval",
+        "heartbeat_cycle_timeout",
+        "backend_operation_timeout",
         "relay_claim_ttl",
+        "relay_batch_timeout",
+        "shutdown_cleanup_timeout",
     ):
         value = values[name]
         if type(value) is not timedelta or value <= timedelta(0):
@@ -371,17 +417,34 @@ def _validate_config(**values: object) -> None:
     heartbeat = values["heartbeat_interval"]
     claim_ttl = values["claim_ttl"]
     lease_ttl = values["lease_ttl"]
+    heartbeat_timeout = values["heartbeat_cycle_timeout"]
     assert isinstance(heartbeat, timedelta)
     assert isinstance(claim_ttl, timedelta)
     assert isinstance(lease_ttl, timedelta)
+    assert isinstance(heartbeat_timeout, timedelta)
     if heartbeat >= min(claim_ttl, lease_ttl):
         raise ValueError("heartbeat_interval must be less than claim and lease TTL")
+    if heartbeat + heartbeat_timeout >= lease_ttl:
+        raise ValueError("heartbeat budget must remain below lease_ttl")
+    if heartbeat + heartbeat_timeout >= claim_ttl:
+        raise ValueError("heartbeat budget must remain below claim_ttl")
     blob_store = values["blob_store"]
     if any(
         not callable(getattr(blob_store, name, None))
         for name in ("put_if_absent", "read", "delete", "close")
     ):
         raise TypeError("blob_store must satisfy BlobStore")
+    authorizer = values["side_effect_resolution_authorizer"]
+    if not callable(getattr(authorizer, "authorize", None)):
+        raise TypeError(
+            "side_effect_resolution_authorizer must satisfy "
+            "SideEffectResolutionAuthorizer",
+        )
+
+
+def _consume_task_result(task: asyncio.Task[object]) -> None:
+    if not task.cancelled():
+        task.exception()
 
 
 __all__ = ["DistributedRuntimeProfile"]

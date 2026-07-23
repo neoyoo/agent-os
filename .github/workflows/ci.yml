@@ -32,17 +32,66 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      AGENTOS_RUN_INTEGRATION: "1"
+      AGENTOS_TEST_POSTGRES_DSN: postgresql://agentos:agentos@localhost:5432/agentos_test
+      AGENTOS_TEST_REDIS_URL: redis://localhost:6379/0
+      AGENTOS_TEST_S3_ENDPOINT_URL: http://localhost:4566
+      AGENTOS_TEST_S3_ACCESS_KEY_ID: agentos
+      AGENTOS_TEST_S3_SECRET_ACCESS_KEY: agentos-test-secret
+      AGENTOS_TEST_S3_BUCKET: agentos-test
+      AGENTOS_TEST_S3_REGION: us-east-1
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: agentos
+          POSTGRES_USER: agentos
+          POSTGRES_DB: agentos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentos -d agentos_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+      s3:
+        image: localstack/localstack:3.8.1
+        env:
+          SERVICES: s3
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -fsS http://localhost:4566/_localstack/health"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - name: Install
-        run: uv sync --extra dev --extra postgres --extra redis
+        run: >-
+          uv sync --extra dev --extra durable --extra distributed
+          --extra distributed-artifacts --extra security
       - name: Lint
         run: uv run ruff check src tests
       - name: Compile
         run: uv run python -m compileall -q src tests
-      - name: Test
-        run: uv run pytest -q
+      - name: Phase 6 scope exclusions
+        run: uv run pytest tests/architecture/test_phase6_scope_exclusions.py -q
+      - name: Unit tests
+        run: uv run pytest -m "not integration" -q
       - name: Integration tests
-        if: ${{ env.AGENTOS_RUN_INTEGRATION == '1' }}
-        run: uv run pytest -q tests/integration
+        env:
+          AGENTOS_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          AGENTOS_TEST_REDIS_CONTAINER: ${{ job.services.redis.id }}
+        run: uv run pytest -m integration -q

@@ -31,6 +31,7 @@ async def insert_outbox(
         "outbox_id": identifier,
         "run_id": run_id,
         "session_id": session_id,
+        "source_id": source_id,
         "version": 1,
         **payload,
     }

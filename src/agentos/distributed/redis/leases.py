@@ -34,10 +34,15 @@ class RedisLeaseAdapter:
         *,
         client: object | None = None,
         key_prefix: str = "agentos",
+        operation_timeout: timedelta = timedelta(seconds=5),
     ) -> None:
         if not key_prefix:
             raise ValueError("key_prefix must not be empty")
-        self._redis = AsyncRedisClient(url, client)
+        self._redis = AsyncRedisClient(
+            url,
+            client,
+            operation_timeout=operation_timeout,
+        )
         self._key_prefix = key_prefix.rstrip(":")
 
     async def acquire(

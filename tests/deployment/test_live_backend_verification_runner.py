@@ -33,16 +33,16 @@ def test_backend_verification_report_importer_parses_canonical_json() -> None:
     payload = {
         "records": [
             {
-                "backendName": "agent_registry",
-                "backendKind": "nacos",
+                "backendName": "postgres_state_store",
+                "backendKind": "postgres",
                 "status": "ok",
                 "checkedAt": 1781589000.0,
-                "evidenceRef": "ci://checks/nacos-agent-registry",
-                "targetRef": "nacos://agentos/agent-registry",
+                "evidenceRef": "ci://checks/postgres-state-store",
+                "targetRef": "postgresql://agentos/state",
                 "metadata": {"namespace": "agentos-prod"},
             },
             {
-                "backend_name": "message_queue",
+                "backend_name": "redis_worker_queue",
                 "backend_kind": "redis",
                 "status": "failed",
                 "checked_at": 1781589001.0,
@@ -55,12 +55,12 @@ def test_backend_verification_report_importer_parses_canonical_json() -> None:
     records = BackendVerificationReportImporter().from_json(json.dumps(payload))
 
     assert [record.backend_name for record in records] == [
-        "agent_registry",
-        "message_queue",
+        "postgres_state_store",
+        "redis_worker_queue",
     ]
-    assert records[0].backend_kind == "nacos"
+    assert records[0].backend_kind == "postgres"
     assert records[0].status == "passed"
-    assert records[0].target_ref == "nacos://agentos/agent-registry"
+    assert records[0].target_ref == "postgresql://agentos/state"
     assert records[1].status == "failed"
     assert records[1].error == "ping timeout"
     json.dumps([record.as_dict() for record in records])
@@ -115,19 +115,19 @@ def test_backend_verification_cli_runner_imports_report_path(tmp_path) -> None:
 def test_backend_verification_cli_runner_imports_stdout_json() -> None:
     report_payload = {
         "records": [
-            _passed_record_payload("agent_registry"),
+            _passed_record_payload("postgres_state_store"),
         ],
     }
     plan = BackendVerificationInvocationPlan(
         command=(sys.executable, "-c", f"print({json.dumps(report_payload)!r})"),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner().run(plan)
 
     assert result.exit_code == 0
     assert result.accepted is True
-    assert result.records[0].backend_name == "agent_registry"
+    assert result.records[0].backend_name == "postgres_state_store"
     assert result.metadata["report_source"] == "stdout"
 
 
@@ -135,14 +135,14 @@ def test_backend_verification_cli_runner_blocks_backend_kind_mismatch() -> None:
     report_payload = {
         "records": [
             {
-                **_passed_record_payload("task_store"),
-                "backend_kind": "redis",
+                **_passed_record_payload("redis_worker_queue"),
+                "backend_kind": "postgres",
             },
         ],
     }
     plan = BackendVerificationInvocationPlan(
         command=(sys.executable, "-c", f"print({json.dumps(report_payload)!r})"),
-        required_backends=("task_store",),
+        required_backends=("redis_worker_queue",),
     )
 
     result = BackendVerificationCliRunner().run(plan)
@@ -150,7 +150,7 @@ def test_backend_verification_cli_runner_blocks_backend_kind_mismatch() -> None:
     assert result.exit_code == 0
     assert result.accepted is False
     assert result.block_production_readiness is True
-    assert result.gate_report().invalid_backends == ("task_store",)
+    assert result.gate_report().invalid_backends == ("redis_worker_queue",)
 
 
 def test_backend_verification_cli_runner_records_timeout_as_blocking_evidence() -> None:
@@ -160,7 +160,7 @@ def test_backend_verification_cli_runner_records_timeout_as_blocking_evidence() 
             "-c",
             "import time; print('started', flush=True); time.sleep(2)",
         ),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner(timeout_seconds=0.01).run(plan)
@@ -170,7 +170,7 @@ def test_backend_verification_cli_runner_records_timeout_as_blocking_evidence() 
     assert result.accepted is False
     assert result.block_production_readiness is True
     assert result.records == ()
-    assert result.gate_report().missing_backends == ("agent_registry",)
+    assert result.gate_report().missing_backends == ("postgres_state_store",)
     assert result.metadata["timed_out"] is True
     assert "timed out" in result.stderr_summary
 
@@ -183,7 +183,7 @@ def test_backend_verification_cli_runner_records_nonzero_exit_and_env_keys() -> 
             "import os, sys; print(os.environ['BACKEND_TOKEN']); "
             "print('broken', file=sys.stderr); sys.exit(7)",
         ),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner(
@@ -211,12 +211,12 @@ def test_backend_verification_evidence_redacts_secret_command_arguments() -> Non
             "--header",
             "Authorization: Bearer raw-bearer",
         ),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
     result = DeploymentLiveBackendVerificationRunResult(
         command=plan.command,
         exit_code=0,
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     assert result.command == plan.command
@@ -249,7 +249,7 @@ def test_backend_verification_cli_runner_does_not_inherit_host_environment(
             "-c",
             "import os; print(os.environ.get('AGENTOS_BACKEND_HOST_SECRET', '<missing>'))",
         ),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner().run(plan)
@@ -270,7 +270,7 @@ def test_backend_verification_cli_runner_env_is_explicit_allowlist(
             "print(os.environ.get('BACKEND_TOKEN', '<missing>')); "
             "print(os.environ.get('AGENTOS_BACKEND_HOST_SECRET', '<missing>'))",
         ),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner(
@@ -287,7 +287,7 @@ def test_backend_verification_cli_runner_records_report_import_error(tmp_path) -
     report_path.write_text("{not-json", encoding="utf-8")
     plan = BackendVerificationInvocationPlan(
         command=(sys.executable, "-c", "print('wrote malformed report')"),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner(report_path=report_path).run(plan)
@@ -307,7 +307,7 @@ def test_backend_verification_cli_runner_bounds_output_summaries() -> None:
             "-c",
             "import sys; print('abcdef'); print('uvwxyz', file=sys.stderr)",
         ),
-        required_backends=("agent_registry",),
+        required_backends=("postgres_state_store",),
     )
 
     result = BackendVerificationCliRunner(
@@ -328,7 +328,7 @@ def test_backend_verification_cli_runner_rejects_invalid_settings() -> None:
     with pytest.raises(ValueError, match="required_backends"):
         BackendVerificationInvocationPlan(
             command=("backend-check",),
-            required_backends=("agent_registry", " "),
+            required_backends=("postgres_state_store", " "),
         )
 
     with pytest.raises(ValueError, match="timeout_seconds"):
@@ -357,6 +357,6 @@ def test_backend_verification_run_result_rejects_secret_metadata() -> None:
         DeploymentLiveBackendVerificationRunResult(
             command=("backend-check",),
             exit_code=0,
-            required_backends=("agent_registry",),
+            required_backends=("postgres_state_store",),
             metadata={"token": "secret-token"},
         )

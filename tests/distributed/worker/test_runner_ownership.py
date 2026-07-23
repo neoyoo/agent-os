@@ -5,7 +5,11 @@ from datetime import timedelta
 
 import pytest
 
-from agentos.distributed.errors import DistributedBackendUnavailableError
+from agentos.distributed.errors import (
+    DeliveryUnavailableError,
+    DistributedBackendUnavailableError,
+)
+from agentos.distributed.models import QueueDelivery
 from agentos.distributed.worker.runner import WorkerRunner
 from agentos.runtime.run_state import RunStatus
 from agentos.runtime.stream_events import TurnStreamCompleted
@@ -37,6 +41,7 @@ def _runner(
     claim_ttl: timedelta = timedelta(minutes=1),
     lease_ttl: timedelta = timedelta(seconds=30),
     heartbeat_interval: timedelta = timedelta(seconds=10),
+    heartbeat_cycle_timeout: timedelta = timedelta(seconds=10),
 ) -> WorkerRunner:
     return WorkerRunner(
         claims=claims,
@@ -49,6 +54,7 @@ def _runner(
         claim_ttl=claim_ttl,
         lease_ttl=lease_ttl,
         heartbeat_interval=heartbeat_interval,
+        heartbeat_cycle_timeout=heartbeat_cycle_timeout,
         heartbeat_wait=heartbeat_wait,
     )
 
@@ -110,6 +116,138 @@ def test_claim_heartbeat_failure_cancels_in_progress_hydration() -> None:
     asyncio.run(scenario())
 
 
+def test_heartbeat_cycle_timeout_cancels_in_progress_hydration() -> None:
+    class BlockingRenewLeases(FakeLeases):
+        async def renew(self, **kwargs: object):  # type: ignore[no-untyped-def]
+            del kwargs
+            self.trace.append("lease.renew")
+            await asyncio.Event().wait()
+
+    async def scenario() -> None:
+        trace: list[str] = []
+        claimed = claimed_execution()
+        claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
+        leases = BlockingRenewLeases(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        factory = FakeAgentFactory(trace, FakeAgent(trace, stream))
+        factory.hydrate_gate = asyncio.Event()
+        heartbeat = HeartbeatGate()
+        runner = _runner(
+            trace=trace,
+            claims=claims,
+            leases=leases,
+            factory=factory,
+            heartbeat_wait=heartbeat,
+            heartbeat_cycle_timeout=timedelta(milliseconds=10),
+        )
+
+        task = asyncio.create_task(runner.run_delivery(DELIVERY))
+        await factory.hydrate_started.wait()
+        await heartbeat.waiting.wait()
+        heartbeat.release.set()
+
+        with pytest.raises(DeliveryUnavailableError):
+            await task
+        assert factory.hydrate_cancelled.is_set()
+        assert "postgres.heartbeat" not in trace
+        assert "queue.ack" not in trace
+
+    asyncio.run(scenario())
+
+
+def test_postgres_heartbeat_cycle_timeout_is_backend_unavailable() -> None:
+    class BlockingHeartbeatClaims(FakeClaims):
+        async def heartbeat(self, **kwargs: object):  # type: ignore[no-untyped-def]
+            del kwargs
+            self.trace.append("postgres.heartbeat")
+            await asyncio.Event().wait()
+
+    async def scenario() -> None:
+        trace: list[str] = []
+        claimed = claimed_execution()
+        claims = BlockingHeartbeatClaims(
+            trace,
+            target=claimed.target,
+            claimed=claimed,
+        )
+        leases = FakeLeases(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        factory = FakeAgentFactory(trace, FakeAgent(trace, stream))
+        factory.hydrate_gate = asyncio.Event()
+        heartbeat = HeartbeatGate()
+        runner = _runner(
+            trace=trace,
+            claims=claims,
+            leases=leases,
+            factory=factory,
+            heartbeat_wait=heartbeat,
+            heartbeat_cycle_timeout=timedelta(milliseconds=10),
+        )
+
+        task = asyncio.create_task(runner.run_delivery(DELIVERY))
+        await factory.hydrate_started.wait()
+        await heartbeat.waiting.wait()
+        heartbeat.release.set()
+
+        with pytest.raises(DistributedBackendUnavailableError):
+            await task
+        assert factory.hydrate_cancelled.is_set()
+        assert trace.index("lease.renew") < trace.index("postgres.heartbeat")
+        assert "queue.ack" not in trace
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_external_cancellation_is_not_replaced_by_lease_release_failure(
+    committed: bool,
+) -> None:
+    class BlockingOwnershipLeases(FakeLeases):
+        def __init__(self, trace: list[str]) -> None:
+            super().__init__(trace)
+            self.ensure_started = asyncio.Event()
+
+        async def ensure_owned(self, **kwargs: object) -> None:
+            del kwargs
+            self.trace.append("lease.ensure_owned")
+            self.ensure_started.set()
+            await asyncio.Event().wait()
+
+        async def release(self, **kwargs: object) -> None:
+            del kwargs
+            self.trace.append("lease.release")
+            raise DeliveryUnavailableError()
+
+    async def scenario() -> None:
+        trace: list[str] = []
+        claimed = claimed_execution()
+        claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
+        if committed:
+            claims.outcome = committed_outcome(RunStatus.COMPLETED)
+        leases = BlockingOwnershipLeases(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        factory = FakeAgentFactory(trace, FakeAgent(trace, stream))
+        runner = _runner(
+            trace=trace,
+            claims=claims,
+            leases=leases,
+            factory=factory,
+        )
+
+        task = asyncio.create_task(runner.run_delivery(DELIVERY))
+        await leases.ensure_started.wait()
+        task.cancel("caller stopped")
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await task
+
+        assert caught.value.args == ("caller stopped",)
+        assert trace[-1] == "lease.release"
+        assert "queue.ack" not in trace
+
+    asyncio.run(scenario())
+
+
 def test_unclaimable_delivery_is_acked_after_terminal_truth_refresh() -> None:
     async def scenario() -> None:
         trace: list[str] = []
@@ -133,6 +271,43 @@ def test_unclaimable_delivery_is_acked_after_terminal_truth_refresh() -> None:
         assert claims.resolve_calls == 1
         assert claims.resolve_outcome_calls == 2
         assert factory.claimed == []
+        assert trace.index("event.ensure_terminal") < trace.index("queue.ack")
+
+    asyncio.run(scenario())
+
+
+def test_high_delivery_count_still_uses_authoritative_postgres_outcome() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        outcome = committed_outcome(RunStatus.COMPLETED)
+        claims = FakeClaims(trace, target=outcome.target)
+        claims.outcome = outcome
+        leases = FakeLeases(trace)
+        queue = FakeQueue(trace)
+        stream = ScriptedStream(trace, (TurnStreamCompleted("unused"),))
+        factory = FakeAgentFactory(trace, FakeAgent(trace, stream))
+        runner = _runner(
+            trace=trace,
+            claims=claims,
+            leases=leases,
+            factory=factory,
+            queue=queue,
+        )
+        delivery = QueueDelivery(
+            DELIVERY.delivery_id,
+            DELIVERY.outbox_id,
+            delivery_count=10_000,
+        )
+
+        assert await runner.run_delivery(delivery) is True
+        assert queue.acked == [delivery]
+        assert claims.resolve_calls == 1
+        assert claims.resolve_outcome_calls == 1
+        assert factory.claimed == []
+        assert trace.index("postgres.resolve") < trace.index("postgres.resolve_outcome")
+        assert trace.index("postgres.resolve_outcome") < trace.index(
+            "event.ensure_terminal",
+        )
         assert trace.index("event.ensure_terminal") < trace.index("queue.ack")
 
     asyncio.run(scenario())

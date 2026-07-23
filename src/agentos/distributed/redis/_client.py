@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
 from agentos.distributed.errors import (
     DeliveryUnavailableError,
     DistributedBackendUnavailableError,
+    DistributedShutdownTimeoutError,
     DistributedStoreClosedError,
 )
 
@@ -14,9 +16,18 @@ from agentos.distributed.errors import (
 class AsyncRedisClient:
     """封装原生 async Redis client 的所有权、错误和 wire normalization。"""
 
-    def __init__(self, url: str | None, client: object | None) -> None:
+    def __init__(
+        self,
+        url: str | None,
+        client: object | None,
+        *,
+        operation_timeout: timedelta = timedelta(seconds=5),
+    ) -> None:
+        if type(operation_timeout) is not timedelta or operation_timeout <= timedelta(0):
+            raise ValueError("operation_timeout must be positive")
         self._client = client if client is not None else _create_client(url)
         self._owns_client = client is None
+        self._operation_timeout = operation_timeout.total_seconds()
         self._closed = False
         self._closing = False
         self._close_lock = asyncio.Lock()
@@ -31,10 +42,35 @@ class AsyncRedisClient:
         *args: object,
         **kwargs: object,
     ) -> Any:
+        return await self._call(
+            self._operation_timeout,
+            method_name,
+            *args,
+            **kwargs,
+        )
+
+    async def blocking_call(
+        self,
+        block_ms: int,
+        method_name: str,
+        *args: object,
+        **kwargs: object,
+    ) -> Any:
+        timeout = max(self._operation_timeout, block_ms / 1_000 + 1.0)
+        return await self._call(timeout, method_name, *args, **kwargs)
+
+    async def _call(
+        self,
+        timeout: float,
+        method_name: str,
+        *args: object,
+        **kwargs: object,
+    ) -> Any:
         self.ensure_open()
         try:
             method = getattr(self._client, method_name)
-            return await method(*args, **kwargs)
+            async with asyncio.timeout(timeout):
+                return await method(*args, **kwargs)
         except Exception:
             raise DeliveryUnavailableError() from None
 
@@ -42,7 +78,8 @@ class AsyncRedisClient:
         self.ensure_open()
         try:
             method = getattr(self._client, "xgroup_create")
-            await method(stream, group, id="0-0", mkstream=True)
+            async with asyncio.timeout(self._operation_timeout):
+                await method(stream, group, id="0-0", mkstream=True)
         except Exception as error:
             if "BUSYGROUP" in str(error):
                 return
@@ -56,7 +93,10 @@ class AsyncRedisClient:
             try:
                 if self._owns_client:
                     try:
-                        await getattr(self._client, "aclose")()
+                        async with asyncio.timeout(self._operation_timeout):
+                            await getattr(self._client, "aclose")()
+                    except TimeoutError:
+                        raise DistributedShutdownTimeoutError() from None
                     except Exception:
                         raise DeliveryUnavailableError() from None
                 self._closed = True

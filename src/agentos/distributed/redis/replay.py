@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from datetime import timedelta
 from urllib.parse import quote
 
 from agentos.distributed.errors import (
@@ -53,12 +54,17 @@ class RedisEventReplayAdapter:
         max_events: int = 1_000,
         block_ms: int = 1_000,
         follow_batch_size: int = 256,
+        operation_timeout: timedelta = timedelta(seconds=5),
     ) -> None:
         require_identifier(key_prefix, "key_prefix")
         require_positive(max_events, "max_events")
         require_positive(block_ms, "block_ms")
         require_positive(follow_batch_size, "follow_batch_size")
-        self._redis = AsyncRedisClient(url, client)
+        self._redis = AsyncRedisClient(
+            url,
+            client,
+            operation_timeout=operation_timeout,
+        )
         self._key_prefix = key_prefix.rstrip(":")
         self._max_events = max_events
         self._block_ms = block_ms
@@ -221,7 +227,8 @@ class RedisEventReplayAdapter:
         run_id: str,
         after: str,
     ) -> None:
-        await self._redis.call(
+        await self._redis.blocking_call(
+            self._block_ms,
             "xread",
             {self._stream_key(scope, session_id, run_id): after},
             count=self._follow_batch_size,

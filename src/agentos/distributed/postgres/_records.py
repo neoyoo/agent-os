@@ -158,7 +158,8 @@ def terminal_result_from_checkpoint(
 
 
 def _validate_tool_pairs(checkpoint: SessionCheckpoint) -> None:
-    messages = checkpoint.messages
+    messages_by_id = {message.id: message for message in checkpoint.messages}
+    messages = tuple(messages_by_id[ref] for ref in checkpoint.active_refs)
     index = 0
     while index < len(messages):
         message = messages[index]

@@ -9,9 +9,11 @@ from agentos.distributed.errors import (
     ArtifactConflictError,
     CommandStateError,
     DistributedBackendUnavailableError,
+    DistributedShutdownTimeoutError,
     RunNotFoundError,
     SchemaMigrationRequiredError,
     SideEffectInFlightError,
+    SideEffectResolutionPermissionError,
 )
 
 
@@ -19,6 +21,10 @@ from agentos.distributed.errors import (
     ("error", "expected"),
     [
         (CliPermissionError(), (3, "cli_permission_denied")),
+        (
+            SideEffectResolutionPermissionError(),
+            (3, "side_effect_resolution_permission_denied"),
+        ),
         (RunNotFoundError(), (4, "run_not_found")),
         (ArtifactNotFoundError(), (4, "artifact_not_found")),
         (ArtifactConflictError(), (5, "artifact_conflict")),
@@ -28,6 +34,10 @@ from agentos.distributed.errors import (
         (
             DistributedBackendUnavailableError(),
             (6, "distributed_backend_unavailable"),
+        ),
+        (
+            DistributedShutdownTimeoutError(),
+            (6, "distributed_shutdown_timeout"),
         ),
         (ValueError("secret payload"), (2, "invalid_cli_input")),
         (OSError("C:/secret/file"), (2, "cli_io_error")),

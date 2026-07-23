@@ -271,7 +271,7 @@ def test_terminal_recovery_observes_real_agent_stream_cleanup_failure() -> None:
     asyncio.run(scenario())
 
 
-def test_terminal_recovery_observes_agent_stream_cleanup_cancellation() -> None:
+def test_terminal_recovery_does_not_ack_cleanup_cancellation() -> None:
     async def scenario() -> None:
         trace: list[str] = []
         claimed = claimed_execution()
@@ -315,6 +315,56 @@ def test_terminal_recovery_observes_agent_stream_cleanup_cancellation() -> None:
 
         with pytest.raises(RuntimeError, match="agent stream cleanup was cancelled"):
             await runner.run_delivery(DELIVERY)
+
+        assert stream.closed
+        assert event_sink.events == []
+        assert queue.acked == []
+        assert "event.ensure_terminal" not in trace
+
+    asyncio.run(scenario())
+
+
+def test_cleanup_cancellation_without_committed_outcome_is_not_acked() -> None:
+    async def scenario() -> None:
+        trace: list[str] = []
+        claimed = claimed_execution()
+        claims = FakeClaims(trace, target=claimed.target, claimed=claimed)
+        claims.pending_outcome = None
+        claims.heartbeat_error = DistributedBackendUnavailableError()
+        queue = FakeQueue(trace)
+        leases = FakeLeases(trace)
+        heartbeat = HeartbeatGate()
+
+        async def events():
+            await asyncio.Event().wait()
+            yield TurnStreamCompleted("unreachable")
+
+        async def cleanup() -> None:
+            raise asyncio.CancelledError("cleanup did not finish")
+
+        stream = ExecutionLease().open_stream(events(), cleanup=cleanup)
+        factory = FakeAgentFactory(trace, FakeAgent(trace, stream))  # type: ignore[arg-type]
+        event_sink = FakeEventSink(trace)
+        runner = WorkerRunner(
+            claims=claims,
+            queue=queue,
+            leases=leases,
+            agent_factory=factory,
+            event_sink=event_sink,
+            worker_id="worker_1",
+            topic="runs",
+            claim_ttl=timedelta(minutes=1),
+            lease_ttl=timedelta(seconds=30),
+            heartbeat_interval=timedelta(seconds=10),
+            heartbeat_wait=heartbeat,
+        )
+
+        task = asyncio.create_task(runner.run_delivery(DELIVERY))
+        await heartbeat.waiting.wait()
+        heartbeat.release.set()
+
+        with pytest.raises(RuntimeError, match="agent stream cleanup was cancelled"):
+            await task
 
         assert stream.closed
         assert event_sink.events == []

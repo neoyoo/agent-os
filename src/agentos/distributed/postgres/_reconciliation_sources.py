@@ -8,7 +8,11 @@ from agentos.distributed.postgres._reconciliation_records import (
     cursor_contains_record,
     cursor_from_row,
 )
-from agentos.distributed.postgres._side_effect_records import load_current
+from agentos.distributed.postgres._side_effect_records import (
+    load_current,
+    update_record,
+    with_fence,
+)
 from agentos.durable.serialization import execution_cursor_to_json
 from agentos.runtime.checkpoint import RunCheckpoint
 from agentos.runtime.run_runtime import RunWriteGuard
@@ -122,8 +126,6 @@ async def capture_reconciliation_source(
         or current.status is not SideEffectStatus.AMBIGUOUS
         or current.run_id != run.run_id
         or current.turn_id != cursor.turn_id
-        or current.claim_id != guard.claim_id
-        or current.fencing_token != guard.fencing_token
         or row["turn_id"] != cursor.turn_id
         or row["aggregate_version"] != run.aggregate_version
         or waiting_checkpoint.aggregate_version != run.aggregate_version + 1
@@ -131,6 +133,12 @@ async def capture_reconciliation_source(
         or not cursor_contains_record(cursor, current)
     ):
         raise CheckpointConflictError()
+    if (
+        current.claim_id != guard.claim_id
+        or current.fencing_token != guard.fencing_token
+    ):
+        current = with_fence(current, guard)
+        await update_record(connection, current)
     await connection.execute(
         """
         INSERT INTO agentos_distributed_reconciliation_sources

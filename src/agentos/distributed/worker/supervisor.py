@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from agentos.distributed.models import QueueDelivery, WorkerState, WorkerStatus
+from agentos.distributed.errors import DistributedShutdownTimeoutError
 from agentos.distributed.protocols import QueuePort
 
 
 Clock = Callable[[], datetime]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class DeliveryRunner(Protocol):
@@ -32,7 +37,8 @@ class DistributedWorker:
         worker_id: str,
         topic: str,
         max_concurrency: int = 1,
-        clock: Clock = lambda: datetime.now(UTC),
+        clock: Clock | None = None,
+        shutdown_cleanup_timeout: timedelta = timedelta(seconds=5),
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be empty")
@@ -40,12 +46,18 @@ class DistributedWorker:
             raise ValueError("topic must not be empty")
         if type(max_concurrency) is not int or max_concurrency <= 0:
             raise ValueError("max_concurrency must be a positive integer")
+        if (
+            type(shutdown_cleanup_timeout) is not timedelta
+            or shutdown_cleanup_timeout <= timedelta(0)
+        ):
+            raise ValueError("shutdown_cleanup_timeout must be positive")
         self._runner = runner
         self._queue = queue
         self._worker_id = worker_id
         self._topic = topic
         self._max_concurrency = max_concurrency
-        self._clock = clock
+        self._clock = _utc_now if clock is None else clock
+        self._shutdown_cleanup_timeout = shutdown_cleanup_timeout.total_seconds()
         self._status: WorkerStatus = "created"
         self._last_heartbeat_at: datetime | None = None
         self._drain_started_at: datetime | None = None
@@ -110,10 +122,38 @@ class DistributedWorker:
             elif self._status == "running":
                 self._status = "draining"
                 self._drain_started_at = self._clock()
-            receiver, self._receiver = self._receiver, None
-        receiver_error = await _cancel_receiver(receiver)
-        await self._finish_active(float(timeout))
-        failure = receiver_error or self._failure
+            receiver = self._receiver
+            if receiver is None:
+                self._receiver_stopped.set()
+        cleanup_error: BaseException | None = None
+        receiver_error: BaseException | None = None
+        try:
+            receiver_error = await _cancel_receiver(
+                receiver,
+                self._shutdown_cleanup_timeout,
+            )
+        except BaseException as error:
+            cleanup_error = error
+        if receiver is not None and receiver.done():
+            self._receiver = None
+        cancellation = next(
+            (
+                error
+                for error in (cleanup_error, receiver_error)
+                if isinstance(error, asyncio.CancelledError)
+            ),
+            None,
+        )
+        try:
+            await self._finish_active(
+                0.0 if cancellation is not None else float(timeout),
+            )
+        except BaseException as error:
+            if cancellation is not None:
+                cancellation.__cause__ = error
+            else:
+                cleanup_error = cleanup_error or error
+        failure = cancellation or cleanup_error or receiver_error or self._failure
         if failure is not None:
             raise failure
 
@@ -122,19 +162,36 @@ class DistributedWorker:
 
         drain_error: BaseException | None = None
         try:
-            if self._status in {"created", "running"}:
+            if self._status != "closed":
                 await self.drain(timeout=0)
-            elif self._status == "draining" and self._active:
-                await self._finish_active(0)
         except BaseException as error:
             drain_error = error
+        queue_error: BaseException | None = None
+        queue_closed = False
         async with self._lifecycle_lock:
             if self._status == "closed":
                 return
-            await self._queue.close()
-            self._status = "closed"
-        if drain_error is not None:
-            raise drain_error
+            queue_error, queue_closed = await _run_cleanup(
+                self._queue.close(),
+                self._shutdown_cleanup_timeout,
+            )
+            drain_incomplete = isinstance(
+                drain_error,
+                (asyncio.CancelledError, DistributedShutdownTimeoutError),
+            )
+            if queue_closed and not drain_incomplete:
+                self._status = "closed"
+        if isinstance(drain_error, asyncio.CancelledError):
+            failure = drain_error
+        elif isinstance(
+            queue_error,
+            (asyncio.CancelledError, DistributedShutdownTimeoutError),
+        ):
+            failure = queue_error
+        else:
+            failure = drain_error or queue_error
+        if failure is not None:
+            raise failure
 
     async def _receive_loop(self) -> None:
         while self._status == "running":
@@ -217,31 +274,112 @@ class DistributedWorker:
         self._receiver_stopped.set()
 
     async def _finish_active(self, timeout: float) -> None:
-        active = tuple(self._active)
+        active = set(self._active)
         if not active:
             return
-        _, pending = await asyncio.wait(active, timeout=timeout)
-        if not pending:
-            return
+        pending = active
+        cancellation: asyncio.CancelledError | None = None
+        if timeout > 0:
+            try:
+                _, pending = await asyncio.wait(active, timeout=timeout)
+            except asyncio.CancelledError as error:
+                cancellation = error
         for task in pending:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        deadline = (
+            asyncio.get_running_loop().time() + self._shutdown_cleanup_timeout
+        )
+        while pending:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                _, pending = await asyncio.wait(pending, timeout=remaining)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        if pending:
+            timeout_error = DistributedShutdownTimeoutError()
+            if cancellation is not None:
+                cancellation.__cause__ = timeout_error
+                raise cancellation
+            raise timeout_error
+        await asyncio.gather(*active, return_exceptions=True)
+        if cancellation is not None:
+            raise cancellation
 
 
 async def _cancel_receiver(
     task: asyncio.Task[None] | None,
+    timeout: float,
 ) -> BaseException | None:
     if task is None:
         return None
     if not task.done():
         task.cancel()
+    deadline = asyncio.get_running_loop().time() + timeout
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            done, _ = await asyncio.wait((task,), timeout=remaining)
+            if not done:
+                break
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    if not task.done():
+        timeout_error = DistributedShutdownTimeoutError()
+        if cancellation is not None:
+            cancellation.__cause__ = timeout_error
+            raise cancellation
+        raise timeout_error
     try:
         await task
     except asyncio.CancelledError:
-        return None
+        return cancellation
     except BaseException as error:
+        if cancellation is not None:
+            cancellation.__cause__ = error
+            return cancellation
         return error
-    return None
+    return cancellation
+
+
+async def _run_cleanup(
+    cleanup: Awaitable[None],
+    timeout: float,
+) -> tuple[BaseException | None, bool]:
+    task = asyncio.create_task(cleanup)
+    deadline = asyncio.get_running_loop().time() + timeout
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            done, _ = await asyncio.wait((task,), timeout=remaining)
+            if not done:
+                break
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    if not task.done():
+        task.cancel()
+        task.add_done_callback(_consume_task_result)
+        return cancellation or DistributedShutdownTimeoutError(), False
+    try:
+        await task
+    except BaseException as error:
+        if cancellation is not None:
+            cancellation.__cause__ = error
+            return cancellation, False
+        return error, False
+    return cancellation, True
+
+
+def _consume_task_result(task: asyncio.Task[object]) -> None:
+    if not task.cancelled():
+        task.exception()
 
 
 __all__ = ["DeliveryRunner", "DistributedWorker"]

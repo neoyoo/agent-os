@@ -94,6 +94,22 @@ print(json.dumps(loaded))
     assert json.loads(completed.stdout) == []
 
 
+def test_distributed_profile_does_not_require_durable_sqlite_extra() -> None:
+    script = """
+import sys
+sys.path.insert(0, "src")
+sys.modules["aiosqlite"] = None
+import agentos.distributed.profile
+"""
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_execution_owner_gate_cannot_be_bypassed_with_aliases(tmp_path: Path) -> None:
     symbol_alias = tmp_path / "symbol_alias.py"
     symbol_alias.write_text(

@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from agentos.multi.team import TeamMessage
+from typing import Literal
 
 
 AgentStatus = Literal["idle", "busy", "offline"]
 AgentLifecycle = Literal["ephemeral", "persistent"]
-AgentEnvelopeType = Literal["task_request", "task_result", "team_message"]
+AgentEnvelopeType = Literal["task_request", "task_result"]
 TaskStatus = Literal[
     "queued",
     "running",
@@ -118,6 +115,6 @@ class AgentEnvelope:
     from_agent_id: str
     to_agent_id: str
     type: AgentEnvelopeType
-    payload: TaskRequest | TaskResult | "TeamMessage"
+    payload: TaskRequest | TaskResult
     created_at: float
     correlation_id: str | None = None
