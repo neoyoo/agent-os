@@ -17,7 +17,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v4
       - name: Install development dependencies
-        run: uv sync --python ${{ matrix.python-version }} --extra dev
+        run: uv sync --python ${{ matrix.python-version }} --all-extras
       - name: Generate public API inventory
         run: >-
           uv run --python ${{ matrix.python-version }} python

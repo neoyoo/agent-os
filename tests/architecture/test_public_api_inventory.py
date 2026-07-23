@@ -112,7 +112,7 @@ def test_public_api_inventory_is_reproducible(tmp_path: Path) -> None:
 def _inventory_ci_job(
     *,
     setup_python: str = "${{ matrix.python-version }}",
-    install: str = "uv sync --python ${{ matrix.python-version }} --extra dev",
+    install: str = "uv sync --python ${{ matrix.python-version }} --all-extras",
     generate: str = (
         "uv run --python ${{ matrix.python-version }} python "
         "scripts/generate_public_api_inventory.py "
@@ -184,8 +184,7 @@ def _public_api_inventory_ci_contract_violations(
                 "sync",
                 "--python",
                 matrix_marker,
-                "--extra",
-                "dev",
+                "--all-extras",
             ),
             "install-command",
         ),
